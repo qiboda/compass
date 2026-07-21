@@ -77,3 +77,83 @@ impl DataProvider for SyntheticProvider {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, Utc};
+
+    fn fetch_all_start() -> DateTime<Utc> {
+        DateTime::from_timestamp(0, 0).unwrap()
+    }
+
+    fn fetch_all_end() -> DateTime<Utc> {
+        DateTime::from_timestamp(4_000_000_000, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn fetch_bars_returns_200() {
+        let p = SyntheticProvider;
+        let bars = p
+            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
+            .await
+            .unwrap();
+        assert_eq!(bars.len(), 200);
+    }
+
+    #[tokio::test]
+    async fn fetch_bars_sorted_by_time_ascending() {
+        let p = SyntheticProvider;
+        let bars = p
+            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
+            .await
+            .unwrap();
+        for w in bars.windows(2) {
+            assert!(w[0].time <= w[1].time);
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_bars_valid_ohlc() {
+        let p = SyntheticProvider;
+        let bars = p
+            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
+            .await
+            .unwrap();
+        for b in &bars {
+            assert!(b.high >= b.open.max(b.close));
+            assert!(b.low <= b.open.min(b.close));
+            assert!(b.volume > 0.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn search_symbols_empty_query_returns_all() {
+        let p = SyntheticProvider;
+        let results = p.search_symbols("").await.unwrap();
+        assert_eq!(results.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn search_symbols_by_code() {
+        let p = SyntheticProvider;
+        let results = p.search_symbols("000001").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].code, "000001");
+        assert_eq!(results[0].name, "平安银行");
+    }
+
+    #[tokio::test]
+    async fn search_symbols_by_name_case_insensitive() {
+        let p = SyntheticProvider;
+        let results = p.search_symbols("平安").await.unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_symbols_no_match() {
+        let p = SyntheticProvider;
+        let results = p.search_symbols("NOTEXIST").await.unwrap();
+        assert!(results.is_empty());
+    }
+}

@@ -160,3 +160,87 @@ impl CompassState {
         self.bars_version = self.bars_version.wrapping_add(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_bar(open: f64, close: f64) -> Bar {
+        Bar {
+            time: Utc::now(),
+            open,
+            high: open + 1.0,
+            low: close - 1.0,
+            close,
+            volume: 1000.0,
+        }
+    }
+
+    #[test]
+    fn appconfig_default_has_expected_values() {
+        let c = AppConfig::default();
+        assert_eq!(c.database.path, "compass.db");
+        assert_eq!(c.api.base_url, "https://push2his.eastmoney.com");
+        assert_eq!(c.api.timeout_secs, 10);
+        assert_eq!(c.api.retry_count, 3);
+        assert_eq!(c.app.default_symbol, "000001");
+        assert_eq!(c.app.default_timeframe, "1d");
+    }
+
+    #[test]
+    fn appconfig_from_toml_overrides_fields() {
+        let config: AppConfig = toml::from_str(
+            r#"[app]
+default_symbol = "600519"
+default_timeframe = "1w"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.app.default_symbol, "600519");
+        assert_eq!(config.app.default_timeframe, "1w");
+    }
+
+    #[test]
+    fn compass_state_new_populates_fields() {
+        let s = CompassState::new("000001", "1d");
+        assert_eq!(s.current_symbol, "000001");
+        assert_eq!(s.current_timeframe, "1d");
+        assert!(!s.loading);
+        assert!(s.bars.is_empty());
+        assert!(s.error.is_none());
+        assert_eq!(s.bars_version, 0);
+    }
+
+    #[test]
+    fn set_bars_stores_and_bumps_version() {
+        let mut s = CompassState::new("000001", "1d");
+        s.set_bars("000001", "1d", vec![make_bar(10.0, 12.0)]);
+        assert_eq!(s.bars_version, 1);
+        assert_eq!(s.bars.len(), 1);
+    }
+
+    #[test]
+    fn set_bars_overwrites_existing_key() {
+        let mut s = CompassState::new("000001", "1d");
+        s.set_bars("000001", "1d", vec![make_bar(10.0, 12.0)]);
+        s.set_bars("000001", "1d", vec![make_bar(20.0, 22.0)]);
+        assert_eq!(s.bars.len(), 1);
+    }
+
+    #[test]
+    fn set_bars_version_wraps() {
+        let mut s = CompassState::new("000001", "1d");
+        s.bars_version = u64::MAX;
+        s.set_bars("000001", "1d", vec![make_bar(1.0, 2.0)]);
+        assert_eq!(s.bars_version, 0);
+    }
+
+    #[test]
+    fn set_bars_stores_multiple_symbols() {
+        let mut s = CompassState::new("000001", "1d");
+        s.set_bars("000001", "1d", vec![make_bar(10.0, 12.0)]);
+        s.set_bars("600519", "1d", vec![make_bar(20.0, 22.0)]);
+        assert_eq!(s.bars.len(), 2);
+    }
+}

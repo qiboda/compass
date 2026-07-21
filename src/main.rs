@@ -355,3 +355,29 @@ impl eframe::App for CompassApp {
 fn custom_dark_theme() -> Theme {
     Theme::dark()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::CompassState;
+
+    fn make_state() -> Arc<Mutex<CompassState>> {
+        Arc::new(Mutex::new(CompassState::new("000001", "1d")))
+    }
+
+    #[test]
+    fn compass_app_new_reads_initial_state() {
+        let state = make_state();
+        let (tx, _rx) = mpsc::channel::<Cmd>();
+        let ctx = egui::Context::default();
+        let app = CompassApp::new(ctx, state.clone(), tx);
+        assert_eq!(app.symbol_input, "000001");
+        assert_eq!(app.timeframe_input, "1d");
+        assert_eq!(app.bars_version, 0);
+    }
+
+    #[test]
+    fn theme_creation_does_not_panic() {
+        let _theme = custom_dark_theme();
+    }
+}
