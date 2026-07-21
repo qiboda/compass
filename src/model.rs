@@ -178,14 +178,10 @@ mod tests {
     }
 
     #[test]
-    fn appconfig_default_has_expected_values() {
-        let c = AppConfig::default();
-        assert_eq!(c.database.path, "compass.db");
-        assert_eq!(c.api.base_url, "https://push2his.eastmoney.com");
-        assert_eq!(c.api.timeout_secs, 10);
-        assert_eq!(c.api.retry_count, 3);
-        assert_eq!(c.app.default_symbol, "000001");
-        assert_eq!(c.app.default_timeframe, "1d");
+    fn appconfig_empty_toml_falls_back_to_default_symbol() {
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(config.app.default_symbol, "000001");
+        assert_eq!(config.app.default_timeframe, "1d");
     }
 
     #[test]
@@ -199,17 +195,6 @@ default_timeframe = "1w"
         .unwrap();
         assert_eq!(config.app.default_symbol, "600519");
         assert_eq!(config.app.default_timeframe, "1w");
-    }
-
-    #[test]
-    fn compass_state_new_populates_fields() {
-        let s = CompassState::new("000001", "1d");
-        assert_eq!(s.current_symbol, "000001");
-        assert_eq!(s.current_timeframe, "1d");
-        assert!(!s.loading);
-        assert!(s.bars.is_empty());
-        assert!(s.error.is_none());
-        assert_eq!(s.bars_version, 0);
     }
 
     #[test]

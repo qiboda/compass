@@ -92,17 +92,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_bars_returns_200() {
+    async fn fetch_bars_has_price_movement() {
         let p = SyntheticProvider;
         let bars = p
             .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
             .await
             .unwrap();
         assert_eq!(bars.len(), 200);
+        let closes: Vec<_> = bars.iter().map(|b| b.close).collect();
+        let all_same = closes.windows(2).all(|w| (w[0] - w[1]).abs() < 0.0001);
+        assert!(!all_same, "random bars should have price variation");
     }
 
     #[tokio::test]
-    async fn fetch_bars_sorted_by_time_ascending() {
+    async fn fetch_bars_consistent_ohlc() {
         let p = SyntheticProvider;
         let bars = p
             .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
@@ -111,27 +114,23 @@ mod tests {
         for w in bars.windows(2) {
             assert!(w[0].time <= w[1].time);
         }
-    }
-
-    #[tokio::test]
-    async fn fetch_bars_valid_ohlc() {
-        let p = SyntheticProvider;
-        let bars = p
-            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
-            .await
-            .unwrap();
         for b in &bars {
             assert!(b.high >= b.open.max(b.close));
             assert!(b.low <= b.open.min(b.close));
-            assert!(b.volume > 0.0);
+            assert!(b.volume >= 1_000_000.0);
         }
     }
 
     #[tokio::test]
-    async fn search_symbols_empty_query_returns_all() {
+    async fn search_symbols_empty_query_returns_all_five() {
         let p = SyntheticProvider;
         let results = p.search_symbols("").await.unwrap();
-        assert_eq!(results.len(), 5);
+        let codes: Vec<&str> = results.iter().map(|s| s.code.as_str()).collect();
+        assert!(codes.contains(&"000001"));
+        assert!(codes.contains(&"000002"));
+        assert!(codes.contains(&"600000"));
+        assert!(codes.contains(&"600036"));
+        assert!(codes.contains(&"300750"));
     }
 
     #[tokio::test]
@@ -144,10 +143,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_symbols_by_name_case_insensitive() {
+    async fn search_symbols_case_insensitive() {
         let p = SyntheticProvider;
-        let results = p.search_symbols("平安").await.unwrap();
-        assert!(!results.is_empty());
+        let by_lower = p.search_symbols("平安").await.unwrap();
+        let by_upper = p.search_symbols("PINGAN").await.unwrap();
+        assert!(!by_lower.is_empty());
+        assert!(by_upper.is_empty()); // code/name are Chinese, English doesn't match
     }
 
     #[tokio::test]

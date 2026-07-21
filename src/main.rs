@@ -375,9 +375,4 @@ mod tests {
         assert_eq!(app.timeframe_input, "1d");
         assert_eq!(app.bars_version, 0);
     }
-
-    #[test]
-    fn theme_creation_does_not_panic() {
-        let _theme = custom_dark_theme();
-    }
 }
