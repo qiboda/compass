@@ -20,6 +20,7 @@ pub enum DataError {
     Parse(String),
 
     #[error("rate limited, retry after {0}s")]
+    #[allow(dead_code)]
     RateLimited(u64),
 
     #[error("no data for {symbol}")]

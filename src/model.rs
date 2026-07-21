@@ -27,6 +27,7 @@ pub enum Cmd {
         range_end: DateTime<Utc>,
     },
     /// Search symbols by keyword.
+    #[allow(dead_code)]
     SearchSymbols { query: String },
 }
 
@@ -57,6 +58,7 @@ pub struct ApiConfig {
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
     #[serde(default = "default_retry_count")]
+    #[allow(dead_code)]
     pub retry_count: u32,
 }
 

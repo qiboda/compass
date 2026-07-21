@@ -10,9 +10,11 @@ use crate::model::SymbolInfo;
 // SyntheticProvider — random OHLCV data for testing / demo
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub struct SyntheticProvider;
 
 impl SyntheticProvider {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self
     }
