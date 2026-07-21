@@ -137,6 +137,21 @@ If working without OpenCode:
 4. **Verify**: `cargo nextest run` + `lsp_diagnostics`.
 5. **Update docs** if the change affects architecture, symbol format, or config.
 
+### Knowledge base sync
+
+Every code change that affects behavior, APIs, data structures, config,
+workflows, or conventions must update the relevant `kb/` file in the
+same commit. AGENTS.md must be updated if the architecture overview changes.
+
+| Change type | kb/ file to update |
+|---|---|
+| New data source, API call, schema change | `data-providers.md` |
+| Threading, pipeline, library changes | `architecture.md` |
+| Symbol format, timeframe mapping | `symbols.md` |
+| Test framework, patterns | `testing.md` |
+| Workflow, hooks, conventions | `process.md` |
+| Project-level conventions | `AGENTS.md` |
+
 ## TDD workflow
 
 Feature and bugfix work follows TDD (Test-Driven Development):
