@@ -40,6 +40,18 @@ Refactors, docs, lint fixes, and typos skip the grill-me + issue cycle — imple
 
 GitHub auto-closes the issue when the commit reaches `main`.
 
+### Commit-msg hook
+
+A git hook (`.githooks/commit-msg`) enforces issue references:
+
+```
+feat: commits → must include "closes #N"
+fix:  commits → must include "fixes #N"
+test, refactor, docs, chore → no issue reference required
+```
+
+The hook is activated via `git config core.hooksPath .githooks` (already configured).
+
 ## OpenCode workflow
 
 ### When to plan first
