@@ -3,6 +3,18 @@ name = "compass"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "compass_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "compass"
+path = "src/main.rs"
+
+[[bin]]
+name = "compass-downloader"
+path = "src/bin/downloader.rs"
+
 [dependencies]
 egui = "0.33"
 eframe = "0.33"
@@ -21,6 +33,9 @@ tracing-appender = "0.2"
 async-trait = "0.1"
 rand = "0.9"
 toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+futures = "0.3"
 
 [dev-dependencies]
 rstest = "0.25"
