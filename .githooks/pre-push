@@ -1,0 +1,61 @@
+#!/bin/bash
+# pre-push hook — verify all issue references point to real, open issues.
+#
+# Extracts "fixes #N" and "closes #N" from commits being pushed and validates
+# each one via `gh issue view`. Rejects the push if any reference is invalid
+# or points to a closed issue.
+
+has_error=0
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+    # Skip branch deletion
+    if [ "$local_oid" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+
+    # Nothing new to push
+    if [ "$remote_oid" = "$local_oid" ]; then
+        continue
+    fi
+
+    # Determine commit range
+    if [ "$remote_oid" = "0000000000000000000000000000000000000000" ]; then
+        range="$local_oid"
+    else
+        range="${remote_oid}..${local_oid}"
+    fi
+
+    # Extract issue references from all commits in the range
+    issues=$(git log "$range" --format="%B" 2>/dev/null \
+        | grep -ioE '(fixes|closes)[[:space:]]+#[0-9]+' \
+        | grep -oE '#[0-9]+' \
+        | sort -u \
+        | tr -d '#' \
+        || true)
+
+    if [ -z "$issues" ]; then
+        continue
+    fi
+
+    for n in $issues; do
+        state=$(unset GITHUB_TOKEN 2>/dev/null; gh issue view "$n" --repo qiboda/compass --json state --jq '.state' 2>/dev/null || echo "MISSING")
+
+        if [ "$state" != "OPEN" ]; then
+            echo ""
+            echo "ERROR: push rejected — issue #$n is $state (must be OPEN)."
+            echo ""
+            if [ "$state" = "MISSING" ]; then
+                echo "  Issue #$n does not exist. Create it with 'gh issue create'."
+            else
+                echo "  Issue #$n is $state. Reopen it with 'gh issue reopen $n'."
+            fi
+            echo ""
+            has_error=1
+        fi
+    done
+done
+
+if [ $has_error -ne 0 ]; then
+    exit 1
+fi
+exit 0

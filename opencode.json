@@ -1,7 +1,8 @@
 {
   "instructions": "AGENTS.md contains the project architecture, tech stack, and conventions. Read it before starting any work. Development follows the issue-driven cycle: user raises requirement → grill-me → create issue → implement → push.",
   "rules": {
-    "requirement-flow": "When the user raises a feature or bug requirement: run /grill-me to clarify scope and decisions, summarize the locked-in decisions, then create a GitHub issue (feature_request or bug_report template) with the summary, show the issue with `gh issue view <N>`, then implement.",
+    "requirement-flow": "CRITICAL — Before writing any feature or bugfix code: 1) verify an open GitHub issue exists for this work (gh issue view <N> — must return 'OPEN'), 2) if none exists, create one with gh issue create using the appropriate template, 3) gh issue view <N> to confirm, 4) only then implement. The pre-push hook will reject pushes referencing nonexistent or closed issues. Never skip this — it is the single most important rule.",
+    "pre-push-validation": "The pre-push hook verifies every 'fixes #N' and 'closes #N' reference points to an open issue. If push is rejected: create the issue or reopen it, amend the commit, and retry.",
     "issue-linking": "Bugfix commits use `fixes #N`. Feature commits use `closes #N`. GitHub auto-closes the issue on push to main.",
     "bug-reporting": "If you discover a new bug during development: create a GitHub issue using the bug_report template, read it back with `gh issue view <N>`, then fix it.",
     "plan-mode": "Multi-step tasks (2+ modules, architecture changes, new data sources) MUST use /ulw-plan before implementing. Single-file fixes, tests, and doc updates may proceed directly with explore → implement.",
