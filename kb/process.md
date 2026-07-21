@@ -138,6 +138,23 @@ If working without OpenCode:
 4. **Verify**: `cargo nextest run` + `lsp_diagnostics`.
 5. **Update docs** if the change affects architecture, symbol format, or config.
 
+## TDD workflow
+
+Feature and bugfix work follows TDD (Test-Driven Development):
+
+```
+RED → GREEN → REFACTOR
+```
+
+1. **RED**: Write a failing test that documents the expected behavior.
+   - Test must fail before any implementation code exists.
+   - If it passes immediately, delete or rewrite — it's testing nothing.
+2. **GREEN**: Write the minimal implementation to make the test pass.
+3. **REFACTOR**: Clean up the code while keeping tests green.
+
+Exploratory changes (new API integration, architecture experiments) may
+write tests after implementation to lock in behavior.
+
 ## Running tests
 
 ```sh

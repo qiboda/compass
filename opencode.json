@@ -12,7 +12,8 @@
     "atomic-commits": "Commit each logical unit separately. One commit = one purpose (fix, feat, test, refactor). Never mix unrelated changes. Use `.gitmessage` template format.",
     "branching": "Trunk-based: push directly to `main`. No feature branches, no PRs for solo development.",
     "doc-sync": "When changing architecture, data flow, symbol format, config schema, or adding new kb-worthy patterns: update both AGENTS.md and the relevant kb/ file.",
-    "test-first": "Any new module or behavior change must include tests (rstest + #[tokio::test]). Tests must pass before marking work complete.",
+    "test-first": "TDD for all feature and bugfix work: write the failing test FIRST, watch it fail, then implement until green. Refactor after green. Exploratory changes (new API integration, architecture refactors) may write tests after implementation.",
+    "test-verify": "Every test must fail before implementation. If a test passes without implementation changes, it's a false positive — delete or rewrite it.",
     "no-type-escape": "Never use `as any`, `@ts-ignore`, or `unwrap()` in production code. Use `.expect(msg)` or proper error handling.",
     "code-style": "Match existing codebase conventions: Rust edition 2024, thiserror for errors, async-trait for trait async fns, tracing for logging."
   }
