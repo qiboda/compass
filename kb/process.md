@@ -11,8 +11,8 @@ User raises requirement
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
   →  /ulw-plan (if multi-step)  →  implement
-  →  cargo nextest + clippy + fmt  →  commit with fixes/closes #N  →  push main
-  →  CI passes  →  GitHub auto-closes issue
+  →  cargo nextest + clippy + fmt  →  commit with ref #N  →  push master
+  →  CI passes  →  manually close issue with gh issue close N
 ```
 
 Refactors, docs, lint fixes, and typos skip the grill-me + issue cycle — implement directly.
@@ -33,20 +33,19 @@ Refactors, docs, lint fixes, and typos skip the grill-me + issue cycle — imple
 
 ### Commit → issue linking
 
-| Issue type | Commit trailer |
+| Commit type | Issue reference |
 |---|---|
-| Bug fix | `fixes #N` |
-| Feature | `closes #N` |
+| feat / fix | `ref #N` |
 
-GitHub auto-closes the issue when the commit reaches `main`.
+Issues are closed **manually** via `gh issue close N` after verification.
+Do NOT use `fixes #N` or `closes #N` — these auto-close the issue on push.
 
 ### Commit-msg hook
 
 A git hook (`.githooks/commit-msg`) enforces issue references:
 
 ```
-feat: commits → must include "closes #N"
-fix:  commits → must include "fixes #N"
+feat/fix commits → must include "ref #N"
 test, refactor, docs, chore → no issue reference required
 ```
 

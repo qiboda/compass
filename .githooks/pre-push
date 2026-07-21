@@ -1,7 +1,7 @@
 #!/bin/bash
 # pre-push hook — verify all issue references point to real, open issues.
 #
-# Extracts "fixes #N" and "closes #N" from commits being pushed and validates
+# Extracts "ref #N" from commits being pushed and validates
 # each one via `gh issue view`. Rejects the push if any reference is invalid
 # or points to a closed issue.
 
@@ -27,7 +27,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
 
     # Extract issue references from all commits in the range
     issues=$(git log "$range" --format="%B" 2>/dev/null \
-        | grep -ioE '(fixes|closes)[[:space:]]+#[0-9]+' \
+        | grep -ioE 'ref[[:space:]]+#[0-9]+' \
         | grep -oE '#[0-9]+' \
         | sort -u \
         | tr -d '#' \
