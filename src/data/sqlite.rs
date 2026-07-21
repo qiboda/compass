@@ -36,11 +36,69 @@ impl SqliteProvider {
                 PRIMARY KEY (symbol, timeframe, adj_type, timestamp)
             );
             CREATE INDEX IF NOT EXISTS idx_bars_lookup
-                ON bars(symbol, timeframe, adj_type, timestamp DESC);",
+                ON bars(symbol, timeframe, adj_type, timestamp DESC);
+            CREATE TABLE IF NOT EXISTS no_data_marks (
+                symbol       TEXT NOT NULL,
+                timeframe    TEXT NOT NULL,
+                last_checked INTEGER NOT NULL,
+                PRIMARY KEY (symbol, timeframe)
+            );",
         )?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// Mark a (symbol, timeframe) as having no data, with a `last_checked` timestamp.
+    pub async fn mark_no_data(&self, symbol: &str, timeframe: &str) -> Result<(), DataError> {
+        let symbol = symbol.to_string();
+        let timeframe = timeframe.to_string();
+        let now = Utc::now().timestamp();
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn
+                .lock()
+                .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+            conn.execute(
+                "INSERT OR REPLACE INTO no_data_marks (symbol, timeframe, last_checked) VALUES (?1, ?2, ?3)",
+                params![symbol, timeframe, now],
+            )
+            .map_err(DataError::from)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
+    }
+
+    /// Check whether a (symbol, timeframe) has a fresh no-data mark (within TTL seconds).
+    pub async fn is_no_data(
+        &self,
+        symbol: &str,
+        timeframe: &str,
+        now_ts: i64,
+        ttl_secs: i64,
+    ) -> Result<bool, DataError> {
+        let symbol = symbol.to_string();
+        let timeframe = timeframe.to_string();
+        let cutoff = now_ts - ttl_secs;
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn
+                .lock()
+                .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM no_data_marks WHERE symbol = ?1 AND timeframe = ?2 AND last_checked >= ?3",
+                    params![symbol, timeframe, cutoff],
+                    |_| Ok(()),
+                )
+                .is_ok();
+            Ok(exists)
+        })
+        .await
+        .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
     }
 }
 
@@ -232,5 +290,42 @@ mod tests {
 
     fn fetch_all_end() -> chrono::DateTime<Utc> {
         chrono::DateTime::from_timestamp(4_000_000_000, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn mark_no_data_then_is_no_data_returns_true() {
+        let provider = SqliteProvider::new(":memory:").unwrap();
+        let now = Utc::now().timestamp();
+        let ttl = 7 * 24 * 3600;
+
+        provider.mark_no_data("000003", "1d").await.unwrap();
+        assert!(provider.is_no_data("000003", "1d", now, ttl).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn is_no_data_returns_false_when_not_marked() {
+        let provider = SqliteProvider::new(":memory:").unwrap();
+        let now = Utc::now().timestamp();
+        let ttl = 7 * 24 * 3600;
+
+        assert!(!provider.is_no_data("000001", "1d", now, ttl).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn is_no_data_returns_false_when_stale() {
+        let provider = SqliteProvider::new(":memory:").unwrap();
+
+        let stale_ts = Utc::now().timestamp() - 8 * 24 * 3600;
+        let conn = provider.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO no_data_marks (symbol, timeframe, last_checked) VALUES (?1, ?2, ?3)",
+            params!["000003", "1d", stale_ts],
+        )
+        .unwrap();
+        drop(conn);
+
+        let now = Utc::now().timestamp();
+        let ttl = 7 * 24 * 3600;
+        assert!(!provider.is_no_data("000003", "1d", now, ttl).await.unwrap());
     }
 }
