@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 
 /// Default maximum days per chunk matching EastMoney's `lmt` parameter limit.
+#[allow(dead_code)]
 pub const DEFAULT_MAX_DAYS: u32 = 2000;
 
 /// Split a date range (inclusive) into chunks of at most `max_days` calendar days.

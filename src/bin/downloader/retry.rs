@@ -13,10 +13,7 @@ use tracing::{debug, warn};
 /// failures, rate-limit responses). Permanent errors (parse, no-data, database)
 /// propagate immediately.
 fn is_retryable(err: &DataError) -> bool {
-    matches!(
-        err,
-        DataError::Network(_) | DataError::RateLimited(_)
-    )
+    matches!(err, DataError::Network(_) | DataError::RateLimited(_))
 }
 
 // ---------------------------------------------------------------------------
@@ -33,18 +30,12 @@ fn is_retryable(err: &DataError) -> bool {
 ///
 /// # Panics
 /// Panics if `max_attempts` is 0.
-pub async fn fetch_with_retry<F, Fut, T>(
-    op: F,
-    max_attempts: u32,
-) -> Result<T, DataError>
+pub async fn fetch_with_retry<F, Fut, T>(op: F, max_attempts: u32) -> Result<T, DataError>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T, DataError>>,
 {
-    assert!(
-        max_attempts > 0,
-        "max_attempts must be at least 1"
-    );
+    assert!(max_attempts > 0, "max_attempts must be at least 1");
 
     let mut last_err: Option<DataError> = None;
 
@@ -57,10 +48,7 @@ where
 
                 if attempt < max_attempts {
                     let delay_secs = 1u64 << (attempt - 1); // 1, 2, 4, 8, …
-                    debug!(
-                        delay_secs = delay_secs,
-                        "backing off before next attempt"
-                    );
+                    debug!(delay_secs = delay_secs, "backing off before next attempt");
                     tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
                 }
             }

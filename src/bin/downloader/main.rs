@@ -26,7 +26,10 @@ use crate::retry::fetch_bars_with_retry;
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "compass-downloader", about = "Download A-share OHLCV data into DuckDB")]
+#[command(
+    name = "compass-downloader",
+    about = "Download A-share OHLCV data into DuckDB"
+)]
 struct Cli {
     /// Stock symbols: "all" or comma-separated codes like "000001,600519"
     #[arg(long, default_value = "all")]
@@ -67,11 +70,8 @@ struct Cli {
 
 /// Convert a "YYYYMMDD" string to `DateTime<Utc>` at midnight UTC.
 fn yyyymmdd_to_utc(date_str: &str) -> DateTime<Utc> {
-    let naive = NaiveDate::parse_from_str(date_str, "%Y%m%d")
-        .expect("date must be valid YYYYMMDD");
-    let naive_dt = naive
-        .and_hms_opt(0, 0, 0)
-        .expect("time must be valid");
+    let naive = NaiveDate::parse_from_str(date_str, "%Y%m%d").expect("date must be valid YYYYMMDD");
+    let naive_dt = naive.and_hms_opt(0, 0, 0).expect("time must be valid");
     DateTime::from_naive_utc_and_offset(naive_dt, Utc)
 }
 
@@ -98,10 +98,7 @@ async fn main() {
     let cli = Cli::parse();
 
     // Resolve end_date
-    let end_date_str = cli
-        .end_date
-        .clone()
-        .unwrap_or_else(yesterday_yyyymmdd);
+    let end_date_str = cli.end_date.clone().unwrap_or_else(yesterday_yyyymmdd);
 
     info!(
         "compass-downloader starting — symbols={}, start={}, end={}, db={}, concurrency={}",
@@ -166,30 +163,37 @@ async fn main() {
     // Bounded-concurrency pipeline
     let sem = Arc::new(tokio::sync::Semaphore::new(cli.concurrency));
 
-    let results: Vec<(String, Result<usize, String>)> =
-        futures::stream::iter(symbol_infos.iter())
-            .map(|info| {
-                let sem = Arc::clone(&sem);
-                let db = Arc::clone(&db);
-                let eastmoney = &eastmoney;
-                let cli = &cli;
-                let progress = Arc::clone(&progress);
-                let end_date_str = end_date_str.clone();
-                async move {
-                    let _permit = sem.acquire().await.expect("semaphore closed");
-                    process_symbol(db, eastmoney, info, &cli.start_date, &end_date_str, &cli.delay_ms, &progress).await
-                }
-            })
-            .buffer_unordered(cli.concurrency)
-            .collect()
-            .await;
+    let results: Vec<(String, Result<usize, String>)> = futures::stream::iter(symbol_infos.iter())
+        .map(|info| {
+            let sem = Arc::clone(&sem);
+            let db = Arc::clone(&db);
+            let eastmoney = &eastmoney;
+            let cli = &cli;
+            let progress = Arc::clone(&progress);
+            let end_date_str = end_date_str.clone();
+            async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+                process_symbol(
+                    db,
+                    eastmoney,
+                    info,
+                    &cli.start_date,
+                    &end_date_str,
+                    &cli.delay_ms,
+                    &progress,
+                )
+                .await
+            }
+        })
+        .buffer_unordered(cli.concurrency)
+        .collect()
+        .await;
 
     progress.finish();
 
     // Summarise
     let total = results.len();
-    let (successes, failures): (Vec<_>, Vec<_>) =
-        results.into_iter().partition(|(_, r)| r.is_ok());
+    let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(|(_, r)| r.is_ok());
 
     let total_bars: usize = successes.iter().filter_map(|(_, r)| r.as_ref().ok()).sum();
     let failed = failures.len();
@@ -267,12 +271,17 @@ async fn process_symbol(
     // 2. Gap detection: figure out what date chunks to fetch
     let start_date = NaiveDate::parse_from_str(start_date_str, "%Y%m%d")
         .expect("start_date must be valid YYYYMMDD");
-    let end_date = NaiveDate::parse_from_str(end_date_str, "%Y%m%d")
-        .expect("end_date must be valid YYYYMMDD");
+    let end_date =
+        NaiveDate::parse_from_str(end_date_str, "%Y%m%d").expect("end_date must be valid YYYYMMDD");
 
     let stored = match db.get_stored_range(&ts_code).await {
         Ok(r) => r,
-        Err(e) => return (code.clone(), Err(format!("DB error checking stored range: {e}"))),
+        Err(e) => {
+            return (
+                code.clone(),
+                Err(format!("DB error checking stored range: {e}")),
+            );
+        }
     };
 
     // Determine the effective start/end dates for fetching
@@ -318,12 +327,8 @@ async fn process_symbol(
 
             // Fetch with retry
             let bars = match fetch_bars_with_retry(
-                eastmoney,
-                code,
-                "101", // daily
-                start_dt,
-                end_dt,
-                3, // max_attempts
+                eastmoney, code, "101", // daily
+                start_dt, end_dt, 3, // max_attempts
             )
             .await
             {
@@ -336,7 +341,9 @@ async fn process_symbol(
                 Err(e) => {
                     return (
                         code.clone(),
-                        Err(format!("fetch failed for {code} [{chunk_start}..{chunk_end}]: {e}")),
+                        Err(format!(
+                            "fetch failed for {code} [{chunk_start}..{chunk_end}]: {e}"
+                        )),
                     );
                 }
             };
@@ -352,10 +359,10 @@ async fn process_symbol(
                         high: b.high,
                         low: b.low,
                         close: b.close,
-                        change: 0.0,   // not available from Bar struct
-                        pct_chg: 0.0,   // not available from Bar struct
+                        change: 0.0,  // not available from Bar struct
+                        pct_chg: 0.0, // not available from Bar struct
                         vol: b.volume,
-                        amount: 0.0,    // not available from Bar struct
+                        amount: 0.0, // not available from Bar struct
                     }
                 })
                 .collect();
@@ -367,7 +374,9 @@ async fn process_symbol(
             if let Err(e) = db.save_stock_daily(&ts_code, &records).await {
                 return (
                     code.clone(),
-                    Err(format!("DB save failed for {code} [{chunk_start}..{chunk_end}]: {e}")),
+                    Err(format!(
+                        "DB save failed for {code} [{chunk_start}..{chunk_end}]: {e}"
+                    )),
                 );
             }
 

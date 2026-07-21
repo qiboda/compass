@@ -141,11 +141,7 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
 
     // ---- 2. Build providers ----
     let http_client = reqwest::Client::new();
-    let eastmoney = EastMoneyProvider::new(
-        http_client,
-        server.base_url(),
-        server.base_url(),
-    );
+    let eastmoney = EastMoneyProvider::new(http_client, server.base_url(), server.base_url());
     let db = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 
     // ---- 3. Enumerate symbols via search_all_symbols ----
@@ -191,9 +187,9 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
                     list_date: None,
                     delist_date: None,
                 };
-                db.upsert_stock_basic(&minimal)
-                    .await
-                    .expect(&format!("upsert minimal stock_basic for {code} failed: {e}"));
+                db.upsert_stock_basic(&minimal).await.expect(&format!(
+                    "upsert minimal stock_basic for {code} failed: {e}"
+                ));
             }
         }
 
@@ -252,10 +248,7 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
         count_600519, 1,
         "600519.SH should have exactly 1 bar in stock_daily"
     );
-    assert_eq!(
-        basic_count, 2,
-        "stock_basic should have exactly 2 entries"
-    );
+    assert_eq!(basic_count, 2, "stock_basic should have exactly 2 entries");
 
     let range_000001 = db
         .get_stored_range("000001.SZ")
@@ -312,11 +305,7 @@ async fn e2e_empty_search_all_symbols_handled_gracefully() {
     });
 
     let http_client = reqwest::Client::new();
-    let eastmoney = EastMoneyProvider::new(
-        http_client,
-        server.base_url(),
-        server.base_url(),
-    );
+    let eastmoney = EastMoneyProvider::new(http_client, server.base_url(), server.base_url());
 
     let results = eastmoney
         .search_all_symbols(100, "b:DLMK014")
@@ -353,9 +342,6 @@ async fn duckdb_in_memory_has_all_seven_tables() {
                 |row| row.get(0),
             )
             .expect(&format!("query for table {table}"));
-        assert!(
-            exists,
-            "table '{table}' should exist in DuckDB schema"
-        );
+        assert!(exists, "table '{table}' should exist in DuckDB schema");
     }
 }

@@ -301,6 +301,7 @@ impl DuckDbProvider {
         sorted.sort_by_key(|r| r.trade_date);
 
         let ts_code = ts_code.to_string();
+        #[allow(clippy::type_complexity)]
         let rows: Vec<(String, f64, f64, f64, f64, Option<f64>, f64, f64, f64, f64)> = {
             let mut prev_close: Option<f64> = None;
             sorted
@@ -613,6 +614,7 @@ impl DuckDbProvider {
         }
 
         let ts_code = ts_code.to_string();
+        #[allow(clippy::type_complexity)]
         let owned: Vec<(String, f64, f64, f64, f64, f64, f64, f64)> = records
             .iter()
             .map(|r| {

@@ -16,7 +16,10 @@ const TABLES: &[(&str, &str)] = &[
 
 pub async fn export_all_tables(db: &DuckDbProvider, dir: &Path) -> Result<(), DataError> {
     std::fs::create_dir_all(dir).map_err(|e| {
-        DataError::Parse(format!("failed to create export dir {}: {e}", dir.display()))
+        DataError::Parse(format!(
+            "failed to create export dir {}: {e}",
+            dir.display()
+        ))
     })?;
 
     for (table, order_clause) in TABLES {
@@ -48,8 +51,8 @@ pub async fn export_all_tables(db: &DuckDbProvider, dir: &Path) -> Result<(), Da
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compass_rs::data::duckdb::DailyRecord;
     use chrono::NaiveDate;
+    use compass_rs::data::duckdb::DailyRecord;
 
     #[tokio::test]
     async fn export_all_tables_creates_parquet_files() {

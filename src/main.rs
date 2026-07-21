@@ -10,8 +10,8 @@ use egui_charts::widget::Chart;
 use tracing::info;
 
 use compass_rs::data::{
-    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider, provider::DataProvider,
-    symbol,
+    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider,
+    provider::{DataProvider},
 };
 use compass_rs::model::{AppConfig, Cmd, CompassState};
 

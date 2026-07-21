@@ -6,6 +6,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 /// * A **spinner** for ongoing activity notifications (e.g. "Enumerating symbols…").
 /// * A **bar** that tracks overall symbol download progress.
 pub struct DownloadProgress {
+    #[allow(dead_code)]
     mp: MultiProgress,
     spinner: ProgressBar,
     bar: ProgressBar,
@@ -18,20 +19,17 @@ impl DownloadProgress {
     pub fn new(total_symbols: u64) -> Self {
         let mp = MultiProgress::new();
 
-        let spinner =
-            ProgressBar::new_spinner().with_style(
-                ProgressStyle::with_template("{spinner:.green} {msg}")
-                    .expect("valid spinner template")
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-            );
+        let spinner = ProgressBar::new_spinner().with_style(
+            ProgressStyle::with_template("{spinner:.green} {msg}")
+                .expect("valid spinner template")
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
         let spinner = mp.add(spinner);
 
         let bar = ProgressBar::new(total_symbols).with_style(
-            ProgressStyle::with_template(
-                "{bar:40.cyan/blue} {pos:>4}/{len:4} {msg}",
-            )
-            .expect("valid bar template")
-            .progress_chars("##-"),
+            ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
+                .expect("valid bar template")
+                .progress_chars("##-"),
         );
         let bar = mp.add(bar);
 
@@ -47,8 +45,7 @@ impl DownloadProgress {
     /// show which symbol was just completed.
     pub fn inc_symbol(&self, symbol: &str) {
         self.bar.inc(1);
-        self.bar
-            .set_message(format!("completed {symbol}"));
+        self.bar.set_message(format!("completed {symbol}"));
     }
 
     /// Finalize both progress indicators (spinner tick → done, bar → done).

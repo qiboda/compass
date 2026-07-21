@@ -13,6 +13,7 @@ use compass_rs::model::AdjFactor;
 /// # Errors
 /// Returns `Err(String)` if the subprocess fails, exits non-zero, or produces
 /// invalid JSON.
+#[allow(dead_code)]
 pub async fn fetch_adj_factors(
     ts_code: &str,
     start_date: &str,
