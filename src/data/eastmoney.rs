@@ -3,8 +3,10 @@ use chrono::{DateTime, NaiveDate, Utc};
 use egui_charts::model::Bar;
 use serde_json::Value;
 
+use crate::data::duckdb::StockBasic;
 use crate::data::provider::{DataError, DataProvider};
-use crate::model::SymbolInfo;
+use crate::data::symbol;
+use crate::model::{RealtimeQuote, SymbolInfo};
 
 /// EastMoney (东方财富) HTTP API data provider.
 ///
@@ -13,12 +15,18 @@ use crate::model::SymbolInfo;
 pub struct EastMoneyProvider {
     client: reqwest::Client,
     base_url: String,
+    realtime_base_url: String,
 }
 
 impl EastMoneyProvider {
-    /// Create a new provider wrapping a `reqwest::Client` and an API base URL.
-    pub fn new(client: reqwest::Client, base_url: String) -> Self {
-        Self { client, base_url }
+    /// Create a new provider wrapping a `reqwest::Client`, an API base URL
+    /// for K-line + symbol search, and a base URL for realtime quotes.
+    pub fn new(client: reqwest::Client, base_url: String, realtime_base_url: String) -> Self {
+        Self {
+            client,
+            base_url,
+            realtime_base_url,
+        }
     }
 
     /// Map a user-supplied symbol to an EastMoney `secid` string (`"{market}.{code}"`).
@@ -75,6 +83,150 @@ impl EastMoneyProvider {
         let naive_dt = naive.and_hms_opt(0, 0, 0)?;
         Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc))
     }
+
+    pub fn to_ts_code_for_symbol(code: &str) -> String {
+        symbol::to_ts_code(code)
+    }
+
+    pub async fn fetch_stock_basic(&self, code: &str) -> Result<StockBasic, DataError> {
+        let url = format!("{}/api/qt/clist/get", self.base_url.trim_end_matches('/'));
+        let fs = format!("b:DLMK014,m:{code}");
+
+        let params1: Vec<(String, String)> = vec![
+            ("pn".into(), "1".into()),
+            ("pz".into(), "1".into()),
+            ("fs".into(), fs.to_string()),
+            ("fields".into(), "f12,f14,f100,f124,f102".into()),
+        ];
+        let resp = self.client.get(&url).query(&params1).send().await?;
+
+        let json: Value = resp.json().await?;
+        let diff = json["data"]["diff"]
+            .as_array()
+            .ok_or_else(|| DataError::NoData {
+                symbol: code.to_string(),
+            })?;
+
+        let item = diff.first().ok_or_else(|| DataError::NoData {
+            symbol: code.to_string(),
+        })?;
+
+        let ts_code = Self::to_ts_code_for_symbol(code);
+        let symbol_name = item["f12"].as_str().unwrap_or(code).to_string();
+        let name = item["f14"].as_str().unwrap_or("").to_string();
+        let industry = item["f100"].as_str().unwrap_or("").to_string();
+        let exchange = symbol::to_exchange(code).to_string();
+        let market = item["f102"].as_str().unwrap_or("").to_string();
+        let list_date_ts = item["f124"].as_f64();
+        let list_date = list_date_ts.and_then(|ts| {
+            DateTime::from_timestamp(ts as i64, 0).and_then(|dt| {
+                NaiveDate::parse_from_str(&dt.format("%Y-%m-%d").to_string(), "%Y-%m-%d").ok()
+            })
+        });
+
+        Ok(StockBasic {
+            ts_code,
+            symbol: symbol_name,
+            name,
+            area: None,
+            industry: if industry.is_empty() {
+                None
+            } else {
+                Some(industry)
+            },
+            market: if market.is_empty() {
+                None
+            } else {
+                Some(market)
+            },
+            exchange: Some(exchange),
+            list_date,
+            delist_date: None,
+        })
+    }
+
+    pub async fn fetch_realtime_quote(&self, code: &str) -> Result<RealtimeQuote, DataError> {
+        let secid = Self::to_secid(code);
+        let url = format!(
+            "{}/api/qt/stock/get?secid={secid}&fields=f9,f167,f84,f85,f51,f52",
+            self.realtime_base_url.trim_end_matches('/'),
+        );
+
+        let resp = self.client.get(&url).send().await?;
+        let json: Value = resp.json().await?;
+        let data = &json["data"];
+
+        if data.is_null() {
+            return Err(DataError::NoData {
+                symbol: code.to_string(),
+            });
+        }
+
+        fn parse_opt_f64(v: &Value) -> Option<f64> {
+            match v {
+                Value::String(s) => s.parse::<f64>().ok(),
+                Value::Number(n) => n.as_f64(),
+                _ => None,
+            }
+        }
+
+        Ok(RealtimeQuote {
+            pe: parse_opt_f64(&data["f9"]),
+            pb: parse_opt_f64(&data["f167"]),
+            total_share: parse_opt_f64(&data["f84"]),
+            float_share: parse_opt_f64(&data["f85"]),
+            up_limit: parse_opt_f64(&data["f51"]),
+            down_limit: parse_opt_f64(&data["f52"]),
+        })
+    }
+
+    pub async fn search_all_symbols(
+        &self,
+        page_size: u32,
+        fs_filter: &str,
+    ) -> Result<Vec<SymbolInfo>, DataError> {
+        let url = format!("{}/api/qt/clist/get", self.base_url.trim_end_matches('/'));
+        let pz_s = page_size.to_string();
+        let mut all: Vec<SymbolInfo> = Vec::new();
+
+        for pn in 1u32..=100 {
+            let pn_s = pn.to_string();
+            let params2: Vec<(String, String)> = vec![
+                ("pn".into(), pn_s),
+                ("pz".into(), pz_s.clone()),
+                ("po".into(), "1".into()),
+                ("np".into(), "1".into()),
+                ("fltt".into(), "2".into()),
+                ("invt".into(), "2".into()),
+                ("fid".into(), "f3".into()),
+                ("fs".into(), fs_filter.to_string()),
+                ("fields".into(), "f12,f14".into()),
+            ];
+            let resp = self.client.get(&url).query(&params2).send().await?;
+
+            let json: Value = resp.json().await?;
+            let diff = match json["data"]["diff"].as_array() {
+                Some(arr) => arr,
+                None => break,
+            };
+            let page_count = diff.len();
+
+            for item in diff {
+                let code = match item["f12"].as_str() {
+                    Some(c) => c.to_string(),
+                    None => continue,
+                };
+                let name = item["f14"].as_str().unwrap_or("").to_string();
+                all.push(SymbolInfo { code, name });
+            }
+
+            if page_count < page_size as usize || page_count == 0 {
+                break;
+            }
+        }
+
+        Ok(all)
+    }
 }
 
 #[async_trait]
@@ -99,22 +251,20 @@ impl DataProvider for EastMoneyProvider {
             "{}/api/qt/stock/kline/get",
             self.base_url.trim_end_matches('/')
         );
-
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[
-                ("secid", secid.as_str()),
-                ("klt", klt),
-                ("fqt", "1"),
-                ("beg", &beg),
-                ("end", &end),
-                ("lmt", "2000"),
-                ("fields1", "f1,f2,f3,f4,f5,f6"),
-                ("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"),
-            ])
-            .send()
-            .await?; // reqwest::Error → DataError::Network via #[from]
+        let params3: Vec<(String, String)> = vec![
+            ("secid".into(), secid.to_string()),
+            ("klt".into(), klt.to_string()),
+            ("fqt".into(), "1".into()),
+            ("beg".into(), beg.clone()),
+            ("end".into(), end.clone()),
+            ("lmt".into(), "2000".into()),
+            ("fields1".into(), "f1,f2,f3,f4,f5,f6".into()),
+            (
+                "fields2".into(),
+                "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61".into(),
+            ),
+        ];
+        let resp = self.client.get(&url).query(&params3).send().await?; // reqwest::Error → DataError::Network via #[from]
 
         let json: Value = resp.json().await?;
 
@@ -168,24 +318,19 @@ impl DataProvider for EastMoneyProvider {
     async fn search_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, DataError> {
         let url = format!("{}/api/qt/clist/get", self.base_url.trim_end_matches('/'));
 
-        let resp = match self
-            .client
-            .get(&url)
-            .query(&[
-                ("pn", "1"),
-                ("pz", "20"),
-                ("po", "1"),
-                ("np", "1"),
-                ("fltt", "2"),
-                ("invt", "2"),
-                ("fid", "f3"),
-                ("fs", "b:DLMK014"),
-                ("fields", "f12,f14"),
-                ("keyword", query),
-            ])
-            .send()
-            .await
-        {
+        let params4: Vec<(String, String)> = vec![
+            ("pn".into(), "1".into()),
+            ("pz".into(), "20".into()),
+            ("po".into(), "1".into()),
+            ("np".into(), "1".into()),
+            ("fltt".into(), "2".into()),
+            ("invt".into(), "2".into()),
+            ("fid".into(), "f3".into()),
+            ("fs".into(), "b:DLMK014".into()),
+            ("fields".into(), "f12,f14".into()),
+            ("keyword".into(), query.to_string()),
+        ];
+        let resp = match self.client.get(&url).query(&params4).send().await {
             Ok(r) => r,
             Err(_) => return Ok(Vec::new()),
         };
@@ -332,7 +477,8 @@ mod tests {
                 .json_body(payload);
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -372,7 +518,8 @@ mod tests {
                 .json_body(payload);
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -407,7 +554,8 @@ mod tests {
                 .json_body(payload);
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -431,7 +579,8 @@ mod tests {
                 .json_body(serde_json::json!({"data": {"klines": []}}));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -454,7 +603,8 @@ mod tests {
                 .json_body(serde_json::json!({"other": true}));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -474,7 +624,8 @@ mod tests {
                 .json_body(serde_json::json!({"data": {"klines": ["too,short"]}}));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -494,7 +645,8 @@ mod tests {
                 .body("this is not json");
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -507,7 +659,11 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_bars_connection_refused_returns_network_error() {
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), "http://127.0.0.1:1".into());
+        let provider = EastMoneyProvider::new(
+            reqwest::Client::new(),
+            "http://127.0.0.1:1".into(),
+            "http://127.0.0.1:1".into(),
+        );
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -539,7 +695,8 @@ mod tests {
                 .json_body(payload);
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -572,7 +729,8 @@ mod tests {
                 .json_body(payload);
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(30);
         let end = chrono::Utc::now();
 
@@ -600,7 +758,8 @@ mod tests {
                 }));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let start = chrono::Utc::now() - chrono::Duration::days(7);
         let end = chrono::Utc::now();
 
@@ -635,7 +794,8 @@ mod tests {
                 }));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
 
         let results = provider.search_symbols("平安").await.unwrap();
         assert_eq!(results.len(), 2);
@@ -656,7 +816,8 @@ mod tests {
                 .json_body(serde_json::json!({"data": {"diff": []}}));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let results = provider.search_symbols("nonexistent").await.unwrap();
         assert!(results.is_empty());
     }
@@ -672,7 +833,8 @@ mod tests {
                 .json_body(serde_json::json!({"other": true}));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let results = provider.search_symbols("test").await.unwrap();
         assert!(results.is_empty());
     }
@@ -688,14 +850,19 @@ mod tests {
                 .body("not json");
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let results = provider.search_symbols("test").await.unwrap();
         assert!(results.is_empty());
     }
 
     #[tokio::test]
     async fn search_symbols_network_error_returns_empty_vec() {
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), "http://127.0.0.1:1".into());
+        let provider = EastMoneyProvider::new(
+            reqwest::Client::new(),
+            "http://127.0.0.1:1".into(),
+            "http://127.0.0.1:1".into(),
+        );
         let results = provider.search_symbols("test").await.unwrap();
         assert!(results.is_empty());
     }
@@ -719,7 +886,8 @@ mod tests {
                 }));
         });
 
-        let provider = EastMoneyProvider::new(reqwest::Client::new(), server.base_url());
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let results = provider.search_symbols("test").await.unwrap();
         assert_eq!(
             results.len(),
@@ -728,5 +896,343 @@ mod tests {
         );
         assert_eq!(results[0].code, "000002");
         assert_eq!(results[0].name, "万科A");
+    }
+
+    // ===================================================================
+    // search_all_symbols — pagination
+    // ===================================================================
+
+    #[tokio::test]
+    async fn search_all_symbols_collects_all_pages() {
+        let server = MockServer::start_async().await;
+
+        // Page 1 — 3 results
+        let _m1 = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("pn", "1")
+                .query_param("pz", "2");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [
+                            {"f12": "000001", "f14": "平安银行"},
+                            {"f12": "000002", "f14": "万科A"},
+                        ]
+                    }
+                }));
+        });
+
+        // Page 2 — 1 result (last page)
+        let _m2 = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("pn", "2")
+                .query_param("pz", "2");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [
+                            {"f12": "000003", "f14": "金田A"},
+                        ]
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let results = provider.search_all_symbols(2, "b:DLMK014").await.unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].code, "000001");
+        assert_eq!(results[0].name, "平安银行");
+        assert_eq!(results[1].code, "000002");
+        assert_eq!(results[1].name, "万科A");
+        assert_eq!(results[2].code, "000003");
+        assert_eq!(results[2].name, "金田A");
+    }
+
+    #[tokio::test]
+    async fn search_all_symbols_stops_at_empty_page() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("pn", "1")
+                .query_param("pz", "100");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({"data": {"diff": []}}));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let results = provider.search_all_symbols(100, "b:DLMK014").await.unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_all_symbols_stops_when_page_smaller_than_pz() {
+        let server = MockServer::start_async().await;
+
+        // Page 1 — full page (3 of 3 = page_size)
+        let _m1 = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("pn", "1")
+                .query_param("pz", "3");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [
+                            {"f12": "000001", "f14": "A"},
+                            {"f12": "000002", "f14": "B"},
+                            {"f12": "000003", "f14": "C"},
+                        ]
+                    }
+                }));
+        });
+
+        // Page 2 — partial page (2 < 3 = page_size → stop)
+        let _m2 = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("pn", "2")
+                .query_param("pz", "3");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [
+                            {"f12": "000004", "f14": "D"},
+                            {"f12": "000005", "f14": "E"},
+                        ]
+                    }
+                }));
+        });
+
+        // Page 3 should NOT be called — verify by not mocking it (would 404)
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let results = provider.search_all_symbols(3, "b:DLMK014").await.unwrap();
+
+        assert_eq!(results.len(), 5);
+    }
+
+    // ===================================================================
+    // fetch_realtime_quote
+    // ===================================================================
+
+    #[tokio::test]
+    async fn fetch_realtime_quote_parses_all_fields() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/stock/get")
+                .query_param("secid", "0.000001");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "f9": 15.3,
+                        "f167": 1.8,
+                        "f84": 1_940_591.0,
+                        "f85": 1_940_591.0,
+                        "f51": 16.53,
+                        "f52": 13.53,
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let quote = provider.fetch_realtime_quote("000001").await.unwrap();
+
+        assert!((quote.pe.unwrap() - 15.3).abs() < 0.01);
+        assert!((quote.pb.unwrap() - 1.8).abs() < 0.01);
+        assert!((quote.total_share.unwrap() - 1_940_591.0).abs() < 0.01);
+        assert!((quote.float_share.unwrap() - 1_940_591.0).abs() < 0.01);
+        assert!((quote.up_limit.unwrap() - 16.53).abs() < 0.01);
+        assert!((quote.down_limit.unwrap() - 13.53).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn fetch_realtime_quote_string_fields_parse_correctly() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/stock/get")
+                .query_param("secid", "1.600519");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "f9": "25.67",
+                        "f167": "-3.14",
+                        "f84": "1256197.8",
+                        "f85": "1256197.8",
+                        "f51": "2000.0",
+                        "f52": "1600.0",
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let quote = provider.fetch_realtime_quote("600519").await.unwrap();
+
+        assert!((quote.pe.unwrap() - 25.67).abs() < 0.01);
+        assert!((quote.pb.unwrap() + 3.14).abs() < 0.01);
+        assert!((quote.up_limit.unwrap() - 2000.0).abs() < 0.01);
+        assert!((quote.down_limit.unwrap() - 1600.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn fetch_realtime_quote_missing_fields_are_none() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/stock/get")
+                .query_param("secid", "0.000001");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "f9": "-",
+                        "f167": "-",
+                        "f84": "-",
+                        "f85": "-",
+                        "f51": "-",
+                        "f52": "-",
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let quote = provider.fetch_realtime_quote("000001").await.unwrap();
+
+        assert!(quote.pe.is_none());
+        assert!(quote.pb.is_none());
+        assert!(quote.total_share.is_none());
+        assert!(quote.float_share.is_none());
+        assert!(quote.up_limit.is_none());
+        assert!(quote.down_limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_realtime_quote_null_data_returns_no_data() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/api/qt/stock/get");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({"data": null}));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let result = provider.fetch_realtime_quote("000001").await;
+        assert!(matches!(result, Err(DataError::NoData { .. })));
+    }
+
+    // ===================================================================
+    // fetch_stock_basic
+    // ===================================================================
+
+    #[tokio::test]
+    async fn fetch_stock_basic_returns_stock_info() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("fs", "b:DLMK014,m:600519");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [{
+                            "f12": "600519",
+                            "f14": "贵州茅台",
+                            "f100": "白酒",
+                            "f124": 997920000,
+                            "f102": "沪主板"
+                        }]
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let info = provider.fetch_stock_basic("600519").await.unwrap();
+
+        assert_eq!(info.ts_code, "600519.SH");
+        assert_eq!(info.symbol, "600519");
+        assert_eq!(info.name, "贵州茅台");
+        assert_eq!(info.industry.as_deref(), Some("白酒"));
+        assert_eq!(info.market.as_deref(), Some("沪主板"));
+        assert_eq!(info.exchange.as_deref(), Some("SH"));
+        assert!(info.delist_date.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_stock_basic_shenzhen_symbol() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("fs", "b:DLMK014,m:000001");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [{
+                            "f12": "000001",
+                            "f14": "平安银行",
+                            "f100": "",
+                            "f102": ""
+                        }]
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let info = provider.fetch_stock_basic("000001").await.unwrap();
+
+        assert_eq!(info.ts_code, "000001.SZ");
+        assert_eq!(info.exchange.as_deref(), Some("SZ"));
+        assert!(info.industry.is_none());
+        assert!(info.market.is_none());
+        assert!(info.list_date.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_stock_basic_no_diff_returns_no_data() {
+        let server = MockServer::start_async().await;
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/api/qt/clist/get");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({"data": {"diff": []}}));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let result = provider.fetch_stock_basic("999999").await;
+        assert!(matches!(result, Err(DataError::NoData { .. })));
     }
 }

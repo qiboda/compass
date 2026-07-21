@@ -13,6 +13,42 @@ pub struct SymbolInfo {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealtimeQuote {
+    pub pe: Option<f64>,
+    pub pb: Option<f64>,
+    pub total_share: Option<f64>,
+    pub float_share: Option<f64>,
+    pub up_limit: Option<f64>,
+    pub down_limit: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockBasic {
+    pub ts_code: String,
+    pub symbol: String,
+    pub name: String,
+    pub area: Option<String>,
+    pub industry: Option<String>,
+    pub market: Option<String>,
+    pub exchange: Option<String>,
+    pub list_date: Option<chrono::NaiveDate>,
+    pub delist_date: Option<chrono::NaiveDate>,
+}
+
+/// Adjustment factor record from Baostock (per-day multiplier for price adjustment).
+///
+/// `adj_factor` is the cumulative adjustment factor for a given date. To compute
+/// forward-adjusted (前复权) or backward-adjusted (后复权) prices, multiply the
+/// unadjusted price by `adj_factor` and divide by the latest factor.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AdjFactor {
+    /// Trade date in "YYYYMMDD" format (e.g. "20250722").
+    pub trade_date: String,
+    /// Cumulative adjustment factor. 1.0 = no adjustment.
+    pub adj_factor: f64,
+}
+
 // ---------------------------------------------------------------------------
 // App command (UI → worker thread)
 // ---------------------------------------------------------------------------

@@ -9,29 +9,62 @@ use crate::data::provider::{DataError, DataProvider, DataWriter, NegativeCache};
 use crate::model::SymbolInfo;
 
 // ---------------------------------------------------------------------------
-// Type aliases for complex record types
+// Type-safe record structs for all 7 tables
 // ---------------------------------------------------------------------------
 
-/// A full daily OHLCV record: (trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount)
-#[allow(dead_code)]
-type DailyRecord = (NaiveDate, f64, f64, f64, f64, f64, f64, f64, f64, f64);
+#[derive(Debug, Clone, PartialEq)]
+pub struct DailyRecord {
+    pub trade_date: NaiveDate,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub change: f64,
+    pub pct_chg: f64,
+    pub vol: f64,
+    pub amount: f64,
+}
 
-/// An adj_factor record: (trade_date, adj_factor)
-type AdjFactorRecord = (NaiveDate, f64);
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdjFactorRecord {
+    pub trade_date: NaiveDate,
+    pub adj_factor: f64,
+}
 
-/// A status record: (trade_date, is_open)
-type StatusRecord = (NaiveDate, bool);
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusRecord {
+    pub trade_date: NaiveDate,
+    pub is_open: bool,
+}
 
-/// A limit record: (trade_date, up_limit, down_limit)
-type LimitRecord = (NaiveDate, f64, f64);
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitRecord {
+    pub trade_date: NaiveDate,
+    pub up_limit: f64,
+    pub down_limit: f64,
+}
 
-/// An indicator record: (trade_date, turnover_rate, turnover_rate_f, volume_ratio, pe, pe_ttm, pb, ps)
-#[allow(dead_code)]
-type IndicatorRecord = (NaiveDate, f64, f64, f64, f64, f64, f64, f64);
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndicatorRecord {
+    pub trade_date: NaiveDate,
+    pub turnover_rate: f64,
+    pub turnover_rate_f: f64,
+    pub volume_ratio: f64,
+    pub pe: f64,
+    pub pe_ttm: f64,
+    pub pb: f64,
+    pub ps: f64,
+}
 
-/// A share record: (trade_date, total_share, float_share, free_share, total_mv, circ_mv)
-#[allow(dead_code)]
-type ShareRecord = (NaiveDate, f64, f64, f64, f64, f64);
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShareRecord {
+    pub trade_date: NaiveDate,
+    pub total_share: f64,
+    pub float_share: f64,
+    pub free_share: f64,
+    pub total_mv: f64,
+    pub circ_mv: f64,
+}
 
 // ---------------------------------------------------------------------------
 // Schema DDL — 7 tables + indexes + no_data_marks
@@ -134,7 +167,6 @@ pub struct DuckDbProvider {
     conn: Arc<Mutex<Connection>>,
 }
 
-#[allow(dead_code, clippy::too_many_arguments)]
 impl DuckDbProvider {
     /// Open (or create) the DuckDB database at `path` and ensure the schema exists.
     pub fn new(path: &str) -> Result<Self, DataError> {
@@ -216,9 +248,9 @@ impl DuckDbProvider {
 
     /// Save a batch of daily OHLCV records into `stock_daily`.
     ///
-    /// Each record is: `(trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount)`.
-    /// Uses `INSERT OR REPLACE` to be idempotent.
-    #[allow(clippy::type_complexity)]
+    /// Records are sorted by `trade_date` in ascending order.  `pre_close` is
+    /// computed from the preceding record's `close` (`NULL` for the first
+    /// record in the batch).  Uses `INSERT OR REPLACE` to be idempotent.
     pub async fn save_stock_daily(
         &self,
         ts_code: &str,
@@ -228,24 +260,33 @@ impl DuckDbProvider {
             return Ok(());
         }
 
+        // Sort by trade_date ascending and compute pre_close = previous close.
+        let mut sorted: Vec<&DailyRecord> = records.iter().collect();
+        sorted.sort_by_key(|r| r.trade_date);
+
         let ts_code = ts_code.to_string();
-        let owned: Vec<(String, f64, f64, f64, f64, f64, f64, f64, f64, f64)> = records
-            .iter()
-            .map(|(d, o, h, l, c, pc, ch, pct, v, amt)| {
-                (
-                    d.format("%Y-%m-%d").to_string(),
-                    *o,
-                    *h,
-                    *l,
-                    *c,
-                    *pc,
-                    *ch,
-                    *pct,
-                    *v,
-                    *amt,
-                )
-            })
-            .collect();
+        let rows: Vec<(String, f64, f64, f64, f64, Option<f64>, f64, f64, f64, f64)> = {
+            let mut prev_close: Option<f64> = None;
+            sorted
+                .iter()
+                .map(|r| {
+                    let pre_close = prev_close;
+                    prev_close = Some(r.close);
+                    (
+                        r.trade_date.format("%Y-%m-%d").to_string(),
+                        r.open,
+                        r.high,
+                        r.low,
+                        r.close,
+                        pre_close,
+                        r.change,
+                        r.pct_chg,
+                        r.vol,
+                        r.amount,
+                    )
+                })
+                .collect()
+        };
 
         let conn = Arc::clone(&self.conn);
 
@@ -262,7 +303,7 @@ impl DuckDbProvider {
                 )
                 .map_err(DataError::Database)?;
 
-            for (date_str, open, high, low, close, pre_close, change, pct_chg, vol, amount) in &owned {
+            for (date_str, open, high, low, close, pre_close, change, pct_chg, vol, amount) in &rows {
                 stmt.execute(params![
                     ts_code,
                     date_str,
@@ -298,7 +339,7 @@ impl DuckDbProvider {
         let ts_code = ts_code.to_string();
         let owned: Vec<(String, f64)> = factors
             .iter()
-            .map(|(d, f)| (d.format("%Y-%m-%d").to_string(), *f))
+            .map(|r| (r.trade_date.format("%Y-%m-%d").to_string(), r.adj_factor))
             .collect();
 
         let conn = Arc::clone(&self.conn);
@@ -370,27 +411,16 @@ impl DuckDbProvider {
     }
 
     /// Upsert a stock_basic record.
-    pub async fn upsert_stock_basic(
-        &self,
-        ts_code: &str,
-        symbol: &str,
-        name: &str,
-        area: &str,
-        industry: &str,
-        market: &str,
-        exchange: &str,
-        list_date: Option<NaiveDate>,
-        delist_date: Option<NaiveDate>,
-    ) -> Result<(), DataError> {
-        let ts_code = ts_code.to_string();
-        let symbol = symbol.to_string();
-        let name = name.to_string();
-        let area = area.to_string();
-        let industry = industry.to_string();
-        let market = market.to_string();
-        let exchange = exchange.to_string();
-        let list_date_str = list_date.map(|d| d.format("%Y-%m-%d").to_string());
-        let delist_date_str = delist_date.map(|d| d.format("%Y-%m-%d").to_string());
+    pub async fn upsert_stock_basic(&self, info: &StockBasic) -> Result<(), DataError> {
+        let ts_code = info.ts_code.clone();
+        let symbol = info.symbol.clone();
+        let name = info.name.clone();
+        let area = info.area.clone();
+        let industry = info.industry.clone();
+        let market = info.market.clone();
+        let exchange = info.exchange.clone();
+        let list_date_str = info.list_date.map(|d| d.format("%Y-%m-%d").to_string());
+        let delist_date_str = info.delist_date.map(|d| d.format("%Y-%m-%d").to_string());
 
         let conn = Arc::clone(&self.conn);
 
@@ -411,10 +441,7 @@ impl DuckDbProvider {
     }
 
     /// Read a single stock_basic record.
-    pub async fn get_stock_basic(
-        &self,
-        ts_code: &str,
-    ) -> Result<Option<StockBasicInfo>, DataError> {
+    pub async fn get_stock_basic(&self, ts_code: &str) -> Result<Option<StockBasic>, DataError> {
         let ts_code = ts_code.to_string();
         let conn = Arc::clone(&self.conn);
 
@@ -428,7 +455,7 @@ impl DuckDbProvider {
 
             let result = stmt
                 .query_row(params![ts_code], |row| {
-                    Ok(StockBasicInfo {
+                    Ok(StockBasic {
                         ts_code: row.get(0)?,
                         symbol: row.get(1)?,
                         name: row.get(2)?,
@@ -466,7 +493,7 @@ impl DuckDbProvider {
         let ts_code = ts_code.to_string();
         let owned: Vec<(String, bool)> = records
             .iter()
-            .map(|(d, is_open)| (d.format("%Y-%m-%d").to_string(), *is_open))
+            .map(|r| (r.trade_date.format("%Y-%m-%d").to_string(), r.is_open))
             .collect();
 
         let conn = Arc::clone(&self.conn);
@@ -506,7 +533,13 @@ impl DuckDbProvider {
         let ts_code = ts_code.to_string();
         let owned: Vec<(String, f64, f64)> = records
             .iter()
-            .map(|(d, up, down)| (d.format("%Y-%m-%d").to_string(), *up, *down))
+            .map(|r| {
+                (
+                    r.trade_date.format("%Y-%m-%d").to_string(),
+                    r.up_limit,
+                    r.down_limit,
+                )
+            })
             .collect();
 
         let conn = Arc::clone(&self.conn);
@@ -534,7 +567,6 @@ impl DuckDbProvider {
     }
 
     /// Save indicator records into `daily_indicator`.
-    #[allow(clippy::type_complexity)]
     pub async fn save_indicators(
         &self,
         ts_code: &str,
@@ -547,16 +579,16 @@ impl DuckDbProvider {
         let ts_code = ts_code.to_string();
         let owned: Vec<(String, f64, f64, f64, f64, f64, f64, f64)> = records
             .iter()
-            .map(|(d, tr, trf, vr, pe, pe_ttm, pb, ps)| {
+            .map(|r| {
                 (
-                    d.format("%Y-%m-%d").to_string(),
-                    *tr,
-                    *trf,
-                    *vr,
-                    *pe,
-                    *pe_ttm,
-                    *pb,
-                    *ps,
+                    r.trade_date.format("%Y-%m-%d").to_string(),
+                    r.turnover_rate,
+                    r.turnover_rate_f,
+                    r.volume_ratio,
+                    r.pe,
+                    r.pe_ttm,
+                    r.pb,
+                    r.ps,
                 )
             })
             .collect();
@@ -600,14 +632,14 @@ impl DuckDbProvider {
         let ts_code = ts_code.to_string();
         let owned: Vec<(String, f64, f64, f64, f64, f64)> = records
             .iter()
-            .map(|(d, ts, fs, free_s, tmv, cmv)| {
+            .map(|r| {
                 (
-                    d.format("%Y-%m-%d").to_string(),
-                    *ts,
-                    *fs,
-                    *free_s,
-                    *tmv,
-                    *cmv,
+                    r.trade_date.format("%Y-%m-%d").to_string(),
+                    r.total_share,
+                    r.float_share,
+                    r.free_share,
+                    r.total_mv,
+                    r.circ_mv,
                 )
             })
             .collect();
@@ -640,12 +672,11 @@ impl DuckDbProvider {
 }
 
 // ---------------------------------------------------------------------------
-// StockBasicInfo — read-back struct
+// StockBasic — read-back struct for stock_basic table
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct StockBasicInfo {
+pub struct StockBasic {
     pub ts_code: String,
     pub symbol: String,
     pub name: String,
@@ -1040,19 +1071,28 @@ mod tests {
         let d2 = NaiveDate::from_ymd_opt(2025, 3, 2).expect("valid date");
 
         let records = vec![
-            (
-                d1,
-                15.0,
-                16.0,
-                14.5,
-                15.5,
-                std::f64::NAN,
-                std::f64::NAN,
-                std::f64::NAN,
-                1000.0,
-                15000.0,
-            ),
-            (d2, 15.5, 17.0, 15.0, 16.5, 15.5, 1.0, 6.45, 2000.0, 33000.0),
+            DailyRecord {
+                trade_date: d1,
+                open: 15.0,
+                high: 16.0,
+                low: 14.5,
+                close: 15.5,
+                change: std::f64::NAN,
+                pct_chg: std::f64::NAN,
+                vol: 1000.0,
+                amount: 15000.0,
+            },
+            DailyRecord {
+                trade_date: d2,
+                open: 15.5,
+                high: 17.0,
+                low: 15.0,
+                close: 16.5,
+                change: 1.0,
+                pct_chg: 6.45,
+                vol: 2000.0,
+                amount: 33000.0,
+            },
         ];
 
         provider
@@ -1065,6 +1105,92 @@ mod tests {
             .await
             .expect("get_stored_range failed");
         assert_eq!(range, Some((d1, d2)));
+    }
+
+    #[tokio::test]
+    async fn save_stock_daily_computes_pre_close_from_previous_close() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        let d1 = NaiveDate::from_ymd_opt(2025, 6, 1).expect("valid date");
+        let d2 = NaiveDate::from_ymd_opt(2025, 6, 2).expect("valid date");
+        let d3 = NaiveDate::from_ymd_opt(2025, 6, 3).expect("valid date");
+
+        // Insert out of order — save_stock_daily sorts by trade_date.
+        let records = vec![
+            DailyRecord {
+                trade_date: d2,
+                open: 21.0,
+                high: 22.0,
+                low: 20.5,
+                close: 21.5,
+                change: 0.5,
+                pct_chg: 2.38,
+                vol: 500.0,
+                amount: 10750.0,
+            },
+            DailyRecord {
+                trade_date: d1,
+                open: 20.0,
+                high: 21.0,
+                low: 19.5,
+                close: 21.0,
+                change: 1.0,
+                pct_chg: 5.0,
+                vol: 300.0,
+                amount: 6300.0,
+            },
+            DailyRecord {
+                trade_date: d3,
+                open: 21.5,
+                high: 23.0,
+                low: 21.0,
+                close: 22.0,
+                change: 0.5,
+                pct_chg: 2.33,
+                vol: 800.0,
+                amount: 17600.0,
+            },
+        ];
+
+        provider
+            .save_stock_daily("000001.SZ", &records)
+            .await
+            .expect("save_stock_daily failed");
+
+        // Verify pre_close directly
+        let conn = provider.conn.lock().expect("mutex lock");
+        let mut stmt = conn
+            .prepare(
+                "SELECT CAST(trade_date AS VARCHAR), pre_close FROM stock_daily WHERE ts_code = '000001.SZ' ORDER BY trade_date ASC",
+            )
+            .expect("prepare");
+        let rows: Vec<(String, Option<f64>)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query_map")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect");
+        drop(stmt);
+        drop(conn);
+
+        assert_eq!(rows.len(), 3, "expected 3 rows");
+
+        // d1 (first record): pre_close should be NULL
+        assert_eq!(rows[0].0, d1.format("%Y-%m-%d").to_string());
+        assert!(rows[0].1.is_none(), "first record pre_close should be NULL");
+
+        // d2: pre_close = d1's close (21.0)
+        assert_eq!(rows[1].0, d2.format("%Y-%m-%d").to_string());
+        assert!(
+            (rows[1].1.unwrap() - 21.0).abs() < 0.001,
+            "d2 pre_close should be 21.0"
+        );
+
+        // d3: pre_close = d2's close (21.5)
+        assert_eq!(rows[2].0, d3.format("%Y-%m-%d").to_string());
+        assert!(
+            (rows[2].1.unwrap() - 21.5).abs() < 0.001,
+            "d3 pre_close should be 21.5"
+        );
     }
 
     #[tokio::test]
@@ -1089,34 +1215,35 @@ mod tests {
     async fn upsert_and_get_stock_basic() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 
-        let list_date = NaiveDate::from_ymd_opt(1991, 4, 3);
+        let info = StockBasic {
+            ts_code: "000001.SZ".into(),
+            symbol: "平安银行".into(),
+            name: "平安银行股份有限公司".into(),
+            area: Some("深圳".into()),
+            industry: Some("银行".into()),
+            market: Some("主板".into()),
+            exchange: Some("SZ".into()),
+            list_date: NaiveDate::from_ymd_opt(1991, 4, 3),
+            delist_date: None,
+        };
+
         provider
-            .upsert_stock_basic(
-                "000001.SZ",
-                "平安银行",
-                "平安银行股份有限公司",
-                "深圳",
-                "银行",
-                "主板",
-                "SZ",
-                list_date,
-                None,
-            )
+            .upsert_stock_basic(&info)
             .await
             .expect("upsert_stock_basic failed");
 
-        let info = provider
+        let fetched = provider
             .get_stock_basic("000001.SZ")
             .await
             .expect("get_stock_basic failed")
             .expect("should have data");
 
-        assert_eq!(info.ts_code, "000001.SZ");
-        assert_eq!(info.symbol, "平安银行");
-        assert_eq!(info.name, "平安银行股份有限公司");
-        assert_eq!(info.area.as_deref(), Some("深圳"));
-        assert_eq!(info.industry.as_deref(), Some("银行"));
-        assert_eq!(info.list_date, list_date);
+        assert_eq!(fetched.ts_code, "000001.SZ");
+        assert_eq!(fetched.symbol, "平安银行");
+        assert_eq!(fetched.name, "平安银行股份有限公司");
+        assert_eq!(fetched.area.as_deref(), Some("深圳"));
+        assert_eq!(fetched.industry.as_deref(), Some("银行"));
+        assert_eq!(fetched.list_date, info.list_date);
     }
 
     #[tokio::test]
@@ -1139,11 +1266,16 @@ mod tests {
 
         let d = NaiveDate::from_ymd_opt(2025, 7, 1).expect("valid date");
         provider
-            .save_status("000001.SZ", &[(d, true)])
+            .save_status(
+                "000001.SZ",
+                &[StatusRecord {
+                    trade_date: d,
+                    is_open: true,
+                }],
+            )
             .await
             .expect("save_status failed");
 
-        // Verify by direct query
         let conn = provider.conn.lock().expect("mutex lock");
         let count: i64 = conn
             .query_row(
@@ -1166,7 +1298,14 @@ mod tests {
 
         let d = NaiveDate::from_ymd_opt(2025, 7, 1).expect("valid date");
         provider
-            .save_limits("000001.SZ", &[(d, 16.5, 13.5)])
+            .save_limits(
+                "000001.SZ",
+                &[LimitRecord {
+                    trade_date: d,
+                    up_limit: 16.5,
+                    down_limit: 13.5,
+                }],
+            )
             .await
             .expect("save_limits failed");
 
@@ -1194,7 +1333,19 @@ mod tests {
 
         let d = NaiveDate::from_ymd_opt(2025, 7, 1).expect("valid date");
         provider
-            .save_indicators("000001.SZ", &[(d, 0.5, 0.3, 1.2, 5.0, 4.8, 0.8, 1.5)])
+            .save_indicators(
+                "000001.SZ",
+                &[IndicatorRecord {
+                    trade_date: d,
+                    turnover_rate: 0.5,
+                    turnover_rate_f: 0.3,
+                    volume_ratio: 1.2,
+                    pe: 5.0,
+                    pe_ttm: 4.8,
+                    pb: 0.8,
+                    ps: 1.5,
+                }],
+            )
             .await
             .expect("save_indicators failed");
 
@@ -1222,7 +1373,17 @@ mod tests {
 
         let d = NaiveDate::from_ymd_opt(2025, 7, 1).expect("valid date");
         provider
-            .save_shares("000001.SZ", &[(d, 194.06, 194.06, 135.84, 2910.9, 2910.9)])
+            .save_shares(
+                "000001.SZ",
+                &[ShareRecord {
+                    trade_date: d,
+                    total_share: 194.06,
+                    float_share: 194.06,
+                    free_share: 135.84,
+                    total_mv: 2910.9,
+                    circ_mv: 2910.9,
+                }],
+            )
             .await
             .expect("save_shares failed");
 
@@ -1252,7 +1413,19 @@ mod tests {
         let d2 = NaiveDate::from_ymd_opt(2024, 6, 1).expect("valid date");
 
         provider
-            .save_adj_factors("000001.SZ", &[(d1, 1.0), (d2, 1.05)])
+            .save_adj_factors(
+                "000001.SZ",
+                &[
+                    AdjFactorRecord {
+                        trade_date: d1,
+                        adj_factor: 1.0,
+                    },
+                    AdjFactorRecord {
+                        trade_date: d2,
+                        adj_factor: 1.05,
+                    },
+                ],
+            )
             .await
             .expect("save_adj_factors failed");
 

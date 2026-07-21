@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "compass-downloader"
-path = "src/bin/downloader.rs"
+path = "src/bin/downloader/main.rs"
 
 [dependencies]
 egui = "0.33"
@@ -40,3 +40,4 @@ futures = "0.3"
 [dev-dependencies]
 rstest = "0.25"
 httpmock = "0.8"
+tempfile = "3"

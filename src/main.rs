@@ -143,7 +143,11 @@ fn start_worker_thread(
                 .build()
                 .expect("failed to create HTTP client");
 
-            let reader = EastMoneyProvider::new(client, config.api.base_url);
+            let reader = EastMoneyProvider::new(
+                client,
+                config.api.base_url,
+                "https://push2.eastmoney.com".to_string(),
+            );
 
             let cache = match DuckDbProvider::new(&config.database.path) {
                 Ok(p) => p,
