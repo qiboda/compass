@@ -4,8 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-egui = "0.33.3"
-eframe = "0.33.3"
-egui-charts = "0.2.0"
-chrono = { version = "0.4.42", features = ["serde"] }
-rand = "0.9.1"
+egui = "0.33"
+eframe = "0.33"
+egui-charts = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+async-trait = "0.1"
+rand = "0.9"
+toml = "0.8"
+
+[dev-dependencies]
+rstest = "0.25"
+httpmock = "0.8"

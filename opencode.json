@@ -1,0 +1,18 @@
+{
+  "instructions": "AGENTS.md contains the project architecture, tech stack, and conventions. Read it before starting any work. Development follows the issue-driven cycle: user raises requirement → grill-me → create issue → implement → push.",
+  "rules": {
+    "requirement-flow": "When the user raises a feature or bug requirement: run /grill-me to clarify scope and decisions, summarize the locked-in decisions, then create a GitHub issue (feature_request or bug_report template) with the summary, show the issue with `gh issue view <N>`, then implement.",
+    "issue-linking": "Bugfix commits use `fixes #N`. Feature commits use `closes #N`. GitHub auto-closes the issue on push to main.",
+    "bug-reporting": "If you discover a new bug during development: create a GitHub issue using the bug_report template, read it back with `gh issue view <N>`, then fix it.",
+    "plan-mode": "Multi-step tasks (2+ modules, architecture changes, new data sources) MUST use /ulw-plan before implementing. Single-file fixes, tests, and doc updates may proceed directly with explore → implement.",
+    "local-verify-before-push": "Run `cargo nextest run && cargo clippy -- -D warnings && cargo fmt --check` before every push. All must pass — never push broken code hoping CI catches it.",
+    "per-step-verify": "After every code change: run `cargo nextest run` and ensure `lsp_diagnostics` is clean on changed files. Failures must be fixed before continuing.",
+    "push-after-issue": "Push to main immediately after completing each issue. Do not batch commits across multiple issues.",
+    "atomic-commits": "Commit each logical unit separately. One commit = one purpose (fix, feat, test, refactor). Never mix unrelated changes. Use `.gitmessage` template format.",
+    "branching": "Trunk-based: push directly to `main`. No feature branches, no PRs for solo development.",
+    "doc-sync": "When changing architecture, data flow, symbol format, config schema, or adding new kb-worthy patterns: update both AGENTS.md and the relevant kb/ file.",
+    "test-first": "Any new module or behavior change must include tests (rstest + #[tokio::test]). Tests must pass before marking work complete.",
+    "no-type-escape": "Never use `as any`, `@ts-ignore`, or `unwrap()` in production code. Use `.expect(msg)` or proper error handling.",
+    "code-style": "Match existing codebase conventions: Rust edition 2024, thiserror for errors, async-trait for trait async fns, tracing for logging."
+  }
+}
