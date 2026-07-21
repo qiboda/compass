@@ -9,14 +9,11 @@ use egui_charts::theme::Theme;
 use egui_charts::widget::Chart;
 use tracing::info;
 
-mod data;
-mod model;
-
-use data::CachedProvider;
-use data::duckdb::DuckDbProvider;
-use data::eastmoney::EastMoneyProvider;
-use data::provider::DataProvider;
-use model::{AppConfig, Cmd, CompassState};
+use compass_rs::data::{
+    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider, provider::DataProvider,
+    symbol,
+};
+use compass_rs::model::{AppConfig, Cmd, CompassState};
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -308,8 +305,6 @@ impl eframe::App for CompassApp {
                     .selected_text(&self.timeframe_input)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.timeframe_input, "1d".into(), "1d");
-                        ui.selectable_value(&mut self.timeframe_input, "1w".into(), "1w");
-                        ui.selectable_value(&mut self.timeframe_input, "1M".into(), "1M");
                     });
 
                 if ui.button("Fetch").clicked() {
@@ -351,7 +346,7 @@ fn custom_dark_theme() -> Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::CompassState;
+    use compass_rs::model::CompassState;
 
     fn make_state() -> Arc<Mutex<CompassState>> {
         Arc::new(Mutex::new(CompassState::new("000001", "1d")))
