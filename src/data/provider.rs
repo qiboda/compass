@@ -14,7 +14,7 @@ pub enum DataError {
     Network(#[from] reqwest::Error),
 
     #[error("database: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] duckdb::Error),
 
     #[error("parse: {0}")]
     Parse(String),
@@ -55,4 +55,23 @@ pub trait DataWriter: Send + Sync {
     /// Persist a batch of bars to storage.
     async fn save_bars(&self, symbol: &str, timeframe: &str, bars: &[Bar])
     -> Result<(), DataError>;
+}
+
+// ---------------------------------------------------------------------------
+// NegativeCache — mark/fetch negative cache entries
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+pub trait NegativeCache: Send + Sync {
+    /// Mark a (symbol, timeframe) as having no data, with a current timestamp.
+    async fn mark_no_data(&self, symbol: &str, timeframe: &str) -> Result<(), DataError>;
+
+    /// Check whether a (symbol, timeframe) has a fresh no-data mark (within TTL seconds).
+    async fn is_no_data(
+        &self,
+        symbol: &str,
+        timeframe: &str,
+        now_ts: i64,
+        ttl_secs: i64,
+    ) -> Result<bool, DataError>;
 }

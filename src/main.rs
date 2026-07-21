@@ -13,9 +13,9 @@ mod data;
 mod model;
 
 use data::CachedProvider;
+use data::duckdb::DuckDbProvider;
 use data::eastmoney::EastMoneyProvider;
 use data::provider::DataProvider;
-use data::sqlite::SqliteProvider;
 use model::{AppConfig, Cmd, CompassState};
 
 // ---------------------------------------------------------------------------
@@ -148,23 +148,15 @@ fn start_worker_thread(
 
             let reader = EastMoneyProvider::new(client, config.api.base_url);
 
-            let cache = match SqliteProvider::new(&config.database.path) {
+            let cache = match DuckDbProvider::new(&config.database.path) {
                 Ok(p) => p,
                 Err(e) => {
-                    tracing::error!(path = %config.database.path, error = %e, "failed to open sqlite cache, worker cannot start");
+                    tracing::error!(path = %config.database.path, error = %e, "failed to open duckdb cache, worker cannot start");
                     return;
                 }
             };
 
-            let writer = match SqliteProvider::new(&config.database.path) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(path = %config.database.path, error = %e, "failed to open sqlite writer, worker cannot start");
-                    return;
-                }
-            };
-
-            let provider = CachedProvider::new(reader, cache, writer);
+            let provider = CachedProvider::new(reader, cache);
 
             loop {
                 let cmd = match cmd_rx.recv() {
