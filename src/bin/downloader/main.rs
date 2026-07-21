@@ -1,5 +1,6 @@
 mod baostock;
 mod chunk;
+mod export;
 mod progress;
 mod retry;
 
@@ -15,7 +16,7 @@ use compass_rs::data::provider::DataError;
 use compass_rs::data::symbol;
 use compass_rs::model::SymbolInfo;
 use futures::stream::StreamExt;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::progress::DownloadProgress;
 use crate::retry::fetch_bars_with_retry;
@@ -54,6 +55,10 @@ struct Cli {
     /// EastMoney API base URL
     #[arg(long, default_value = "https://push2his.eastmoney.com")]
     base_url: String,
+
+    /// Export all tables as Parquet files to this directory after download
+    #[arg(long)]
+    export_parquet: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +205,14 @@ async fn main() {
         eprintln!("  FAIL {symbol}: {}", err.as_ref().unwrap_err());
     }
     eprintln!("==============================");
+
+    // Parquet export (optional, does not block main flow on failure)
+    if let Some(ref export_dir) = cli.export_parquet {
+        info!("Exporting Parquet files to {}…", export_dir.display());
+        if let Err(e) = export::export_all_tables(&db, export_dir).await {
+            warn!("Parquet export failed: {e}");
+        }
+    }
 
     if failed > 0 {
         std::process::exit(1);

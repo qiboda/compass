@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS no_data_marks (
 // ---------------------------------------------------------------------------
 
 pub struct DuckDbProvider {
-    conn: Arc<Mutex<Connection>>,
+    pub conn: Arc<Mutex<Connection>>,
 }
 
 impl DuckDbProvider {
@@ -185,6 +185,42 @@ impl DuckDbProvider {
     /// Convenience constructor for tests — opens an in-memory database.
     pub fn new_in_memory() -> Result<Self, DataError> {
         Self::new(":memory:")
+    }
+
+    /// Execute an arbitrary SQL batch (for maintenance/export operations).
+    ///
+    /// SQL statements are separated by `;`.  Only use this for trusted,
+    /// static SQL — never concatenate user input.
+    pub async fn execute_batch(&self, sql: &str) -> Result<(), DataError> {
+        let sql = sql.to_string();
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn
+                .lock()
+                .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+            conn.execute_batch(&sql).map_err(DataError::Database)
+        })
+        .await
+        .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
+    }
+
+    /// Check whether a table has any rows by executing a COUNT query.
+    pub async fn table_has_rows(&self, count_sql: &str) -> Result<bool, DataError> {
+        let count_sql = count_sql.to_string();
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn
+                .lock()
+                .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+            let count: i64 = conn
+                .query_row(&count_sql, [], |row| row.get(0))
+                .map_err(DataError::Database)?;
+            Ok(count > 0)
+        })
+        .await
+        .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
     }
 
     // -----------------------------------------------------------------------

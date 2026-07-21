@@ -123,8 +123,32 @@ git push origin main          # triggers CI
 ## Quickstart
 
 ```sh
-cargo run                       # launch the app (needs X11/Wayland)
+cargo run                       # launch the GUI app (needs X11/Wayland)
 RUST_LOG=debug cargo run        # verbose logging
+```
+
+### CLI downloader
+
+```sh
+# Download all A-share stocks
+cargo run --bin compass-downloader -- --symbols all
+
+# Download specific symbols
+cargo run --bin compass-downloader -- --symbols "000001,600519"
+
+# Custom database path, start date, concurrency
+cargo run --bin compass-downloader -- \
+    --symbols all \
+    --db /path/to/compass.duckdb \
+    --start-date 19900101 \
+    --concurrency 5 \
+    --delay-ms 200
+
+# Parquet export after download
+cargo run --bin compass-downloader -- --symbols all --export-parquet /tmp/exports/
+
+# Full help
+cargo run --bin compass-downloader -- --help
 ```
 
 ## Adding a feature (manual)
@@ -174,7 +198,8 @@ write tests after implementation to lock in behavior.
 ```sh
 cargo nextest run                       # recommended
 cargo test                              # standard runner
-cargo test sqlite                       # filter by name
+cargo test duckdb                       # filter by name
+cargo test --test integration_test      # integration tests only
 ```
 
 ## Checking code quality
@@ -208,12 +233,34 @@ Missing keys fall back to defaults defined in `src/model.rs`.
 curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=101&fqt=1&beg=20250101&end=20250721&lmt=10&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
 ```
 
-### Inspect the SQLite cache
+### Inspect the DuckDB database
 
 ```sh
-sqlite3 compass.db "SELECT symbol, timeframe, count(*) FROM bars GROUP BY 1, 2;"
-sqlite3 compass.db "SELECT * FROM bars WHERE symbol='000001' AND timeframe='1d' ORDER BY timestamp DESC LIMIT 5;"
+# Install duckdb CLI: https://duckdb.org/docs/installation/
+duckdb compass.db
+
+# Inside duckdb shell:
+.tables
+SELECT ts_code, COUNT(*) FROM stock_daily GROUP BY ts_code;
+SELECT * FROM stock_daily WHERE ts_code='000001.SZ' ORDER BY trade_date DESC LIMIT 5;
+SELECT * FROM stock_basic;
+SELECT * FROM stock_adj_factor WHERE ts_code='000001.SZ' ORDER BY trade_date DESC LIMIT 5;
+
+# Or from command line:
+duckdb compass.db -c "SELECT ts_code, COUNT(*) FROM stock_daily GROUP BY ts_code;"
+duckdb compass.db -c "SELECT * FROM stock_basic;"
 ```
+
+### Baostock setup
+
+Baostock requires Python 3 and the `baostock` package:
+
+```sh
+pip install baostock
+```
+
+The CLI downloader invokes Baostock via `python3 scripts/fetch_adj_factor.py`.
+If `python3` is not on PATH, use a symlink or set up a wrapper.
 
 ### Reset everything
 

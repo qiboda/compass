@@ -12,14 +12,61 @@
 | Shenzhen 创业板 | 0 | 300xxx–301xxx | 300750 宁德时代 |
 | Beijing (北交所) | 0 | 8xxxxx | 830799 艾融软件 |
 
-## to_secid() conversion
+## ts_code convention
 
-User-facing symbols map to EastMoney API `secid` format `"{market}.{code}"`.
-The implementation is in `src/data/eastmoney.rs::to_secid()`.
+The DuckDB schema uses `ts_code` as the primary stock identifier: `"{code}.{exchange}"`.
+
+| Bare code | ts_code | Description |
+|---|---|---|
+| `000001` | `000001.SZ` | 平安银行 — Shenzhen |
+| `600519` | `600519.SH` | 贵州茅台 — Shanghai |
+| `688001` | `688001.SH` | 华兴源创 — 科创板 |
+| `300750` | `300750.SZ` | 宁德时代 — 创业板 |
+| `830799` | `830799.BJ` | 艾融软件 — 北交所 |
+| `sh.000001` | `000001.SH` | 上证指数 — explicit SH prefix |
+| `sz.000001` | `000001.SZ` | 平安银行 — explicit SZ prefix |
+| `bj.8xxxxx` | `8xxxxx.BJ` | 北交所 — explicit BJ prefix |
+
+### Conversion functions (`src/data/symbol.rs`)
+
+```rust
+/// Infer exchange from stock code (heuristic + explicit prefix support).
+/// Returns "SH", "SZ", or "BJ".
+pub fn to_exchange(code: &str) -> &str
+
+/// Convert bare code to full ts_code: "{code}.{exchange}".
+/// "000001" → "000001.SZ", "sh.600519" → "600519.SH"
+pub fn to_ts_code(symbol: &str) -> String
+```
+
+These functions are used by both `DuckDbProvider` (to convert bare symbols to
+ts_code for SQL queries) and `EastMoneyProvider` (for `to_secid` mapping).
 
 ### Explicit prefixes (case-insensitive)
 
 For ambiguous codes, use a prefix to force the exchange:
+
+| Input | to_exchange | to_ts_code |
+|---|---|---|
+| `sh.000001` | `"SH"` | `"000001.SH"` |
+| `sz.000001` | `"SZ"` | `"000001.SZ"` |
+| `bj.830799` | `"BJ"` | `"830799.BJ"` |
+| `SH.600519` | `"SH"` | `"600519.SH"` |
+
+### Heuristic (no prefix)
+
+When no prefix is provided:
+
+| Code starts with | Exchange | ts_code suffix |
+|---|---|---|
+| `6` | Shanghai (SH) | `.SH` |
+| `8` | Beijing (BJ) | `.BJ` |
+| Anything else | Shenzhen (SZ) | `.SZ` |
+
+## to_secid() conversion
+
+User-facing symbols map to EastMoney API `secid` format `"{market}.{code}"`.
+The implementation is in `src/data/eastmoney.rs::to_secid()`.
 
 | Input | secid | Explanation |
 |---|---|---|
@@ -27,15 +74,8 @@ For ambiguous codes, use a prefix to force the exchange:
 | `sz.000001` | `0.000001` | 平安银行 — explicit SZ |
 | `bj.830799` | `0.830799` | 艾融软件 — explicit BJ |
 | `SH.600519` | `1.600519` | case-insensitive |
-
-### Heuristic (no prefix)
-
-When no prefix is provided:
-
-| Code starts with | Market | Rationale |
-|---|---|---|
-| `6` | Shanghai (1) | All SH stocks: 600/601/603/605/688/900 |
-| Anything else | Shenzhen (0) | SZ stocks: 000–004, 002–003, 300–301; BJ: 8xxxxx |
+| `000001` | `0.000001` | Heuristic: SZ (most stocks in 000xxx range) |
+| `600519` | `1.600519` | Heuristic: SH (all 6xxxxx codes) |
 
 ### Ambiguity: the 000xxx–004xxx range
 
