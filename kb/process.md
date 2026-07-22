@@ -216,7 +216,7 @@ Create `~/.config/compass/config.toml` to override defaults:
 default_symbol = "600519"
 ```
 
-Missing keys fall back to defaults defined in `src/model.rs`.
+Missing keys fall back to defaults defined in `crates/compass-core/src/model.rs`.
 
 ## Logs
 

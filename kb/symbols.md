@@ -26,7 +26,7 @@ from the schema; `to_ts_code()` still exists for backward compatibility.
 | `300750` | SZ | 宁德时代 (创业板) |
 | `830799` | BJ | 艾融软件 (北交所) |
 
-### Conversion functions (`src/data/symbol.rs`)
+### Conversion functions (`crates/compass-core/src/data/symbol.rs`)
 
 ```rust
 /// Infer exchange from stock code (heuristic + explicit prefix support).
@@ -65,7 +65,7 @@ When no prefix is provided:
 ## to_secid() conversion
 
 User-facing symbols map to EastMoney API `secid` format `"{market}.{code}"`.
-The implementation is in `src/data/eastmoney.rs::to_secid()`.
+The implementation is in `crates/compass-core/src/data/eastmoney.rs::to_secid()`.
 
 | Input | secid | Explanation |
 |---|---|---|

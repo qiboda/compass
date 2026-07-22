@@ -53,9 +53,10 @@ cargo run --bin compass-data -- export
 
 ## Architecture
 
-- **Library crate** `compass_rs` (`src/lib.rs`) shared by GUI and CLI binaries.
-- **GUI binary** `compass` (`src/main.rs`) — egui chart window.
-- **Data CLI** `compass-data` (`src/bin/data/main.rs`) — subcommand-based pipeline.
+- **Library crate** `compass-core` (`crates/compass-core/src/lib.rs`) shared by GUI and CLI.
+- **GUI binary** `compass` (`crates/compass/src/main.rs`) — egui chart window.
+- **Data CLI** `compass-data` (`crates/compass-data/src/main.rs`) — subcommand-based pipeline.
+- Workspace root `Cargo.toml` manages shared dependency versions.
 - `CompassApp` owns a `Chart` widget and shared `CompassState` (Arc<Mutex<>>).
 - Worker thread (`std::thread`) runs a `tokio` runtime, listens for `Cmd` via mpsc,
   dispatches to `CachedProvider`, and updates `CompassState`.
@@ -84,7 +85,7 @@ compass-data export      parquet_data/ → duckdb/csv (format conversion)
 
 ## Data providers
 
-### EastMoneyProvider (`src/data/eastmoney.rs`)
+### EastMoneyProvider (`crates/compass-core/src/data/eastmoney.rs`)
 
 Fetches K-line data from `push2his.eastmoney.com`. Symbol listing and stock
 info from `push2delay.eastmoney.com`. Symbol → secid conversion via `to_secid()`:
@@ -99,17 +100,17 @@ info from `push2delay.eastmoney.com`. Symbol → secid conversion via `to_secid(
 | `sz.000001` | `0.000001` | 显式深圳 |
 | `bj.8xxxxx` | `0.8xxxxx` | 北交所 |
 
-### DuckDbProvider (`src/data/duckdb.rs`)
+### DuckDbProvider (`crates/compass-core/src/data/duckdb.rs`)
 
 Local persistent cache. Implements `DataProvider` + `DataWriter` + `NegativeCache`.
 Tables use `symbol` (6-digit code like `000001`) as primary key — no more `ts_code`.
 
-### ParquetReader (`src/data/parquet.rs`)
+### ParquetReader (`crates/compass-core/src/data/parquet.rs`)
 
 Reads Parquet files directly via DuckDB `read_parquet()`. Implements `DataProvider`.
 Parquet files are partitioned by symbol: `parquet_data/stock_daily/000001.parquet`.
 
-### Dolt import (`src/bin/data/import_dolt.rs`)
+### Dolt import (`crates/compass-data/src/import_dolt.rs`)
 
 Reads from Dolt `investment_data` (`final_a_stock_eod_price` table) via `dolt sql`
 CSV export, converts to Parquet files partitioned by symbol.

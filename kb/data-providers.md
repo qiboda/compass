@@ -11,7 +11,7 @@ CachedProvider<R: DataProvider, C: DataProvider+NegativeCache+DataWriter>
 The GUI uses `CachedProvider`. The CLI (`compass-data download`) uses
 `EastMoneyProvider` and `DuckDbProvider` directly without CachedProvider.
 
-## Traits (`src/data/provider.rs`)
+## Traits (`crates/compass-core/src/data/provider.rs`)
 
 ```rust
 #[async_trait]
@@ -32,7 +32,7 @@ trait NegativeCache: Send + Sync {
 }
 ```
 
-## EastMoneyProvider (`src/data/eastmoney.rs`)
+## EastMoneyProvider (`crates/compass-core/src/data/eastmoney.rs`)
 
 Source: `https://push2his.eastmoney.com` (K-line) and
 `https://push2delay.eastmoney.com` (symbol listing, stock info, realtime).
@@ -107,7 +107,7 @@ Returns `RealtimeQuote`:
 | `up_limit` | `f51` | Daily price ceiling (涨停价) |
 | `down_limit` | `f52` | Daily price floor (跌停价) |
 
-## DuckDbProvider (`src/data/duckdb.rs`)
+## DuckDbProvider (`crates/compass-core/src/data/duckdb.rs`)
 
 Implements `DataProvider`, `DataWriter`, and `NegativeCache`. Uses
 `Arc<Mutex<Connection>>` internally. Serves as staging database for
@@ -161,7 +161,7 @@ pub struct LimitRecord { trade_date, up_limit, down_limit }
 pub struct StockBasic { symbol, name, area, industry, market, exchange, list_date, delist_date }
 ```
 
-## ParquetReader (`src/data/parquet.rs`)
+## ParquetReader (`crates/compass-core/src/data/parquet.rs`)
 
 Reads Parquet files directly via DuckDB `read_parquet()`. Implements `DataProvider`.
 This is the primary data source once Dolt import is complete — no native DuckDB
@@ -193,7 +193,7 @@ parquet_data/
 `fetch_bars` uses `tokio::task::spawn_blocking` with a clone of `Arc<Mutex<Connection>>`.
 Other methods are synchronous (filesystem scanning is fast).
 
-## Dolt → Parquet import (`src/bin/data/import_dolt.rs`)
+## Dolt → Parquet import (`crates/compass-data/src/import_dolt.rs`)
 
 Reads from Dolt `investment_data` database via the `dolt` CLI:
 

@@ -78,7 +78,7 @@ DuckDB staging
 
 ## CachedProvider
 
-Read-through cache composition (`src/data/mod.rs`):
+Read-through cache composition (`crates/compass-core/src/data/mod.rs`):
 
 ```
 CachedProvider { reader: EastMoneyProvider, cache: DuckDbProvider }
@@ -97,28 +97,35 @@ means "not cached" — we do NOT return zero bars to the caller.
 ## Source layout
 
 ```
-src/
-├── lib.rs                     # pub mod data; pub mod model;
-├── main.rs                    # eframe bootstrap, worker thread spawn, logging, config (binary: compass)
-├── model.rs                   # Cmd enum, CompassState, AppConfig, SymbolInfo, RealtimeQuote, AdjFactor, StockBasic
-├── data/
-│   ├── mod.rs                 # CachedProvider<R, C> (read-through cache composition)
-│   ├── provider.rs            # DataProvider + DataWriter + NegativeCache traits, DataError enum
-│   ├── duckdb.rs              # DuckDbProvider (4-table schema, cache read + write-through)
-│   ├── eastmoney.rs           # EastMoneyProvider (HTTP fetch, symbol search, realtime, stock info)
-│   ├── parquet.rs             # ParquetReader (DuckDB read_parquet, implements DataProvider)
-│   └── symbol.rs              # to_exchange(), to_ts_code() — bare code → ts_code conversion
-└── bin/
-    └── data/
-        ├── main.rs            # CLI binary (compass-data): clap subcommand dispatch
-        ├── download.rs        # download subcommand: EastMoney → staging DuckDB
-        ├── import_dolt.rs     # import subcommand: Dolt CSV → Parquet
-        ├── merge.rs           # merge subcommand: staging DuckDB → Parquet
-        ├── export.rs          # export subcommand: Parquet → DuckDB / old DuckDB-native export
-        ├── baostock.rs        # Baostock Python subprocess for adj_factor
-        ├── chunk.rs           # Date range chunk splitting (max 2000 days per chunk)
-        ├── progress.rs        # indicatif MultiProgress spinner + bar
-        └── retry.rs           # fetch_with_retry (exponential backoff: 1s/2s/4s)
+crates/
+├── compass-core/               # Library (compass-core)
+│   ├── src/
+│   │   ├── lib.rs              # pub mod data; pub mod model;
+│   │   ├── model.rs            # Cmd, CompassState, AppConfig, SymbolInfo, RealtimeQuote, AdjFactor, StockBasic
+│   │   └── data/
+│   │       ├── mod.rs          # CachedProvider<R, C> (read-through cache)
+│   │       ├── provider.rs     # DataProvider + DataWriter + NegativeCache traits, DataError
+│   │       ├── duckdb.rs       # DuckDbProvider (4-table schema)
+│   │       ├── eastmoney.rs    # EastMoneyProvider (HTTP fetch, search, realtime)
+│   │       ├── parquet.rs      # ParquetReader (DuckDB read_parquet)
+│   │       ├── symbol.rs       # to_exchange(), to_ts_code()
+│   │       └── synthetic.rs    # Synthetic test data generator
+│   └── tests/
+│       └── integration_test.rs
+├── compass/                    # GUI binary
+│   └── src/main.rs             # eframe bootstrap, worker thread, logging, config
+└── compass-data/               # CLI binary
+    └── src/
+        ├── main.rs             # clap subcommand dispatch
+        ├── download.rs         # download: EastMoney → staging DuckDB
+        ├── import_dolt.rs      # import: Dolt CSV → Parquet
+        ├── merge.rs            # merge: staging DuckDB → Parquet (incremental)
+        ├── export.rs           # export: Parquet → DuckDB / other formats
+        ├── baostock.rs         # Baostock Python subprocess for adj_factor
+        ├── chunk.rs            # Date range chunk splitting (max 2000 days)
+        ├── progress.rs         # indicatif progress bar
+        └── retry.rs            # fetch_with_retry (exponential backoff)
+Cargo.toml                      # workspace root — shared dependencies
 ```
 
 ## DuckDB schema (staging, 4 tables + negative cache)
@@ -205,7 +212,7 @@ for EastMoney downloads before merging into Parquet.
 ## symbol convention
 
 - Primary key is `symbol` — a 6-digit bare code: `"000001"`, `"600519"`, `"836149"`
-- Exchange is inferred from code ranges (`to_exchange()` in `src/data/symbol.rs`):
+- Exchange is inferred from code ranges (`to_exchange()` in `crates/compass-core/src/data/symbol.rs`):
   - `6xxxxx` → SH, `000xxx–004xxx` → SZ, `300xxx` → SZ, `8xxxxx` → BJ
 - `ts_code` format (`"000001.SZ"`) has been retired; the `to_ts_code()` helper
   still exists for backward compatibility but is no longer used as a primary key

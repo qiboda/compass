@@ -22,7 +22,7 @@ cargo test --test integration_test      # integration tests only
 - **Unit tests**: `#[cfg(test)] mod tests` at the bottom of each source file.
   Tests can access private functions and structs.
 - **Integration tests**: `tests/` directory. Tests only the public API of
-  `compass_rs` (library crate).
+  `compass-core` (library crate).
 
 ## Writing tests
 
