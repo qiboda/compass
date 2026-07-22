@@ -9,23 +9,30 @@ See `kb/` for detailed docs on specific subsystems.
    config, or workflows MUST update the relevant `kb/` files AND `AGENTS.md` in the SAME commit.
    Stale docs are worse than no docs.
 
-2. **test-first**: Feature and bugfix work follows RED → GREEN → REFACTOR.
+2. **requirement-flow (CRITICAL)**: Before writing any feature or bugfix code:
+   a) verify an open GitHub issue exists (`gh issue view <N>`),
+   b) if none exists, create one with `gh issue create`,
+   c) `gh issue view <N>` to confirm,
+   d) only then implement.
+   Refactors, docs, lint fixes, and typos skip this.
+
+3. **test-first**: Feature and bugfix work follows RED → GREEN → REFACTOR.
    Write the failing test FIRST, watch it fail for the right reason, then implement.
    Exploratory changes may write tests after. Pure refactors: pin current behavior with
    characterization tests first.
 
-3. **per-step-verify**: After every code change, run `cargo test` and ensure
+4. **per-step-verify**: After every code change, run `cargo test` and ensure
    `lsp_diagnostics` is clean on changed files.
 
-4. **local-verify-before-commit**: Run before committing:
+5. **local-verify-before-commit**: Run before committing:
    ```sh
    cargo test && cargo clippy -- -D warnings && cargo fmt --check
    ```
 
-5. **no-type-escape**: Never use `unwrap()` in production code — use `.expect(msg)` or
+6. **no-type-escape**: Never use `unwrap()` in production code — use `.expect(msg)` or
    proper error handling. Never suppress type errors with `as` casts or `@ts-ignore`.
 
-6. **branching**: Trunk-based: push directly to `main`. No feature branches for solo work.
+7. **branching**: Trunk-based: push directly to `main`. No feature branches for solo work.
 
 ## Commit style
 
