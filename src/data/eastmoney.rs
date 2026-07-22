@@ -88,60 +88,162 @@ impl EastMoneyProvider {
         symbol::to_ts_code(code)
     }
 
+    /// Fetch ALL stock basic info in one paginated pass, returning a map keyed by code.
+    /// Avoids O(N²) per-symbol lookups — use this in batch download pipelines.
+    pub async fn fetch_all_stock_basics(
+        &self,
+    ) -> Result<std::collections::HashMap<String, StockBasic>, DataError> {
+        let url = format!(
+            "{}/api/qt/clist/get",
+            self.realtime_base_url.trim_end_matches('/')
+        );
+        let fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+        let pz: u32 = 100;
+        let mut map = std::collections::HashMap::new();
+
+        for pn in 1u32..=60 {
+            let params: Vec<(String, String)> = vec![
+                ("pn".into(), pn.to_string()),
+                ("pz".into(), pz.to_string()),
+                ("po".into(), "1".into()),
+                ("np".into(), "1".into()),
+                ("fltt".into(), "2".into()),
+                ("invt".into(), "2".into()),
+                ("fid".into(), "f3".into()),
+                ("fs".into(), fs.to_string()),
+                ("fields".into(), "f12,f14,f100,f124,f102".into()),
+                ("ut".into(), "bd1d9ddb04089700cf9c27f6f7426281".into()),
+            ];
+            let resp = self.client.get(&url).query(&params).send().await?;
+            let json: Value = resp.json().await?;
+            let diff = match json["data"]["diff"].as_array() {
+                Some(arr) => arr,
+                None => break,
+            };
+
+            for item in diff {
+                let code = match item["f12"].as_str() {
+                    Some(c) => c.to_string(),
+                    None => continue,
+                };
+                let name = item["f14"].as_str().unwrap_or("").to_string();
+                let industry = item["f100"].as_str().unwrap_or("").to_string();
+                let exchange = symbol::to_exchange(&code).to_string();
+                let market = item["f102"].as_str().unwrap_or("").to_string();
+                let list_date_ts = item["f124"].as_f64();
+                let list_date = list_date_ts.and_then(|ts| {
+                    DateTime::from_timestamp(ts as i64, 0).and_then(|dt| {
+                        NaiveDate::parse_from_str(&dt.format("%Y-%m-%d").to_string(), "%Y-%m-%d")
+                            .ok()
+                    })
+                });
+
+                map.insert(
+                    code.clone(),
+                    StockBasic {
+                        symbol: code,
+                        name,
+                        area: None,
+                        industry: if industry.is_empty() {
+                            None
+                        } else {
+                            Some(industry)
+                        },
+                        market: if market.is_empty() {
+                            None
+                        } else {
+                            Some(market)
+                        },
+                        exchange: Some(exchange),
+                        list_date,
+                        delist_date: None,
+                    },
+                );
+            }
+
+            if diff.len() < pz as usize {
+                break;
+            }
+        }
+
+        Ok(map)
+    }
+
     pub async fn fetch_stock_basic(&self, code: &str) -> Result<StockBasic, DataError> {
-        let url = format!("{}/api/qt/clist/get", self.base_url.trim_end_matches('/'));
-        let fs = format!("b:DLMK014,m:{code}");
+        let url = format!(
+            "{}/api/qt/clist/get",
+            self.realtime_base_url.trim_end_matches('/')
+        );
+        let fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+        let pz: u32 = 100;
 
-        let params1: Vec<(String, String)> = vec![
-            ("pn".into(), "1".into()),
-            ("pz".into(), "1".into()),
-            ("fs".into(), fs.to_string()),
-            ("fields".into(), "f12,f14,f100,f124,f102".into()),
-        ];
-        let resp = self.client.get(&url).query(&params1).send().await?;
+        for pn in 1u32..=60 {
+            let params1: Vec<(String, String)> = vec![
+                ("pn".into(), pn.to_string()),
+                ("pz".into(), pz.to_string()),
+                ("po".into(), "1".into()),
+                ("np".into(), "1".into()),
+                ("fltt".into(), "2".into()),
+                ("invt".into(), "2".into()),
+                ("fid".into(), "f3".into()),
+                ("fs".into(), fs.to_string()),
+                ("fields".into(), "f12,f14,f100,f124,f102".into()),
+                ("ut".into(), "bd1d9ddb04089700cf9c27f6f7426281".into()),
+            ];
+            let resp = self.client.get(&url).query(&params1).send().await?;
 
-        let json: Value = resp.json().await?;
-        let diff = json["data"]["diff"]
-            .as_array()
-            .ok_or_else(|| DataError::NoData {
-                symbol: code.to_string(),
-            })?;
+            let json: Value = resp.json().await?;
+            let diff = json["data"]["diff"]
+                .as_array()
+                .ok_or_else(|| DataError::NoData {
+                    symbol: code.to_string(),
+                })?;
 
-        let item = diff.first().ok_or_else(|| DataError::NoData {
+            for item in diff {
+                if item["f12"].as_str() == Some(code) {
+                    let name = item["f14"].as_str().unwrap_or("").to_string();
+                    let industry = item["f100"].as_str().unwrap_or("").to_string();
+                    let exchange = symbol::to_exchange(code).to_string();
+                    let market = item["f102"].as_str().unwrap_or("").to_string();
+                    let list_date_ts = item["f124"].as_f64();
+                    let list_date = list_date_ts.and_then(|ts| {
+                        DateTime::from_timestamp(ts as i64, 0).and_then(|dt| {
+                            NaiveDate::parse_from_str(
+                                &dt.format("%Y-%m-%d").to_string(),
+                                "%Y-%m-%d",
+                            )
+                            .ok()
+                        })
+                    });
+
+                    return Ok(StockBasic {
+                        symbol: code.to_string(),
+                        name,
+                        area: None,
+                        industry: if industry.is_empty() {
+                            None
+                        } else {
+                            Some(industry)
+                        },
+                        market: if market.is_empty() {
+                            None
+                        } else {
+                            Some(market)
+                        },
+                        exchange: Some(exchange),
+                        list_date,
+                        delist_date: None,
+                    });
+                }
+            }
+
+            if diff.len() < pz as usize {
+                break;
+            }
+        }
+
+        Err(DataError::NoData {
             symbol: code.to_string(),
-        })?;
-
-        let ts_code = Self::to_ts_code_for_symbol(code);
-        let symbol_name = item["f12"].as_str().unwrap_or(code).to_string();
-        let name = item["f14"].as_str().unwrap_or("").to_string();
-        let industry = item["f100"].as_str().unwrap_or("").to_string();
-        let exchange = symbol::to_exchange(code).to_string();
-        let market = item["f102"].as_str().unwrap_or("").to_string();
-        let list_date_ts = item["f124"].as_f64();
-        let list_date = list_date_ts.and_then(|ts| {
-            DateTime::from_timestamp(ts as i64, 0).and_then(|dt| {
-                NaiveDate::parse_from_str(&dt.format("%Y-%m-%d").to_string(), "%Y-%m-%d").ok()
-            })
-        });
-
-        Ok(StockBasic {
-            ts_code,
-            symbol: symbol_name,
-            name,
-            area: None,
-            industry: if industry.is_empty() {
-                None
-            } else {
-                Some(industry)
-            },
-            market: if market.is_empty() {
-                None
-            } else {
-                Some(market)
-            },
-            exchange: Some(exchange),
-            list_date,
-            delist_date: None,
         })
     }
 
@@ -185,9 +287,13 @@ impl EastMoneyProvider {
         page_size: u32,
         fs_filter: &str,
     ) -> Result<Vec<SymbolInfo>, DataError> {
-        let url = format!("{}/api/qt/clist/get", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/api/qt/clist/get",
+            self.realtime_base_url.trim_end_matches('/')
+        );
         let pz_s = page_size.to_string();
         let mut all: Vec<SymbolInfo> = Vec::new();
+        let mut total: Option<u64> = None;
 
         for pn in 1u32..=100 {
             let pn_s = pn.to_string();
@@ -201,6 +307,7 @@ impl EastMoneyProvider {
                 ("fid".into(), "f3".into()),
                 ("fs".into(), fs_filter.to_string()),
                 ("fields".into(), "f12,f14".into()),
+                ("ut".into(), "bd1d9ddb04089700cf9c27f6f7426281".into()),
             ];
             let resp = self.client.get(&url).query(&params2).send().await?;
 
@@ -210,6 +317,10 @@ impl EastMoneyProvider {
                 None => break,
             };
             let page_count = diff.len();
+
+            if total.is_none() {
+                total = json["data"]["total"].as_u64();
+            }
 
             for item in diff {
                 let code = match item["f12"].as_str() {
@@ -223,6 +334,21 @@ impl EastMoneyProvider {
             if page_count < page_size as usize || page_count == 0 {
                 break;
             }
+        }
+
+        let collected = all.len() as u64;
+        if collected == 0 {
+            return Ok(all);
+        }
+
+        if let Some(t) = total
+            && collected < t
+        {
+            tracing::warn!(
+                "search_all_symbols: collected {} but total is {} — results may be incomplete",
+                collected,
+                t
+            );
         }
 
         Ok(all)
@@ -316,7 +442,10 @@ impl DataProvider for EastMoneyProvider {
     /// Returns an empty `Vec` on any parse / network failure — search is
     /// best-effort and should never propagate an error to the caller.
     async fn search_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, DataError> {
-        let url = format!("{}/api/qt/clist/get", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/api/qt/clist/get",
+            self.realtime_base_url.trim_end_matches('/')
+        );
 
         let params4: Vec<(String, String)> = vec![
             ("pn".into(), "1".into()),
@@ -1154,10 +1283,12 @@ mod tests {
     async fn fetch_stock_basic_returns_stock_info() {
         let server = MockServer::start_async().await;
 
+        let fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+
         let _m = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
                 .path("/api/qt/clist/get")
-                .query_param("fs", "b:DLMK014,m:600519");
+                .query_param("fs", fs);
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(serde_json::json!({
@@ -1177,7 +1308,6 @@ mod tests {
             EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let info = provider.fetch_stock_basic("600519").await.unwrap();
 
-        assert_eq!(info.ts_code, "600519.SH");
         assert_eq!(info.symbol, "600519");
         assert_eq!(info.name, "贵州茅台");
         assert_eq!(info.industry.as_deref(), Some("白酒"));
@@ -1190,10 +1320,12 @@ mod tests {
     async fn fetch_stock_basic_shenzhen_symbol() {
         let server = MockServer::start_async().await;
 
+        let fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+
         let _m = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
                 .path("/api/qt/clist/get")
-                .query_param("fs", "b:DLMK014,m:000001");
+                .query_param("fs", fs);
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(serde_json::json!({
@@ -1212,7 +1344,7 @@ mod tests {
             EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let info = provider.fetch_stock_basic("000001").await.unwrap();
 
-        assert_eq!(info.ts_code, "000001.SZ");
+        assert_eq!(info.symbol, "000001");
         assert_eq!(info.exchange.as_deref(), Some("SZ"));
         assert!(info.industry.is_none());
         assert!(info.market.is_none());
@@ -1223,8 +1355,12 @@ mod tests {
     async fn fetch_stock_basic_no_diff_returns_no_data() {
         let server = MockServer::start_async().await;
 
+        let fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+
         let _m = server.mock(|when, then| {
-            when.method(httpmock::Method::GET).path("/api/qt/clist/get");
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("fs", fs);
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(serde_json::json!({"data": {"diff": []}}));
@@ -1234,5 +1370,41 @@ mod tests {
             EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
         let result = provider.fetch_stock_basic("999999").await;
         assert!(matches!(result, Err(DataError::NoData { .. })));
+    }
+
+    // ===================================================================
+    // fetch_all_stock_basics
+    // ===================================================================
+
+    #[tokio::test]
+    async fn fetch_all_stock_basics_returns_map() {
+        let server = MockServer::start_async().await;
+        let fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
+
+        let _m = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/qt/clist/get")
+                .query_param("fs", fs);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {
+                        "diff": [
+                            {"f12": "000001", "f14": "平安银行", "f100": "银行", "f124": -1, "f102": "主板"},
+                            {"f12": "600519", "f14": "贵州茅台", "f100": "白酒", "f124": 997920000, "f102": "沪主板"},
+                        ]
+                    }
+                }));
+        });
+
+        let provider =
+            EastMoneyProvider::new(reqwest::Client::new(), server.base_url(), server.base_url());
+        let map = provider.fetch_all_stock_basics().await.unwrap();
+
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["000001"].symbol, "000001");
+        assert_eq!(map["000001"].name, "平安银行");
+        assert_eq!(map["600519"].symbol, "600519");
+        assert_eq!(map["600519"].name, "贵州茅台");
     }
 }

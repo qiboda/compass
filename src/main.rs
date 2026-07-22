@@ -10,8 +10,7 @@ use egui_charts::widget::Chart;
 use tracing::info;
 
 use compass_rs::data::{
-    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider,
-    provider::{DataProvider},
+    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider, provider::DataProvider,
 };
 use compass_rs::model::{AppConfig, Cmd, CompassState};
 
@@ -146,7 +145,7 @@ fn start_worker_thread(
             let reader = EastMoneyProvider::new(
                 client,
                 config.api.base_url,
-                "https://push2.eastmoney.com".to_string(),
+                "https://push2delay.eastmoney.com".to_string(),
             );
 
             let cache = match DuckDbProvider::new(&config.database.path) {

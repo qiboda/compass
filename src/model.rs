@@ -25,7 +25,6 @@ pub struct RealtimeQuote {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockBasic {
-    pub ts_code: String,
     pub symbol: String,
     pub name: String,
     pub area: Option<String>,

@@ -12,20 +12,19 @@
 | Shenzhen 创业板 | 0 | 300xxx–301xxx | 300750 宁德时代 |
 | Beijing (北交所) | 0 | 8xxxxx | 830799 艾融软件 |
 
-## ts_code convention
+## symbol convention
 
-The DuckDB schema uses `ts_code` as the primary stock identifier: `"{code}.{exchange}"`.
+The primary key across all data tables is the bare 6-digit `symbol` code.
+The older `ts_code` convention (`"{code}.{exchange}"`) has been retired
+from the schema; `to_ts_code()` still exists for backward compatibility.
 
-| Bare code | ts_code | Description |
+| Bare code | Exchange | Stock |
 |---|---|---|
-| `000001` | `000001.SZ` | 平安银行 — Shenzhen |
-| `600519` | `600519.SH` | 贵州茅台 — Shanghai |
-| `688001` | `688001.SH` | 华兴源创 — 科创板 |
-| `300750` | `300750.SZ` | 宁德时代 — 创业板 |
-| `830799` | `830799.BJ` | 艾融软件 — 北交所 |
-| `sh.000001` | `000001.SH` | 上证指数 — explicit SH prefix |
-| `sz.000001` | `000001.SZ` | 平安银行 — explicit SZ prefix |
-| `bj.8xxxxx` | `8xxxxx.BJ` | 北交所 — explicit BJ prefix |
+| `000001` | SZ | 平安银行 |
+| `600519` | SH | 贵州茅台 |
+| `688001` | SH | 华兴源创 (科创板) |
+| `300750` | SZ | 宁德时代 (创业板) |
+| `830799` | BJ | 艾融软件 (北交所) |
 
 ### Conversion functions (`src/data/symbol.rs`)
 

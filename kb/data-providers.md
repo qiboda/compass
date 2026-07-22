@@ -8,8 +8,8 @@ CachedProvider<R: DataProvider, C: DataProvider+NegativeCache+DataWriter>
     └── cache:  DuckDbProvider     (local read + write-through + negative cache)
 ```
 
-The CLI downloader (`compass-downloader`) uses `EastMoneyProvider` and `DuckDbProvider`
-directly — it does NOT use `CachedProvider`.
+The GUI uses `CachedProvider`. The CLI (`compass-data download`) uses
+`EastMoneyProvider` and `DuckDbProvider` directly without CachedProvider.
 
 ## Traits (`src/data/provider.rs`)
 
@@ -34,8 +34,8 @@ trait NegativeCache: Send + Sync {
 
 ## EastMoneyProvider (`src/data/eastmoney.rs`)
 
-Source: `https://push2his.eastmoney.com` (K-line, symbols, stock info) and
-`https://push2.eastmoney.com` (realtime quotes).
+Source: `https://push2his.eastmoney.com` (K-line) and
+`https://push2delay.eastmoney.com` (symbol listing, stock info, realtime).
 
 ### Fetch bars (`DataProvider::fetch_bars`)
 
@@ -65,50 +65,24 @@ Parsed fields: `[0]=date, [1]=open, [2]=close, [3]=high, [4]=low, [5]=volume`.
 
 ### Search symbols (`DataProvider::search_symbols`)
 
-HTTP GET to `{base_url}/api/qt/clist/get`.
-
-Parameters:
-
-| Param | Value |
-|---|---|
-| `pn` | `1` |
-| `pz` | `20` |
-| `po` | `1` |
-| `np` | `1` |
-| `fltt` | `2` |
-| `invt` | `2` |
-| `fid` | `f3` |
-| `fs` | `b:DLMK014` |
-| `keyword` | User query |
-
-Response JSON path: `data.diff[]` with `f12` (code) and `f14` (name).
-
-Best-effort: any parse or network error returns empty `Vec`, never propagates.
+HTTP GET to `{realtime_base_url}/api/qt/clist/get`. Uses `keyword` parameter for
+fuzzy matching. Best-effort: any parse or network error returns empty `Vec`.
 
 ### Search all symbols (`search_all_symbols`)
 
-Paginated version of search_symbols. Parameters:
+Paginated symbol listing. Correct fs filter for all A-shares:
 
-| Param | Value |
-|---|---|
-| `pn` | Incrementing page number (1..100) |
-| `pz` | Page size (caller-supplied) |
-| `po` | `1` |
-| `np` | `1` |
-| `fltt` | `2` |
-| `invt` | `2` |
-| `fid` | `f3` |
-| `fs` | Caller-supplied filter (e.g. `"b:DLMK014"`) |
-| `fields` | `"f12,f14"` |
+```
+fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048
+```
 
-Auto-pagination: stops when the response contains fewer items than `pz` (partial
-page) or 0 items (empty page). Maximum 100 pages.
+Parameters include `ut=bd1d9ddb04089700cf9c27f6f7426281` (static token).
+Page size capped at 100 by the API. Uses `data.total` field for pagination tracking.
 
 ### Fetch stock basic (`fetch_stock_basic`)
 
-HTTP GET to `{base_url}/api/qt/clist/get`.
-
-Filters by `fs=m:{code}` and returns a single `StockBasic` record:
+HTTP GET to `{realtime_base_url}/api/qt/clist/get`. Paginates through
+A-share stocks to find the target code. Returns `StockBasic` with:
 
 | Field | JSON key | Description |
 |---|---|---|
@@ -117,9 +91,6 @@ Filters by `fs=m:{code}` and returns a single `StockBasic` record:
 | `industry` | `f100` | Industry classification |
 | `market` | `f102` | Market segment (e.g. `"沪主板"`) |
 | `list_date` | `f124` | Unix timestamp → `NaiveDate`; `-1` means unknown |
-
-Exchange is inferred via `to_exchange(code)`. `ts_code` is generated as
-`"{code}.{exchange}"` via `to_ts_code(code)`.
 
 ### Fetch realtime quote (`fetch_realtime_quote`)
 
@@ -136,47 +107,36 @@ Returns `RealtimeQuote`:
 | `up_limit` | `f51` | Daily price ceiling (涨停价) |
 | `down_limit` | `f52` | Daily price floor (跌停价) |
 
-All fields are `Option<f64>`. String values like `"-"` or `"-3.14"` are parsed
-via `parse_opt_f64`; unparseable values yield `None`. A null `data` key returns
-`DataError::NoData`.
-
 ## DuckDbProvider (`src/data/duckdb.rs`)
 
 Implements `DataProvider`, `DataWriter`, and `NegativeCache`. Uses
-`Arc<Mutex<Connection>>` internally — one connection, one writer at a time.
+`Arc<Mutex<Connection>>` internally. Serves as staging database for
+`compass-data download` and cache for GUI.
 
-### Schema (7 tables + no_data_marks)
+### Schema (4 tables + no_data_marks)
 
 | Table | Purpose | Key |
 |---|---|---|
-| `stock_daily` | Core OHLCV bars | `(ts_code, trade_date)` |
-| `stock_adj_factor` | Adjustment factors from Baostock | `(ts_code, trade_date)` |
-| `stock_basic` | Stock name, industry, exchange, list date | `ts_code` |
-| `stock_status` | Per-day trading status | `(ts_code, trade_date)` |
-| `stock_limit` | Daily price limits (涨停/跌停) | `(ts_code, trade_date)` |
-| `daily_indicator` | PE/PB/PS/turnover indicators | `(ts_code, trade_date)` |
-| `stock_share` | Share capital and market cap | `(ts_code, trade_date)` |
+| `stock_daily` | Core OHLCV bars | `(symbol, trade_date)` |
+| `stock_adj_factor` | Adjustment factors from Baostock | `(symbol, trade_date)` |
+| `stock_basic` | Stock name, industry, exchange, list date | `symbol` |
+| `stock_limit` | Daily price limits (涨停/跌停) | `(symbol, trade_date)` |
 | `no_data_marks` | Negative cache entries with TTL | `(symbol, timeframe)` |
 
 ### Read path (`DataProvider::fetch_bars`)
 
-Uses `tokio::task::spawn_blocking`. Converts bare symbol → `ts_code` via
-`symbol::to_ts_code()`. Query:
-
 ```sql
-SELECT CAST(trade_date AS VARCHAR), open, high, low, close, vol
+SELECT CAST(trade_date AS VARCHAR), open, high, low, close, volume
 FROM stock_daily
-WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
 ORDER BY trade_date ASC
 ```
 
 ### Write path (`DataWriter::save_bars`)
 
-Uses `spawn_blocking` + `INSERT OR REPLACE` with ts_code conversion:
-
 ```sql
 INSERT OR REPLACE INTO stock_daily
-    (ts_code, trade_date, open, high, low, close, vol)
+    (symbol, trade_date, open, high, low, close, volume)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ```
 
@@ -184,61 +144,64 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 
 | Method | Operation |
 |---|---|
-| `save_stock_daily(ts_code, records)` | INSERT OR REPLACE into stock_daily; computes pre_close |
-| `get_stored_range(ts_code)` | MIN/MAX trade_date for gap detection |
-| `save_adj_factors(ts_code, factors)` | INSERT OR REPLACE into stock_adj_factor |
-| `get_adj_factor_range(ts_code)` | MIN/MAX trade_date for adj_factor |
+| `save_stock_daily(symbol, records)` | INSERT OR REPLACE into stock_daily |
+| `get_stored_range(symbol)` | MIN/MAX trade_date for gap detection |
+| `save_adj_factors(symbol, factors)` | INSERT OR REPLACE into stock_adj_factor |
+| `get_adj_factor_range(symbol)` | MIN/MAX trade_date for adj_factor |
 | `upsert_stock_basic(info)` | INSERT OR REPLACE into stock_basic |
-| `get_stock_basic(ts_code)` | Read single stock_basic record |
-| `save_status(ts_code, records)` | INSERT OR REPLACE into stock_status |
-| `save_limits(ts_code, records)` | INSERT OR REPLACE into stock_limit |
-| `save_indicators(ts_code, records)` | INSERT OR REPLACE into daily_indicator |
-| `save_shares(ts_code, records)` | INSERT OR REPLACE into stock_share |
+| `get_stock_basic(symbol)` | Read single stock_basic record |
+| `save_limits(symbol, records)` | INSERT OR REPLACE into stock_limit |
 
 ### Record types
 
 ```rust
-pub struct DailyRecord { trade_date, open, high, low, close, change, pct_chg, vol, amount }
+pub struct DailyRecord { trade_date, open, high, low, close, adjclose, volume, amount }
 pub struct AdjFactorRecord { trade_date, adj_factor }
-pub struct StatusRecord { trade_date, is_open }
 pub struct LimitRecord { trade_date, up_limit, down_limit }
-pub struct IndicatorRecord { trade_date, turnover_rate, turnover_rate_f, volume_ratio, pe, pe_ttm, pb, ps }
-pub struct ShareRecord { trade_date, total_share, float_share, free_share, total_mv, circ_mv }
-pub struct StockBasic { ts_code, symbol, name, area, industry, market, exchange, list_date, delist_date }
+pub struct StockBasic { symbol, name, area, industry, market, exchange, list_date, delist_date }
 ```
 
-### NegativeCache
+## ParquetReader (`src/data/parquet.rs`)
 
-| Method | Query |
+Reads Parquet files directly via DuckDB `read_parquet()`. Implements `DataProvider`.
+This is the primary data source once Dolt import is complete — no native DuckDB
+tables needed.
+
+### Directory layout
+
+```
+parquet_data/
+├── stock_basic.parquet
+└── stock_daily/
+    ├── 000001.parquet     # One file per symbol
+    ├── 600519.parquet
+    └── ...
+```
+
+### Methods
+
+| Method | Implementation |
 |---|---|
-| `mark_no_data(symbol, timeframe)` | `INSERT OR REPLACE INTO no_data_marks` with current timestamp |
-| `is_no_data(symbol, timeframe, now_ts, ttl_secs)` | `SELECT 1 FROM no_data_marks WHERE … AND last_checked >= ?` |
+| `fetch_bars(symbol, start, end)` | `SELECT ... FROM read_parquet('{symbol}.parquet') WHERE ...` |
+| `search_symbols(query)` | Client-side filter over filesystem scan |
+| `list_symbols()` | `std::fs::read_dir(parquet_data/stock_daily/)` |
+| `get_stored_range(symbol)` | `SELECT MIN/MAX(tradedate) FROM read_parquet(...)` |
+| `get_stock_basic(symbol)` | `SELECT ... FROM read_parquet('stock_basic.parquet') WHERE symbol = ?` |
 
-TTL defaults to 7 days. Stale entries (>TTL) are considered expired (returns `false`).
+### Threading
 
-## Baostock integration (`src/bin/downloader/baostock.rs`)
+`fetch_bars` uses `tokio::task::spawn_blocking` with a clone of `Arc<Mutex<Connection>>`.
+Other methods are synchronous (filesystem scanning is fast).
 
-Python subprocess for fetching adjustment factors.
+## Dolt → Parquet import (`src/bin/data/import_dolt.rs`)
 
-### Script: `scripts/fetch_adj_factor.py`
+Reads from Dolt `investment_data` database via the `dolt` CLI:
 
-```python
-import baostock as bs, json, sys
-bs.login()
-rs = bs.query_adjust_factor(code, start_date, end_date)
-# outputs JSON array of [{trade_date, adj_factor}] to stdout
-```
+1. `dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"`
+2. Per symbol: `dolt sql -r csv` → temp CSV → DuckDB `read_csv` → `COPY ... TO '{symbol}.parquet'`
+3. Strips SH/SZ/BJ prefix from Dolt symbols (e.g. `SZ000001` → `000001`)
 
-### Rust integration
-
-```rust
-pub async fn fetch_adj_factors(code, start_date, end_date) -> Result<Vec<AdjFactor>>
-```
-
-- Spawns `python3 scripts/fetch_adj_factor.py <code> <start> <end>`
-- Reads stdout, parses JSON array
-- Returns `Vec<AdjFactor { trade_date: String, adj_factor: f64 }>`
-- Writes to `stock_adj_factor` via `DuckDbProvider::save_adj_factors()`
+Source table: `final_a_stock_eod_price` (18.25M rows, 6122 stocks, 1990–2026).
 
 ## Error type
 
@@ -264,5 +227,5 @@ timeout_secs = 10
 retry_count = 3
 
 [database]
-path = "compass.db"     # DuckDB database file (not SQLite — the config key remains unchanged)
+path = "compass.duckdb"
 ```

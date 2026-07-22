@@ -1,5 +1,9 @@
 /target
 .omo/
 compass.db
+compass.duckdb
 logs/
 *.log
+investment_data/
+data/
+parquet_data/

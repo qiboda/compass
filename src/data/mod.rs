@@ -1,5 +1,6 @@
 pub mod duckdb;
 pub mod eastmoney;
+pub mod parquet;
 pub mod provider;
 pub mod symbol;
 mod synthetic;

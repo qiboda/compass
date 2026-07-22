@@ -127,28 +127,26 @@ cargo run                       # launch the GUI app (needs X11/Wayland)
 RUST_LOG=debug cargo run        # verbose logging
 ```
 
-### CLI downloader
+### CLI (compass-data)
 
 ```sh
-# Download all A-share stocks
-cargo run --bin compass-downloader -- --symbols all
+# Download from EastMoney to staging DuckDB
+cargo run --bin compass-data -- download --symbols "000001,600519"
+cargo run --bin compass-data -- download --symbols all --concurrency 2 --delay-ms 2000
 
-# Download specific symbols
-cargo run --bin compass-downloader -- --symbols "000001,600519"
+# Import from Dolt into Parquet main database
+cargo run --bin compass-data -- import
+cargo run --bin compass-data -- import --limit 100
 
-# Custom database path, start date, concurrency
-cargo run --bin compass-downloader -- \
-    --symbols all \
-    --db /path/to/compass.duckdb \
-    --start-date 19900101 \
-    --concurrency 5 \
-    --delay-ms 200
+# Merge staging DuckDB into Parquet
+cargo run --bin compass-data -- merge
 
-# Parquet export after download
-cargo run --bin compass-downloader -- --symbols all --export-parquet /tmp/exports/
+# Export Parquet to DuckDB
+cargo run --bin compass-data -- export
 
 # Full help
-cargo run --bin compass-downloader -- --help
+cargo run --bin compass-data -- --help
+cargo run --bin compass-data -- download --help
 ```
 
 ## Adding a feature (manual)
@@ -227,43 +225,52 @@ Missing keys fall back to defaults defined in `src/model.rs`.
 
 ## Debugging tips
 
-### Check what the API returns
+### Check what the EastMoney API returns
 
 ```sh
+# K-line API
 curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=101&fqt=1&beg=20250101&end=20250721&lmt=10&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+
+# Symbol listing API
+curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281"
 ```
 
-### Inspect the DuckDB database
+### Inspect the staging DuckDB
 
 ```sh
-# Install duckdb CLI: https://duckdb.org/docs/installation/
-duckdb compass.db
+# DuckDB CLI not installed by default. Use the export command instead:
+cargo run --bin compass-data -- export
 
-# Inside duckdb shell:
-.tables
-SELECT ts_code, COUNT(*) FROM stock_daily GROUP BY ts_code;
-SELECT * FROM stock_daily WHERE ts_code='000001.SZ' ORDER BY trade_date DESC LIMIT 5;
-SELECT * FROM stock_basic;
-SELECT * FROM stock_adj_factor WHERE ts_code='000001.SZ' ORDER BY trade_date DESC LIMIT 5;
-
-# Or from command line:
-duckdb compass.db -c "SELECT ts_code, COUNT(*) FROM stock_daily GROUP BY ts_code;"
-duckdb compass.db -c "SELECT * FROM stock_basic;"
+# Or query via Python duckdb package if available
 ```
 
-### Baostock setup
-
-Baostock requires Python 3 and the `baostock` package:
+### Inspect Parquet files
 
 ```sh
-pip install baostock
+ls -lh parquet_data/stock_daily/ | head -20
+wc -l parquet_data/stock_daily/     # file count = symbol count
 ```
 
-The CLI downloader invokes Baostock via `python3 scripts/fetch_adj_factor.py`.
-If `python3` is not on PATH, use a symlink or set up a wrapper.
+### Query Parquet with DuckDB
+
+```rust
+use duckdb::Connection;
+let conn = Connection::open_in_memory()?;
+conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/600519.parquet') LIMIT 5")?;
+```
+
+### Dolt database queries
+
+```sh
+dolt --data-dir=investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
+dolt --data-dir=investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
+dolt --data-dir=investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
+```
 
 ### Reset everything
 
 ```sh
-rm compass.db logs/compass.log
+rm compass.duckdb logs/compass.log         # GUI cache
+rm -rf data/                                 # staging cache
+rm -rf parquet_data/                        # main Parquet data
 ```
