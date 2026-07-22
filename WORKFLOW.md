@@ -1,4 +1,4 @@
-# OpenCode Workflow Rules
+# Workflow
 
 AGENTS.md is auto-loaded by OpenCode — contains architecture, tech stack, conventions.
 See `kb/` for detailed docs on specific subsystems.
@@ -6,7 +6,7 @@ See `kb/` for detailed docs on specific subsystems.
 Development follows the issue-driven cycle:
 user raises requirement → /grill-me to clarify → create GitHub issue → plan (if multi-step) → implement → push.
 
-## Rules (ordered by priority)
+## Workflow (ordered by priority)
 
 1. **doc-sync (CRITICAL)**: Any code change affecting behavior, public APIs, data structures,
    config, or workflows MUST update the relevant `kb/` files AND `AGENTS.md` in the SAME commit.
