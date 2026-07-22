@@ -9,10 +9,10 @@ use egui_charts::theme::Theme;
 use egui_charts::widget::Chart;
 use tracing::info;
 
-use compass_rs::data::{
+use compass_core::data::{
     CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider, provider::DataProvider,
 };
-use compass_rs::model::{AppConfig, Cmd, CompassState};
+use compass_core::model::{AppConfig, Cmd, CompassState};
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -349,7 +349,7 @@ fn custom_dark_theme() -> Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compass_rs::model::CompassState;
+    use compass_core::model::CompassState;
 
     fn make_state() -> Arc<Mutex<CompassState>> {
         Arc::new(Mutex::new(CompassState::new("000001", "1d")))

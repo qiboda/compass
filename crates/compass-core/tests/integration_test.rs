@@ -7,11 +7,11 @@
 // =============================================================================
 
 use chrono::{DateTime, NaiveDate, Utc};
-use compass_rs::data::duckdb::{DailyRecord, DuckDbProvider, StockBasic};
-use compass_rs::data::eastmoney::EastMoneyProvider;
-use compass_rs::data::provider::DataProvider;
-use compass_rs::data::symbol;
-use compass_rs::model::SymbolInfo;
+use compass_core::data::duckdb::{DailyRecord, DuckDbProvider, StockBasic};
+use compass_core::data::eastmoney::EastMoneyProvider;
+use compass_core::data::provider::DataProvider;
+use compass_core::data::symbol;
+use compass_core::model::SymbolInfo;
 use httpmock::MockServer;
 
 /// Build a single K-line CSV string matching EastMoney format:
@@ -383,7 +383,7 @@ async fn e2e_fetch_stock_basic_real_api_returns_valid_data() {
 #[ignore = "requires network access to EastMoney API"]
 async fn e2e_fetch_bars_real_api_returns_data() {
     use chrono::{DateTime, NaiveDate, Utc};
-    use compass_rs::data::provider::DataProvider;
+    use compass_core::data::provider::DataProvider;
 
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -465,7 +465,7 @@ async fn duckdb_in_memory_has_required_tables() {
 // ParquetReader integration tests (requires exported Parquet data)
 // =============================================================================
 
-use compass_rs::data::parquet::ParquetReader;
+use compass_core::data::parquet::ParquetReader;
 
 #[tokio::test]
 #[ignore = "requires exported parquet_data/ — run `cargo run --bin compass-data -- import --limit 3`"]
