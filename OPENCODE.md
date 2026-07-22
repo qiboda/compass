@@ -16,23 +16,27 @@ See `kb/` for detailed docs on specific subsystems.
    d) only then implement.
    Refactors, docs, lint fixes, and typos skip this.
 
-3. **test-first**: Feature and bugfix work follows RED → GREEN → REFACTOR.
+3. **plan-first**: Multi-step tasks (2+ modules, architecture changes, new data sources,
+   ambiguous scope) MUST use the plan agent first. Single-file fixes, tests, and doc updates
+   may proceed directly.
+
+4. **test-first**: Feature and bugfix work follows RED → GREEN → REFACTOR.
    Write the failing test FIRST, watch it fail for the right reason, then implement.
    Exploratory changes may write tests after. Pure refactors: pin current behavior with
    characterization tests first.
 
-4. **per-step-verify**: After every code change, run `cargo test` and ensure
+5. **per-step-verify**: After every code change, run `cargo test` and ensure
    `lsp_diagnostics` is clean on changed files.
 
-5. **local-verify-before-commit**: Run before committing:
+6. **local-verify-before-commit**: Run before committing:
    ```sh
    cargo test && cargo clippy -- -D warnings && cargo fmt --check
    ```
 
-6. **no-type-escape**: Never use `unwrap()` in production code — use `.expect(msg)` or
+7. **no-type-escape**: Never use `unwrap()` in production code — use `.expect(msg)` or
    proper error handling. Never suppress type errors with `as` casts or `@ts-ignore`.
 
-7. **branching**: Trunk-based: push directly to `main`. No feature branches for solo work.
+8. **branching**: Trunk-based: push directly to `main`. No feature branches for solo work.
 
 ## Commit style
 
