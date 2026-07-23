@@ -1,103 +1,222 @@
 # Symbols & Stock Codes
 
-## A-share market segments
+Stock codes in China's A-share market aren't globally unique — the same numeric
+code can mean different things on different exchanges. Compass has to handle
+this ambiguity while keeping the data model simple enough for a single developer
+to maintain.
 
-| Exchange | Market code | Code ranges | Examples |
-|---|---|---|---|
-| Shanghai (SH) | 1 | 600xxx, 601xxx, 603xxx, 605xxx | 600519 贵州茅台 |
-| Shanghai STAR (科创板) | 1 | 688xxx | 688001 华兴源创 |
-| Shanghai (B-share) | 1 | 900xxx | 900901 云赛B |
-| Shenzhen (SZ) 主板 | 0 | 000xxx–004xxx | 000001 平安银行 |
-| Shenzhen 中小板 | 0 | 002xxx, 003xxx | 002415 海康威视 |
-| Shenzhen 创业板 | 0 | 300xxx–301xxx | 300750 宁德时代 |
-| Beijing (北交所) | 0 | 8xxxxx | 830799 艾融软件 |
+## The A-share market landscape
 
-## symbol convention
+China has three stock exchanges with distinct code ranges:
 
-The primary key across all data tables is the bare 6-digit `symbol` code.
-The older `ts_code` convention (`"{code}.{exchange}"`) has been retired
-from the schema; `to_ts_code()` still exists for backward compatibility.
+| Exchange | Chinese Name | Market Code | Code Ranges | Notable Segment |
+|---|---|---|---|---|
+| Shanghai (SH) | 上海证券交易所 | `1` (EastMoney) | 600xxx–605xxx | Main board |
+| Shanghai (SH) | 上海证券交易所 | `1` | 688xxx | STAR Market (科创板) |
+| Shanghai (SH) | 上海证券交易所 | `1` | 900xxx | B-shares (外币) |
+| Shenzhen (SZ) | 深圳证券交易所 | `0` (EastMoney) | 000xxx–004xxx | Main board |
+| Shenzhen (SZ) | 深圳证券交易所 | `0` | 002xxx–003xxx | SME board (中小板) |
+| Shenzhen (SZ) | 深圳证券交易所 | `0` | 300xxx–301xxx | ChiNext (创业板) |
+| Beijing (BJ) | 北京证券交易所 | `0` (EastMoney) | 8xxxxx | 北交所 |
 
-| Bare code | Exchange | Stock |
-|---|---|---|
-| `000001` | SZ | 平安银行 |
-| `600519` | SH | 贵州茅台 |
-| `688001` | SH | 华兴源创 (科创板) |
-| `300750` | SZ | 宁德时代 (创业板) |
-| `830799` | BJ | 艾融软件 (北交所) |
+The key insight: **for stocks, code ranges don't overlap across exchanges**.
+`600xxx` is always Shanghai, `300xxx` always Shenzhen, `8xxxxx` always Beijing.
+This means we can **infer the exchange from the code** — no need to store it
+alongside every data row.
 
-### Conversion functions (`crates/compass-core/src/data/symbol.rs`)
+## Why bare 6-digit codes?
+
+Compass uses bare 6-digit codes (`"000001"`, `"600519"`) as the primary
+identifier everywhere: in the Parquet filenames, in the DuckDB `symbol` column,
+in the UI input box.
+
+The older format `"000001.SZ"` (ts_code convention) has been retired. Here's why:
+
+**The problem with ts_code**: mixing identity with metadata creates ambiguity.
+`"000001.SZ"` encodes two facts — the stock is `000001`, and it trades on
+Shenzhen. But the exchange is **already determinable from the code** (see
+inference rules below). Storing it in the identifier is redundant, and
+redundancy breeds inconsistency — what if someone writes `"000001.SH"` by
+mistake?
+
+**What we gain from bare codes**:
+- Simpler SQL: no string splitting in WHERE clauses
+- Cleaner filenames: `000001.parquet` instead of `000001.SZ.parquet`
+- One-to-one mapping: each stock has exactly one canonical identifier
+- Existing code ranges are already non-overlapping for stocks
+
+The `to_ts_code()` helper still exists in the codebase for backward
+compatibility, but it's no longer used as a primary key.
+
+## Exchange inference: the heuristic
+
+Given a bare 6-digit code, what exchange does it belong to?
 
 ```rust
-/// Infer exchange from stock code (heuristic + explicit prefix support).
-/// Returns "SH", "SZ", or "BJ".
 pub fn to_exchange(code: &str) -> &str
-
-/// Convert bare code to full ts_code: "{code}.{exchange}".
-/// "000001" → "000001.SZ", "sh.600519" → "600519.SH"
-pub fn to_ts_code(symbol: &str) -> String
 ```
 
-These functions are used by both `DuckDbProvider` (to convert bare symbols to
-ts_code for SQL queries) and `EastMoneyProvider` (for `to_secid` mapping).
+The rules, in order:
 
-### Explicit prefixes (case-insensitive)
-
-For ambiguous codes, use a prefix to force the exchange:
-
-| Input | to_exchange | to_ts_code |
+| Code starts with | Exchange | Rationale |
 |---|---|---|
-| `sh.000001` | `"SH"` | `"000001.SH"` |
-| `sz.000001` | `"SZ"` | `"000001.SZ"` |
-| `bj.830799` | `"BJ"` | `"830799.BJ"` |
-| `SH.600519` | `"SH"` | `"600519.SH"` |
+| `6` | `"SH"` | All 6xxxxx codes are Shanghai stocks |
+| `8` | `"BJ"` | All 8xxxxx codes are Beijing stocks |
+| Anything else | `"SZ"` | 000xxx–004xxx, 002xxx, 300xxx are all Shenzhen |
 
-### Heuristic (no prefix)
+This heuristic is correct for **stocks**. Indices are a different story.
 
-When no prefix is provided:
+## The ambiguity: 000001
 
-| Code starts with | Exchange | ts_code suffix |
+The `000xxx` range is the only one where codes overlap between exchanges:
+
+| Code | Exchange | What it is |
 |---|---|---|
-| `6` | Shanghai (SH) | `.SH` |
-| `8` | Beijing (BJ) | `.BJ` |
-| Anything else | Shenzhen (SZ) | `.SZ` |
+| `000001` | Shenzhen | 平安银行 (Ping An Bank) — a stock |
+| `000001` | Shanghai | 上证指数 (Shanghai Composite Index) — an index |
+| `000002` | Shenzhen | 万科A (Vanke A) — a stock |
+| `399001` | Shenzhen | 深证成指 (SZSE Component Index) — an index |
 
-## to_secid() conversion
+For stocks (the 99% use case), the heuristic defaults to **Shenzhen** for
+`000xxx` codes, since that's where almost all stocks in this range trade.
 
-User-facing symbols map to EastMoney API `secid` format `"{market}.{code}"`.
-The implementation is in `crates/compass-core/src/data/eastmoney.rs::to_secid()`.
+For indices, use an **explicit prefix**:
 
-| Input | secid | Explanation |
+| Input | Meaning |
+|---|---|
+| `000001` | 平安银行 (SZ stock — default) |
+| `sh.000001` | 上证指数 (SH index — explicit) |
+| `sz.000001` | 平安银行 (SZ stock — explicit, same as default) |
+
+## Explicit prefixes
+
+When the heuristic isn't what you want, force the exchange with a prefix:
+
+| Prefix | Exchange | Example | Result |
+|---|---|---|---|
+| `sh.` | Shanghai | `sh.000001` | `"SH"`, `000001` |
+| `sz.` | Shenzhen | `sz.600519` | `"SZ"`, `600519` (unusual but valid) |
+| `bj.` | Beijing | `bj.830799` | `"BJ"`, `830799` |
+
+Prefixes are **case-insensitive**: `SH.600519` and `sh.600519` are equivalent.
+
+## EastMoney secid mapping
+
+EastMoney's API uses a different identifier format: `"{market}.{code}"`, where
+market is `0` for Shenzhen/Beijing and `1` for Shanghai.
+
+The `to_secid()` function converts Compass symbols to EastMoney secids:
+
+```rust
+pub fn to_secid(symbol: &str) -> String
+```
+
+### Conversion table
+
+| Our input | secid | How it works |
 |---|---|---|
-| `sh.000001` | `1.000001` | 上证指数 — explicit SH |
-| `sz.000001` | `0.000001` | 平安银行 — explicit SZ |
-| `bj.830799` | `0.830799` | 艾融软件 — explicit BJ |
-| `SH.600519` | `1.600519` | case-insensitive |
-| `000001` | `0.000001` | Heuristic: SZ (most stocks in 000xxx range) |
-| `600519` | `1.600519` | Heuristic: SH (all 6xxxxx codes) |
+| `000001` | `0.000001` | Heuristic: code starts with `0` → SZ → market code `0` |
+| `600519` | `1.600519` | Heuristic: code starts with `6` → SH → market code `1` |
+| `688001` | `1.688001` | Same heuristic: `6` → SH → `1` |
+| `300750` | `0.300750` | Starts with `3` (not 6 or 8) → SZ → `0` |
+| `830799` | `0.830799` | Heuristic: code starts with `8` → BJ → but EastMoney uses `0` for BJ |
+| `sh.000001` | `1.000001` | Explicit SH prefix → market `1` |
+| `sz.000001` | `0.000001` | Explicit SZ prefix → market `0` |
+| `bj.830799` | `0.830799` | Explicit BJ prefix → but EastMoney uses `0` for BJ |
 
-### Ambiguity: the 000xxx–004xxx range
+Important note: Beijing exchange uses market code `0` in EastMoney's system —
+same as Shenzhen. The distinction is handled by the code range, not the market
+code.
 
-`000001`–`004999` is the only overlapping range:
-- **Shenzhen**: stocks like 平安银行(000001), 万科A(000002)
-- **Shanghai**: indices like 上证指数(000001), 深证成指(399001)
+### The conversion pipeline
 
-**Default behavior**: without prefix → Shenzhen (stocks are the common case).
-Use `sh.000001` to fetch Shanghai Composite Index instead.
+```
+User types: "600519"
+    │
+    ▼
+to_exchange("600519") → "SH"         (infer exchange)
+    │
+    ▼
+to_ts_code("600519") → "600519.SH"   (legacy, not primary key)
+    │
+    ▼
+to_secid("600519") → "1.600519"      (EastMoney API format)
+    │
+    ▼
+HTTP GET ...?secid=1.600519&klt=101...
+```
+
+## Dolt symbol mapping
+
+Dolt's `investment_data` database stores symbols with exchange prefixes:
+
+| Dolt symbol | Compass symbol | Exchange stripped |
+|---|---|---|
+| `SZ000001` | `000001` | SZ |
+| `SH600519` | `600519` | SH |
+| `BJ830799` | `830799` | BJ |
+
+The import pipeline strips these prefixes during the CSV → Parquet conversion.
+The mapping is straightforward: remove the first two characters, which are
+always the exchange code.
 
 ## Timeframe mapping
 
-EastMoney uses numeric `klt` values:
+Compass accepts human-friendly timeframe strings in the GUI and CLI. These map
+to EastMoney's numeric `klt` (K-line type) parameter:
 
-| User input | klt | Description |
-|---|---|---|
-| `1m` | `1` | 1 minute |
-| `5m` | `5` | 5 minutes |
-| `15m` | `15` | 15 minutes |
-| `30m` | `30` | 30 minutes |
-| `60m`, `1h` | `60` | 60 minutes |
-| `1d`, `daily`, `day` | `101` | Daily |
-| `1w`, `weekly`, `week` | `102` | Weekly |
-| `1M`, `monthly`, `month` | `103` | Monthly |
+| User Input | klt | Semantics | Typical Use |
+|---|---|---|---|
+| `1m` | `1` | 1 minute | Intraday |
+| `5m` | `5` | 5 minutes | Intraday |
+| `15m` | `15` | 15 minutes | Intraday |
+| `30m` | `30` | 30 minutes | Intraday |
+| `60m`, `1h` | `60` | 60 minutes | Intraday |
+| `1d`, `daily`, `day` | `101` | Daily | Primary view |
+| `1w`, `weekly`, `week` | `102` | Weekly | Long-term trends |
+| `1M`, `monthly`, `month` | `103` | Monthly | Very long-term |
+| (numeric string) | passthrough | Raw klt value | For testing |
 
-Unrecognized strings are passed through unchanged (supports numeric klt directly).
+If the input doesn't match any known string, it's passed through as-is. This
+supports direct numeric klt values (e.g., `"101"` is interpreted as klt=101,
+daily).
+
+### Why these particular values?
+
+EastMoney's klt numbering is their internal convention. `101`/`102`/`103` for
+daily/weekly/monthly is the EastMoney standard. The minute-level values
+(1/5/15/30/60) are more intuitive.
+
+### Timeframe in the data model
+
+The timeframe string is used as part of the composite key `(symbol, timeframe)`
+in CompassState's BarsMap. This means you can have `("600519", "1d")` and
+`("600519", "1w")` loaded simultaneously, and switching between them is instant
+(no refetch).
+
+## Putting it all together
+
+A complete symbol conversion for a typical user flow:
+
+```
+User opens Compass.
+Config says: default_symbol = "000001", default_timeframe = "1d"
+
+    "000001" → to_exchange → "SZ"
+    "000001" → to_secid → "0.000001"
+    "1d"     → timeframe_to_klt → 101
+
+Worker sends: GET ...?secid=0.000001&klt=101&beg=...
+Response → parsed into Vec<Bar>
+Bars stored under key ("000001", "1d") in CompassState.bars
+
+User types "600519", clicks Fetch.
+
+    "600519" → to_secid → "1.600519"
+    Fetches, caches, displays.
+
+User types "sh.000001", wants the index.
+
+    "sh.000001" → explicit prefix → to_secid → "1.000001"
+    Fetches Shanghai Composite Index instead of 平安银行.
+```

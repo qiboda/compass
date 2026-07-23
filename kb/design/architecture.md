@@ -1,257 +1,362 @@
 # Architecture
 
-## Threading model
+## What is Compass?
 
-Two-thread design eliminates blocking issues between UI and I/O.
+Compass is a **local-first A-share stock chart application**. Unlike web-based
+stock viewers that depend on a remote server for every interaction, Compass
+downloads and caches all OHLCV data locally. Once data is imported, chart
+rendering is instant — no network calls, no rate limiting, no API keys.
 
-```
-┌─────────────────────┐     std::sync::mpsc      ┌───────────────────────┐
-│   MAIN THREAD (egui) │ ──── Cmd::Fetch ──────► │   WORKER THREAD       │
-│                      │                          │   tokio Runtime       │
-│  eframe::App::ui()   │                          │                       │
-│    lock state        │ ◄─── Arc<Mutex> ──────── │   loop {              │
-│    read bars         │     (shared state)       │     cmd = rx.recv()   │
-│    draw chart        │                          │     bars = fetch()    │
-│    send Cmd on click │                          │     update state      │
-│                      │     ctx.request_repaint()│     ctx.request_repaint()
-└─────────────────────┘                          └───────────────────────┘
-```
+It has two faces:
 
-- Main thread: eframe event loop, owns `CompassApp` widget. Polls `CompassState`
-  via `Arc<Mutex<>>` every frame, rebuilds chart data when `bars_version` changes.
-- Worker thread: `std::thread::spawn` → `tokio::runtime::Runtime::new()`
-  → `block_on` loop that receives `Cmd` via `mpsc::channel`.
-- State sharing: `Arc<Mutex<CompassState>>`. NOT `RefCell` (not `Send`).
-  Mutex chosen over `RwLock` — no write starvation risk here.
-- All DuckDB I/O goes through `tokio::task::spawn_blocking` since DuckDB
-  operations are synchronous. The connection is wrapped in `Arc<Mutex<Connection>>`.
+| Face | Binary | Purpose |
+|---|---|---|
+| **Chart app** | `compass` | Interactive candlestick chart with symbol search, timeframe selection, crosshair, zoom, pan. Runs as a native desktop window via egui. |
+| **Data pipeline** | `compass-data` | Offline data management — download from EastMoney, import from Dolt, merge staging into production, export to other formats. |
 
-## Data pipeline (GUI)
+Both share the same library crate (`compass-core`), which defines the data
+model, provider traits, and all I/O logic.
+
+## How the crates fit together
 
 ```
-UI (CompassApp)
-  └─ mpsc::Sender<Cmd>
-       └─ Worker thread (tokio runtime)
-            └─ CachedProvider<R: DataProvider, C: DataProvider+NegativeCache+DataWriter>
-                 ├─ 1. DuckDbProvider::fetch_bars      (cache read from stock_daily)
-                 ├─ 2. EastMoneyProvider::fetch_bars    (HTTP, cache miss)
-                 └─ 3. DuckDbProvider::save_bars        (write-through to stock_daily)
+compass (GUI binary)
+  │
+  ├── compass-core (library)
+  │     ├── model.rs      ─ shared types: Cmd, CompassState, AppConfig, Bar
+  │     ├── data/mod.rs   ─ CachedProvider (read-through cache + negative cache)
+  │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
+  │     ├── data/duckdb.rs   ─ DuckDbProvider (local cache)
+  │     ├── data/eastmoney.rs ─ EastMoneyProvider (HTTP API)
+  │     ├── data/parquet.rs   ─ ParquetReader (main database)
+  │     ├── data/symbol.rs    ─ Exchange inference, code conversion
+  │     └── data/synthetic.rs ─ Test data generator
+  │
+  └── compass-data (CLI binary)
+        └── download / import / merge / export subcommands
 ```
 
-## Data pipeline (CLI — compass-data)
+`compass-core` contains zero UI code. It provides traits and implementations
+for fetching, storing, and querying stock data. The GUI and CLI are thin
+orchestrators that wire up providers and dispatch work.
+
+## The threading model: why two threads?
+
+The core architectural challenge: **egui runs synchronously on the main thread,
+but all data I/O (HTTP, DuckDB) requires async tokio.** If we block the main
+thread on I/O, the UI freezes. If we use async on the main thread, egui breaks.
+
+The solution: separate the UI thread from the I/O thread.
 
 ```
-compass-data download    EastMoney API → staging.duckdb (staging)
-compass-data import      Dolt investment_data → parquet_data/ (main DB)
-compass-data merge       staging.duckdb → parquet_data/ (incremental merge)
-compass-data export      parquet_data/ → duckdb/csv (format conversion)
+┌──────────────────────────┐     mpsc::channel      ┌──────────────────────────┐
+│   MAIN THREAD (eframe)    │ ──── Cmd::Fetch ─────► │   WORKER THREAD           │
+│                            │                        │   tokio Runtime           │
+│  eframe::App::update()    │                        │                            │
+│    lock state (read)      │ ◄── Arc<Mutex<State>> ─ │   loop {                   │
+│    read bars               │     (shared state)      │     cmd = rx.recv()       │
+│    draw chart              │                        │     bars = fetch()        │
+│    send Cmd on click       │                        │     update state           │
+│                            │   ctx.request_repaint()│     ctx.request_repaint()  │
+└──────────────────────────┘                        └──────────────────────────┘
 ```
 
-### Download pipeline
+Key design decisions:
+
+- **mpsc channel** for commands: lightweight, unidirectional. The UI sends
+  `Cmd::FetchBars`, the worker processes it and writes results to shared state.
+  Data never flows back through the channel — no need for oneshot replies.
+
+- **Arc<Mutex<CompassState>>** for shared state: both threads read/write the
+  same struct. Mutex was chosen over RwLock because the critical sections are
+  tiny (copying bars, setting a loading flag) — RwLock's overhead isn't
+  justified here.
+
+- **No RefCell**: `RefCell` is `!Send`, so it can't cross thread boundaries.
+  Mutex is the only viable interior-mutability primitive for this use case.
+
+- **request_repaint()**: after every state update, the worker tells egui to
+  redraw. The main thread checks `bars_version` on each frame — if it changed,
+  it rebuilds the chart data from shared state.
+
+- **spawn_blocking for DuckDB**: DuckDB's C API is synchronous. All DuckDB
+  queries run inside `tokio::task::spawn_blocking`, which moves the blocking
+  work to a dedicated thread pool. This keeps the tokio runtime responsive
+  for other async tasks (HTTP fetches, timers).
+
+The worker thread owns the tokio runtime. It's created with `std::thread::spawn`,
+then immediately calls `rt.block_on(async { ... })` to enter an async event
+loop. This is a common pattern when the outer application framework (eframe) is
+not async-aware.
+
+## Data pipeline: from user click to chart
+
+When you type `600519`, select `1d`, and click "Fetch", here's what happens:
 
 ```
-tokio runtime (current_thread)
-  ├─ 1. EastMoneyProvider::search_all_symbols  → enumerate stocks
-  ├─ 2. EastMoneyProvider::fetch_stock_basic   → stock_basic table
-  ├─ 3. DuckDbProvider::get_stored_range        → gap detection
-  ├─ 4. EastMoneyProvider::fetch_bars            → OHLCV chunks
-  └─ 5. DuckDbProvider::save_stock_daily         → staging.duckdb
+UI (CompassApp::update)
+  │  user clicks "Fetch"
+  │  cmd_tx.send(Cmd::FetchBars { symbol: "600519", timeframe: "1d", ... })
+  │
+  ▼
+Worker thread (start_worker_thread)
+  │  cmd_rx.recv() → Cmd::FetchBars
+  │  state.loading = true
+  │
+  ▼
+CachedProvider::fetch_bars("600519", "1d", start, end)
+  │
+  ├─ 1. Check negative cache → is this symbol known to have no data? (TTL 7d)
+  │     If yes → return DataError::NoData immediately (no HTTP call)
+  │
+  ├─ 2. Check inflight dedup → is another fetch for this same symbol already running?
+  │     If yes → return NoData (caller will retry or ignore)
+  │
+  ├─ 3. Try DuckDB cache → SELECT FROM stock_daily WHERE symbol='600519'
+  │     If non-empty result → cache hit! Return bars. No remote call.
+  │
+  ├─ 4. Cache miss → EastMoneyProvider::fetch_bars()
+  │     HTTP GET to push2his.eastmoney.com → parse JSON → Vec<Bar>
+  │
+  ├─ 5. If successful → DuckDbProvider::save_bars() (write-through to cache)
+  │     If NoData → mark negative cache (skip this symbol for 7 days)
+  │
+  └─ 6. Clear inflight, return bars to worker
+  │
+  ▼
+Worker updates CompassState
+  │  state.set_bars("600519", "1d", bars)
+  │  bars_version++  (UI detects this change next frame)
+  │  state.loading = false
+  │  ctx.request_repaint()
+  │
+  ▼
+UI (next frame)
+  │  detects bars_version changed
+  │  rebuilds BarData from state.bars
+  │  draws candlestick chart
 ```
 
-### Import pipeline (Dolt → Parquet)
+### Why read-through cache?
+
+The CachedProvider pattern is "check local first, fetch remote on miss, write
+back to local." This gives three benefits:
+
+1. **Instant replay**: after the first fetch, repeated views of the same stock
+   load from DuckDB — no network, no rate limiting.
+2. **Offline capability**: once cached, you can view charts without internet.
+3. **API respect**: fewer HTTP calls to EastMoney means fewer chances of being
+   rate-limited or blocked.
+
+### Why negative cache?
+
+EastMoney returns `{"data": null}` for stocks that don't exist or delisted
+stocks. Without negative caching, every "Fetch" click would hit the API, get
+null, and waste a request. With negative caching (TTL 7 days), the first miss
+marks the symbol; subsequent fetches within 7 days return NoData instantly.
+
+### Why inflight dedup?
+
+If the user clicks "Fetch" twice before the first request completes, two
+identical HTTP calls would race. Inflight dedup tracks which
+(symbol, timeframe) pairs currently have an active request. The second click
+returns NoData instead of starting a duplicate fetch.
+
+## Data pipeline: CLI (compass-data)
+
+The CLI manages data offline, before the GUI ever runs. It has four subcommands
+that form a pipeline:
 
 ```
-dolt CLI (CSV export)
-  ├─ 1. SELECT DISTINCT symbol → symbol list
-  ├─ 2. Per-symbol: SELECT → CSV → DuckDB → Parquet
-  └─ 3. Stock basic → stock_basic.parquet
+EastMoney API ──download──► staging.duckdb ──merge──► parquet_data/ ──export──► compass.duckdb
+Dolt DB ───────import─────► parquet_data/
 ```
 
-### Merge pipeline (staging → Parquet)
+### download: EastMoney → staging
+- Enumerates all A-share symbols via EastMoney search API
+- Fetches stock basic info (name, industry, list date)
+- Detects gaps (compares existing data range with requested range)
+- Downloads OHLCV bars in chunks (max 2000 bars per request)
+- Rate-limited: configurable concurrency (default 2) and delay between requests (default 1s)
+- Writes to staging DuckDB via INSERT OR IGNORE (skip duplicates by default)
+
+### import: Dolt → Parquet
+- Queries Dolt `investment_data` database via `dolt sql -r csv`
+- Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
+- Strips exchange prefixes (SZ000001 → 000001)
+- Converts to Parquet via DuckDB's COPY TO PARQUET
+- One Parquet file per symbol: `parquet_data/stock_daily/000001.parquet`
+- Merge mode (default): existing data preserved, only new dates added
+- Overwrite mode: full replacement from Dolt
+
+### merge: staging → Parquet
+- Lists symbols in staging DuckDB not yet in Parquet
+- For each new symbol: COPY staging → Parquet file
+- Incremental: only moves data for symbols that don't already exist
+
+### export: Parquet → other formats
+- Reads parquet_data/ directory
+- Exports to DuckDB, CSV, or parquet-dir format
+- Used to create the final database the GUI reads from
+
+**Default behavior everywhere**: merge/skip. Existing data is preserved; only
+new data is added. Pass `--overwrite` to replace. This migration-style behavior
+prevents accidental data loss.
+
+## Storage strategy: why both DuckDB and Parquet?
 
 ```
-DuckDB staging
-  ├─ 1. List symbols in staging DuckDB
-  ├─ 2. For each symbol NOT already in Parquet:
-  └─ 3. COPY staging → parquet_data/stock_daily/{symbol}.parquet
+Compass uses two database formats for different purposes:
+
+  Parquet files (parquet_data/)
+    ├─ Source of truth — the canonical data store
+    ├─ Stock basic: stock_basic.parquet (one file for all symbols)
+    └─ Stock daily: stock_daily/{symbol}.parquet (one file per symbol)
+
+  DuckDB (compass.db / staging.duckdb)
+    ├─ GUI cache — stores fetched bars for instant replay
+    ├─ CLI staging — temporary buffer during download
+    └─ Negative cache — tracks no-data symbols with TTL
 ```
 
-## CachedProvider
+### Why Parquet as source of truth?
 
-Read-through cache composition (`crates/compass-core/src/data/mod.rs`):
+- **Columnar**: DuckDB queries only read the columns they need (e.g., `SELECT
+  close` reads only the close column). Much faster than row-based formats for
+  analytical queries across thousands of bars.
+- **Partitioned by symbol**: each stock is one file. Adding a new stock is a
+  new file — no table rebuilds. Deleting is `rm`.
+- **Queryable**: DuckDB's `read_parquet()` function lets us query Parquet files
+  directly with SQL, without loading them into tables.
+- **Portable**: Parquet is an open standard. You can open it with Python
+  (pandas, polars), R, or any DuckDB instance. No vendor lock-in.
+- **Compact**: columnar compression reduces storage. 6000+ stocks × 30 years ≈
+  manageable disk footprint.
 
-```
-CachedProvider { reader: EastMoneyProvider, cache: DuckDbProvider }
-    │
-    ├── fetch_bars() → 1. cache.fetch_bars()       → if hit AND non-empty, return
-    │                  2. reader.fetch_bars()       → call EastMoney HTTP API
-    │                  3. cache.save_bars()         → write to DuckDB (stock_daily)
-    │                  4. return bars
-    ├── NegativeCache  → marks (symbol, timeframe) pairs as no-data (TTL 7d)
-    └── Inflight dedup → prevents duplicate concurrent fetches
-```
+### Why DuckDB for caching and staging?
 
-Cache hit requires bars to be **non-empty**. An empty result from DuckDB
-means "not cached" — we do NOT return zero bars to the caller.
+- **Write-friendly**: INSERT OR REPLACE/IGNORE semantics; automatic primary key
+  conflict handling. Parquet is append-only and harder to update.
+- **In-memory mode**: tests use `DuckDbProvider::new_in_memory()` for fully
+  isolated databases with zero cleanup.
+- **Bundled**: the `duckdb` crate bundles the C library — no system dependency.
+- **OLAP-optimized**: DuckDB is built for analytical workloads (aggregations,
+  window functions, time-series queries), which maps perfectly to stock data.
 
-## Source layout
+### The read path
 
-```
-crates/
-├── compass-core/               # Library (compass-core)
-│   ├── src/
-│   │   ├── lib.rs              # pub mod data; pub mod model;
-│   │   ├── model.rs            # Cmd, CompassState, AppConfig, SymbolInfo, RealtimeQuote, AdjFactor, StockBasic
-│   │   └── data/
-│   │       ├── mod.rs          # CachedProvider<R, C> (read-through cache)
-│   │       ├── provider.rs     # DataProvider + DataWriter + NegativeCache traits, DataError
-│   │       ├── duckdb.rs       # DuckDbProvider (4-table schema)
-│   │       ├── eastmoney.rs    # EastMoneyProvider (HTTP fetch, search, realtime)
-│   │       ├── parquet.rs      # ParquetReader (DuckDB read_parquet)
-│   │       ├── symbol.rs       # to_exchange(), to_ts_code()
-│   │       └── synthetic.rs    # Synthetic test data generator
-│   └── tests/
-│       └── integration_test.rs
-├── compass/                    # GUI binary
-│   └── src/main.rs             # eframe bootstrap, worker thread, logging, config
-└── compass-data/               # CLI binary
-    └── src/
-        ├── main.rs             # clap subcommand dispatch
-        ├── download.rs         # download: EastMoney → staging DuckDB
-        ├── import_dolt.rs      # import: Dolt CSV → Parquet
-        ├── merge.rs            # merge: staging DuckDB → Parquet (incremental)
-        ├── export.rs           # export: Parquet → DuckDB / other formats
-        ├── baostock.rs         # Baostock Python subprocess for adj_factor
-        ├── chunk.rs            # Date range chunk splitting (max 2000 days)
-        ├── progress.rs         # indicatif progress bar
-        └── retry.rs            # fetch_with_retry (exponential backoff)
-Cargo.toml                      # workspace root — shared dependencies
-```
+The GUI reads from Parquet via `ParquetReader` when available (after import),
+and uses DuckDB as a read-through cache. The CLI writes to DuckDB staging first,
+then merges into Parquet. This two-tier design separates the concerns of "fast
+writes and caching" (DuckDB) from "durable, queryable storage" (Parquet).
 
-## DuckDB schema (staging, 4 tables + negative cache)
+## Symbol convention: why bare 6-digit codes?
 
-Core OHLCV table — keyed by `(symbol, trade_date)`:
+Every stock in Compass is identified by a bare 6-digit code: `"000001"`,
+`"600519"`, `"836149"`. No exchange suffix, no prefix.
 
-```sql
-CREATE TABLE IF NOT EXISTS stock_daily (
-    symbol      VARCHAR NOT NULL,      -- 6-digit stock code: '000001', '600519'
-    trade_date  DATE NOT NULL,
-    open        DOUBLE,
-    high        DOUBLE,
-    low         DOUBLE,
-    close       DOUBLE,
-    adjclose    DOUBLE,                -- adjustment close from Dolt
-    volume      DOUBLE,                -- 成交量 (手)
-    amount      DOUBLE,                -- 成交额 (元)
-    PRIMARY KEY (symbol, trade_date)
-);
-```
+### Why not ts_code format?
 
-Adjustment factors:
+The older format `"000001.SZ"` mixes identity (the code) with metadata (the
+exchange). This causes problems:
 
-```sql
-CREATE TABLE IF NOT EXISTS stock_adj_factor (
-    symbol      VARCHAR NOT NULL,
-    trade_date  DATE NOT NULL,
-    adj_factor  DOUBLE NOT NULL,
-    PRIMARY KEY (symbol, trade_date)
-);
-```
+- A single stock can have different formats depending on context
+- Parsing requires splitting on `.` and handling edge cases
+- Exchange can be **inferred from the code itself** — the suffix is redundant
 
-Stock basic info (name, exchange, listing date):
+We retired `ts_code` from the schema. The `to_ts_code()` function still exists
+for backward compatibility but is no longer used as a primary key.
 
-```sql
-CREATE TABLE IF NOT EXISTS stock_basic (
-    symbol      VARCHAR PRIMARY KEY,
-    name        VARCHAR,
-    area        VARCHAR,
-    industry    VARCHAR,
-    market      VARCHAR,
-    exchange    VARCHAR,
-    list_date   DATE,
-    delist_date DATE
-);
+### Exchange inference
+
+Since codes are unique across exchanges in practice, we use heuristic rules:
+
+| Code starts with | Exchange |
+|---|---|
+| `6` | Shanghai (SH) |
+| `8` | Beijing (BJ) |
+| Anything else | Shenzhen (SZ) |
+
+For the rare ambiguous cases (e.g., `000001` could be 平安银行 SZ or 上证指数 SH),
+use explicit prefixes: `sh.000001` for the index, plain `000001` for the stock
+(which defaults to SZ — stocks are the common case).
+
+See `kb/design/symbols.md` for the complete market segment breakdown and
+EastMoney secid mapping.
+
+## Config system
+
+Compass loads config from `~/.config/compass/config.toml` on startup. All
+fields are optional — missing keys fall back to sensible defaults defined in
+`AppConfig::default()`.
+
+```toml
+[database]
+path = "compass.db"           # where to store the cache
+
+[api]
+base_url = "https://push2his.eastmoney.com"
+timeout_secs = 10
+retry_count = 3
+
+[app]
+default_symbol = "000001"     # what to show on startup
+default_timeframe = "1d"
 ```
 
-Price limits (涨停/跌停):
+The config path is `$HOME/.config/compass/config.toml`. If the file doesn't
+exist or can't be parsed, the app starts with all defaults — no manual setup
+required.
 
-```sql
-CREATE TABLE IF NOT EXISTS stock_limit (
-    symbol      VARCHAR NOT NULL,
-    trade_date  DATE NOT NULL,
-    up_limit    DOUBLE,
-    down_limit  DOUBLE,
-    PRIMARY KEY (symbol, trade_date)
-);
+## Logging
+
+Logs go to **two sinks** simultaneously:
+
+1. **stderr** — always; level controlled by `RUST_LOG` env var
+2. **`logs/compass.log`** — daily rolling file with ANSI stripped
+
+```sh
+RUST_LOG=debug cargo run    # verbose: see every HTTP request, DuckDB query
+RUST_LOG=info cargo run     # normal: state transitions, fetch counts, errors
+RUST_LOG=warn cargo run     # quiet: only problems
 ```
 
-Negative cache (TTL-managed no-data marks):
+The file appender uses `tracing-appender`'s daily rotation — each day gets a
+new file (`compass.log.2025-07-23`), and the current day is always
+`compass.log`.
 
-```sql
-CREATE TABLE IF NOT EXISTS no_data_marks (
-    symbol TEXT NOT NULL, timeframe TEXT NOT NULL,
-    last_checked BIGINT NOT NULL,
-    PRIMARY KEY (symbol, timeframe)
-);
-```
+## Library decisions
 
-## Parquet schema (main database)
+Every library choice in Compass was deliberate. Here's why each one was chosen:
 
-```
-parquet_data/
-├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date
-└── stock_daily/
-    ├── 000001.parquet         # One file per symbol
-    ├── 600519.parquet         # Columns: tradedate, open, high, low, close, adjclose, volume, amount
-    └── ...
-```
-
-Parquet files are the source of truth. DuckDB staging is a temporary buffer
-for EastMoney downloads before merging into Parquet.
-
-## symbol convention
-
-- Primary key is `symbol` — a 6-digit bare code: `"000001"`, `"600519"`, `"836149"`
-- Exchange is inferred from code ranges (`to_exchange()` in `crates/compass-core/src/data/symbol.rs`):
-  - `6xxxxx` → SH, `000xxx–004xxx` → SZ, `300xxx` → SZ, `8xxxxx` → BJ
-- `ts_code` format (`"000001.SZ"`) has been retired; the `to_ts_code()` helper
-  still exists for backward compatibility but is no longer used as a primary key
-
-## Commands (UI → Worker)
-
-```rust
-enum Cmd {
-    FetchBars { symbol, timeframe, range_start, range_end },
-    SearchSymbols { query },
-}
-```
-
-Lightweight structs only. Data flows back through `CompassState`, not through
-the channel response.
-
-## Libraries
-
-| # | Decision | Choice | Rationale |
+| # | Decision | Choice | Why |
 |---|---|---|---|
-| 1 | GUI | egui 0.33 + eframe 0.33 | Pure-Rust immediate-mode GUI |
-| 2 | Chart widget | egui-charts 0.2 | Candlestick chart support |
-| 3 | Async runtime | tokio (rt-multi-thread for GUI, current_thread for CLI) | reqwest requires tokio |
-| 4 | HTTP client | reqwest 0.12 (rustls-tls) | No openssl; 10s timeout; retry |
-| 5 | Database | duckdb 1.0 (bundled + parquet) | Columnar OLAP; Parquet read/write; no system lib needed |
-| 6 | DB threading | tokio::task::spawn_blocking + Arc<Mutex<>> | duckdb is sync; Mutex for exclusive access |
-| 7 | Serialization | serde + serde_json | EastMoney API returns JSON |
-| 8 | Time | chrono 0.4 (serde) | UTC timestamps; JSON parse |
-| 9 | Data errors | thiserror 2 | Precise error enum |
-| 10 | App errors | anyhow 1 | Context wrapping |
-| 11 | Logging | tracing + subscriber + appender | Structured, daily rolling files |
-| 12 | Async trait | async-trait 0.1 | Native async trait not stable |
-| 13 | Config | toml → ~/.config/compass/config.toml | Fallback defaults |
-| 14 | CLI args | clap 4 (derive) | compass-data binary |
-| 15 | Progress | indicatif 0.17 | Spinner + progress bar for CLI |
-| 16 | Concurrency | futures 0.3 (Semaphore + buffer_unordered) | Bounded parallelism for CLI |
-| 17 | Threading | Main=egui, Worker=tokio | Non-async eframe |
-| 18 | State sharing | Arc<Mutex<CompassState>> | Not RefCell; Mutex > RwLock here |
-| 19 | Commands | std::sync::mpsc | Lightweight, data via state |
-| 20 | Data abstraction | DataProvider + DataWriter + NegativeCache traits | DuckDB-first, fallback, auto-cache |
-| 21 | Parquet storage | ParquetReader + COPY TO PARQUET | Columnar, partitioned by symbol, queryable by DuckDB |
-| 22 | Dolt import | dolt CLI CSV → DuckDB → Parquet | Offline bulk import of investment_data |
+| 1 | GUI framework | egui 0.33 + eframe | Pure-Rust immediate-mode GUI. No HTML/CSS/JS, no webview dependency. Compiles to a single native binary. |
+| 2 | Chart widget | egui-charts 0.2 | Candlestick chart with built-in pan, zoom, crosshair. Matches the egui ecosystem. |
+| 3 | Async runtime | tokio (rt-multi-thread) | reqwest requires tokio. Multi-thread runtime lets the worker handle concurrent fetches. CLI uses current_thread for simplicity. |
+| 4 | HTTP client | reqwest 0.12 (rustls-tls) | No OpenSSL dependency (rustls). Configurable timeout + retry. JSON deserialization built in. |
+| 5 | Database | duckdb 1.0 (bundled) | OLAP-optimized columnar engine. Reads/writes Parquet natively. The `bundled` feature ships the C library — no system duckdb required. |
+| 6 | DB threading | spawn_blocking + Arc<Mutex<>> | DuckDB is synchronous C. `spawn_blocking` moves queries to a thread pool so they don't block the async runtime. Mutex ensures exclusive connection access. |
+| 7 | Serialization | serde + serde_json | EastMoney API returns JSON. serde derives on all data types. |
+| 8 | Time handling | chrono 0.4 | UTC timestamps, date arithmetic (range_start/end calculation), JSON parse support. |
+| 9 | Error types | thiserror 2 (library), anyhow 1 (binaries) | Precise `DataError` enum with `From` impls for `?` propagation in the library. `anyhow` for context-wrapping in binary entry points. |
+| 10 | Logging | tracing + subscriber + appender | Structured, async, level-filtered. Daily rolling files via tracing-appender. |
+| 11 | Async traits | async-trait 0.1 | Native async traits in Rust are still unstable. This macro is the standard workaround. |
+| 12 | Config | toml → Deserialize | Simple, readable format. `#[serde(default)]` on every field means partial configs work. |
+| 13 | CLI args | clap 4 (derive) | Derive macro generates the CLI parser from a struct. Type-safe, self-documenting. |
+| 14 | Progress bars | indicatif 0.17 | Spinner + progress bar for long-running CLI operations (download, import). |
+| 15 | Concurrency | futures Semaphore + buffer_unordered | Bounded parallelism for CLI download. Semaphore caps concurrent requests; buffer_unordered preserves order while processing results as they arrive. |
+| 16 | State sharing | Arc<Mutex<CompassState>> | Shared between UI and worker threads. Mutex chosen over RwLock — critical sections are short, no write starvation risk. |
+| 17 | Command channel | std::sync::mpsc | Simple, well-understood. Lightweight commands flow one way; results flow back through shared state, not the channel. |
+| 18 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction lets us swap backends: DuckDB, EastMoney, Parquet — all behind the same interface. Testable with mock implementations. |
+| 19 | Parquet storage | DuckDB read_parquet + COPY TO | Columnar format partitioned by symbol. Queryable without loading into tables. |
+| 20 | Dolt import | dolt CLI → CSV → DuckDB → Parquet | Offline bulk import of 18M+ rows. Uses the dolt binary directly (no library binding). |
+
+## Where to go next
+
+- **Data providers**: `kb/design/data-providers.md` — the trait system and each
+  provider implementation in depth
+- **Symbols**: `kb/design/symbols.md` — market segments, code conversion,
+  timeframe mapping
+- **API reference**: `cargo doc --open` — full type-level documentation for
+  all public APIs

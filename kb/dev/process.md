@@ -178,6 +178,27 @@ same commit. AGENTS.md must be updated if the architecture overview changes.
 | Workflow, hooks, conventions | `kb/dev/process.md` |
 | Project-level conventions | `AGENTS.md` |
 
+### Documentation conventions
+
+**kb/design/ files must use narrative, developer-onboarding style.**
+A reader new to the project should understand not just _what_ but _why_.
+Every design decision must be accompanied by its rationale: the problem
+it solves, the alternatives considered, the trade-offs accepted.
+
+**API reference belongs in `cargo doc`, not kb/.**
+Use `///` doc comments on public types, traits, and functions.
+`kb/design/` explains design intent and architecture; `cargo doc`
+handles the precise API surface. The two complement each other —
+kb/ tells the story, rustdoc provides the reference.
+
+**Never hardcode version numbers in kb/.** `Cargo.toml` is the single
+source of truth for dependency versions. kb/ docs may mention crate
+names and their purpose, but not `= "0.25"`.
+
+**AGENTS.md is an index, not a duplicate.** It points at kb/ files
+with one-line summaries. Full explanation lives in kb/, never repeated
+in AGENTS.md.
+
 ## TDD workflow
 
 Feature and bugfix work follows TDD (Test-Driven Development):

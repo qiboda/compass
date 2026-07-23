@@ -76,9 +76,9 @@ Detailed docs under `kb/` — organized into two sections:
 
 | File | Content |
 |---|---|
-| `kb/design/architecture.md` | Threading model, data pipeline, CachedProvider, schema, source layout, libraries |
-| `kb/design/symbols.md` | A-share market segments, `to_secid()` prefix/fallback logic, timeframe mapping |
-| `kb/design/data-providers.md` | EastMoney HTTP, DuckDB, Dolt, ParquetReader, DataError |
+| `kb/design/architecture.md` | System overview, crate relationships, threading rationale, data pipeline flows, storage strategy, library decisions |
+| `kb/design/data-providers.md` | Trait system design, CachedProvider read-through pattern, EastMoney/DuckDB/Parquet providers, error handling |
+| `kb/design/symbols.md` | A-share market segments, symbol convention rationale, exchange inference, secid mapping, timeframe handling |
 | `kb/dev/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
 | `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
