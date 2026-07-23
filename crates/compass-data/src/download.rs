@@ -24,6 +24,7 @@ pub async fn run(
     end_date: Option<String>,
     base_url: String,
     realtime_url: String,
+    overwrite: bool,
 ) {
     let end_date_str = end_date.unwrap_or_else(yesterday_yyyymmdd);
 
@@ -41,11 +42,7 @@ pub async fn run(
         .build()
         .expect("failed to build reqwest client");
 
-    let eastmoney = EastMoneyProvider::new(
-        http_client,
-        base_url.clone(),
-        realtime_url.clone(),
-    );
+    let eastmoney = EastMoneyProvider::new(http_client, base_url.clone(), realtime_url.clone());
     let db = Arc::new(
         DuckDbProvider::new(db_path.to_str().expect("db path must be valid UTF-8"))
             .expect("failed to open DuckDB"),
@@ -99,7 +96,7 @@ pub async fn run(
 
     // Pre-populate stock_basic table from batch
     for (code, basic) in &stock_basics {
-        if let Err(e) = db.upsert_stock_basic(basic).await {
+        if let Err(e) = db.upsert_stock_basic(basic, overwrite).await {
             tracing::warn!(%code, error = %e, "failed to upsert stock_basic from batch");
         }
     }
@@ -128,6 +125,7 @@ pub async fn run(
                     &delay_ms,
                     &progress,
                     &stock_basics,
+                    overwrite,
                 )
                 .await
             }
@@ -186,6 +184,7 @@ async fn process_symbol(
     delay_ms: &u64,
     progress: &DownloadProgress,
     stock_basics: &std::collections::HashMap<String, StockBasic>,
+    overwrite: bool,
 ) -> (String, Result<usize, String>) {
     let code = &info.code;
 
@@ -193,13 +192,13 @@ async fn process_symbol(
 
     // 1. Upsert stock_basic (check batch result first, fall back to HTTP)
     if let Some(stock_basic) = stock_basics.get(code) {
-        if let Err(e) = db.upsert_stock_basic(stock_basic).await {
+        if let Err(e) = db.upsert_stock_basic(stock_basic, overwrite).await {
             tracing::warn!(%code, error = %e, "failed to upsert stock_basic from batch");
         }
     } else {
         match eastmoney.fetch_stock_basic(code).await {
             Ok(stock_basic) => {
-                if let Err(e) = db.upsert_stock_basic(&stock_basic).await {
+                if let Err(e) = db.upsert_stock_basic(&stock_basic, overwrite).await {
                     tracing::warn!(%code, error = %e, "failed to upsert stock_basic");
                 }
             }
@@ -215,7 +214,7 @@ async fn process_symbol(
                     list_date: None,
                     delist_date: None,
                 };
-                if let Err(e2) = db.upsert_stock_basic(&minimal).await {
+                if let Err(e2) = db.upsert_stock_basic(&minimal, overwrite).await {
                     tracing::warn!(%code, error = %e2, "failed to upsert minimal stock_basic");
                 }
             }
@@ -321,7 +320,7 @@ async fn process_symbol(
             total_bars += count;
 
             // Save to DuckDB
-            if let Err(e) = db.save_stock_daily(code, &records).await {
+            if let Err(e) = db.save_stock_daily(code, &records, overwrite).await {
                 return (
                     code.clone(),
                     Err(format!(
@@ -365,7 +364,10 @@ mod tests {
     #[test]
     fn yyyymmdd_to_utc_handles_leap_year() {
         let dt = yyyymmdd_to_utc("20240229");
-        assert_eq!(dt.date_naive(), NaiveDate::from_ymd_opt(2024, 2, 29).unwrap());
+        assert_eq!(
+            dt.date_naive(),
+            NaiveDate::from_ymd_opt(2024, 2, 29).unwrap()
+        );
     }
 
     #[test]
@@ -398,22 +400,35 @@ mod tests {
             when.method(httpmock::Method::GET)
                 .path("/api/qt/stock/kline/get")
                 .query_param("secid", "0.000001");
-            then.status(200).header("content-type", "application/json").json_body(serde_json::json!({
-                "data": {"klines": [
-                    kline_csv("2024-01-02", 10.0, 10.5, 11.0, 9.5, 1000.0),
-                    kline_csv("2024-01-03", 10.5, 11.0, 11.5, 10.0, 2000.0),
-                ]}
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {"klines": [
+                        kline_csv("2024-01-02", 10.0, 10.5, 11.0, 9.5, 1000.0),
+                        kline_csv("2024-01-03", 10.5, 11.0, 11.5, 10.0, 2000.0),
+                    ]}
+                }));
         });
 
-        let info = SymbolInfo { code: "000001".into(), name: "平安银行".into() };
+        let info = SymbolInfo {
+            code: "000001".into(),
+            name: "平安银行".into(),
+        };
         let progress = DownloadProgress::new(1);
         let basics = std::collections::HashMap::new();
 
         let (code, result) = process_symbol(
-            db.clone(), &eastmoney, &info,
-            "20240101", "20240105", &0, &progress, &basics,
-        ).await;
+            db.clone(),
+            &eastmoney,
+            &info,
+            "20240101",
+            "20240105",
+            &0,
+            &progress,
+            &basics,
+            true,
+        )
+        .await;
 
         assert_eq!(code, "000001");
         let bars = result.expect("should succeed");
@@ -432,32 +447,52 @@ mod tests {
 
         // Pre-populate stock_basic via batch map — no HTTP mock needed for basic
         let mut basics = std::collections::HashMap::new();
-        basics.insert("000001".to_string(), StockBasic {
-            symbol: "000001".into(), name: "平安银行".into(),
-            area: None, industry: None, market: None,
-            exchange: Some("SZ".into()),
-            list_date: None, delist_date: None,
-        });
+        basics.insert(
+            "000001".to_string(),
+            StockBasic {
+                symbol: "000001".into(),
+                name: "平安银行".into(),
+                area: None,
+                industry: None,
+                market: None,
+                exchange: Some("SZ".into()),
+                list_date: None,
+                delist_date: None,
+            },
+        );
 
         // Mock K-line API
         let _m_kline = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
                 .path("/api/qt/stock/kline/get")
                 .query_param("secid", "0.000001");
-            then.status(200).header("content-type", "application/json").json_body(serde_json::json!({
-                "data": {"klines": [
-                    kline_csv("2024-06-01", 1500.0, 1510.0, 1520.0, 1490.0, 500.0),
-                ]}
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {"klines": [
+                        kline_csv("2024-06-01", 1500.0, 1510.0, 1520.0, 1490.0, 500.0),
+                    ]}
+                }));
         });
 
-        let info = SymbolInfo { code: "000001".into(), name: "平安银行".into() };
+        let info = SymbolInfo {
+            code: "000001".into(),
+            name: "平安银行".into(),
+        };
         let progress = DownloadProgress::new(1);
 
         let (code, result) = process_symbol(
-            db.clone(), &eastmoney, &info,
-            "20240601", "20240602", &0, &progress, &basics,
-        ).await;
+            db.clone(),
+            &eastmoney,
+            &info,
+            "20240601",
+            "20240602",
+            &0,
+            &progress,
+            &basics,
+            true,
+        )
+        .await;
 
         assert_eq!(code, "000001");
         assert_eq!(result.unwrap(), 1);
@@ -474,20 +509,38 @@ mod tests {
         let d = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
         let record = DailyRecord {
             trade_date: d,
-            open: 10.0, high: 11.0, low: 9.0, close: 10.5,
-            adjclose: 10.5, volume: 1000.0, amount: 0.0,
+            open: 10.0,
+            high: 11.0,
+            low: 9.0,
+            close: 10.5,
+            adjclose: 10.5,
+            volume: 1000.0,
+            amount: 0.0,
         };
-        db.save_stock_daily("000001", &[record]).await.expect("save");
+        db.save_stock_daily("000001", &[record], true)
+            .await
+            .expect("save");
 
         // No API mocks needed — symbol is already covered
-        let info = SymbolInfo { code: "000001".into(), name: "平安银行".into() };
+        let info = SymbolInfo {
+            code: "000001".into(),
+            name: "平安银行".into(),
+        };
         let progress = DownloadProgress::new(1);
         let basics = std::collections::HashMap::new();
 
         let (code, result) = process_symbol(
-            db.clone(), &eastmoney, &info,
-            "20240301", "20240301", &0, &progress, &basics,
-        ).await;
+            db.clone(),
+            &eastmoney,
+            &info,
+            "20240301",
+            "20240301",
+            &0,
+            &progress,
+            &basics,
+            true,
+        )
+        .await;
 
         assert_eq!(code, "000001");
         assert_eq!(result.unwrap(), 0); // zero new bars
@@ -506,11 +559,13 @@ mod tests {
             when.method(httpmock::Method::GET)
                 .path("/api/qt/clist/get")
                 .query_param("fs", fs);
-            then.status(200).header("content-type", "application/json").json_body(serde_json::json!({
-                "data": {"diff": [
-                    {"f12": "000001", "f14": "平安银行", "f100": "", "f124": -1, "f102": ""},
-                ]}
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {"diff": [
+                        {"f12": "000001", "f14": "平安银行", "f100": "", "f124": -1, "f102": ""},
+                    ]}
+                }));
         });
 
         // Mock K-line for 000001
@@ -518,17 +573,25 @@ mod tests {
             when.method(httpmock::Method::GET)
                 .path("/api/qt/stock/kline/get")
                 .query_param("secid", "0.000001");
-            then.status(200).header("content-type", "application/json").json_body(serde_json::json!({
-                "data": {"klines": [kline_csv("2024-03-01", 10.0, 10.5, 11.0, 9.5, 1000.0)]}
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!({
+                    "data": {"klines": [kline_csv("2024-03-01", 10.0, 10.5, 11.0, 9.5, 1000.0)]}
+                }));
         });
 
         super::run(
-            "000001".to_string(), db_path.clone(),
-            1, 0,
-            "20240301".to_string(), Some("20240302".to_string()),
-            mock_url.clone(), mock_url,
-        ).await;
+            "000001".to_string(),
+            db_path.clone(),
+            1,
+            0,
+            "20240301".to_string(),
+            Some("20240302".to_string()),
+            mock_url.clone(),
+            mock_url,
+            true,
+        )
+        .await;
 
         let db = DuckDbProvider::new(db_path.to_str().unwrap()).expect("open");
         let range = db.get_stored_range("000001").await.expect("range");

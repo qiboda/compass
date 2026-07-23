@@ -133,16 +133,20 @@ RUST_LOG=debug cargo run        # verbose logging
 # Download from EastMoney to staging DuckDB
 cargo run --bin compass-data -- download --symbols "000001,600519"
 cargo run --bin compass-data -- download --symbols all --concurrency 2 --delay-ms 2000
+cargo run --bin compass-data -- download --symbols all --overwrite  # force overwrite
 
 # Import from Dolt into Parquet main database
 cargo run --bin compass-data -- import
 cargo run --bin compass-data -- import --limit 100
+cargo run --bin compass-data -- import --overwrite  # full replace (skip merge)
 
 # Merge staging DuckDB into Parquet
 cargo run --bin compass-data -- merge
+cargo run --bin compass-data -- merge --overwrite   # staging wins on conflict
 
 # Export Parquet to DuckDB
 cargo run --bin compass-data -- export
+cargo run --bin compass-data -- export --overwrite  # force overwrite
 
 # Full help
 cargo run --bin compass-data -- --help
@@ -179,12 +183,29 @@ same commit. AGENTS.md must be updated if the architecture overview changes.
 Feature and bugfix work follows TDD (Test-Driven Development):
 
 ```
-RED → GREEN → REFACTOR
+DESIGN TESTS → RED → GREEN → REFACTOR
 ```
+
+0. **DESIGN TESTS**: Write a **test case document** (inline comment block in the test
+   module or a separate `#[doc]` block) listing every scenario the tests must cover:
+
+   ```
+   // Test cases:
+   // 1. Normal input — returns expected result
+   // 2. Empty input — returns empty/default
+   // 3. Boundary values — min/max handled correctly
+   // 4. Error paths — invalid input produces proper error
+   // 5. Edge cases — null/missing fields, very large values, etc.
+   ```
+
+   This ensures test coverage is comprehensive and prevents blind-spot bugs.
+   The test case list serves as a checklist — every item must have at least one
+   corresponding `#[test]` or `#[case]` before the implementation is considered done.
 
 1. **RED**: Write a failing test that documents the expected behavior.
    - Test must fail before any implementation code exists.
    - If it passes immediately, delete or rewrite — it's testing nothing.
+   - Verify each scenario from the test case document is covered.
 2. **GREEN**: Write the minimal implementation to make the test pass.
 3. **REFACTOR**: Clean up the code while keeping tests green.
 

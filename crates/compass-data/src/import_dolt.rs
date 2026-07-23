@@ -52,6 +52,9 @@ pub fn run(
     output: PathBuf,
     limit: usize,
     symbols_filter: Option<&str>,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+    overwrite: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&output)?;
 
@@ -83,6 +86,20 @@ pub fn run(
     } else {
         symbols.len()
     };
+    let date_filter = match (start_date, end_date) {
+        (Some(s), Some(e)) => format!("AND tradedate >= '{s}' AND tradedate <= '{e}'"),
+        (Some(s), None) => format!("AND tradedate >= '{s}'"),
+        (None, Some(e)) => format!("AND tradedate <= '{e}'"),
+        (None, None) => String::new(),
+    };
+
+    if start_date.is_some() || end_date.is_some() {
+        info!(
+            "Date filter: {}..={}",
+            start_date.unwrap_or("min"),
+            end_date.unwrap_or("max")
+        );
+    }
     info!("Found {} symbols, exporting {}...", symbols.len(), total);
 
     // ------------------------------------------------------------------
@@ -122,15 +139,14 @@ pub fn run(
     let work_dir = std::env::temp_dir().join("compass_parquet_work");
     std::fs::create_dir_all(&work_dir)?;
 
-    for symbol in symbols.iter().take(total) {
+    for (i, symbol) in symbols.iter().take(total).enumerate() {
         let code = strip_prefix(symbol);
         pb.set_message(code.to_string());
 
-        // Fetch CSV for this symbol
         let query = format!(
             "SELECT tradedate, open, high, low, close, adjclose, volume, amount \
              FROM final_a_stock_eod_price \
-             WHERE symbol = '{symbol}' \
+             WHERE symbol = '{symbol}' {date_filter} \
              ORDER BY tradedate"
         );
         let csv_data = match run_dolt_sql(&dolt_dir, &query) {
@@ -156,17 +172,60 @@ pub fn run(
             std::fs::create_dir_all(parent)?;
         }
 
-        let sql = format!(
-            "COPY (SELECT * FROM read_csv('{}', header=true)) TO '{}' (FORMAT PARQUET)",
-            csv_path.display(),
-            parquet_path.display(),
-        );
-        if let Err(e) = duck.execute_batch(&sql) {
-            warn!("DuckDB export failed for {code}: {e}");
+        if !overwrite && parquet_path.exists() {
+            // Merge: keep existing data (priority 1), only add new dates from Dolt (priority 2)
+            let tmp_path = work_dir.join(format!("{code}.tmp.parquet"));
+            let sql = format!(
+                "COPY (
+                    SELECT tradedate, open, high, low, close, adjclose, volume, amount
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (PARTITION BY tradedate ORDER BY priority) AS rn
+                        FROM (
+                            SELECT tradedate, open, high, low, close, adjclose, volume, amount, 1 AS priority
+                            FROM read_parquet('{}')
+                            UNION ALL
+                            SELECT tradedate, open, high, low, close, adjclose, volume, amount, 2
+                            FROM read_csv('{}', header=true)
+                        )
+                    ) WHERE rn = 1
+                    ORDER BY tradedate
+                ) TO '{}' (FORMAT PARQUET)",
+                parquet_path.display(),
+                csv_path.display(),
+                tmp_path.display(),
+            );
+            if let Err(e) = duck.execute_batch(&sql) {
+                warn!("DuckDB merge failed for {code}: {e}");
+            } else {
+                match std::fs::copy(&tmp_path, &parquet_path) {
+                    Ok(_) => (),
+                    Err(e) => warn!("copy temp parquet for {code}: {e}"),
+                }
+            }
+            let _ = std::fs::remove_file(&tmp_path);
+        } else {
+            // Full replace: write CSV directly to Parquet
+            let sql = format!(
+                "COPY (SELECT * FROM read_csv('{}', header=true)) TO '{}' (FORMAT PARQUET)",
+                csv_path.display(),
+                parquet_path.display(),
+            );
+            if let Err(e) = duck.execute_batch(&sql) {
+                warn!("DuckDB export failed for {code}: {e}");
+            }
         }
 
         let _ = std::fs::remove_file(&csv_path);
         pb.inc(1);
+
+        if (i + 1) % 100 == 0 || i + 1 == total {
+            info!(
+                "Progress: {}/{} symbols ({:.1}%)",
+                i + 1,
+                total,
+                (i + 1) as f64 / total as f64 * 100.0
+            );
+        }
     }
 
     // Remove temp work directory if empty

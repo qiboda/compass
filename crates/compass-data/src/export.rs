@@ -6,7 +6,7 @@ use compass_core::data::provider::{DataError, DataProvider};
 use tracing::{error, info, warn};
 
 /// Export Parquet data to another format.
-pub async fn run_export(input: PathBuf, format: String, output: PathBuf) {
+pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwrite: bool) {
     match format.as_str() {
         "duckdb" => {
             info!("Exporting Parquet → DuckDB: {}", output.display());
@@ -62,7 +62,7 @@ pub async fn run_export(input: PathBuf, format: String, output: PathBuf) {
                     })
                     .collect();
 
-                if let Err(e) = db.save_stock_daily(&info.code, &records).await {
+                if let Err(e) = db.save_stock_daily(&info.code, &records, overwrite).await {
                     warn!("save_stock_daily failed for {}: {}", info.code, e);
                 }
             }
@@ -154,7 +154,7 @@ mod tests {
         ];
 
         provider
-            .save_stock_daily("000001", &records)
+            .save_stock_daily("000001", &records, true)
             .await
             .expect("save_stock_daily failed");
 
@@ -196,6 +196,7 @@ mod tests {
                     volume: 100.0,
                     amount: 1000.0,
                 }],
+                true,
             )
             .await
             .expect("save_stock_daily failed");
@@ -221,10 +222,15 @@ mod tests {
             "CREATE TABLE t(tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);
              INSERT INTO t VALUES ('2024-01-02', 9, 11, 8, 10, 10, 1000, 0);",
         ).expect("create");
-        let pq_path = parquet_tmp.path().join("stock_daily").join("000001.parquet");
+        let pq_path = parquet_tmp
+            .path()
+            .join("stock_daily")
+            .join("000001.parquet");
         conn.execute_batch(&format!(
-            "COPY t TO '{}' (FORMAT PARQUET)", pq_path.display()
-        )).expect("copy");
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            pq_path.display()
+        ))
+        .expect("copy");
 
         let duckdb_tmp = tempfile::tempdir().expect("tempdir");
         let duckdb_path = duckdb_tmp.path().join("export.duckdb");
@@ -233,7 +239,9 @@ mod tests {
             parquet_tmp.path().to_path_buf(),
             "duckdb".to_string(),
             duckdb_path.clone(),
-        ).await;
+            true,
+        )
+        .await;
 
         assert!(duckdb_path.exists(), "DuckDB file should be created");
     }

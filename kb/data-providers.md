@@ -1,5 +1,8 @@
 # Data Providers
 
+> **Priority**: Dolt `investment_data` (local) is the **primary** data source.
+> EastMoney is a fallback for data not available locally.
+
 ## Provider stack
 
 ```
@@ -22,7 +25,9 @@ trait DataProvider: Send + Sync {
 
 #[async_trait]
 trait DataWriter: Send + Sync {
-    async fn save_bars(&self, symbol, timeframe, bars: &[Bar]) -> Result<(), DataError>;
+    /// When `overwrite` is false, existing rows are skipped (migration-style).
+    /// When true, existing rows are replaced.
+    async fn save_bars(&self, symbol, timeframe, bars: &[Bar], overwrite: bool) -> Result<(), DataError>;
 }
 
 #[async_trait]
@@ -134,23 +139,29 @@ ORDER BY trade_date ASC
 
 ### Write path (`DataWriter::save_bars`)
 
+Uses `INSERT OR REPLACE` when `overwrite=true`, `INSERT OR IGNORE` when `overwrite=false`:
+
 ```sql
-INSERT OR REPLACE INTO stock_daily
+INSERT OR {REPLACE|IGNORE} INTO stock_daily
     (symbol, trade_date, open, high, low, close, volume)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ```
 
 ### Per-table methods (non-trait, for CLI downloader)
 
+All write methods accept an `overwrite: bool` parameter. When `false`, existing
+(symbol, trade_date) rows are skipped via `INSERT OR IGNORE`. When `true`,
+existing rows are replaced via `INSERT OR REPLACE`.
+
 | Method | Operation |
 |---|---|
-| `save_stock_daily(symbol, records)` | INSERT OR REPLACE into stock_daily |
+| `save_stock_daily(symbol, records, overwrite)` | INSERT into stock_daily |
 | `get_stored_range(symbol)` | MIN/MAX trade_date for gap detection |
-| `save_adj_factors(symbol, factors)` | INSERT OR REPLACE into stock_adj_factor |
+| `save_adj_factors(symbol, factors, overwrite)` | INSERT into stock_adj_factor |
 | `get_adj_factor_range(symbol)` | MIN/MAX trade_date for adj_factor |
-| `upsert_stock_basic(info)` | INSERT OR REPLACE into stock_basic |
+| `upsert_stock_basic(info, overwrite)` | INSERT into stock_basic |
 | `get_stock_basic(symbol)` | Read single stock_basic record |
-| `save_limits(symbol, records)` | INSERT OR REPLACE into stock_limit |
+| `save_limits(symbol, records, overwrite)` | INSERT into stock_limit |
 
 ### Record types
 
@@ -198,10 +209,25 @@ Other methods are synchronous (filesystem scanning is fast).
 Reads from Dolt `investment_data` database via the `dolt` CLI:
 
 1. `dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"`
-2. Per symbol: `dolt sql -r csv` → temp CSV → DuckDB `read_csv` → `COPY ... TO '{symbol}.parquet'`
+2. Per symbol: `dolt sql -r csv` → temp CSV → DuckDB converts to Parquet
 3. Strips SH/SZ/BJ prefix from Dolt symbols (e.g. `SZ000001` → `000001`)
 
 Source table: `final_a_stock_eod_price` (18.25M rows, 6122 stocks, 1990–2026).
+
+**Default behavior (no `--overwrite`)**: Migration-style merge. If a Parquet file
+already exists for a symbol, existing data is preserved (priority 1) and only
+new dates from Dolt are added (priority 2). Uses `ROW_NUMBER() OVER (PARTITION BY tradedate)`
+for deduplication.
+
+**With `--overwrite`**: Full replace — the Parquet file is rewritten entirely
+from Dolt data (old behavior).
+
+Filter with `--symbols` to import only specific stocks (comma-separated 6-digit codes):
+```sh
+cargo run --bin compass-data -- import --symbols 000001,600519
+```
+Use `--limit N` to cap the number of symbols. Use `--overwrite` to force
+overwriting existing dates instead of merging.
 
 ## Error type
 

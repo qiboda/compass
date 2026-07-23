@@ -4,7 +4,7 @@ use duckdb::{Connection, params};
 use tracing::{error, info, warn};
 
 /// Merge staging DuckDB into Parquet main database with incremental updates.
-pub async fn run(db: PathBuf, output: PathBuf) {
+pub async fn run(db: PathBuf, output: PathBuf, overwrite: bool) {
     info!(
         "merge: staging={} → parquet={}",
         db.display(),
@@ -46,7 +46,7 @@ pub async fn run(db: PathBuf, output: PathBuf) {
                 merged_new += 1;
             }
         } else if staging_has_new_data(&conn, symbol, &parquet_path) {
-            if merge_incremental(&conn, symbol, &parquet_path) {
+            if merge_incremental(&conn, symbol, &parquet_path, overwrite) {
                 merged_update += 1;
             }
         } else {
@@ -95,7 +95,10 @@ fn parquet_date_range(path: &std::path::Path) -> Option<(String, String)> {
     let mut stmt = conn.prepare(&sql).ok()?;
     let (min, max) = stmt
         .query_row([], |row| {
-            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?))
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ))
         })
         .ok()?;
     Some((min?, max?))
@@ -126,10 +129,19 @@ fn merge_full(conn: &Connection, symbol: &str, parquet_path: &std::path::Path) -
     }
 }
 
-fn merge_incremental(conn: &Connection, symbol: &str, parquet_path: &std::path::Path) -> bool {
+fn merge_incremental(
+    conn: &Connection,
+    symbol: &str,
+    parquet_path: &std::path::Path,
+    overwrite: bool,
+) -> bool {
     let pq_path = parquet_path.to_string_lossy();
     let tmp_path = parquet_path.with_extension("tmp.parquet");
     let tmp_str = tmp_path.to_string_lossy();
+
+    // When overwrite=true, staging data wins on duplicate dates (priority 1).
+    // When overwrite=false, existing Parquet data wins (priority 1).
+    let (staging_priority, parquet_priority) = if overwrite { (1, 2) } else { (2, 1) };
 
     let sql = format!(
         "COPY (
@@ -137,10 +149,10 @@ fn merge_incremental(conn: &Connection, symbol: &str, parquet_path: &std::path::
             FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY tradedate ORDER BY priority) AS rn
                 FROM (
-                    SELECT trade_date AS tradedate, open, high, low, close, adjclose, volume, amount, 1 AS priority
+                    SELECT trade_date AS tradedate, open, high, low, close, adjclose, volume, amount, {staging_priority} AS priority
                     FROM stock_daily WHERE symbol = ?
                     UNION ALL
-                    SELECT tradedate, open, high, low, close, adjclose, volume, amount, 2
+                    SELECT tradedate, open, high, low, close, adjclose, volume, amount, {parquet_priority}
                     FROM read_parquet('{pq_path}')
                 )
             ) WHERE rn = 1
@@ -149,19 +161,17 @@ fn merge_incremental(conn: &Connection, symbol: &str, parquet_path: &std::path::
     );
 
     match conn.execute(&sql, params![symbol]) {
-        Ok(_) => {
-            match std::fs::copy(&tmp_path, parquet_path) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&tmp_path);
-                    true
-                }
-                Err(e) => {
-                    error!("copy temp parquet for {symbol}: {e}");
-                    let _ = std::fs::remove_file(&tmp_path);
-                    false
-                }
+        Ok(_) => match std::fs::copy(&tmp_path, parquet_path) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                true
             }
-        }
+            Err(e) => {
+                error!("copy temp parquet for {symbol}: {e}");
+                let _ = std::fs::remove_file(&tmp_path);
+                false
+            }
+        },
         Err(e) => {
             error!("incremental merge for {symbol}: {e}");
             let _ = std::fs::remove_file(&tmp_path);
@@ -192,7 +202,8 @@ mod tests {
                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,
                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE,
                 PRIMARY KEY (symbol, trade_date))",
-        ).expect("create");
+        )
+        .expect("create");
         (tmp, conn)
     }
 
@@ -200,7 +211,8 @@ mod tests {
         conn.execute(
             "INSERT OR REPLACE INTO stock_daily VALUES (?, ?, 1,2,1,?,?,100,0)",
             params![symbol, date, close, close],
-        ).expect("insert");
+        )
+        .expect("insert");
     }
 
     #[test]
@@ -227,10 +239,13 @@ mod tests {
         let path = out.path().join("600519.parquet");
         assert!(merge_full(&conn, "600519", &path));
         let v = Connection::open_in_memory().expect("duckdb");
-        let n: i64 = v.query_row(
-            &format!("SELECT COUNT(*) FROM read_parquet('{}')", path.display()),
-            [], |r| r.get(0),
-        ).expect("query");
+        let n: i64 = v
+            .query_row(
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", path.display()),
+                [],
+                |r| r.get(0),
+            )
+            .expect("query");
         assert_eq!(n, 2);
     }
 
@@ -254,7 +269,8 @@ mod tests {
         let out = tempfile::tempdir().expect("tempdir");
         let path = out.path().join("000001.parquet");
         merge_full(&conn, "000001", &path);
-        conn.execute("DELETE FROM stock_daily WHERE symbol = '000001'", []).expect("del");
+        conn.execute("DELETE FROM stock_daily WHERE symbol = '000001'", [])
+            .expect("del");
         insert_row(&conn, "000001", "2024-06-15", 15.0);
         assert!(!staging_has_new_data(&conn, "000001", &path));
     }
@@ -274,14 +290,17 @@ mod tests {
         insert_row(&conn, "600519", "2024-01-04", 1520.0);
 
         assert!(staging_has_new_data(&conn, "600519", &path));
-        assert!(merge_incremental(&conn, "600519", &path));
+        assert!(merge_incremental(&conn, "600519", &path, true));
 
         let v = Connection::open_in_memory().expect("duckdb");
         let mut s = v.prepare(
             &format!("SELECT CAST(tradedate AS VARCHAR), close FROM read_parquet('{}') ORDER BY tradedate", path.display()),
         ).expect("prep");
-        let rows: Vec<(String, f64)> = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .expect("q").collect::<Result<Vec<_>,_>>().expect("c");
+        let rows: Vec<(String, f64)> = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("q")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("c");
 
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0], ("2024-01-02".into(), 1500.0));

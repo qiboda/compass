@@ -58,6 +58,10 @@ enum Command {
         /// EastMoney API URL for realtime/symbol listing
         #[arg(long, default_value = "https://push2delay.eastmoney.com")]
         realtime_url: String,
+
+        /// Overwrite existing data instead of skipping duplicates
+        #[arg(long, default_value_t = false)]
+        overwrite: bool,
     },
 
     /// Import data from Dolt investment_data into Parquet main database
@@ -77,6 +81,18 @@ enum Command {
         /// Stock symbols to import (comma-separated 6-digit codes, e.g. "000001,600519")
         #[arg(long)]
         symbols: Option<String>,
+
+        /// Start date (YYYYMMDD), inclusive
+        #[arg(long)]
+        start_date: Option<String>,
+
+        /// End date (YYYYMMDD), inclusive
+        #[arg(long)]
+        end_date: Option<String>,
+
+        /// Overwrite existing data instead of skipping duplicates
+        #[arg(long, default_value_t = false)]
+        overwrite: bool,
     },
 
     /// Merge staging DuckDB into Parquet main database
@@ -88,6 +104,10 @@ enum Command {
         /// Main Parquet directory
         #[arg(long, default_value = "parquet_data")]
         output: PathBuf,
+
+        /// Overwrite existing data instead of skipping duplicates
+        #[arg(long, default_value_t = false)]
+        overwrite: bool,
     },
 
     /// Export Parquet main database to other formats
@@ -103,6 +123,10 @@ enum Command {
         /// Output path
         #[arg(long, default_value = "compass.duckdb")]
         output: PathBuf,
+
+        /// Overwrite existing data instead of skipping duplicates
+        #[arg(long, default_value_t = false)]
+        overwrite: bool,
     },
 }
 
@@ -127,6 +151,7 @@ async fn main() {
             end_date,
             base_url,
             realtime_url,
+            overwrite,
         } => {
             download::run(
                 symbols,
@@ -137,6 +162,7 @@ async fn main() {
                 end_date,
                 base_url,
                 realtime_url,
+                overwrite,
             )
             .await;
         }
@@ -145,21 +171,37 @@ async fn main() {
             output,
             limit,
             symbols,
+            start_date,
+            end_date,
+            overwrite,
         } => {
-            if let Err(e) = import_dolt::run(dolt_dir, output, limit, symbols.as_deref()) {
+            if let Err(e) = import_dolt::run(
+                dolt_dir,
+                output,
+                limit,
+                symbols.as_deref(),
+                start_date.as_deref(),
+                end_date.as_deref(),
+                overwrite,
+            ) {
                 error!("Import failed: {e}");
                 std::process::exit(1);
             }
         }
-        Command::Merge { db, output } => {
-            merge::run(db, output).await;
+        Command::Merge {
+            db,
+            output,
+            overwrite,
+        } => {
+            merge::run(db, output, overwrite).await;
         }
         Command::Export {
             input,
             format,
             output,
+            overwrite,
         } => {
-            export::run_export(input, format, output).await;
+            export::run_export(input, format, output, overwrite).await;
         }
     }
 }

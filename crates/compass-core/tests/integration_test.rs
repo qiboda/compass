@@ -158,7 +158,7 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
         // 4a. Upsert stock_basic
         match eastmoney.fetch_stock_basic(code).await {
             Ok(stock_basic) => {
-                db.upsert_stock_basic(&stock_basic)
+                db.upsert_stock_basic(&stock_basic, true)
                     .await
                     .expect("upsert_stock_basic failed");
             }
@@ -173,7 +173,7 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
                     list_date: None,
                     delist_date: None,
                 };
-                db.upsert_stock_basic(&minimal).await.expect(&format!(
+                db.upsert_stock_basic(&minimal, true).await.expect(&format!(
                     "upsert minimal stock_basic for {code} failed: {e}"
                 ));
             }
@@ -189,7 +189,7 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
 
         // 4c. Convert bars → DailyRecord and save to DuckDB
         let records: Vec<DailyRecord> = bars.iter().map(|b| bar_to_daily(b)).collect();
-        db.save_stock_daily(code, &records)
+        db.save_stock_daily(code, &records, true)
             .await
             .expect(&format!("save_stock_daily for {code} failed"));
 

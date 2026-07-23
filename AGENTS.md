@@ -1,8 +1,14 @@
 # AGENTS.md — compass
 
-A-share stock chart desktop application built with egui. Data pipeline supports
-EastMoney (online), Dolt investment_data (local), and Parquet-based storage
-with DuckDB for querying.
+A-share stock chart desktop application built with egui. Data pipeline uses
+local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks),
+with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for querying.
+
+## Workflow (MANDATORY)
+
+For all **feature** and **bugfix** work, the `compass-workflow` skill MUST be loaded.
+This enforces: issue-driven development, doc-sync, test-first, per-step-verify,
+and commit discipline.
 
 ## Knowledge base
 
@@ -38,18 +44,27 @@ RUST_LOG=debug cargo run     # verbose logging
 ### compass-data CLI
 
 ```sh
-# Download from EastMoney into staging DuckDB
-cargo run --bin compass-data -- download --symbols 600519
+# Import from Dolt investment_data (primary) into Parquet main database
+cargo run --bin compass-data -- import                    # all 6000+ stocks (merge mode)
+cargo run --bin compass-data -- import --symbols 000001,600519  # specific stocks
+cargo run --bin compass-data -- import --overwrite        # full overwrite (ignore merge)
 
-# Import from Dolt investment_data into Parquet main database
-cargo run --bin compass-data -- import --limit 100
+# Download from EastMoney (fallback) into staging DuckDB
+cargo run --bin compass-data -- download --symbols 600519
+cargo run --bin compass-data -- download --symbols all --overwrite  # force overwrite
 
 # Merge staging DuckDB into Parquet main database
 cargo run --bin compass-data -- merge
+cargo run --bin compass-data -- merge --overwrite         # staging wins on conflict
 
 # Export Parquet to DuckDB
 cargo run --bin compass-data -- export
+cargo run --bin compass-data -- export --overwrite        # force overwrite
 ```
+
+All commands default to **merge/skip** behavior (migration-style):
+existing unique keys are preserved, only new data is added. Pass `--overwrite`
+to replace existing data. Applies to `import`, `download`, `merge`, `export`.
 
 ## Architecture
 
@@ -58,6 +73,14 @@ See `kb/architecture.md` — threading model, data pipeline, CachedProvider, sch
 ## Data providers
 
 See `kb/data-providers.md` — EastMoney, DuckDB, Dolt, ParquetReader, DataError.
+
+**Priority**: Dolt `investment_data` (local) is the **primary** data source.
+EastMoney is a fallback for data not available locally.
+
+### Dolt import (`crates/compass-data/src/import_dolt.rs`)
+
+Reads from Dolt `investment_data` (`final_a_stock_eod_price` table) via `dolt sql`
+CSV export, converts to Parquet files partitioned by symbol.
 
 ### EastMoneyProvider (`crates/compass-core/src/data/eastmoney.rs`)
 
@@ -72,11 +95,6 @@ Fetches K-line data from `push2his.eastmoney.com`. Symbol → secid conversion v
 | `sh.000001` | `1.000001` | 上证指数 (explicit SH prefix) |
 | `sz.000001` | `0.000001` | 显式深圳 |
 | `bj.8xxxxx` | `0.8xxxxx` | 北交所 |
-
-### Dolt import (`crates/compass-data/src/import_dolt.rs`)
-
-Reads from Dolt `investment_data` (`final_a_stock_eod_price` table) via `dolt sql`
-CSV export, converts to Parquet files partitioned by symbol.
 
 ## Parquet schema (main database)
 
