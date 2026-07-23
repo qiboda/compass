@@ -7,6 +7,64 @@ description: Enforces the compass project workflow — issue-driven development,
 
 This project follows a strict workflow. You MUST enforce these rules for every code change.
 
+---
+
+## 🛑 TRIGGER: PRE-IMPLEMENTATION GATE (IMMEDIATE)
+
+**The moment this skill is loaded, you are in GATE MODE.**
+
+Before you create any todos, before you read any source files, before you write
+a single line of code — you MUST verbalize the following checklist to the user.
+
+```
+🛑 PRE-IMPLEMENTATION GATE
+
+I will now check each gate step before proceeding:
+
+☐ STEP 1 — ISSUE
+   gh issue view <N> (or create with gh issue create)
+   → [must show issue URL to user]
+
+☐ STEP 2 — PLAN (skip only if single-file change)
+   Plan agent run and approved
+   → [must show plan summary]
+
+☐ STEP 3 — TESTS (RED phase)
+   Write failing test FIRST, confirm it fails for the right reason
+   → [must show test failure output]
+
+☐ STEP 4 — DOCS
+   Identify which kb/ files need updating:
+   → [must list files]
+```
+
+**You are FORBIDDEN from using any edit/write/bash tools for implementation
+until ALL four steps above are completed and shown to the user.**
+
+If you find yourself writing code without completing the gate, STOP IMMEDIATELY
+and go back to step 1. This is a HARD BLOCK — no exceptions for feature/bugfix work.
+
+### Exceptions (skip the gate)
+
+The gate does NOT apply to:
+- Refactors (no behavior change)
+- Documentation-only changes
+- Lint fixes
+- Typo fixes
+- Test additions for existing code
+
+### Gate completion signal
+
+When all four steps are complete, announce explicitly:
+
+```
+✅ GATE COMPLETE — proceeding to implementation
+```
+
+Only then may you create todos and begin editing files.
+
+---
+
 ## Rules (ordered by priority)
 
 ### 1. Doc Sync (CRITICAL)
@@ -69,7 +127,29 @@ All three must pass before `git push`.
 
 ### 8. Branching
 
-Trunk-based: push directly to `main`. No feature branches.
+Trunk-based: push directly to `master`. No feature branches.
+
+---
+
+## 🔄 POST-IMPLEMENTATION SELF-AUDIT
+
+After completing implementation, review your own work against this checklist:
+
+```
+🔍 POST-IMPLEMENTATION AUDIT
+
+☐ Were all gate steps completed before code was written?
+☐ Does every changed kb/ file reflect the actual changes?
+☐ Do all tests pass? (cargo test)
+☐ Is cargo clippy clean?
+☐ Is cargo fmt --check clean?
+☐ Does the commit include ref #N?
+☐ Are kb/ updates in the same commit as code changes?
+```
+
+If any box is unchecked, fix it before pushing.
+
+---
 
 ## Commit Style
 

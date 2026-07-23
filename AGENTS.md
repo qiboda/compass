@@ -4,11 +4,39 @@ A-share stock chart desktop application built with egui. Data pipeline uses
 local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks),
 with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for querying.
 
+---
+
+## 🛑 PRE-IMPLEMENTATION GATE (READ BEFORE ANY CODE CHANGE)
+
+**For ALL feature and bugfix work, you MUST complete this gate BEFORE writing any code.**
+
+Before you touch a single file, verbalize EACH step to the user and confirm completion:
+
+| Step | Action | Evidence Required |
+|---|---|---|
+| **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
+| **2. Plan** | If 2+ modules involved: run plan agent | Plan approved by user |
+| **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
+| **4. Docs** | Identify which `kb/` files need updating | List of files to user |
+
+**If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
+
+This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
+remind you of this gate. If you find yourself writing code without completing
+these steps, you are violating the workflow — stop immediately and go back.
+
+Exceptions (skip the gate): refactors, documentation-only changes, lint fixes, typo fixes.
+
+---
+
 ## Workflow (MANDATORY)
 
 For all **feature** and **bugfix** work, the `compass-workflow` skill MUST be loaded.
 This enforces: issue-driven development, doc-sync, test-first, per-step-verify,
 and commit discipline.
+
+**After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
+checklist above. Do not skip any step.
 
 ## Knowledge base
 
