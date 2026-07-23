@@ -1,3 +1,5 @@
+//! A-share stock code conversion and exchange inference.
+
 /// Extract the exchange code for a given A-share stock code.
 ///
 /// Supports explicit market prefixes for disambiguation (case-insensitive):

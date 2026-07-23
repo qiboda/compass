@@ -1,3 +1,12 @@
+//! Data provider abstractions and implementations.
+//!
+//! The module contains the trait system ([`provider::DataProvider`],
+//! [`provider::DataWriter`], [`provider::NegativeCache`]) and concrete
+//! implementations for DuckDB, EastMoney, Parquet, and synthetic test data.
+//!
+//! The [`CachedProvider`] composes a remote reader with a local cache
+//! to implement read-through caching with negative cache and inflight dedup.
+
 pub mod duckdb;
 pub mod eastmoney;
 pub mod parquet;
@@ -22,6 +31,16 @@ const NO_DATA_TTL_SECS: i64 = 7 * 24 * 3600;
 // CachedProvider — reader-first, cache fallback
 // ---------------------------------------------------------------------------
 
+/// Read-through cache composing a remote reader with a local store.
+///
+/// On `fetch_bars`:
+/// 1. Checks negative cache (skip remote if known-empty)
+/// 2. Checks inflight dedup (skip if already fetching)
+/// 3. Tries local cache → hit returns immediately
+/// 4. Fetches from remote reader → persists to cache → returns
+///
+/// The `R` (reader) and `C` (cache) type parameters let the cache layer
+/// work with any reader+cache combination without duplication.
 pub struct CachedProvider<R: DataProvider, C: DataProvider + NegativeCache + DataWriter> {
     reader: R,
     cache: C,
@@ -29,6 +48,7 @@ pub struct CachedProvider<R: DataProvider, C: DataProvider + NegativeCache + Dat
 }
 
 impl<R: DataProvider, C: DataProvider + NegativeCache + DataWriter> CachedProvider<R, C> {
+    /// Create a new read-through cache with the given reader and cache backends.
     pub fn new(reader: R, cache: C) -> Self {
         Self {
             reader,

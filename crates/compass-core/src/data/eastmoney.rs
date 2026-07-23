@@ -1,3 +1,8 @@
+//! EastMoney (东方财富) HTTP API data provider.
+//!
+//! Fetches OHLCV K-line data from public HTTP endpoints without authentication.
+//! Provides stock search, basic info, realtime quotes, and batch symbol enumeration.
+
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use egui_charts::model::Bar;
@@ -84,6 +89,7 @@ impl EastMoneyProvider {
         Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc))
     }
 
+    /// Thin wrapper around [`symbol::to_ts_code`] for EastMoney-specific use.
     pub fn to_ts_code_for_symbol(code: &str) -> String {
         symbol::to_ts_code(code)
     }
@@ -169,6 +175,7 @@ impl EastMoneyProvider {
         Ok(map)
     }
 
+    /// Look up stock metadata (name, industry, listing date) for a single code.
     pub async fn fetch_stock_basic(&self, code: &str) -> Result<StockBasic, DataError> {
         let url = format!(
             "{}/api/qt/clist/get",
@@ -247,6 +254,7 @@ impl EastMoneyProvider {
         })
     }
 
+    /// Fetch live market data for a single stock (P/E, P/B, price limits, etc.).
     pub async fn fetch_realtime_quote(&self, code: &str) -> Result<RealtimeQuote, DataError> {
         let secid = Self::to_secid(code);
         let url = format!(
@@ -282,6 +290,10 @@ impl EastMoneyProvider {
         })
     }
 
+    /// Paginate through all A-share stock symbols.
+    ///
+    /// Returns the complete list of stock codes matching `fs_filter`.
+    /// The API returns at most `page_size` items per page.
     pub async fn search_all_symbols(
         &self,
         page_size: u32,

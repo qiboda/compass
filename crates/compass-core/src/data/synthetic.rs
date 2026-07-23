@@ -10,6 +10,10 @@ use crate::model::SymbolInfo;
 // SyntheticProvider — random OHLCV data for testing / demo
 // ---------------------------------------------------------------------------
 
+/// In-memory provider that generates random OHLCV data for testing and demos.
+///
+/// Produces 200 bars of random price movement starting from 100.0. Symbol
+/// search returns a fixed set of five well-known A-share stocks.
 #[allow(dead_code)]
 pub struct SyntheticProvider;
 

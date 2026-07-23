@@ -1,3 +1,7 @@
+#![allow(missing_docs)]
+// Record types below are data bags with self-explanatory field names.
+// Requiring doc comments on every field would reduce readability.
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -12,6 +16,7 @@ use crate::model::SymbolInfo;
 // Type-safe record structs for all 7 tables
 // ---------------------------------------------------------------------------
 
+/// A single row from the `stock_daily` table — one trading day's OHLCV data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DailyRecord {
     pub trade_date: NaiveDate,
@@ -24,18 +29,21 @@ pub struct DailyRecord {
     pub amount: f64,
 }
 
+/// A single row from the `stock_adj_factor` table — per-day price adjustment multiplier.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdjFactorRecord {
     pub trade_date: NaiveDate,
     pub adj_factor: f64,
 }
 
+/// A single row from the trade status table — whether the market was open.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusRecord {
     pub trade_date: NaiveDate,
     pub is_open: bool,
 }
 
+/// A single row from the `stock_limit` table — daily price ceiling and floor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LimitRecord {
     pub trade_date: NaiveDate,
@@ -43,6 +51,7 @@ pub struct LimitRecord {
     pub down_limit: f64,
 }
 
+/// A single row from the indicator table — turnover rate, P/E, P/B, etc.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndicatorRecord {
     pub trade_date: NaiveDate,
@@ -55,6 +64,7 @@ pub struct IndicatorRecord {
     pub ps: f64,
 }
 
+/// A single row from the share table — share count and market value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShareRecord {
     pub trade_date: NaiveDate,
@@ -125,6 +135,14 @@ CREATE TABLE IF NOT EXISTS no_data_marks (
 // DuckDbProvider — local persistent cache
 // ---------------------------------------------------------------------------
 
+/// Local persistent cache backed by a DuckDB database file.
+///
+/// Implements all three provider traits (`DataProvider`, `DataWriter`,
+/// `NegativeCache`) for a single DuckDB connection. The connection is
+/// wrapped in `Arc<Mutex<>>` — all queries go through `spawn_blocking`
+/// since DuckDB is synchronous.
+///
+/// Use `new(path)` for file-backed storage or `new_in_memory()` for tests.
 pub struct DuckDbProvider {
     pub conn: Arc<Mutex<Connection>>,
 }
@@ -546,6 +564,7 @@ impl DuckDbProvider {
 // StockBasic — read-back struct for stock_basic table
 // ---------------------------------------------------------------------------
 
+/// Read-back struct for the `stock_basic` table.
 #[derive(Debug, Clone)]
 pub struct StockBasic {
     pub symbol: String,

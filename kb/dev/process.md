@@ -80,15 +80,24 @@ cargo nextest run           # all tests must pass
 ```
 Ensure `lsp_diagnostics` is clean on changed files.
 
+**Doc comment discipline**: every `pub` item added or modified in
+`compass-core` MUST have a `///` doc comment. This is enforced by
+`#![warn(missing_docs)]` — `cargo doc --no-deps` must be warning-free.
+Doc comments are part of the code, not an afterthought. Write them
+as you write the implementation, not after.
+
 ### Before pushing
 
 ```sh
 cargo nextest run
 cargo clippy -- -D warnings
 cargo fmt --check
+cargo doc --no-deps         # must be warning-free
 ```
 
-All three must pass before `git push`. Never push broken code.
+All four must pass before `git push`. Never push broken code.
+`cargo doc --no-deps` verifies that `#![warn(missing_docs)]` in
+`compass-core` is clean — every public item must have a `///` doc comment.
 
 ### Push rhythm
 

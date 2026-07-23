@@ -1,11 +1,22 @@
 #!/bin/bash
-# pre-push hook — verify all issue references point to real, open issues.
+# pre-push hook — verify quality gates and issue references.
 #
-# Extracts "ref #N" from commits being pushed and validates
-# each one via `gh issue view`. Rejects the push if any reference is invalid
-# or points to a closed issue.
+# 1. cargo doc must be warning-free (RUSTDOCFLAGS="-D warnings")
+# 2. "ref #N" in commit messages must point to open issues
 
 has_error=0
+
+# --- Quality gate: cargo doc ---
+echo "pre-push: cargo doc --no-deps (must be warning-free)..."
+if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1; then
+    echo ""
+    echo "ERROR: cargo doc produced warnings or errors."
+    echo "  Add /// doc comments to all public items and re-run."
+    echo ""
+    has_error=1
+fi
+
+# --- Issue reference validation ---
 
 while read -r local_ref local_oid remote_ref remote_oid; do
     # Skip branch deletion

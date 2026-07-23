@@ -1,3 +1,8 @@
+//! Shared data model types.
+//!
+//! Contains commands, application state, configuration, and stock metadata
+//! used by both the GUI and CLI binaries.
+
 use chrono::{DateTime, Utc};
 use egui_charts::model::Bar;
 use serde::{Deserialize, Serialize};
@@ -9,29 +14,54 @@ use serde::{Deserialize, Serialize};
 /// Info returned by symbol search (code + display name).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolInfo {
+    /// 6-digit stock code (e.g. "000001").
     pub code: String,
+    /// Chinese display name (e.g. "平安银行").
     pub name: String,
 }
 
+/// Live market data for a stock.
+///
+/// Fetched from EastMoney realtime API. All fields are optional — the API
+/// may return `null` for any field, especially outside trading hours.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeQuote {
+    /// Price-to-earnings ratio.
     pub pe: Option<f64>,
+    /// Price-to-book ratio.
     pub pb: Option<f64>,
+    /// Total share capital (万股).
     pub total_share: Option<f64>,
+    /// Floating share capital (万股).
     pub float_share: Option<f64>,
+    /// Daily price ceiling (涨停价).
     pub up_limit: Option<f64>,
+    /// Daily price floor (跌停价).
     pub down_limit: Option<f64>,
 }
 
+/// Core stock metadata.
+///
+/// Contains the stock's identifying information: code, display name,
+/// industry classification, market segment, exchange, and listing dates.
+/// Stored in the `stock_basic` table in DuckDB and `stock_basic.parquet`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockBasic {
+    /// 6-digit stock code.
     pub symbol: String,
+    /// Chinese display name.
     pub name: String,
+    /// Geographic area.
     pub area: Option<String>,
+    /// Industry classification.
     pub industry: Option<String>,
+    /// Market segment (e.g. "主板", "创业板").
     pub market: Option<String>,
+    /// Exchange code ("SH", "SZ", "BJ").
     pub exchange: Option<String>,
+    /// First trading date.
     pub list_date: Option<chrono::NaiveDate>,
+    /// Last trading date (if delisted).
     pub delist_date: Option<chrono::NaiveDate>,
 }
 
@@ -52,56 +82,83 @@ pub struct AdjFactor {
 // App command (UI → worker thread)
 // ---------------------------------------------------------------------------
 
+/// Commands sent from the UI thread to the worker thread via `mpsc::channel`.
+///
+/// The worker receives these one at a time, processes them asynchronously,
+/// and writes results back through [`CompassState`].
 #[derive(Debug, Clone)]
 pub enum Cmd {
     /// Fetch OHLCV bars for a symbol/timeframe/date-range.
     FetchBars {
+        /// 6-digit stock code.
         symbol: String,
+        /// Timeframe string (e.g. "1d", "1w").
         timeframe: String,
+        /// Earliest date to fetch.
         range_start: DateTime<Utc>,
+        /// Latest date to fetch.
         range_end: DateTime<Utc>,
     },
     /// Search symbols by keyword.
     #[allow(dead_code)]
-    SearchSymbols { query: String },
+    SearchSymbols {
+        /// Search query string.
+        query: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
 // Application config (loaded from ~/.config/compass/config.toml)
 // ---------------------------------------------------------------------------
 
+/// Root application configuration loaded from `~/.config/compass/config.toml`.
+///
+/// All fields use `#[serde(default)]` — missing keys fall back to the
+/// per-struct `Default` implementation. Partial configs work.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
+    /// DuckDB cache file location (default: "compass.db").
     pub database: DatabaseConfig,
     #[serde(default)]
+    /// EastMoney API settings.
     pub api: ApiConfig,
     #[serde(default)]
+    /// Application behavior (default symbol, timeframe).
     pub app: AppSection,
 }
 
+/// Database connection settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseConfig {
     #[serde(default = "default_db_path")]
+    /// Path to the DuckDB database file.
     pub path: String,
 }
 
+/// EastMoney API connection settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiConfig {
     #[serde(default = "default_base_url")]
+    /// EastMoney K-line API base URL.
     pub base_url: String,
     #[serde(default = "default_timeout_secs")]
+    /// HTTP request timeout in seconds.
     pub timeout_secs: u64,
     #[serde(default = "default_retry_count")]
     #[allow(dead_code)]
+    /// Number of retry attempts for transient failures.
     pub retry_count: u32,
 }
 
+/// Application-level settings: default stock and timeframe on startup.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppSection {
     #[serde(default = "default_symbol")]
+    /// Stock code displayed on startup.
     pub default_symbol: String,
     #[serde(default = "default_timeframe")]
+    /// Timeframe displayed on startup (e.g. "1d").
     pub default_timeframe: String,
 }
 
@@ -158,6 +215,11 @@ fn default_timeframe() -> String {
 /// Bars keyed by (symbol, timeframe).
 pub type BarsMap = std::collections::HashMap<(String, String), Vec<Bar>>;
 
+/// Shared mutable state between the UI (main) and worker (tokio) threads.
+///
+/// Protected by `Arc<Mutex<>>` — the UI reads on every frame, the worker
+/// writes after each async operation. `bars_version` acts as a change
+/// notification: the UI rebuilds chart data when it differs from last frame.
 pub struct CompassState {
     /// All loaded OHLCV bars, keyed by (symbol, timeframe).
     pub bars: BarsMap,
@@ -176,6 +238,9 @@ pub struct CompassState {
 }
 
 impl CompassState {
+    /// Create a new state with the given defaults.
+    ///
+    /// Bars start empty; loaded on first fetch.
     pub fn new(default_symbol: &str, default_timeframe: &str) -> Self {
         Self {
             bars: BarsMap::new(),

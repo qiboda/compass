@@ -1,3 +1,9 @@
+//! Parquet-based main database reader.
+//!
+//! Queries Parquet files directly via DuckDB's `read_parquet()` function
+//! without loading data into tables. One file per symbol under
+//! `parquet_data/stock_daily/`.
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
