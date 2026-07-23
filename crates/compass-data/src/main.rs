@@ -73,6 +73,10 @@ enum Command {
         /// Max symbols (0 = all)
         #[arg(long, default_value_t = 0)]
         limit: usize,
+
+        /// Stock symbols to import (comma-separated 6-digit codes, e.g. "000001,600519")
+        #[arg(long)]
+        symbols: Option<String>,
     },
 
     /// Merge staging DuckDB into Parquet main database
@@ -114,7 +118,7 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-            Command::Download {
+        Command::Download {
             symbols,
             db,
             concurrency,
@@ -140,8 +144,9 @@ async fn main() {
             dolt_dir,
             output,
             limit,
+            symbols,
         } => {
-            if let Err(e) = import_dolt::run(dolt_dir, output, limit) {
+            if let Err(e) = import_dolt::run(dolt_dir, output, limit, symbols.as_deref()) {
                 error!("Import failed: {e}");
                 std::process::exit(1);
             }

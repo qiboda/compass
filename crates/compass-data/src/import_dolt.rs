@@ -37,10 +37,21 @@ fn run_dolt_sql(dolt_dir: &Path, query: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("UTF-8 error: {e}"))
 }
 
+/// Filter symbols by 6-digit codes. `filter` is comma-separated (e.g. "000001,600519").
+/// Matches against full Dolt symbols (e.g. "SZ000001", "SH600519") by stripping prefix.
+fn filter_symbols(symbols: Vec<String>, filter: &str) -> Vec<String> {
+    let wanted: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
+    symbols
+        .into_iter()
+        .filter(|s| wanted.iter().any(|w| strip_prefix(s) == *w))
+        .collect()
+}
+
 pub fn run(
     dolt_dir: PathBuf,
     output: PathBuf,
     limit: usize,
+    symbols_filter: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&output)?;
 
@@ -59,6 +70,13 @@ pub fn run(
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
+
+    // Filter by requested symbols (6-digit codes)
+    let symbols = if let Some(filter) = symbols_filter {
+        filter_symbols(symbols, filter)
+    } else {
+        symbols
+    };
 
     let total = if limit > 0 {
         symbols.len().min(limit)
@@ -204,10 +222,58 @@ mod tests {
 
     #[test]
     fn run_dolt_sql_returns_error_for_nonexistent_dir() {
-        let result = run_dolt_sql(
-            std::path::Path::new("/nonexistent/dolt/dir"),
-            "SELECT 1",
-        );
+        let result = run_dolt_sql(std::path::Path::new("/nonexistent/dolt/dir"), "SELECT 1");
         assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // filter_symbols tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn filter_symbols_matches_sz_code() {
+        let input = vec!["SZ000001".into(), "SH600519".into(), "SZ300750".into()];
+        let result = filter_symbols(input, "000001");
+        assert_eq!(result, vec!["SZ000001"]);
+    }
+
+    #[test]
+    fn filter_symbols_matches_sh_code() {
+        let input = vec!["SZ000001".into(), "SH600519".into()];
+        let result = filter_symbols(input, "600519");
+        assert_eq!(result, vec!["SH600519"]);
+    }
+
+    #[test]
+    fn filter_symbols_matches_multiple_comma_separated() {
+        let input = vec![
+            "SZ000001".into(),
+            "SH600519".into(),
+            "SZ300750".into(),
+            "BJ830799".into(),
+        ];
+        let result = filter_symbols(input, "000001,600519");
+        assert_eq!(result, vec!["SZ000001", "SH600519"]);
+    }
+
+    #[test]
+    fn filter_symbols_handles_spaces_in_filter() {
+        let input = vec!["SZ000001".into(), "SH600519".into()];
+        let result = filter_symbols(input, " 000001 , 600519 ");
+        assert_eq!(result, vec!["SZ000001", "SH600519"]);
+    }
+
+    #[test]
+    fn filter_symbols_returns_empty_on_no_match() {
+        let input = vec!["SZ000001".into(), "SH600519".into()];
+        let result = filter_symbols(input, "999999");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_symbols_returns_empty_on_empty_input() {
+        let input: Vec<String> = vec![];
+        let result = filter_symbols(input, "000001");
+        assert!(result.is_empty());
     }
 }
