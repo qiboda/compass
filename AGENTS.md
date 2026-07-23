@@ -70,17 +70,16 @@ checklist above. Do not skip any step.
 Detailed docs under `kb/` — organized into three sections:
 
 | Section | Purpose |
-|---|---|
+|---|---|---|
 | `kb/design/` | Project design details — architecture, data providers, symbols |
-| `kb/dev/` | Development aids — workflow, process, reflections |
-| `kb/test/` | Testing — test patterns, integration tests, test stories |
+| `kb/dev/` | Development aids — workflow, process, testing, reflections |
 
 | File | Content |
 |---|---|
 | `kb/design/architecture.md` | Threading model, data pipeline, CachedProvider, schema, source layout, libraries |
 | `kb/design/symbols.md` | A-share market segments, `to_secid()` prefix/fallback logic, timeframe mapping |
 | `kb/design/data-providers.md` | EastMoney HTTP, DuckDB, Dolt, ParquetReader, DataError |
-| `kb/test/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
+| `kb/dev/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
 | `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
 
@@ -211,7 +210,7 @@ default_timeframe = "1d"
 
 ## Testing
 
-See `kb/test/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
+See `kb/dev/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
 
 ```toml
 [dev-dependencies]

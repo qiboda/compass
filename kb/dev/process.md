@@ -174,7 +174,7 @@ same commit. AGENTS.md must be updated if the architecture overview changes.
 | New data source, API call, schema change | `kb/design/data-providers.md` |
 | Threading, pipeline, library changes | `kb/design/architecture.md` |
 | Symbol format, timeframe mapping | `kb/design/symbols.md` |
-| Test framework, patterns | `kb/test/testing.md` |
+| Test framework, patterns | `kb/dev/testing.md` |
 | Workflow, hooks, conventions | `kb/dev/process.md` |
 | Project-level conventions | `AGENTS.md` |
 
