@@ -6,6 +6,17 @@ with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for que
 
 ---
 
+## ⚡ GRILL-ME FIRST (ALWAYS)
+
+**On EVERY user message in this repo, you MUST load `/grill-me` before responding.**
+This is NON-NEGOTIABLE. No exceptions.
+
+The grill-me interview must complete with "shared understanding reached" before
+you proceed to any other action — including reading files, classifying the
+request, creating todos, or writing code.
+
+---
+
 ## 🛑 PRE-IMPLEMENTATION GATE (READ BEFORE ANY CODE CHANGE)
 
 **For ALL feature and bugfix work, you MUST complete this gate BEFORE writing any code.**
@@ -14,7 +25,6 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 
 | Step | Action | Evidence Required |
 |---|---|---|
-| **0. Grill-Me** | Load `/grill-me`, interview user relentlessly | "shared understanding reached" + locked-in decisions |
 | **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
 | **2. Plan** | If 2+ modules involved: run plan agent | Plan approved by user |
 | **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
@@ -22,15 +32,17 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
 
+### HARD BLOCK
+
 This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
 remind you of this gate. If you find yourself writing code without completing
-these steps, you are violating the workflow — stop immediately and go back.
+these steps, you are violating the workflow — stop immediately, `git stash` or revert, and go back to step 0.
 
 Exceptions (skip the gate): refactors, documentation-only changes, lint fixes, typo fixes.
 
 ### After implementation: Reflection Record
 
-After EVERY feature/bugfix, append a brief reflection to `kb/reflections.md`:
+After EVERY feature/bugfix, append a brief reflection to `kb/dev/reflections.md`:
 
 ```markdown
 ## [date] — ref #[N] [title]
@@ -55,16 +67,22 @@ checklist above. Do not skip any step.
 
 ## Knowledge base
 
-Detailed docs under `kb/`:
+Detailed docs under `kb/` — organized into three sections:
+
+| Section | Purpose |
+|---|---|
+| `kb/design/` | Project design details — architecture, data providers, symbols |
+| `kb/dev/` | Development aids — workflow, process, reflections |
+| `kb/test/` | Testing — test patterns, integration tests, test stories |
 
 | File | Content |
 |---|---|
-| `kb/architecture.md` | Threading model, data pipeline, CachedProvider, schema, source layout, libraries |
-| `kb/symbols.md` | A-share market segments, `to_secid()` prefix/fallback logic, timeframe mapping |
-| `kb/data-providers.md` | EastMoney HTTP, DuckDB, Dolt, ParquetReader, DataError |
-| `kb/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
-| `kb/process.md` | Dev workflow, commands, config, debugging, reset |
-| `kb/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
+| `kb/design/architecture.md` | Threading model, data pipeline, CachedProvider, schema, source layout, libraries |
+| `kb/design/symbols.md` | A-share market segments, `to_secid()` prefix/fallback logic, timeframe mapping |
+| `kb/design/data-providers.md` | EastMoney HTTP, DuckDB, Dolt, ParquetReader, DataError |
+| `kb/test/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
+| `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
+| `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
 
 ## Setup
 
@@ -112,11 +130,11 @@ to replace existing data. Applies to `import`, `download`, `merge`, `export`.
 
 ## Architecture
 
-See `kb/architecture.md` — threading model, data pipeline, CachedProvider, schema, source layout, libraries.
+See `kb/design/architecture.md` — threading model, data pipeline, CachedProvider, schema, source layout, libraries.
 
 ## Data providers
 
-See `kb/data-providers.md` — EastMoney, DuckDB, Dolt, ParquetReader, DataError.
+See `kb/design/data-providers.md` — EastMoney, DuckDB, Dolt, ParquetReader, DataError.
 
 **Priority**: Dolt `investment_data` (local) is the **primary** data source.
 EastMoney is a fallback for data not available locally.
@@ -193,7 +211,7 @@ default_timeframe = "1d"
 
 ## Testing
 
-See `kb/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
+See `kb/test/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
 
 ```toml
 [dev-dependencies]

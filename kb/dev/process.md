@@ -157,7 +157,7 @@ cargo run --bin compass-data -- download --help
 
 If working without OpenCode:
 
-1. **Explore** the relevant source files (`kb/architecture.md` for layout).
+1. **Explore** the relevant source files (`kb/design/architecture.md` for layout).
 2. **Test first**: Write a failing test in `#[cfg(test)] mod tests`.
 3. **Implement** in the source file.
 4. **Verify**: `cargo nextest run` + `lsp_diagnostics`.
@@ -171,11 +171,11 @@ same commit. AGENTS.md must be updated if the architecture overview changes.
 
 | Change type | kb/ file to update |
 |---|---|
-| New data source, API call, schema change | `data-providers.md` |
-| Threading, pipeline, library changes | `architecture.md` |
-| Symbol format, timeframe mapping | `symbols.md` |
-| Test framework, patterns | `testing.md` |
-| Workflow, hooks, conventions | `process.md` |
+| New data source, API call, schema change | `kb/design/data-providers.md` |
+| Threading, pipeline, library changes | `kb/design/architecture.md` |
+| Symbol format, timeframe mapping | `kb/design/symbols.md` |
+| Test framework, patterns | `kb/test/testing.md` |
+| Workflow, hooks, conventions | `kb/dev/process.md` |
 | Project-level conventions | `AGENTS.md` |
 
 ## TDD workflow

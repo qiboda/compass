@@ -21,13 +21,8 @@ a single line of code — you MUST verbalize the following checklist to the user
 
 I will now check each gate step before proceeding:
 
-☐ STEP 0 — GRILL-ME (ALWAYS REQUIRED)
-   Load /grill-me skill. Interview the user relentlessly about every aspect
-   of the requirement until shared understanding is reached.
-   → [must report "shared understanding reached" with locked-in decisions]
-
 ☐ STEP 1 — ISSUE
-   Create gh issue from the shared understanding summary
+   Create gh issue from the requirement
    → [must show issue URL to user]
 
 ☐ STEP 2 — PLAN (skip only if single-file change)
@@ -44,10 +39,10 @@ I will now check each gate step before proceeding:
 ```
 
 **You are FORBIDDEN from using any edit/write/bash tools for implementation
-until ALL five steps (0-4) above are completed and shown to the user.**
+until ALL four steps (1-4) above are completed and shown to the user.**
 
 If you find yourself writing code without completing the gate, STOP IMMEDIATELY
-and go back to step 0. This is a HARD BLOCK — no exceptions for feature/bugfix work.
+and go back to step 1. This is a HARD BLOCK — no exceptions for feature/bugfix work.
 
 ### Exceptions (skip the gate)
 
@@ -72,30 +67,17 @@ Only then may you create todos and begin editing files.
 
 ## Rules (ordered by priority)
 
-### 0. Grill-Me First (ALWAYS)
-
-For EVERY feature and bugfix, the `/grill-me` skill MUST be fired before
-anything else. The grill-me interview:
-
-- Clarifies ambiguous requirements
-- Resolves design decisions depth-first
-- Produces a "locked-in decisions" summary
-
-The locked-in decisions become the body of the GitHub issue in step 1.
-Never skip this — even for seemingly simple features. The interview
-often surfaces hidden complexity.
-
 ### 1. Doc Sync (CRITICAL)
 
 Any code change affecting behavior, public APIs, data structures, config, or workflows MUST update the relevant `kb/` files AND `AGENTS.md` in the SAME commit.
 
 | Change type | kb/ file to update |
 |---|---|
-| New data source, API call, schema change | `data-providers.md` |
-| Threading, pipeline, library changes | `architecture.md` |
-| Symbol format, timeframe mapping | `symbols.md` |
-| Test framework, patterns | `testing.md` |
-| Workflow, hooks, conventions | `process.md` |
+| New data source, API call, schema change | `kb/design/data-providers.md` |
+| Threading, pipeline, library changes | `kb/design/architecture.md` |
+| Symbol format, timeframe mapping | `kb/design/symbols.md` |
+| Test framework, patterns | `kb/test/testing.md` |
+| Workflow, hooks, conventions | `kb/dev/process.md` |
 | Project-level conventions | `AGENTS.md` |
 
 ### 2. Requirement Flow (CRITICAL)
@@ -172,7 +154,7 @@ If any box is unchecked, fix it before pushing.
 ## 📝 REFLECTION RECORD (MANDATORY)
 
 After EVERY feature or bugfix implementation, you MUST write a brief reflection
-and append it to `kb/reflections.md`. This is NOT optional.
+and append it to `kb/dev/reflections.md`. This is NOT optional.
 
 ### Format
 
