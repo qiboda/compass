@@ -53,42 +53,15 @@ cargo run --bin compass-data -- export
 
 ## Architecture
 
-- **Library crate** `compass-core` (`crates/compass-core/src/lib.rs`) shared by GUI and CLI.
-- **GUI binary** `compass` (`crates/compass/src/main.rs`) — egui chart window.
-- **Data CLI** `compass-data` (`crates/compass-data/src/main.rs`) — subcommand-based pipeline.
-- Workspace root `Cargo.toml` manages shared dependency versions.
-- `CompassApp` owns a `Chart` widget and shared `CompassState` (Arc<Mutex<>>).
-- Worker thread (`std::thread`) runs a `tokio` runtime, listens for `Cmd` via mpsc,
-  dispatches to `CachedProvider`, and updates `CompassState`.
-- UI thread polls state each frame, rebuilds chart data on `bars_version` change.
-
-### Data pipeline (GUI)
-
-```
-UI (CompassApp)
-  └─ mpsc::Sender<Cmd>
-       └─ Worker thread (tokio runtime)
-            └─ CachedProvider<R: DataProvider, C: DataProvider+NegativeCache+DataWriter>
-                 ├─ 1. DuckDbProvider::fetch_bars      (cache read)
-                 ├─ 2. EastMoneyProvider::fetch_bars    (HTTP, cache miss)
-                 └─ 3. DuckDbProvider::save_bars        (write-through)
-```
-
-### Data pipeline (CLI — compass-data)
-
-```
-compass-data download    EastMoney API → staging.duckdb (staging)
-compass-data import      Dolt investment_data → parquet_data/ (main DB)
-compass-data merge       staging.duckdb → parquet_data/ (incremental merge)
-compass-data export      parquet_data/ → duckdb/csv (format conversion)
-```
+See `kb/architecture.md` — threading model, data pipeline, CachedProvider, schema, source layout, libraries.
 
 ## Data providers
 
+See `kb/data-providers.md` — EastMoney, DuckDB, Dolt, ParquetReader, DataError.
+
 ### EastMoneyProvider (`crates/compass-core/src/data/eastmoney.rs`)
 
-Fetches K-line data from `push2his.eastmoney.com`. Symbol listing and stock
-info from `push2delay.eastmoney.com`. Symbol → secid conversion via `to_secid()`:
+Fetches K-line data from `push2his.eastmoney.com`. Symbol → secid conversion via `to_secid()`:
 
 | Input | secid | Description |
 |---|---|---|
@@ -99,16 +72,6 @@ info from `push2delay.eastmoney.com`. Symbol → secid conversion via `to_secid(
 | `sh.000001` | `1.000001` | 上证指数 (explicit SH prefix) |
 | `sz.000001` | `0.000001` | 显式深圳 |
 | `bj.8xxxxx` | `0.8xxxxx` | 北交所 |
-
-### DuckDbProvider (`crates/compass-core/src/data/duckdb.rs`)
-
-Local persistent cache. Implements `DataProvider` + `DataWriter` + `NegativeCache`.
-Tables use `symbol` (6-digit code like `000001`) as primary key — no more `ts_code`.
-
-### ParquetReader (`crates/compass-core/src/data/parquet.rs`)
-
-Reads Parquet files directly via DuckDB `read_parquet()`. Implements `DataProvider`.
-Parquet files are partitioned by symbol: `parquet_data/stock_daily/000001.parquet`.
 
 ### Dolt import (`crates/compass-data/src/import_dolt.rs`)
 
@@ -168,10 +131,7 @@ default_timeframe = "1d"
 
 ## Testing
 
-- Framework: `rstest` (parameterized + fixtures) + `#[tokio::test]` for async
-- HTTP mock: `httpmock` (dev-dependency)
-- DuckDB tests use `":memory:"` for isolated in-memory databases
-- Run: `cargo test` or `cargo nextest run`
+See `kb/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
 
 ```toml
 [dev-dependencies]
