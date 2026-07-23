@@ -1,10 +1,34 @@
 #!/bin/bash
 # pre-push hook — verify quality gates and issue references.
 #
-# 1. cargo doc must be warning-free (RUSTDOCFLAGS="-D warnings")
-# 2. "ref #N" in commit messages must point to open issues
+# 1. cargo fmt (must be clean)
+# 2. cargo clippy (must be warning-free)
+# 3. cargo doc (must be warning-free)
+# 4. "ref #N" in commit messages must point to open issues
+#
+# Matches the pre-push checklist in kb/dev/process.md.
 
 has_error=0
+
+# --- Quality gate: cargo fmt ---
+echo "pre-push: cargo fmt --check..."
+if ! cargo fmt --check; then
+    echo ""
+    echo "ERROR: cargo fmt --check found unformatted code."
+    echo "  Run 'cargo fmt' and commit the changes."
+    echo ""
+    has_error=1
+fi
+
+# --- Quality gate: cargo clippy ---
+echo "pre-push: cargo clippy -- -D warnings..."
+if ! cargo clippy -- -D warnings 2>&1; then
+    echo ""
+    echo "ERROR: cargo clippy produced warnings."
+    echo "  Fix clippy warnings before pushing."
+    echo ""
+    has_error=1
+fi
 
 # --- Quality gate: cargo doc ---
 echo "pre-push: cargo doc --no-deps (must be warning-free)..."
