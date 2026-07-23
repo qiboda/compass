@@ -67,7 +67,7 @@ checklist above. Do not skip any step.
 
 ## Knowledge base
 
-Detailed docs under `kb/` — organized into three sections:
+Detailed docs under `kb/` — organized into two sections:
 
 | Section | Purpose |
 |---|---|---|
@@ -211,12 +211,6 @@ default_timeframe = "1d"
 ## Testing
 
 See `kb/dev/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
-
-```toml
-[dev-dependencies]
-rstest = "0.25"
-httpmock = "0.8"
-```
 
 ## egui-charts API
 

@@ -2,12 +2,11 @@
 
 ## Framework
 
-```toml
-[dev-dependencies]
-rstest = "0.25"       # parameterized tests + fixtures
-httpmock = "0.8"     # HTTP mock server
-tempfile = "3"        # temporary file/dir creation
-```
+| Crate | Purpose |
+|---|---|
+| `rstest` | parameterized tests + fixtures |
+| `httpmock` | HTTP mock server |
+| `tempfile` | temporary file/dir creation |
 
 ## Test runner
 
