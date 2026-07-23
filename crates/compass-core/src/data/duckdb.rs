@@ -1129,7 +1129,10 @@ mod tests {
             .expect("fetch");
 
         assert_eq!(bars.len(), 1);
-        assert!((bars[0].close - 99.0).abs() < 0.01, "close should be 99.0 after overwrite");
+        assert!(
+            (bars[0].close - 99.0).abs() < 0.01,
+            "close should be 99.0 after overwrite"
+        );
     }
 
     // -----------------------------------------------------------------------
