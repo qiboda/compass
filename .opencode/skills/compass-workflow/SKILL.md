@@ -21,8 +21,13 @@ a single line of code — you MUST verbalize the following checklist to the user
 
 I will now check each gate step before proceeding:
 
+☐ STEP 0 — GRILL-ME (ALWAYS REQUIRED)
+   Load /grill-me skill. Interview the user relentlessly about every aspect
+   of the requirement until shared understanding is reached.
+   → [must report "shared understanding reached" with locked-in decisions]
+
 ☐ STEP 1 — ISSUE
-   gh issue view <N> (or create with gh issue create)
+   Create gh issue from the shared understanding summary
    → [must show issue URL to user]
 
 ☐ STEP 2 — PLAN (skip only if single-file change)
@@ -39,10 +44,10 @@ I will now check each gate step before proceeding:
 ```
 
 **You are FORBIDDEN from using any edit/write/bash tools for implementation
-until ALL four steps above are completed and shown to the user.**
+until ALL five steps (0-4) above are completed and shown to the user.**
 
 If you find yourself writing code without completing the gate, STOP IMMEDIATELY
-and go back to step 1. This is a HARD BLOCK — no exceptions for feature/bugfix work.
+and go back to step 0. This is a HARD BLOCK — no exceptions for feature/bugfix work.
 
 ### Exceptions (skip the gate)
 
@@ -55,7 +60,7 @@ The gate does NOT apply to:
 
 ### Gate completion signal
 
-When all four steps are complete, announce explicitly:
+When all five steps are complete, announce explicitly:
 
 ```
 ✅ GATE COMPLETE — proceeding to implementation
@@ -66,6 +71,19 @@ Only then may you create todos and begin editing files.
 ---
 
 ## Rules (ordered by priority)
+
+### 0. Grill-Me First (ALWAYS)
+
+For EVERY feature and bugfix, the `/grill-me` skill MUST be fired before
+anything else. The grill-me interview:
+
+- Clarifies ambiguous requirements
+- Resolves design decisions depth-first
+- Produces a "locked-in decisions" summary
+
+The locked-in decisions become the body of the GitHub issue in step 1.
+Never skip this — even for seemingly simple features. The interview
+often surfaces hidden complexity.
 
 ### 1. Doc Sync (CRITICAL)
 
@@ -138,7 +156,7 @@ After completing implementation, review your own work against this checklist:
 ```
 🔍 POST-IMPLEMENTATION AUDIT
 
-☐ Were all gate steps completed before code was written?
+☐ Were all gate steps (0-4) completed before code was written?
 ☐ Does every changed kb/ file reflect the actual changes?
 ☐ Do all tests pass? (cargo test)
 ☐ Is cargo clippy clean?
@@ -148,6 +166,33 @@ After completing implementation, review your own work against this checklist:
 ```
 
 If any box is unchecked, fix it before pushing.
+
+---
+
+## 📝 REFLECTION RECORD (MANDATORY)
+
+After EVERY feature or bugfix implementation, you MUST write a brief reflection
+and append it to `kb/reflections.md`. This is NOT optional.
+
+### Format
+
+```markdown
+## [date] — [issue ref] [brief title]
+
+**What was done**: [1-2 sentences summarizing the change]
+
+**What went wrong** (if any): [process failures, missed steps, surprises]
+
+**Lessons learned**: [what to do differently next time]
+```
+
+### Purpose
+
+Reflections compound. They prevent the same mistakes from recurring. If you
+skipped the gate or violated a rule, that MUST appear in the reflection.
+
+The reflection MUST be committed in the same commit as the implementation,
+or as a follow-up commit immediately after.
 
 ---
 

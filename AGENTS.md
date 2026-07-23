@@ -14,6 +14,7 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 
 | Step | Action | Evidence Required |
 |---|---|---|
+| **0. Grill-Me** | Load `/grill-me`, interview user relentlessly | "shared understanding reached" + locked-in decisions |
 | **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
 | **2. Plan** | If 2+ modules involved: run plan agent | Plan approved by user |
 | **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
@@ -26,6 +27,20 @@ remind you of this gate. If you find yourself writing code without completing
 these steps, you are violating the workflow — stop immediately and go back.
 
 Exceptions (skip the gate): refactors, documentation-only changes, lint fixes, typo fixes.
+
+### After implementation: Reflection Record
+
+After EVERY feature/bugfix, append a brief reflection to `kb/reflections.md`:
+
+```markdown
+## [date] — ref #[N] [title]
+
+**What was done**: [1-2 sentences]
+**What went wrong**: [process failures, if any]
+**Lessons learned**: [what to do differently]
+```
+
+This is MANDATORY — commit it with the implementation or immediately after.
 
 ---
 
@@ -49,6 +64,7 @@ Detailed docs under `kb/`:
 | `kb/data-providers.md` | EastMoney HTTP, DuckDB, Dolt, ParquetReader, DataError |
 | `kb/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
 | `kb/process.md` | Dev workflow, commands, config, debugging, reset |
+| `kb/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
 
 ## Setup
 
