@@ -451,7 +451,7 @@ timeout_secs = 10           # HTTP request timeout
 retry_count = 3             # retry attempts on transient failure
 
 [database]
-path = "compass.db"         # DuckDB cache file location
+path = "data/compass.db"         # DuckDB cache file location
 ```
 
 For the CLI, most settings are command-line arguments (see `compass-data --help`):

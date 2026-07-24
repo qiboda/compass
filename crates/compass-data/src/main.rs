@@ -123,7 +123,7 @@ enum Command {
         format: String,
 
         /// Output path
-        #[arg(long, default_value = "compass.duckdb")]
+        #[arg(long, default_value = "data/compass.duckdb")]
         output: PathBuf,
 
         /// Overwrite existing data instead of skipping duplicates

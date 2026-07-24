@@ -190,7 +190,7 @@ impl Default for AppSection {
 }
 
 fn default_db_path() -> String {
-    "compass.db".into()
+    "data/compass.db".into()
 }
 fn default_base_url() -> String {
     "https://push2his.eastmoney.com".into()

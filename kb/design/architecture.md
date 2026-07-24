@@ -212,7 +212,7 @@ Compass uses two database formats for different purposes:
     ├─ Stock basic: stock_basic.parquet (one file for all symbols)
     └─ Stock daily: stock_daily/{symbol}.parquet (one file per symbol)
 
-  DuckDB (compass.db / staging.duckdb)
+  DuckDB (data/compass.db / data/staging.duckdb)
     ├─ GUI cache — stores fetched bars for instant replay
     ├─ CLI staging — temporary buffer during download
     └─ Negative cache — tracks no-data symbols with TTL
@@ -294,7 +294,7 @@ fields are optional — missing keys fall back to sensible defaults defined in
 
 ```toml
 [database]
-path = "compass.db"           # where to store the cache
+path = "data/compass.db"           # where to store the cache
 
 [api]
 base_url = "https://push2his.eastmoney.com"

@@ -202,7 +202,7 @@ CREATE TABLE stock_limit (
 
 ```toml
 [database]
-path = "compass.duckdb"
+path = "data/compass.duckdb"
 
 [api]
 base_url = "https://push2his.eastmoney.com"

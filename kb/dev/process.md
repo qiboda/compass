@@ -321,7 +321,7 @@ dolt --data-dir=investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
 ### Reset everything
 
 ```sh
-rm compass.duckdb logs/compass.log         # GUI cache
+rm data/compass.duckdb logs/compass.log         # GUI cache
 rm -rf data/                                 # staging cache
 rm -rf parquet_data/                        # main Parquet data
 ```

@@ -21,7 +21,7 @@ mkdir -p ~/.config/compass
 [database]
 # Path to the DuckDB cache file used by the GUI.
 # Default: "compass.db"
-path = "compass.db"
+path = "data/compass.db"
 
 [api]
 # EastMoney K-line API endpoint.

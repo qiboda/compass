@@ -81,13 +81,13 @@ See [Config](config.md) for all options.
 
 ## Data prerequisites
 
-The chart app reads from the local DuckDB cache (`compass.db`). Before first use,
+The chart app reads from the local DuckDB cache (`data/compass.db`). Before first use,
 you need data available:
 
 ```sh
 # Option A: Import from Dolt (complete history)
 cargo run --bin compass-data -- import
-cargo run --bin compass-data -- export   # → compass.db
+cargo run --bin compass-data -- export   # → data/compass.db
 
 # Option B: Download from EastMoney (specific stocks)
 cargo run --bin compass-data -- download --symbols 000001,600519

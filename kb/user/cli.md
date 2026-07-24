@@ -5,7 +5,7 @@
 `compass-data` manages A-share OHLCV data through four subcommands:
 
 ```
-EastMoney API ──download──► staging.duckdb ──merge──► parquet_data/ ──export──► compass.duckdb
+EastMoney API ──download──► staging.duckdb ──merge──► parquet_data/ ──export──► data/compass.duckdb
 Dolt DB ───────import─────► parquet_data/
 ```
 
@@ -153,7 +153,7 @@ cargo run --bin compass-data -- export [OPTIONS]
 |---|---|---|
 | `--input` | `parquet_data` | Parquet data directory |
 | `--format` | `duckdb` | Output format: `duckdb`, `csv`, `parquet-dir` |
-| `--output` | `compass.duckdb` | Output path |
+| `--output` | `data/compass.duckdb` | Output path |
 | `--overwrite` | `false` | Replace existing data instead of skipping |
 
 ### Examples
