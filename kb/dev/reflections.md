@@ -73,3 +73,36 @@ exchange. Index data was silently dropped on date conflicts.
 3. The test `validate_symbol_allows_dolt_prefixed_codes` already passed because
    `is_ascii_alphanumeric()` includes uppercase. Don't write tests without
    confirming they actually fail first.
+
+---
+
+## 2026-07-24 — ref #11 feat: add performance benchmarks with criterion
+
+**What was done**: Added criterion.rs benchmarks covering all data operations:
+ParquetReader cold/warm reads, DuckDbProvider cache hit/miss/save, CachedProvider
+read-through, EastMoneyProvider parse/round-trip, Dolt per-symbol export.
+Added CI `cargo bench --no-run` step and documented in `kb/dev/testing.md`.
+
+**What went wrong**: Deep agents wrote benchmark code that didn't pass `cargo fmt`.
+Had to amend the commit after pre-push hook caught it. The agents also each
+took different approaches to async (some used `rt.block_on`, others tried
+`to_async` which doesn't exist in criterion 0.5). Resulted in inconsistent
+patterns across bench files.
+
+**Lessons learned**:
+1. When delegating code to parallel agents, ALWAYS run `cargo fmt` and `cargo clippy`
+   before committing. Agents don't run formatters.
+2. Give agents more specific technical constraints for async patterns (explicitly
+   say "use rt.block_on, not to_async" for criterion 0.5 compatibility).
+3. The bar for delegating benchmark code should be higher — the agents produced
+   working code but with subtle style/approach inconsistencies that needed
+   post-hoc fixing.
+
+**Lessons learned**:
+1. When investigating a bug, check the DATA first. The `duplicate codes in Dolt`
+   pattern would have been obvious if I'd queried Dolt for these symbols sooner.
+2. Filenames that strip distinguishing information are fundamentally lossy.
+   The 6-digit code is not a unique identifier — exchange prefix matters.
+3. The test `validate_symbol_allows_dolt_prefixed_codes` already passed because
+   `is_ascii_alphanumeric()` includes uppercase. Don't write tests without
+   confirming they actually fail first.

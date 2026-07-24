@@ -68,6 +68,17 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  bench-check:
+    name: Bench (compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo bench --no-run
+
   nextest:
     name: Test (nextest)
     runs-on: ubuntu-latest

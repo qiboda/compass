@@ -104,3 +104,42 @@ async `db` method, the spawned task blocks waiting for the lock you already hold
 5. **Integration tests**: Mock EastMoney endpoints with httpmock, use DuckDB
    `:memory:`, and run the full pipeline (enumerate → stock_basic → fetch bars →
    save stock_daily → verify counts).
+
+## Benchmarks
+
+Performance benchmarks use [criterion.rs](https://github.com/bheisler/criterion.rs)
+and live under `benches/` in each crate.
+
+### Running
+
+```sh
+cargo bench                       # all benchmarks (slow — ~hours for full suite)
+cargo bench --bench parquet_bench # specific benchmark
+cargo bench -- --quick            # quick run (fewer samples, for development)
+cargo bench --no-run              # CI: compile only, don't execute
+```
+
+Results are written to `target/criterion/` as HTML reports.
+
+### Available benchmarks
+
+| Crate | Bench file | What it measures |
+|---|---|---|
+| `compass-core` | `parquet_bench` | ParquetReader cold/warm read at 100/1000/5000 rows, real SZ000001 |
+| `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
+| `compass-core` | `cached_bench` | CachedProvider cache hit, cache miss (read-through), negative cache |
+| `compass-core` | `eastmoney_bench` | Kline parse latency/throughput, httpmock round-trip, error paths |
+| `compass-data` | `dolt_bench` | Dolt sql -r parquet per-symbol, 300KB file write, symbol enumeration |
+
+### Data requirements
+
+- **Parquet benchmarks**: need `parquet_data/` with real data OR generate synthetic data via in-memory DuckDB
+- **Dolt benchmarks**: need `investment_data/` directory and `dolt` CLI on PATH; skip gracefully if missing
+- **EastMoney benchmarks**: use `httpmock` — no real network calls
+- **All others**: use in-memory DuckDB or temp directories — no external dependencies
+
+### CI policy
+
+CI runs `cargo bench --no-run` to verify compilation. Benchmarks are NOT executed
+in CI — CI environments are too variable for meaningful performance data.
+Run benchmarks locally before and after performance-sensitive changes.
