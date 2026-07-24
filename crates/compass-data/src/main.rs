@@ -205,3 +205,12 @@ async fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(feature = "tracy")]
+    fn tracy_layer_constructs() {
+        let _layer = tracing_tracy::TracyLayer::default();
+    }
+}

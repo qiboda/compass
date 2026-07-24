@@ -21,3 +21,8 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
+tracing-tracy = { workspace = true, optional = true }
+tracy-client-sys = { workspace = true, optional = true }
+
+[features]
+tracy = ["dep:tracing-tracy", "dep:tracy-client-sys", "tracy-client-sys/enable", "compass-core/tracy"]

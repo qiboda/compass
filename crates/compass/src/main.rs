@@ -365,4 +365,10 @@ mod tests {
         assert_eq!(app.timeframe_input, "1d");
         assert_eq!(app.bars_version, 0);
     }
+
+    #[test]
+    #[cfg(feature = "tracy")]
+    fn tracy_layer_constructs() {
+        let _layer = tracing_tracy::TracyLayer::default();
+    }
 }
