@@ -88,10 +88,17 @@ as you write the implementation, not after.
 
 ### Before pushing
 
-```sh
-cargo nextest run
-cargo clippy -- -D warnings
-cargo fmt --check
+The pre-push hook (`.githooks/pre-push`) enforces these checks in order:
+
+1. **CI health**: latest CI run on `master` must be passing. If it's failing,
+   create an issue for the failure, fix it, then push. Never push on top of
+   a broken CI.
+2. **cargo fmt --check**
+3. **cargo clippy -- -D warnings**
+4. **cargo doc --no-deps** (must be warning-free)
+5. **Issue references**: `ref #N` must point to open issues
+
+Manual pre-push checklist:
 cargo doc --no-deps         # must be warning-free
 ```
 

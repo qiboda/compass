@@ -1,6 +1,7 @@
 #!/bin/bash
 # pre-push hook — verify quality gates and issue references.
 #
+# 0. Latest CI on master must be passing
 # 1. cargo fmt (must be clean)
 # 2. cargo clippy (must be warning-free)
 # 3. cargo doc (must be warning-free)
@@ -9,6 +10,22 @@
 # Matches the pre-push checklist in kb/dev/process.md.
 
 has_error=0
+
+# --- Quality gate: CI status ---
+echo "pre-push: checking latest CI on master..."
+CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+if [ "$CI_STATUS" = "failure" ]; then
+    echo ""
+    echo "ERROR: Latest CI run on master is FAILING."
+    echo "  Fix CI before pushing. Run: gh run list --repo qiboda/compass --limit 1"
+    echo "  If it's a known issue, create an issue and fix it before pushing."
+    echo ""
+    has_error=1
+elif [ "$CI_STATUS" = "unknown" ]; then
+    echo "  (could not check CI status — continuing)"
+else
+    echo "  CI status: $CI_STATUS"
+fi
 
 # --- Quality gate: cargo fmt ---
 echo "pre-push: cargo fmt --check..."
