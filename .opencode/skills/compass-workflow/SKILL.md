@@ -91,11 +91,13 @@ Skip this for: refactors, docs, lint fixes, typos.
 
 Commit references: `ref #N` (feat/fix), no `fixes #N` / `closes #N` (auto-close unwanted).
 
-### 3. Plan First
+### 3. Plan First (`/ulw-plan`)
 
-Use the plan agent for: multi-step tasks (2+ modules), architecture changes, new data sources, ambiguous scope.
+**Non-negotiable for multi-step work.** Run `/ulw-plan` for: multi-step tasks (2+ modules), architecture changes, new data sources, ambiguous scope.
 
-Skip planning for: single-file fixes, tests, doc updates.
+The plan agent produces a `.omo/plans/*.md` file with task wave ordering and verification gates. Do NOT skip this and verbally describe the plan yourself — the agent's structured output is the approved execution contract.
+
+Skip planning only for: truly single-file fixes, test additions, doc updates.
 
 ### 4. Test First
 

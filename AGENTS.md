@@ -26,7 +26,7 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 | Step | Action | Evidence Required |
 |---|---|---|
 | **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
-| **2. Plan** | If 2+ modules involved: run plan agent | Plan approved by user |
+| **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
 | **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
 | **4. Docs** | Identify which `kb/` files need updating | List of files to user |
 
