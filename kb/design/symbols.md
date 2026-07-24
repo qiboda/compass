@@ -156,7 +156,7 @@ Dolt's `investment_data` database stores symbols with exchange prefixes:
 | `SH600519` | `600519` | SH |
 | `BJ830799` | `830799` | BJ |
 
-The import pipeline strips these prefixes during the CSV → Parquet conversion.
+The import pipeline strips these prefixes during the Dolt → Parquet conversion.
 The mapping is straightforward: remove the first two characters, which are
 always the exchange code.
 

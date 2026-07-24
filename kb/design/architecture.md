@@ -181,13 +181,13 @@ Dolt DB ───────import─────► parquet_data/
 - Writes to staging DuckDB via INSERT OR IGNORE (skip duplicates by default)
 
 ### import: Dolt → Parquet
-- Queries Dolt `investment_data` database via `dolt sql -r csv`
+- Queries Dolt `investment_data` database via `dolt sql -r parquet`
 - Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
 - Strips exchange prefixes (SZ000001 → 000001)
-- Converts to Parquet via DuckDB's COPY TO PARQUET
+- Writes Parquet bytes directly — no CSV or DuckDB intermediary
 - One Parquet file per symbol: `parquet_data/stock_daily/000001.parquet`
-- Merge mode (default): existing data preserved, only new dates added
-- Overwrite mode: full replacement from Dolt
+- Merge mode (default): uses DuckDB `read_parquet` to merge existing + new
+- Overwrite mode: bytes written directly to target file
 
 ### merge: staging → Parquet
 - Lists symbols in staging DuckDB not yet in Parquet
@@ -350,7 +350,7 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 | 17 | Command channel | std::sync::mpsc | Simple, well-understood. Lightweight commands flow one way; results flow back through shared state, not the channel. |
 | 18 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction lets us swap backends: DuckDB, EastMoney, Parquet — all behind the same interface. Testable with mock implementations. |
 | 19 | Parquet storage | DuckDB read_parquet + COPY TO | Columnar format partitioned by symbol. Queryable without loading into tables. |
-| 20 | Dolt import | dolt CLI → CSV → DuckDB → Parquet | Offline bulk import of 18M+ rows. Uses the dolt binary directly (no library binding). |
+| 20 | Dolt import | dolt CLI → Parquet (direct) | Offline bulk import of 18M+ rows. Dolt `sql -r parquet` writes binary Parquet directly, skipping the CSV intermediary. |
 
 ## Where to go next
 

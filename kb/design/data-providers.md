@@ -364,23 +364,23 @@ The import pipeline (`compass-data import`) works as follows:
 dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     │
     ├─ Produces list of 6122 symbols (e.g. "SZ000001", "SH600519")
+    │     [Note: symbol list query still uses CSV for simple text parsing]
     │
     ├─ For each symbol:
-    │     dolt sql -r csv -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001'"
-    │       → temp CSV file
-    │       → DuckDB reads CSV, converts to Parquet via COPY TO
-    │       → written to parquet_data/stock_daily/000001.parquet
+    │     dolt sql -r parquet -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001'"
+    │       → binary Parquet bytes (no CSV intermediation)
+    │       → written directly to parquet_data/stock_daily/000001.parquet
     │
     └─ Stock basic info → parquet_data/stock_basic.parquet
 ```
 
 **Merge vs overwrite**: by default (`--overwrite` not set), the import is
 migration-style:
-1. Read existing Parquet data (if any)
-2. Read Dolt CSV data
+1. Read existing Parquet data (if any) via `read_parquet`
+2. Write Dolt Parquet data to temp file
 3. Use `ROW_NUMBER() OVER (PARTITION BY tradedate ORDER BY priority)` to
    deduplicate: existing data gets priority 1, Dolt data gets priority 2
-4. Write merged result as new Parquet file
+4. Write merged result as new Parquet file via DuckDB `read_parquet` + `COPY TO`
 
 This means you can run `import` repeatedly without losing any data you've
 already imported from other sources. Only genuinely new dates are added.
