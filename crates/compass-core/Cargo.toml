@@ -21,3 +21,20 @@ httpmock = { workspace = true }
 tempfile = { workspace = true }
 rstest = { workspace = true }
 toml = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "parquet_bench"
+harness = false
+
+[[bench]]
+name = "duckdb_bench"
+harness = false
+
+[[bench]]
+name = "cached_bench"
+harness = false
+
+[[bench]]
+name = "eastmoney_bench"
+harness = false

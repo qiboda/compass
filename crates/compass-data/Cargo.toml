@@ -24,3 +24,8 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 httpmock = { workspace = true }
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "dolt_bench"
+harness = false
