@@ -5,5 +5,6 @@ compass.duckdb
 logs/
 *.log
 investment_data/
+.dolt/
 /data
 parquet_data/
