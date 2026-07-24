@@ -143,3 +143,25 @@ Results are written to `target/criterion/` as HTML reports.
 CI runs `cargo bench --no-run` to verify compilation. Benchmarks are NOT executed
 in CI — CI environments are too variable for meaningful performance data.
 Run benchmarks locally before and after performance-sensitive changes.
+
+### Saving and comparing baselines
+
+Benchmark results are saved to `bench_results/<version>/` for versioned tracking:
+
+```sh
+# Save a full baseline (auto-generates timestamp-based version)
+scripts/bench-save.sh
+
+# Save with explicit version
+scripts/bench-save.sh v1.0
+
+# Quick run (fewer samples, faster)
+scripts/bench-save.sh v2.0 quick
+
+# Compare current code against a previous baseline
+cargo bench -- --baseline v1.0
+```
+
+The script runs `cargo bench -- --save-baseline <version>` then copies
+results out of `target/criterion/` into `bench_results/<version>/`,
+keeping them outside the build cache.
