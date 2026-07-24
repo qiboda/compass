@@ -41,7 +41,7 @@ mistake?
 
 **What we gain from bare codes**:
 - Simpler SQL: no string splitting in WHERE clauses
-- Cleaner filenames: `000001.parquet` instead of `000001.SZ.parquet`
+- Cleaner filenames: `SZ000001.parquet` instead of `000001.SZ.parquet`
 - One-to-one mapping: each stock has exactly one canonical identifier
 - Existing code ranges are already non-overlapping for stocks
 

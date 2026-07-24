@@ -190,7 +190,7 @@ pub fn run(
             continue;
         }
 
-        let parquet_path = stock_daily_dir.join(format!("{code}.parquet"));
+        let parquet_path = stock_daily_dir.join(format!("{symbol}.parquet"));
 
         if !overwrite && parquet_path.exists() {
             // Merge: keep existing data (priority 1), only add new dates from Dolt (priority 2)

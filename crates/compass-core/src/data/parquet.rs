@@ -33,8 +33,8 @@ fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
 /// parquet_data/
 ///   stock_basic.parquet
 ///   stock_daily/
-///     000001.parquet
-///     600519.parquet
+///     SZ000001.parquet
+///     SH600519.parquet
 ///     ...
 /// ```
 pub struct ParquetReader {
@@ -360,7 +360,7 @@ mod tests {
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
 
-        let result = reader.fetch_bars_blocking("000001", start, end);
+        let result = reader.fetch_bars_blocking("SZ000001", start, end);
         assert!(matches!(result, Err(DataError::NoData { .. })));
     }
 
@@ -375,10 +375,10 @@ mod tests {
     fn parquet_path_constructs_correctly() {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        std::fs::write(tmp.path().join("stock_daily/000001.parquet"), b"").expect("write");
+        std::fs::write(tmp.path().join("stock_daily/SZ000001.parquet"), b"").expect("write");
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        assert!(reader.file_exists("000001"));
+        assert!(reader.file_exists("SZ000001"));
         assert!(!reader.file_exists("999999"));
     }
 
@@ -393,6 +393,17 @@ mod tests {
             result.is_err() || result.unwrap().is_none(),
             "SQL injection via symbol should return error or None, not data"
         );
+    }
+
+    #[test]
+    fn validate_symbol_allows_dolt_prefixed_codes() {
+        // Dolt symbols include uppercase prefixes: SZ, SH, BJ
+        validate_symbol("SZ000001").expect("SZ000001 should be valid");
+        validate_symbol("SH600519").expect("SH600519 should be valid");
+        validate_symbol("BJ830799").expect("BJ830799 should be valid");
+        // Special chars still rejected
+        assert!(validate_symbol("SZ.000001").is_err());
+        assert!(validate_symbol("SH/600519").is_err());
     }
 
     #[test]
@@ -468,7 +479,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
         create_test_ohlcv_parquet(
             &tmp,
-            "000001",
+            "SZ000001",
             &[
                 ("2024-01-02", 10.0),
                 ("2024-01-03", 11.0),
@@ -480,7 +491,7 @@ mod tests {
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
         let bars = reader
-            .fetch_bars_blocking("000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end)
             .expect("fetch");
 
         assert_eq!(bars.len(), 3);
@@ -496,7 +507,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
         create_test_ohlcv_parquet(
             &tmp,
-            "000001",
+            "SZ000001",
             &[
                 ("2024-01-02", 10.0),
                 ("2024-01-03", 11.0),
@@ -520,7 +531,7 @@ mod tests {
             Utc,
         );
         let bars = reader
-            .fetch_bars_blocking("000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end)
             .expect("fetch");
         assert_eq!(bars.len(), 2, "should only return Jan dates");
     }
@@ -531,7 +542,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
         create_test_ohlcv_parquet(
             &tmp,
-            "600519",
+            "SH600519",
             &[
                 ("2024-06-01", 1500.0),
                 ("2024-06-15", 1510.0),
@@ -541,7 +552,7 @@ mod tests {
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let range = reader
-            .get_stored_range("600519")
+            .get_stored_range("SH600519")
             .expect("range")
             .expect("some");
         assert_eq!(range.0.to_string(), "2024-06-01");
@@ -552,13 +563,13 @@ mod tests {
     fn list_symbols_finds_parquet_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        create_test_ohlcv_parquet(&tmp, "000001", &[("2024-01-01", 10.0)]);
-        create_test_ohlcv_parquet(&tmp, "600519", &[("2024-01-01", 1500.0)]);
+        create_test_ohlcv_parquet(&tmp, "SZ000001", &[("2024-01-01", 10.0)]);
+        create_test_ohlcv_parquet(&tmp, "SH600519", &[("2024-01-01", 1500.0)]);
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let symbols = reader.list_symbols().expect("list");
         assert_eq!(symbols.len(), 2);
-        assert_eq!(symbols[0].code, "000001");
-        assert_eq!(symbols[1].code, "600519");
+        assert_eq!(symbols[0].code, "SH600519");
+        assert_eq!(symbols[1].code, "SZ000001");
     }
 }

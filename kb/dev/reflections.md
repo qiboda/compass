@@ -49,3 +49,27 @@ PRE-IMPLEMENTATION GATE was skipped entirely.
    commit. Should build the discipline of committing the failing test first.
 3. When the user says "修改" (modify/change), that IS an implementation verb —
    gate immediately, don't jump to code.
+
+---
+
+## 2026-07-24 — ref #10 fix: use Dolt symbol as Parquet filename to prevent cross-exchange merging
+
+**What was done**: Changed import to use the full Dolt symbol (e.g. `SZ000852`)
+instead of the stripped 6-digit code (`000852`) as the Parquet filename. This
+prevents stock (SZ) and index (SH) data from merging into the same file when
+they share a 6-digit code.
+
+**What went wrong**: The original analysis of "4 missing symbols" was wrong.
+Those symbols were never missing — Dolt has both `SZ000852` and `SH000852`,
+and the import correctly merged them into one file. The merge logic treated
+them as the same entity because `PARTITION BY tradedate` doesn't differentiate
+exchange. Index data was silently dropped on date conflicts.
+
+**Lessons learned**:
+1. When investigating a bug, check the DATA first. The `duplicate codes in Dolt`
+   pattern would have been obvious if I'd queried Dolt for these symbols sooner.
+2. Filenames that strip distinguishing information are fundamentally lossy.
+   The 6-digit code is not a unique identifier — exchange prefix matters.
+3. The test `validate_symbol_allows_dolt_prefixed_codes` already passed because
+   `is_ascii_alphanumeric()` includes uppercase. Don't write tests without
+   confirming they actually fail first.

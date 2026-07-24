@@ -324,7 +324,7 @@ to query Parquet files directly:
 
 ```sql
 SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
-FROM read_parquet('parquet_data/stock_daily/600519.parquet')
+FROM read_parquet('parquet_data/stock_daily/SH600519.parquet')
 WHERE tradedate >= '2025-01-01' AND tradedate <= '2025-07-21'
 ORDER BY tradedate ASC
 ```
@@ -369,7 +369,7 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     ├─ For each symbol:
     │     dolt sql -r parquet -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001'"
     │       → binary Parquet bytes (no CSV intermediation)
-    │       → written directly to parquet_data/stock_daily/000001.parquet
+    │       → written directly to parquet_data/stock_daily/SZ000001.parquet
     │
     └─ Stock basic info → parquet_data/stock_basic.parquet
 ```
