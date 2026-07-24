@@ -2,7 +2,7 @@ mod baostock;
 mod chunk;
 mod download;
 mod export;
-mod import_dolt;
+use compass_data::import_dolt;
 mod merge;
 mod progress;
 mod retry;

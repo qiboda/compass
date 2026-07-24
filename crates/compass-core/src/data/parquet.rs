@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use duckdb::{Connection, OptionalExt, params};
 use egui_charts::model::Bar;
 
@@ -201,10 +201,12 @@ impl ParquetReader {
 
         match result {
             Some((Some(min_s), Some(max_s))) if !min_s.is_empty() && !max_s.is_empty() => {
-                let min_date = NaiveDate::parse_from_str(&min_s, "%Y-%m-%d")
-                    .map_err(|e| DataError::Parse(format!("invalid date '{min_s}': {e}")))?;
-                let max_date = NaiveDate::parse_from_str(&max_s, "%Y-%m-%d")
-                    .map_err(|e| DataError::Parse(format!("invalid date '{max_s}': {e}")))?;
+                let min_date = date_str_to_utc(&min_s)
+                    .map(|dt| dt.date_naive())
+                    .ok_or_else(|| DataError::Parse(format!("invalid date '{min_s}'")))?;
+                let max_date = date_str_to_utc(&max_s)
+                    .map(|dt| dt.date_naive())
+                    .ok_or_else(|| DataError::Parse(format!("invalid date '{max_s}'")))?;
                 Ok(Some((min_date, max_date)))
             }
             _ => Ok(None),
@@ -242,10 +244,10 @@ impl ParquetReader {
                     exchange: row.get::<_, Option<String>>(2)?,
                     list_date: row
                         .get::<_, Option<String>>(3)?
-                        .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                     delist_date: row
                         .get::<_, Option<String>>(4)?
-                        .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                 })
             })
             .map_err(|e| match e {
@@ -260,9 +262,20 @@ impl ParquetReader {
 }
 
 fn date_str_to_utc(date_str: &str) -> Option<DateTime<Utc>> {
-    let naive = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
-    let naive_dt = naive.and_hms_opt(0, 0, 0)?;
-    Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc))
+    // Try date-only format (CAST from DATE column)
+    if let Ok(naive) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+        let naive_dt = naive.and_hms_opt(0, 0, 0)?;
+        return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
+    }
+    // Try timestamp format (CAST from TIMESTAMP column includes time component)
+    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
+        return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
+    }
+    // Handle sub-second precision if present
+    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S%.f") {
+        return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------

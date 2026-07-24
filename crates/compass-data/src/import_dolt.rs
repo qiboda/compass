@@ -18,7 +18,7 @@ fn strip_prefix(symbol: &str) -> &str {
 }
 
 /// Run `dolt sql -r csv` and return the CSV output as a string.
-fn run_dolt_sql_csv(dolt_dir: &Path, query: &str) -> Result<String, String> {
+pub fn run_dolt_sql_csv(dolt_dir: &Path, query: &str) -> Result<String, String> {
     let output = std::process::Command::new("dolt")
         .arg("--data-dir")
         .arg(dolt_dir)
@@ -39,7 +39,7 @@ fn run_dolt_sql_csv(dolt_dir: &Path, query: &str) -> Result<String, String> {
 }
 
 /// Run `dolt sql -r parquet` and return the binary Parquet output.
-fn run_dolt_sql_parquet(dolt_dir: &Path, query: &str) -> Result<Vec<u8>, String> {
+pub fn run_dolt_sql_parquet(dolt_dir: &Path, query: &str) -> Result<Vec<u8>, String> {
     let output = std::process::Command::new("dolt")
         .arg("--data-dir")
         .arg(dolt_dir)
