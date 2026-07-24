@@ -47,7 +47,6 @@ and go back to step 1. This is a HARD BLOCK — no exceptions for feature/bugfix
 ### Exceptions (skip the gate)
 
 The gate does NOT apply to:
-- Refactors (no behavior change)
 - Documentation-only changes
 - Lint fixes
 - Typo fixes

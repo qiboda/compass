@@ -15,13 +15,13 @@ User raises requirement
   →  CI passes  →  manually close issue with gh issue close N
 ```
 
-Refactors, docs, lint fixes, and typos skip the grill-me + issue cycle — implement directly.
+Docs, lint fixes, and typos skip the grill-me + issue cycle — implement directly.
 
 | Work type | Issue required? |
 |---|---|
 | Feature | ✅ Required |
 | Bug fix | ✅ Required |
-| Refactor | ❌ Skip |
+| Refactor | ✅ Required |
 | Docs update | ❌ Skip |
 | Lint / typo | ❌ Skip |
 

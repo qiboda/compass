@@ -38,7 +38,7 @@ This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
 remind you of this gate. If you find yourself writing code without completing
 these steps, you are violating the workflow — stop immediately, `git stash` or revert, and go back to step 0.
 
-Exceptions (skip the gate): refactors, documentation-only changes, lint fixes, typo fixes.
+Exceptions (skip the gate): documentation-only changes, lint fixes, typo fixes.
 
 ### After implementation: Reflection Record
 

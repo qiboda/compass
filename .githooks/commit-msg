@@ -1,8 +1,8 @@
 #!/bin/bash
-# commit-msg hook — enforce issue references for feat/fix commits.
+# commit-msg hook — enforce issue references for code-change commits.
 #
-# feat/fix: commits must reference an issue via "ref #N"
-# Other types (test, refactor, docs, chore) are exempt.
+# feat/fix/refactor: commits must reference an issue via "ref #N"
+# Other types (test, docs, chore) are exempt.
 
 COMMIT_MSG_FILE="$1"
 
@@ -12,10 +12,10 @@ head -1 "$COMMIT_MSG_FILE" | grep -qE "^(Merge|Revert)" && exit 0
 # Extract subject line
 SUBJECT=$(head -1 "$COMMIT_MSG_FILE")
 
-# Check feat/fix: requires "ref #N"
-if echo "$SUBJECT" | grep -qE "^(feat|fix)[(!]*: "; then
+# Check feat/fix/refactor: requires "ref #N"
+if echo "$SUBJECT" | grep -qE "^(feat|fix|refactor)[(!]*: "; then
     if ! grep -qiE "ref[[:space:]]+#[0-9]+" "$COMMIT_MSG_FILE"; then
-        echo "ERROR: feat/fix commits must reference a GitHub issue with 'ref #N' in the body."
+        echo "ERROR: feat/fix/refactor commits must reference a GitHub issue with 'ref #N' in the body."
         echo ""
         echo "  Example:"
         echo "    feat: add thing"
@@ -27,5 +27,5 @@ if echo "$SUBJECT" | grep -qE "^(feat|fix)[(!]*: "; then
     exit 0
 fi
 
-# All other types (test, refactor, docs, chore, etc.) — pass
+# All other types (test, docs, chore, etc.) — pass
 exit 0
