@@ -1,5 +1,6 @@
 /target
-.omo/
+.omo/*
+!.omo/plans/
 compass.db
 compass.duckdb
 logs/
