@@ -183,9 +183,8 @@ Dolt DB ───────import─────► parquet_data/
 ### import: Dolt → Parquet
 - Queries Dolt `investment_data` database via `dolt sql -r parquet`
 - Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
-- Strips exchange prefixes (SZ000001 → 000001)
 - Writes Parquet bytes directly — no CSV or DuckDB intermediary
-- One Parquet file per Dolt symbol: `parquet_data/stock_daily/SZ000001.parquet`
+- Filenames use the full Dolt symbol: `parquet_data/stock_daily/SZ000001.parquet`
 - Merge mode (default): uses DuckDB `read_parquet` to merge existing + new
 - Overwrite mode: bytes written directly to target file
 

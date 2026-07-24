@@ -145,8 +145,9 @@ EastMoney is a fallback for data not available locally.
 
 ### Dolt import (`crates/compass-data/src/import_dolt.rs`)
 
-Reads from Dolt `investment_data` (`final_a_stock_eod_price` table) via `dolt sql`
-CSV export, converts to Parquet files partitioned by symbol.
+Reads from Dolt `investment_data` (`final_a_stock_eod_price` and `ts_a_stock_list`
+tables) via `dolt sql -r parquet` (direct binary Parquet) and `dolt sql -r csv`
+(for symbol enumeration), partitioned by Dolt symbol.
 
 ### EastMoneyProvider (`crates/compass-core/src/data/eastmoney.rs`)
 

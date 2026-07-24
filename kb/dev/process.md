@@ -307,7 +307,7 @@ wc -l parquet_data/stock_daily/     # file count = symbol count
 ```rust
 use duckdb::Connection;
 let conn = Connection::open_in_memory()?;
-conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/600519.parquet') LIMIT 5")?;
+conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
 ```
 
 ### Dolt database queries

@@ -26,9 +26,11 @@ alongside every data row.
 
 ## Why bare 6-digit codes?
 
-Compass uses bare 6-digit codes (`"000001"`, `"600519"`) as the primary
-identifier everywhere: in the Parquet filenames, in the DuckDB `symbol` column,
-in the UI input box.
+Compass uses bare 6-digit codes (`"000001"`, `"600519"`) as the user-facing
+identifier — in the UI input box and API calls. Parquet filenames and DuckDB
+storage use the Dolt native format with exchange prefix (`"SZ000001"`,
+`"SH600519"`) to avoid collisions between stocks and indices that share a
+6-digit code.
 
 The older format `"000001.SZ"` (ts_code convention) has been retired. Here's why:
 
@@ -148,17 +150,18 @@ HTTP GET ...?secid=1.600519&klt=101...
 
 ## Dolt symbol mapping
 
-Dolt's `investment_data` database stores symbols with exchange prefixes:
+Dolt's `investment_data` database stores symbols with exchange prefixes.
+The import pipeline preserves the full Dolt symbol as the Parquet filename:
 
-| Dolt symbol | Compass symbol | Exchange stripped |
+| Dolt symbol | Parquet filename | User-facing code |
 |---|---|---|
-| `SZ000001` | `000001` | SZ |
-| `SH600519` | `600519` | SH |
-| `BJ830799` | `830799` | BJ |
+| `SZ000001` | `SZ000001.parquet` | `000001` |
+| `SH600519` | `SH600519.parquet` | `600519` |
+| `BJ830799` | `BJ830799.parquet` | `830799` |
 
-The import pipeline strips these prefixes during the Dolt → Parquet conversion.
-The mapping is straightforward: remove the first two characters, which are
-always the exchange code.
+The `strip_prefix()` function removes the first two characters for matching
+user input (e.g., `--symbols 000001` matches `SZ000001`), but the filename
+keeps the full Dolt symbol.
 
 ## Timeframe mapping
 

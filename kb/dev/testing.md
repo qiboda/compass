@@ -81,13 +81,13 @@ into ONE scope before any async `db` method calls:
 // SAFE: all direct conn access before any async db calls
 let (count_a, count_b) = {
     let conn = db.conn.lock().expect("lock");
-    let c1 = conn.query_row("SELECT COUNT(*) FROM stock_daily WHERE ts_code='000001.SZ'", ...)?;
-    let c2 = conn.query_row("SELECT COUNT(*) FROM stock_daily WHERE ts_code='600519.SH'", ...)?;
+    let c1 = conn.query_row("SELECT COUNT(*) FROM stock_daily WHERE symbol='SZ000001'", ...)?;
+    let c2 = conn.query_row("SELECT COUNT(*) FROM stock_daily WHERE symbol='SH600519'", ...)?;
     (c1, c2)
 }; // lock released
 
 // Now safe to call async db methods
-let info = db.get_stock_basic("000001.SZ").await?;
+let info = db.get_stock_basic("SZ000001").await?;
 ```
 
 The `DuckDbProvider` async methods use `spawn_blocking` which tries to lock `conn`

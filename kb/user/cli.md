@@ -88,7 +88,7 @@ parquet_data/
 └── stock_daily/
     ├── SZ000001.parquet          # One file per Dolt symbol
     ├── SH600519.parquet
-    └── ...                       # ~6122 files total
+    └── ...                       # ~6123 files total
 ```
 
 **Note**: Files are named by Dolt's native symbol format (e.g. `SZ000001`, `SH600519`).

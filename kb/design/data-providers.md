@@ -363,7 +363,7 @@ The import pipeline (`compass-data import`) works as follows:
 ```
 dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     │
-    ├─ Produces list of 6122 symbols (e.g. "SZ000001", "SH600519")
+    ├─ Produces list of 6123 symbols (e.g. "SZ000001", "SH600519")
     │     [Note: symbol list query still uses CSV for simple text parsing]
     │
     ├─ For each symbol:
