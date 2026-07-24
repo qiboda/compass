@@ -165,3 +165,43 @@ cargo bench -- --baseline v1.0
 The script runs `cargo bench -- --save-baseline <version>` then copies
 results out of `target/criterion/` into `bench_results/<version>/`,
 keeping them outside the build cache.
+
+## Profiling (Tracy)
+
+Compass supports the [Tracy profiler](https://github.com/wolfpld/tracy) via the
+`tracing-tracy` crate. Tracy provides real-time, nanosecond-resolution CPU
+profiling with flamegraph visualization.
+
+### Setup
+
+1. Install the Tracy profiler server from [GitHub Releases](https://github.com/wolfpld/tracy/releases)
+   or build from source. You need the `tracy-capture` (or `tracy-profiler`) binary.
+
+2. Run the Tracy capture server:
+   ```sh
+   tracy-capture -o compass.tracy
+   ```
+   This opens the Tracy GUI. It listens on `localhost:8086` by default.
+
+3. Run Compass with the `tracy` feature:
+   ```sh
+   cargo run --features tracy
+   # or: cargo run --bin compass-data --features tracy -- download --symbols 000001
+   ```
+
+### How it works
+
+- All `tracing` spans (from `#[instrument]` and `#[tracing::instrument]` macros)
+  are automatically converted to Tracy zones — no additional instrumentation needed.
+- When Tracy is not running, the layer silently no-ops.
+- When the `tracy` feature is not enabled at compile time, the entire dependency
+  tree is pruned — zero runtime or compile-time overhead.
+- Build without `--features tracy` for normal use. Only enable it when profiling.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `cargo build --features tracy` fails | Missing C++ toolchain or cmake | `sudo apt install cmake build-essential` |
+| No data appears in Tracy GUI | Firewall blocking port 8086 | Check `tracy-capture` is running on same machine |
+| Link error: symbol not found | `tracy-client-sys` version mismatch with installed Tracy | Use `tracy-capture` version matching `tracy-client-sys 0.24` |

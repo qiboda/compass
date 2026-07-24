@@ -11,6 +11,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use tracing::error;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// compass-data — A-share stock data pipeline
 ///
@@ -132,12 +134,17 @@ enum Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let registry = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer());
+
+    #[cfg(feature = "tracy")]
+    let registry = registry.with(tracing_tracy::TracyLayer::default());
+
+    registry.init();
 
     let cli = Cli::parse();
 

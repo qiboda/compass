@@ -81,11 +81,15 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt::layer().with_writer(std::io::stderr))
-        .with(fmt::layer().with_ansi(false).with_writer(non_blocking))
-        .init();
+        .with(fmt::layer().with_ansi(false).with_writer(non_blocking));
+
+    #[cfg(feature = "tracy")]
+    let registry = registry.with(tracing_tracy::TracyLayer::default());
+
+    registry.init();
 
     info!("Logging initialized");
 
