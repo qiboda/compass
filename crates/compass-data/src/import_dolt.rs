@@ -17,7 +17,8 @@ fn strip_prefix(symbol: &str) -> &str {
     }
 }
 
-fn run_dolt_sql(dolt_dir: &Path, query: &str) -> Result<String, String> {
+/// Run `dolt sql -r csv` and return the CSV output as a string.
+fn run_dolt_sql_csv(dolt_dir: &Path, query: &str) -> Result<String, String> {
     let output = std::process::Command::new("dolt")
         .arg("--data-dir")
         .arg(dolt_dir)
@@ -36,6 +37,31 @@ fn run_dolt_sql(dolt_dir: &Path, query: &str) -> Result<String, String> {
 
     String::from_utf8(output.stdout).map_err(|e| format!("UTF-8 error: {e}"))
 }
+
+/// Run `dolt sql -r parquet` and return the binary Parquet output.
+fn run_dolt_sql_parquet(dolt_dir: &Path, query: &str) -> Result<Vec<u8>, String> {
+    let output = std::process::Command::new("dolt")
+        .arg("--data-dir")
+        .arg(dolt_dir)
+        .arg("sql")
+        .arg("-r")
+        .arg("parquet")
+        .arg("-q")
+        .arg(query)
+        .output()
+        .map_err(|e| format!("dolt command failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("dolt error: {stderr}"));
+    }
+
+    Ok(output.stdout)
+}
+
+/// Parquet file size threshold: files smaller than this are considered empty
+/// (schema-only, 0 data rows). A single OHLCV row is ~200 bytes.
+const MIN_PARQUET_SIZE: u64 = 500;
 
 /// Filter symbols by 6-digit codes. `filter` is comma-separated (e.g. "000001,600519").
 /// Matches against full Dolt symbols (e.g. "SZ000001", "SH600519") by stripping prefix.
@@ -62,7 +88,7 @@ pub fn run(
     // 1. Get distinct symbols
     // ------------------------------------------------------------------
     info!("Fetching symbol list...");
-    let symbols_csv = run_dolt_sql(
+    let symbols_csv = run_dolt_sql_csv(
         &dolt_dir,
         "SELECT DISTINCT symbol FROM final_a_stock_eod_price ORDER BY symbol",
     )?;
@@ -103,26 +129,18 @@ pub fn run(
     info!("Found {} symbols, exporting {}...", symbols.len(), total);
 
     // ------------------------------------------------------------------
-    // 2. Export stock_basic (small table, one file)
+    // 2. Export stock_basic — direct Parquet from Dolt
     // ------------------------------------------------------------------
     info!("Exporting stock_basic...");
-    let basic_csv = run_dolt_sql(
+    let basic_bytes = run_dolt_sql_parquet(
         &dolt_dir,
         "SELECT symbol, '' AS name, \
          CASE WHEN exchange = 'SZSE' THEN 'SZ' WHEN exchange = 'SHSE' THEN 'SH' ELSE exchange END AS exchange, \
          list_date, delist_date FROM ts_a_stock_list",
     )?;
 
-    let duck = Connection::open_in_memory()?;
-    let basic_path = std::env::temp_dir().join("compass_basic.csv");
-    std::fs::write(&basic_path, &basic_csv)?;
-    let sql = format!(
-        "COPY (SELECT * FROM read_csv('{}', header=true)) TO '{}/stock_basic.parquet' (FORMAT PARQUET)",
-        basic_path.display(),
-        output.display(),
-    );
-    duck.execute_batch(&sql)?;
-    let _ = std::fs::remove_file(&basic_path);
+    let basic_path = output.join("stock_basic.parquet");
+    std::fs::write(&basic_path, &basic_bytes)?;
     info!("  → {}/stock_basic.parquet", output.display());
 
     // ------------------------------------------------------------------
@@ -139,6 +157,12 @@ pub fn run(
     let work_dir = std::env::temp_dir().join("compass_parquet_work");
     std::fs::create_dir_all(&work_dir)?;
 
+    let stock_daily_dir = output.join("stock_daily");
+    std::fs::create_dir_all(&stock_daily_dir)?;
+
+    // DuckDB connection for merge operations (overwrite=false + existing file)
+    let duck = Connection::open_in_memory()?;
+
     for (i, symbol) in symbols.iter().take(total).enumerate() {
         let code = strip_prefix(symbol);
         pb.set_message(code.to_string());
@@ -149,7 +173,7 @@ pub fn run(
              WHERE symbol = '{symbol}' {date_filter} \
              ORDER BY tradedate"
         );
-        let csv_data = match run_dolt_sql(&dolt_dir, &query) {
+        let parquet_data = match run_dolt_sql_parquet(&dolt_dir, &query) {
             Ok(data) => data,
             Err(e) => {
                 warn!("dolt query failed for {symbol}: {e}");
@@ -158,22 +182,21 @@ pub fn run(
             }
         };
 
-        if csv_data.lines().count() <= 1 {
+        // Empty Parquet (schema only, 0 rows) is ~219 bytes. Skip.
+        let len = parquet_data.len() as u64;
+        if len < MIN_PARQUET_SIZE {
+            warn!("symbol {symbol} returned empty data ({len} bytes), skipping");
             pb.inc(1);
             continue;
         }
 
-        // Write CSV to temp, read into DuckDB, export to Parquet
-        let csv_path = work_dir.join(format!("{code}.csv"));
-        std::fs::write(&csv_path, &csv_data)?;
-
-        let parquet_path = output.join("stock_daily").join(format!("{code}.parquet"));
-        if let Some(parent) = parquet_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let parquet_path = stock_daily_dir.join(format!("{code}.parquet"));
 
         if !overwrite && parquet_path.exists() {
             // Merge: keep existing data (priority 1), only add new dates from Dolt (priority 2)
+            let new_path = work_dir.join(format!("{code}.new.parquet"));
+            std::fs::write(&new_path, &parquet_data)?;
+
             let tmp_path = work_dir.join(format!("{code}.tmp.parquet"));
             let sql = format!(
                 "COPY (
@@ -185,37 +208,31 @@ pub fn run(
                             FROM read_parquet('{}')
                             UNION ALL
                             SELECT tradedate, open, high, low, close, adjclose, volume, amount, 2
-                            FROM read_csv('{}', header=true)
+                            FROM read_parquet('{}')
                         )
                     ) WHERE rn = 1
                     ORDER BY tradedate
                 ) TO '{}' (FORMAT PARQUET)",
                 parquet_path.display(),
-                csv_path.display(),
+                new_path.display(),
                 tmp_path.display(),
             );
             if let Err(e) = duck.execute_batch(&sql) {
                 warn!("DuckDB merge failed for {code}: {e}");
             } else {
-                match std::fs::copy(&tmp_path, &parquet_path) {
-                    Ok(_) => (),
-                    Err(e) => warn!("copy temp parquet for {code}: {e}"),
+                if let Err(e) = std::fs::copy(&tmp_path, &parquet_path) {
+                    warn!("copy merged parquet for {code}: {e}");
                 }
             }
+            let _ = std::fs::remove_file(&new_path);
             let _ = std::fs::remove_file(&tmp_path);
         } else {
-            // Full replace: write CSV directly to Parquet
-            let sql = format!(
-                "COPY (SELECT * FROM read_csv('{}', header=true)) TO '{}' (FORMAT PARQUET)",
-                csv_path.display(),
-                parquet_path.display(),
-            );
-            if let Err(e) = duck.execute_batch(&sql) {
-                warn!("DuckDB export failed for {code}: {e}");
+            // New file or overwrite: write Parquet bytes directly
+            if let Err(e) = std::fs::write(&parquet_path, &parquet_data) {
+                warn!("write parquet failed for {code}: {e}");
             }
         }
 
-        let _ = std::fs::remove_file(&csv_path);
         pb.inc(1);
 
         if (i + 1) % 100 == 0 || i + 1 == total {
@@ -236,7 +253,7 @@ pub fn run(
     // ------------------------------------------------------------------
     // 4. Summary
     // ------------------------------------------------------------------
-    let file_count = std::fs::read_dir(output.join("stock_daily"))
+    let file_count = std::fs::read_dir(&stock_daily_dir)
         .map(|d| d.count())
         .unwrap_or(0);
 
@@ -280,9 +297,33 @@ mod tests {
     }
 
     #[test]
-    fn run_dolt_sql_returns_error_for_nonexistent_dir() {
-        let result = run_dolt_sql(std::path::Path::new("/nonexistent/dolt/dir"), "SELECT 1");
+    fn run_dolt_sql_csv_returns_error_for_nonexistent_dir() {
+        let result = run_dolt_sql_csv(std::path::Path::new("/nonexistent/dolt/dir"), "SELECT 1");
         assert!(result.is_err());
+    }
+
+    /// When querying a symbol that doesn't exist in Dolt, the Parquet output
+    /// is a valid file with schema but 0 data rows (~219 bytes, below MIN_PARQUET_SIZE).
+    /// This triggers the skip path in the import loop.
+    #[test]
+    fn run_dolt_sql_parquet_returns_small_file_for_nonexistent_symbol() {
+        let dolt_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../investment_data");
+        let result = run_dolt_sql_parquet(
+            &dolt_dir,
+            "SELECT tradedate, open, high, low, close, adjclose, volume, amount \
+             FROM final_a_stock_eod_price \
+             WHERE symbol = 'SZ999999' ORDER BY tradedate",
+        );
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(
+            (data.len() as u64) < MIN_PARQUET_SIZE,
+            "nonexistent symbol should produce tiny Parquet ({} bytes < {}), got {} bytes",
+            data.len(),
+            MIN_PARQUET_SIZE,
+            data.len()
+        );
     }
 
     // ------------------------------------------------------------------
