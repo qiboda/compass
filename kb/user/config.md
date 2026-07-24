@@ -1,0 +1,101 @@
+# Configuration
+
+Compass reads configuration from `~/.config/compass/config.toml` at startup.
+All fields are optional — missing keys fall back to sensible defaults.
+
+## Location
+
+```sh
+~/.config/compass/config.toml
+```
+
+Create the file and directory if they don't exist:
+
+```sh
+mkdir -p ~/.config/compass
+```
+
+## Full schema
+
+```toml
+[database]
+# Path to the DuckDB cache file used by the GUI.
+# Default: "compass.db"
+path = "compass.db"
+
+[api]
+# EastMoney K-line API endpoint.
+# Default: "https://push2his.eastmoney.com"
+base_url = "https://push2his.eastmoney.com"
+
+# HTTP request timeout in seconds.
+# Default: 10
+timeout_secs = 10
+
+# Number of retry attempts on transient HTTP failures.
+# Default: 3
+retry_count = 3
+
+[app]
+# Stock code displayed when the app starts.
+# Default: "000001"
+default_symbol = "000001"
+
+# Timeframe displayed when the app starts.
+# Default: "1d"
+default_timeframe = "1d"
+```
+
+## Defaults
+
+If the config file doesn't exist or can't be parsed, these defaults apply:
+
+| Section | Key | Default |
+|---|---|---|
+| `database` | `path` | `compass.db` |
+| `api` | `base_url` | `https://push2his.eastmoney.com` |
+| `api` | `timeout_secs` | `10` |
+| `api` | `retry_count` | `3` |
+| `app` | `default_symbol` | `000001` |
+| `app` | `default_timeframe` | `1d` |
+
+## Examples
+
+### Change default stock to 贵州茅台
+
+```toml
+[app]
+default_symbol = "600519"
+```
+
+A partial config works — only the keys you specify are overridden:
+
+```toml
+[app]
+default_symbol = "600519"
+# default_timeframe stays "1d" (default)
+```
+
+### Increase API timeout for slow connections
+
+```toml
+[api]
+timeout_secs = 30
+retry_count = 5
+```
+
+### Custom database location
+
+```toml
+[database]
+path = "/data/compass/cache.duckdb"
+```
+
+## Validation
+
+The config is validated at startup. If parsing fails, a warning is logged and
+all defaults are used. Check the logs for details:
+
+```sh
+RUST_LOG=info cargo run 2>&1 | grep config
+```

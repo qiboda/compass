@@ -67,12 +67,13 @@ checklist above. Do not skip any step.
 
 ## Knowledge base
 
-Detailed docs under `kb/` — organized into two sections:
+Detailed docs under `kb/` — organized into three sections:
 
 | Section | Purpose |
-|---|---|---|
-| `kb/design/` | Project design details — architecture, data providers, symbols |
+|---|---|
+| `kb/design/` | Project design — architecture, data providers, symbols |
 | `kb/dev/` | Development aids — workflow, process, testing, reflections |
+| `kb/user/` | User reference — installation, GUI, CLI, config |
 
 | File | Content |
 |---|---|
@@ -82,6 +83,10 @@ Detailed docs under `kb/` — organized into two sections:
 | `kb/dev/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
 | `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
+| `kb/user/index.md` | User overview — what Compass is, quickstart, prereqs |
+| `kb/user/gui.md` | Chart app — interface, controls, data flow, stock codes |
+| `kb/user/cli.md` | Data pipeline — download, import, merge, export, workflows, troubleshooting |
+| `kb/user/config.md` | Config reference — all options, defaults, examples |
 
 ## Setup
 
