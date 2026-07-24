@@ -249,10 +249,13 @@ and uses DuckDB as a read-through cache. The CLI writes to DuckDB staging first,
 then merges into Parquet. This two-tier design separates the concerns of "fast
 writes and caching" (DuckDB) from "durable, queryable storage" (Parquet).
 
-## Symbol convention: why bare 6-digit codes?
+## Symbol convention: Dolt-native prefixed codes
 
-Every stock in Compass is identified by a bare 6-digit code: `"000001"`,
-`"600519"`, `"836149"`. No exchange suffix, no prefix.
+Every stock in Compass is identified by its Dolt-native symbol with exchange
+prefix: `"SZ000001"`, `"SH600519"`, `"BJ836149"`. The 2-letter prefix
+(SZ/SH/BJ) is part of the canonical identifier — it's in the Parquet
+filename, in the database column, and in the API. Bare 6-digit input is
+accepted as a convenience and resolved via exchange inference.
 
 ### Why not ts_code format?
 

@@ -24,13 +24,13 @@ The key insight: **for stocks, code ranges don't overlap across exchanges**.
 This means we can **infer the exchange from the code** — no need to store it
 alongside every data row.
 
-## Why bare 6-digit codes?
+## Why Dolt-native symbols?
 
-Compass uses bare 6-digit codes (`"000001"`, `"600519"`) as the user-facing
-identifier — in the UI input box and API calls. Parquet filenames and DuckDB
-storage use the Dolt native format with exchange prefix (`"SZ000001"`,
-`"SH600519"`) to avoid collisions between stocks and indices that share a
-6-digit code.
+Compass uses the Dolt-native prefixed format (`"SZ000001"`, `"SH600519"`,
+`"BJ830799"`) as the canonical identifier everywhere: in Parquet filenames,
+in the DuckDB `symbol` column, and as the primary key. Bare 6-digit codes
+are accepted as user input for convenience and resolved to the canonical
+format via exchange inference.
 
 The older format `"000001.SZ"` (ts_code convention) has been retired. Here's why:
 
@@ -41,11 +41,11 @@ inference rules below). Storing it in the identifier is redundant, and
 redundancy breeds inconsistency — what if someone writes `"000001.SH"` by
 mistake?
 
-**What we gain from bare codes**:
-- Simpler SQL: no string splitting in WHERE clauses
-- Cleaner filenames: `SZ000001.parquet` instead of `000001.SZ.parquet`
-- One-to-one mapping: each stock has exactly one canonical identifier
-- Existing code ranges are already non-overlapping for stocks
+**What we gain from Dolt-native symbols**:
+- No dots in filenames: `SZ000001.parquet` instead of `000001.SZ.parquet`
+- No cross-exchange collisions: `SZ000852` (stock) and `SH000852` (index) are separate files
+- One-to-one mapping: each Dolt symbol is a unique Parquet file
+- Clear exchange at a glance: the 2-letter prefix is immediately visible
 
 The `to_ts_code()` helper still exists in the codebase for backward
 compatibility, but it's no longer used as a primary key.
@@ -151,17 +151,17 @@ HTTP GET ...?secid=1.600519&klt=101...
 ## Dolt symbol mapping
 
 Dolt's `investment_data` database stores symbols with exchange prefixes.
-The import pipeline preserves the full Dolt symbol as the Parquet filename:
+These prefixes are the canonical identifier everywhere — in filenames,
+in the database, and in user-facing interfaces:
 
-| Dolt symbol | Parquet filename | User-facing code |
+| Symbol | Parquet filename | Stock |
 |---|---|---|
-| `SZ000001` | `SZ000001.parquet` | `000001` |
-| `SH600519` | `SH600519.parquet` | `600519` |
-| `BJ830799` | `BJ830799.parquet` | `830799` |
+| `SZ000001` | `SZ000001.parquet` | 平安银行 |
+| `SH600519` | `SH600519.parquet` | 贵州茅台 |
+| `BJ830799` | `BJ830799.parquet` | 艾融软件 |
 
-The `strip_prefix()` function removes the first two characters for matching
-user input (e.g., `--symbols 000001` matches `SZ000001`), but the filename
-keeps the full Dolt symbol.
+The `strip_prefix()` function exists for backward compatibility when matching
+bare 6-digit input, but the canonical format always includes the prefix.
 
 ## Timeframe mapping
 
