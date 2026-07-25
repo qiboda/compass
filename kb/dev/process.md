@@ -124,14 +124,54 @@ Push immediately after completing each issue. Do not batch.
 
 ## Git branching
 
-**Trunk-based development.** Push directly to `main`.
+**Feature-branch + PR workflow.**
 
 ```
-main  ●──●──●──●──●  (trunk)
+master  ●──●──●──●────────●  (trunk)
+              \          /
+feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
 ```
 
-Solo project — no feature branches, no PRs. CI runs on push to `main`.
-If the project grows to multiple contributors, switch to feature branches + PRs.
+### Worktrees (isolated development)
+
+For complex features or experimental changes, use git worktrees manually.
+Worktrees are stored under `.worktrees/` within the project (gitignored).
+
+**Why manual**: The `opencode-worktree` plugin (kdco/worktree via OCX) was
+evaluated and found to have blocking issues:
+
+- `worktree_create` fails when the worktree path already exists — no idempotent re-open
+- Terminal spawn reports success blindly; actual session launch is unreliable
+- No way to reopen a terminal for an existing worktree without deleting/recreating
+- Session forking inherits spawning context, defeating isolation
+
+Manual worktrees avoid these issues and give full control.
+
+#### Creating a worktree
+
+```bash
+git worktree add .worktrees/<project-id>/<branch> <base-branch>
+# or with a new branch:
+git worktree add -b <branch> .worktrees/<project-id>/<branch> <base>
+```
+
+Then launch OpenCode in the worktree directory to start an isolated session.
+
+#### Removing a worktree
+
+```bash
+git worktree remove .worktrees/<project-id>/<branch> --force
+git branch -D <branch>  # if no longer needed
+```
+
+#### When to use
+
+Use worktrees when:
+- Experimenting with risky changes that might break the build
+- Working on multiple features in parallel without branch switching
+- Running long CI cycles in isolation
+
+Don't use worktrees for trivial fixes or documentation-only changes.
 
 ## Version control
 
