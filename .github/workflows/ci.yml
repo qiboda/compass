@@ -30,6 +30,12 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install Dolt
+        run: |
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64 -o /tmp/dolt
+          chmod +x /tmp/dolt
+          sudo mv /tmp/dolt /usr/local/bin/dolt
+          dolt version
       - run: cargo test --verbose
 
   clippy:
@@ -89,6 +95,12 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install Dolt
+        run: |
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64 -o /tmp/dolt
+          chmod +x /tmp/dolt
+          sudo mv /tmp/dolt /usr/local/bin/dolt
+          dolt version
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run
 
@@ -103,6 +115,12 @@ jobs:
           toolchain: stable
           components: llvm-tools
       - uses: Swatinem/rust-cache@v2
+      - name: Install Dolt
+        run: |
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64 -o /tmp/dolt
+          chmod +x /tmp/dolt
+          sudo mv /tmp/dolt /usr/local/bin/dolt
+          dolt version
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --html
       - uses: actions/upload-artifact@v7

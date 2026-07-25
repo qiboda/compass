@@ -71,6 +71,42 @@ let provider = EastMoneyProvider::new(
 // Now HTTP calls hit the mock server instead of real EastMoney.
 ```
 
+### Dolt (test database)
+
+Tests that need a Dolt database use `dolt init` + `dolt sql` to create a temporary,
+self-contained database at runtime. No external data dependency.
+
+```rust
+let tmp = tempfile::tempdir().expect("create temp dir");
+
+// Set identity for dolt init (uses git underneath)
+std::process::Command::new("dolt")
+    .arg("config").arg("--global").arg("--add")
+    .arg("user.email").arg("test@compass.local")
+    .output().expect("dolt config");
+std::process::Command::new("dolt")
+    .arg("config").arg("--global").arg("--add")
+    .arg("user.name").arg("Test")
+    .output().expect("dolt config");
+
+// Init and create schema
+std::process::Command::new("dolt")
+    .arg("--data-dir").arg(tmp.path())
+    .arg("init").output().expect("dolt init");
+
+std::process::Command::new("dolt")
+    .arg("--data-dir").arg(tmp.path())
+    .arg("sql").arg("-q")
+    .arg("CREATE TABLE t (id INT PRIMARY KEY, val TEXT)")
+    .output().expect("dolt sql");
+
+// Query via run_dolt_sql_parquet / run_dolt_sql_csv
+let data = run_dolt_sql_parquet(tmp.path(), "SELECT * FROM t").unwrap();
+```
+
+CI installs `dolt` from GitHub releases. Tests clean up automatically via
+`TempDir` drop. The `investment_data` repo (18M+ rows) is never cloned.
+
 ### DuckDB deadlock avoidance
 
 When writing tests that mix direct `db.conn.lock()` calls with async `DuckDbProvider`
