@@ -277,9 +277,9 @@ impl CompassApp {
 }
 
 impl eframe::App for CompassApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let theme = custom_dark_theme();
-        egui_charts::theme::apply_to_egui(ctx, &theme);
+        egui_charts::theme::apply_to_egui(ui.ctx(), &theme);
 
         // Check whether the worker updated bars → rebuild chart data
         {
@@ -296,7 +296,7 @@ impl eframe::App for CompassApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             // --- Top controls row ---
             let (loading, error) = {
                 let s = self.state.lock().unwrap();
@@ -338,7 +338,7 @@ impl eframe::App for CompassApp {
             self.chart.show(ui);
         });
 
-        ctx.request_repaint_after(Duration::from_millis(200));
+        ui.ctx().request_repaint_after(Duration::from_millis(200));
     }
 }
 

@@ -11,9 +11,9 @@ async-trait = "0.1"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 duckdb = { version = "1", features = ["bundled", "parquet"] }
-egui = "0.33"
-eframe = "0.33"
-egui-charts = "0.2"
+egui = "0.35"
+eframe = "0.35"
+egui-charts = { git = "https://github.com/qiboda/egui-charts.git", branch = "compass" }
 futures = "0.3"
 rand = "0.9"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
