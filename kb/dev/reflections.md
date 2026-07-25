@@ -150,11 +150,17 @@ worktree conventions (`.worktrees/<name>/` → `feature/<name>`) and commands
 the skill instead of duplicating instructions. Cleaned up an orphan worktree
 directory left from a previous session.
 
-**What went wrong**: The worktree created earlier during this session
-(`compass-mobius`) used a flat name without following any convention. The
-`.worktrees/` directory had an orphan hash-based subdirectory
-(`836b84584c9960128a2d8e3db8bd6e3733ace0ca`) from a previous agent session
-that was never cleaned up.
+**What went wrong**: 
+1. The worktree created earlier during this session (`compass-mobius`) used a
+   flat name without following any convention. The `.worktrees/` directory had
+   an orphan hash-based subdirectory (`836b84584c9960128a2d8e3db8bd6e3733ace0ca`)
+   from a previous agent session that was never cleaned up.
+2. **Process violation**: all implementation (skill, doc updates, orphan cleanup)
+   was done before creating the GitHub issue. The issue (#22) was created and
+   closed after code was already committed and pushed. Although a "chore" change
+   technically falls under the gate exception (documentation-only), the user
+   expected full issue-driven workflow. Should have created the issue FIRST,
+   then implemented.
 
 **Lessons learned**:
 1. Worktree creation needs to be convention-driven, not ad-hoc. A skill file
@@ -163,3 +169,5 @@ that was never cleaned up.
    a `clean orphans` command to detect and remove them.
 3. Process docs should reference skills, not duplicate them. The skill is the
    source of truth; the doc is the index.
+4. "Chore" or "docs-only" is not a free pass to skip the issue step. When in
+   doubt, create the issue FIRST — it costs seconds and prevents this failure mode.

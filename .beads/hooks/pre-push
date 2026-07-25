@@ -86,6 +86,21 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         range="${remote_oid}..${local_oid}"
     fi
 
+    # Detect malformed ref references (ref not followed by #N)
+    all_refs=$(git log "$range" --format="%B" 2>/dev/null | grep -ciE 'ref[[:space:]]+')
+    valid_refs=$(git log "$range" --format="%B" 2>/dev/null | grep -ciE 'ref[[:space:]]+#[0-9]+')
+
+    if [ "$all_refs" -gt "$valid_refs" ]; then
+        echo ""
+        echo "ERROR: malformed 'ref' reference in commit message."
+        echo "  Found 'ref' without a valid GitHub issue number."
+        echo "  Use 'ref #N' format (e.g., 'ref #23'), not beads IDs or bare text."
+        echo "  If this is a chore/docs/test commit, remove the 'ref' keyword entirely."
+        echo ""
+        has_error=1
+        continue
+    fi
+
     # Extract issue references from all commits in the range
     issues=$(git log "$range" --format="%B" 2>/dev/null \
         | grep -ioE 'ref[[:space:]]+#[0-9]+' \
