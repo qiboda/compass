@@ -88,7 +88,12 @@ as you write the implementation, not after.
 
 ### Before pushing
 
-The pre-push hook (`.githooks/pre-push`) enforces these checks in order:
+**Push gate**: `git push` requires explicit user instruction. The agent may
+commit freely but must NOT push unless the user explicitly says "push",
+"提交push", or equivalent. No implicit pushing — even after passing all
+quality gates.
+
+The pre-push hook (`.beads/hooks/pre-push`) enforces these checks in order:
 
 1. **CI health**: latest CI run on `master` must be passing. If it's failing,
    create an issue for the failure, fix it, then push. Never push on top of
