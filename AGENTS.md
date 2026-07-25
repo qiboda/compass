@@ -65,6 +65,12 @@ and commit discipline.
 **After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
 checklist above. Do not skip any step.
 
+## Worktrees
+
+For isolated development (experiments, library migrations, multi-day features),
+load the `worktree` skill. Worktrees live at `.worktrees/<name>/` and map to
+`feature/<name>` branches. See `kb/dev/process.md#worktrees` for policy.
+
 ## Knowledge base
 
 Detailed docs under `kb/` — organized into three sections:

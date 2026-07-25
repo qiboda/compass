@@ -138,4 +138,28 @@ flagged as not OPEN, blocking pushes.
 1. `git log $sha` without a range prefix scans all ancestors — use `merge-base..$sha` to
    limit to branch-specific commits.
 2. Pre-push hooks that shell out to git need to handle the "new remote ref" case carefully.
-   The remote SHA being all-zeros is not a signal to scan everything.
+    The remote SHA being all-zeros is not a signal to scan everything.
+
+---
+
+## 2026-07-25 — chore: add worktree management skill
+
+**What was done**: Created `.opencode/skills/worktree/SKILL.md` to standardize
+worktree conventions (`.worktrees/<name>/` → `feature/<name>`) and commands
+(create, list, remove, clean orphans). Updated `kb/dev/process.md` to reference
+the skill instead of duplicating instructions. Cleaned up an orphan worktree
+directory left from a previous session.
+
+**What went wrong**: The worktree created earlier during this session
+(`compass-mobius`) used a flat name without following any convention. The
+`.worktrees/` directory had an orphan hash-based subdirectory
+(`836b84584c9960128a2d8e3db8bd6e3733ace0ca`) from a previous agent session
+that was never cleaned up.
+
+**Lessons learned**:
+1. Worktree creation needs to be convention-driven, not ad-hoc. A skill file
+   is the right home for these rules — agents load it and follow the convention.
+2. Orphan directories under `.worktrees/` are a real problem. The skill includes
+   a `clean orphans` command to detect and remove them.
+3. Process docs should reference skills, not duplicate them. The skill is the
+   source of truth; the doc is the index.
