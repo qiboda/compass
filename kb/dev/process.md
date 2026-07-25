@@ -13,7 +13,7 @@ User raises requirement
   →  /ulw-plan (if multi-step)  →  implement
   →  cargo nextest (tests must pass)
   →  commit with ref #N
-  →  quality review (/review-work or manual)
+  →  ai-review (/review-work)
   →  push master
   →  CI passes  →  close issue with gh issue close N
 ```
@@ -116,12 +116,8 @@ All four must pass before `git push`. Never push broken code.
 
 ### Quality review
 
-After committing and before pushing, run a quality review:
-
-- **For AI-assisted work**: use `/review-work` — launches 5 parallel agents
-  (goal verification, code quality, security, QA execution, context mining)
-- **Manual review**: check for correctness, edge cases, error handling, and
-  whether the change matches the issue description
+After committing and before pushing, run `/review-work` — launches 5 parallel
+agents (goal verification, code quality, security, QA execution, context mining).
 
 Skippable for: docs, lint fixes, typos, trivial chores.
 
