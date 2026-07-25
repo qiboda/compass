@@ -124,14 +124,34 @@ Push immediately after completing each issue. Do not batch.
 
 ## Git branching
 
-**Trunk-based development.** Push directly to `main`.
+**Feature-branch + PR workflow.**
 
 ```
-main  ●──●──●──●──●  (trunk)
+master  ●──●──●──●────────●  (trunk)
+              \          /
+feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
 ```
 
-Solo project — no feature branches, no PRs. CI runs on push to `main`.
-If the project grows to multiple contributors, switch to feature branches + PRs.
+### Worktrees (isolated development)
+
+For complex features or experimental changes, use git worktrees via the
+`opencode-worktree` plugin. The agent can create isolated worktrees that
+spawn their own terminal with OpenCode running inside.
+
+| Tool | Purpose |
+|---|---|
+| `worktree_create("feat/xxx")` | Create a git worktree for isolated dev. Auto-spawns terminal. |
+| `worktree_delete("reason")` | Delete current worktree. Auto-commits changes and cleans up. |
+
+Worktrees are stored in `~/.local/share/opencode/worktree/<project>/<branch>/`
+outside the repository — no pollution of the main working directory.
+
+Use worktrees when:
+- Experimenting with risky changes that might break the build
+- Working on multiple features in parallel without branch switching
+- Running long CI cycles in isolation
+
+Don't use worktrees for trivial fixes or documentation-only changes.
 
 ## Version control
 
