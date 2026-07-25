@@ -13,8 +13,3 @@ parquet_data/
 
 # Manual worktree storage
 .worktrees/
-
-# Beads / Dolt files (added by bd init)
-*.db
-.beads-credential-key
-.beads/proxieddb/
