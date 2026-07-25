@@ -11,6 +11,9 @@ investment_data/
 parquet_data/
 *.wal
 
+# Manual worktree storage
+.worktrees/
+
 # Beads / Dolt files (added by bd init)
 *.db
 .beads-credential-key
