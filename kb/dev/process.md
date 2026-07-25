@@ -10,9 +10,12 @@ User raises requirement
   →  Shared understanding reached → summarize locked-in decisions
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
-  →  /ulw-plan (if multi-step)  →  implement
-  →  cargo nextest + clippy + fmt  →  commit with ref #N  →  push master
-  →  CI passes  →  manually close issue with gh issue close N
+  →  git checkout -b feat/desc              # create feature branch
+  →  /ulw-plan (if multi-step) → implement
+  →  cargo nextest + clippy + fmt → commit with ref #N → push branch
+  →  gh pr create --body "Closes #N"        # create PR
+  →  CI passes → manual squash merge → issue auto-closes via Closes #N
+  →  git checkout master && git pull && git branch -d feat/desc  # cleanup
 ```
 
 Docs, lint fixes, and typos skip the grill-me + issue cycle — implement directly.
@@ -29,16 +32,19 @@ Docs, lint fixes, and typos skip the grill-me + issue cycle — implement direct
 
 1. Create issue using `.github/ISSUE_TEMPLATE/bug_report.md` template
 2. Read it back (`gh issue view <N>`) to confirm it exists
-3. Fix it — commit with `fixes #N`
+3. Fix it — commit with `ref #N`
 
 ### Commit → issue linking
 
 | Commit type | Issue reference |
 |---|---|
-| feat / fix | `ref #N` |
+| feat / fix | `ref #N` in commit body |
 
-Issues are closed **manually** via `gh issue close N` after verification.
-Do NOT use `fixes #N` or `closes #N` — these auto-close the issue on push.
+`ref #N` goes in the commit body (enforced by commit-msg hook).
+`Closes #N` goes in the PR description body — GitHub auto-closes when the PR is merged.
+
+Never put `fixes #N` or `closes #N` in a commit message — that would
+auto-close the issue when the commit merges to master, bypassing PR review.
 
 ### Commit-msg hook
 
@@ -90,50 +96,62 @@ as you write the implementation, not after.
 
 The pre-push hook (`.githooks/pre-push`) enforces these checks in order:
 
-1. **CI health**: latest CI run on `master` must be passing. If it's failing,
-   create an issue for the failure, fix it, then push. Never push on top of
-   a broken CI.
-2. **cargo fmt --check**
-3. **cargo clippy -- -D warnings**
-4. **cargo doc --no-deps** (must be warning-free)
-5. **Issue references**: `ref #N` must point to open issues
+1. **cargo fmt --check**
+2. **cargo clippy -- -D warnings**
+3. **cargo doc --no-deps** (must be warning-free)
+4. **Issue references**: `ref #N` must point to open issues
+
+Never merge a PR with failing CI — check CI status at the PR page or
+with `gh pr checks <branch>`
 
 Manual pre-push checklist:
 cargo doc --no-deps         # must be warning-free
 ```
 
-All four must pass before `git push`. Never push broken code.
+All quality gates must pass before `git push`. Never push broken code.
 `cargo doc --no-deps` verifies that `#![warn(missing_docs)]` in
 `compass-core` is clean — every public item must have a `///` doc comment.
 
-### Push rhythm
+### PR rhythm
 
-Push immediately after completing each issue. Do not batch.
+Create a PR immediately after completing each issue. Do not batch.
+Keep PRs small and focused on a single issue.
 
 ### Commit discipline
 
 - Each commit = one logical unit. Never mix bugfix + feature + refactor.
 - Conventional commits: `feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`.
-- Bugfix commits use `fixes #N`, feature commits use `closes #N`.
+- All feat/fix commits must include `ref #N` in the commit body.
+- Never use `fixes #N` or `closes #N` in commit messages — those go in PR body.
 - Template: `git config commit.template .gitmessage` is already set.
 
 ## Git branching
 
-**Trunk-based development.** Push directly to `main`.
+**Feature-branch + PR.** Each feature/fix gets its own branch off `master`.
 
 ```
-main  ●──●──●──●──●  (trunk)
+master  ──●────────●────────●──  (PR squash merge)
+          \        /        /
+  feat/xxx  ●──●──●        /
+  fix/yyy         ●──●──●─
 ```
 
-Solo project — no feature branches, no PRs. CI runs on push to `main`.
-If the project grows to multiple contributors, switch to feature branches + PRs.
+- Branch naming: `feat/<short-description>` for features, `fix/<short-description>` for fixes
+- Push branch → create PR → CI passes → manual squash merge → branch deleted
+- Never push directly to `master`
 
 ## Version control
 
 ```sh
-git add <files>              # stage only intended changes
-git commit                    # uses .gitmessage template
-git push origin main          # triggers CI
+git checkout -b feat/short-desc          # create feature branch
+git add <files>                           # stage only intended changes
+git commit                                 # uses .gitmessage template
+git push -u origin feat/short-desc        # push branch (not master), set upstream
+gh pr create --base master --title "..." --body "Closes #N"  # create PR
+# Wait for CI to pass, then manually squash-merge via GitHub UI
+git checkout master && git pull            # sync local master
+git branch -d feat/short-desc             # delete local branch
+git push origin --delete feat/short-desc  # clean up remote branch
 ```
 
 ## Quickstart

@@ -26,11 +26,16 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 | Step | Action | Evidence Required |
 |---|---|---|
 | **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
+| **1b. Branch** | Create feature branch: `git checkout -b feat/desc` or `fix/desc` | Branch name shown |
 | **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
 | **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
 | **4. Docs** | Identify which `kb/` files need updating | List of files to user |
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
+
+**Commit discipline**: All `feat`/`fix` commits must use `ref #N` in the commit body
+(enforced by commit-msg hook). Never use `fixes #N` or `closes #N` in commit messages —
+those go in the PR description body to auto-close issues on merge.
 
 ### HARD BLOCK
 
@@ -252,7 +257,10 @@ bd close <id>         # Complete work
 
 The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
 
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
+- **Conservative (default)**: Use `bd` for task tracking. Do not run `git push` to master,
+  Dolt remote sync, or merge PRs unless explicitly asked. Allowed without explicit ask:
+  create feature branches, push feature branches, create PRs via `gh pr create`.
+  At handoff, report changed files, validation, PR link, and suggested next commands.
 - **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
 - **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
 
@@ -263,18 +271,23 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 1. **File issues for remaining work** - Create beads for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
 3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
+4. **Push branch and create PR**:
    ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   bd dolt push
-   git push
-   git status
+   git push origin <branch>
+   gh pr create --base master --title "..." --body "Closes #N"
    ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
+5. **Wait for CI**: Ensure all checks pass before manual merge.
+6. **Sync Beads** (if using Dolt sync for issues):
+   ```bash
+   bd dolt push
+   ```
+7. **Clean up after merge**:
+   ```bash
+   git checkout master && git pull
+   git branch -d <branch>
+   git push origin --delete <branch>   # clean up remote branch too
+   ```
+8. **Hand off** - Summarize changes, validation, issue status, PR link, and suggested next commands.
 
 **Critical rules:**
 - Explicit user or orchestrator instructions override this Beads block.

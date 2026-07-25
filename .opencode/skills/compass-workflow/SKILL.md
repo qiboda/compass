@@ -25,21 +25,25 @@ I will now check each gate step before proceeding:
    Create gh issue from the requirement
    → [must show issue URL to user]
 
-☐ STEP 2 — PLAN (skip only if single-file change)
+☐ STEP 2 — BRANCH
+   Create feature branch from master (git checkout -b feat/desc or fix/desc)
+   → [must show branch name]
+
+☐ STEP 3 — PLAN (skip only if single-file change)
    Plan agent run and approved
    → [must show plan summary]
 
-☐ STEP 3 — TESTS (RED phase)
+☐ STEP 4 — TESTS (RED phase)
    Write failing test FIRST, confirm it fails for the right reason
    → [must show test failure output]
 
-☐ STEP 4 — DOCS
+☐ STEP 5 — DOCS
    Identify which kb/ files need updating:
    → [must list files]
 ```
 
 **You are FORBIDDEN from using any edit/write/bash tools for implementation
-until ALL four steps (1-4) above are completed and shown to the user.**
+until ALL five steps (1-5) above are completed and shown to the user.**
 
 If you find yourself writing code without completing the gate, STOP IMMEDIATELY
 and go back to step 1. This is a HARD BLOCK — no exceptions for feature/bugfix work.
@@ -126,9 +130,14 @@ All three must pass before `git push`.
 - Never `unwrap()` in production code — use `.expect(msg)` or proper error handling
 - Never suppress type errors with `as` casts or `@ts-ignore`
 
-### 8. Branching
+### 8. Branching + PR
 
-Trunk-based: push directly to `master`. No feature branches.
+Feature-branch + PR workflow:
+- Branch naming: `feat/<desc>` for features, `fix/<desc>` for fixes
+- Push to branch (never master), create PR via `gh pr create`
+- CI must pass before merge; merge is manual (squash)
+- `Closes #N` in PR description for auto-close on merge
+- Delete branch after merge
 
 ---
 
@@ -139,13 +148,16 @@ After completing implementation, review your own work against this checklist:
 ```
 🔍 POST-IMPLEMENTATION AUDIT
 
-☐ Were all gate steps (0-4) completed before code was written?
+☐ Were all gate steps (1-5) completed before code was written?
 ☐ Does every changed kb/ file reflect the actual changes?
 ☐ Do all tests pass? (cargo test)
 ☐ Is cargo clippy clean?
 ☐ Is cargo fmt --check clean?
 ☐ Does the commit include ref #N?
 ☐ Are kb/ updates in the same commit as code changes?
+☐ Is the branch pushed to remote? (git push origin <branch>)
+☐ Is a PR created? (gh pr create --base master)
+☐ Does the PR body include Closes #N?
 ```
 
 If any box is unchecked, fix it before pushing.

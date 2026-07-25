@@ -1,7 +1,7 @@
 #!/bin/bash
 # pre-push hook — verify quality gates and issue references.
 #
-# 0. Latest CI on master must be passing
+# 0. Guard against direct pushes to master/main
 # 1. cargo fmt (must be clean)
 # 2. cargo clippy (must be warning-free)
 # 3. cargo doc (must be warning-free)
@@ -10,22 +10,6 @@
 # Matches the pre-push checklist in kb/dev/process.md.
 
 has_error=0
-
-# --- Quality gate: CI status ---
-echo "pre-push: checking latest CI on master..."
-CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
-if [ "$CI_STATUS" = "failure" ]; then
-    echo ""
-    echo "ERROR: Latest CI run on master is FAILING."
-    echo "  Fix CI before pushing. Run: gh run list --repo qiboda/compass --limit 1"
-    echo "  If it's a known issue, create an issue and fix it before pushing."
-    echo ""
-    has_error=1
-elif [ "$CI_STATUS" = "unknown" ]; then
-    echo "  (could not check CI status — continuing)"
-else
-    echo "  CI status: $CI_STATUS"
-fi
 
 # --- Quality gate: cargo fmt ---
 echo "pre-push: cargo fmt --check..."
@@ -57,20 +41,26 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1; then
     has_error=1
 fi
 
-# --- Issue reference validation ---
-
+# --- Validate refs: guard master/main + check issue references ---
 while read -r local_ref local_oid remote_ref remote_oid; do
     # Skip branch deletion
     if [ "$local_oid" = "0000000000000000000000000000000000000000" ]; then
         continue
     fi
 
-    # Nothing new to push
-    if [ "$remote_oid" = "$local_oid" ]; then
+    # Guard: reject direct pushes to master or main
+    if [ "$remote_ref" = "refs/heads/master" ] || [ "$remote_ref" = "refs/heads/main" ]; then
+        echo "ERROR: Direct pushes to $remote_ref are disabled."
+        echo "  Use feature-branch + PR workflow instead:"
+        echo "    git checkout -b feat/desc"
+        echo "    git push origin feat/desc"
+        echo "    gh pr create --base master"
+        echo ""
+        has_error=1
         continue
     fi
 
-    # Determine commit range
+    # Determine commit range for issue-ref check
     if [ "$remote_oid" = "0000000000000000000000000000000000000000" ]; then
         range="$local_oid"
     else
@@ -106,6 +96,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         fi
     done
 done
+# Note: Closes #N is expected in the PR body, not validated by this hook.
 
 if [ $has_error -ne 0 ]; then
     exit 1
