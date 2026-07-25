@@ -32,9 +32,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Dolt
         run: |
-          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64 -o /tmp/dolt
-          chmod +x /tmp/dolt
-          sudo mv /tmp/dolt /usr/local/bin/dolt
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
+          tar -xzf /tmp/dolt.tar.gz -C /tmp
+          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
       - run: cargo test --verbose
 
@@ -97,9 +97,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Dolt
         run: |
-          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64 -o /tmp/dolt
-          chmod +x /tmp/dolt
-          sudo mv /tmp/dolt /usr/local/bin/dolt
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
+          tar -xzf /tmp/dolt.tar.gz -C /tmp
+          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run
@@ -117,9 +117,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Dolt
         run: |
-          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64 -o /tmp/dolt
-          chmod +x /tmp/dolt
-          sudo mv /tmp/dolt /usr/local/bin/dolt
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
+          tar -xzf /tmp/dolt.tar.gz -C /tmp
+          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --html
