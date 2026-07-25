@@ -107,6 +107,7 @@ patterns across bench files.
    `is_ascii_alphanumeric()` includes uppercase. Don't write tests without
    confirming they actually fail first.
 
+
 ## 2026-07-25 — ref #14 fix: CI broken — dolt-dependent test fails without dolt binary
 
 **What was done**: Replaced the hard dependency on the `investment_data` Dolt
@@ -121,4 +122,20 @@ by the test. Added `dolt` installation to CI test/nextest/coverage jobs.
    (`dolt init` + `dolt sql`) are cheap and make tests portable.
 2. When adding an external tool dependency, update CI and docs together.
 3. `dolt init` requires `user.email`/`user.name` config — set `dolt config --global`
-   before init in test setup.
+    before init in test setup.
+
+## 2026-07-25 — ref #16 fix: pre-push hook new-branch range scans only branch commits
+
+**What was done**: Changed the issue-reference validation in `.beads/hooks/pre-push` to use
+`git merge-base origin/master` for new branches instead of `$local_oid` (which scanned all
+reachable history including master).
+
+**What went wrong**: The original code set `range="$local_oid"` for new branches, which made
+`git log` scan the entire commit history. Closed issues from old master commits were
+flagged as not OPEN, blocking pushes.
+
+**Lessons learned**:
+1. `git log $sha` without a range prefix scans all ancestors — use `merge-base..$sha` to
+   limit to branch-specific commits.
+2. Pre-push hooks that shell out to git need to handle the "new remote ref" case carefully.
+   The remote SHA being all-zeros is not a signal to scan everything.
