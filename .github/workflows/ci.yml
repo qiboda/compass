@@ -26,7 +26,6 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@v1
@@ -52,7 +51,6 @@ jobs:
   docs:
     name: Docs
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@v1
@@ -68,7 +66,6 @@ jobs:
   bench-check:
     name: Bench (compile)
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@v1
@@ -82,7 +79,6 @@ jobs:
   nextest:
     name: Test (nextest)
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@v1
@@ -103,7 +99,6 @@ jobs:
   coverage:
     name: Coverage (llvm-cov)
     runs-on: ubuntu-latest
-    needs: build
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
