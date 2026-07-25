@@ -11,8 +11,11 @@ User raises requirement
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
   →  /ulw-plan (if multi-step)  →  implement
-  →  cargo nextest + clippy + fmt  →  commit with ref #N  →  push master
-  →  CI passes  →  manually close issue with gh issue close N
+  →  cargo nextest (tests must pass)
+  →  commit with ref #N
+  →  quality review (/review-work or manual)
+  →  push master
+  →  CI passes  →  close issue with gh issue close N
 ```
 
 Docs, lint fixes, and typos skip the grill-me + issue cycle — implement directly.
@@ -110,6 +113,17 @@ cargo doc --no-deps         # must be warning-free
 All four must pass before `git push`. Never push broken code.
 `cargo doc --no-deps` verifies that `#![warn(missing_docs)]` in
 `compass-core` is clean — every public item must have a `///` doc comment.
+
+### Quality review
+
+After committing and before pushing, run a quality review:
+
+- **For AI-assisted work**: use `/review-work` — launches 5 parallel agents
+  (goal verification, code quality, security, QA execution, context mining)
+- **Manual review**: check for correctness, edge cases, error handling, and
+  whether the change matches the issue description
+
+Skippable for: docs, lint fixes, typos, trivial chores.
 
 ### Push rhythm
 
