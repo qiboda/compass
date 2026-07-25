@@ -106,3 +106,19 @@ patterns across bench files.
 3. The test `validate_symbol_allows_dolt_prefixed_codes` already passed because
    `is_ascii_alphanumeric()` includes uppercase. Don't write tests without
    confirming they actually fail first.
+
+## 2026-07-25 — ref #14 fix: CI broken — dolt-dependent test fails without dolt binary
+
+**What was done**: Replaced the hard dependency on the `investment_data` Dolt
+database (18M+ rows) with a self-contained temp Dolt database created on-the-fly
+by the test. Added `dolt` installation to CI test/nextest/coverage jobs.
+
+**What went wrong**: The original test assumed `dolt` CLI and a local clone of
+`investment_data` were always present. CI had neither.
+
+**Lessons learned**:
+1. Tests that shell out to external tools need to self-bootstrap. Temp databases
+   (`dolt init` + `dolt sql`) are cheap and make tests portable.
+2. When adding an external tool dependency, update CI and docs together.
+3. `dolt init` requires `user.email`/`user.name` config — set `dolt config --global`
+   before init in test setup.

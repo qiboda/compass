@@ -10,3 +10,8 @@ investment_data/
 /data
 parquet_data/
 *.wal
+
+# Beads / Dolt files (added by bd init)
+*.db
+.beads-credential-key
+.beads/proxieddb/

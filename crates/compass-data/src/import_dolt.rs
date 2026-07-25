@@ -305,17 +305,65 @@ mod tests {
     /// When querying a symbol that doesn't exist in Dolt, the Parquet output
     /// is a valid file with schema but 0 data rows (~219 bytes, below MIN_PARQUET_SIZE).
     /// This triggers the skip path in the import loop.
+    ///
+    /// Uses a self-contained temp Dolt database — no dependency on the real
+    /// `investment_data` repo. Requires `dolt` on PATH (installed in CI).
     #[test]
     fn run_dolt_sql_parquet_returns_small_file_for_nonexistent_symbol() {
-        let dolt_dir =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../investment_data");
+        let tmp = tempfile::tempdir().expect("create temp dir");
+
+        for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
+            let out = std::process::Command::new("dolt")
+                .arg("config")
+                .arg("--global")
+                .arg("--add")
+                .arg(key)
+                .arg(val)
+                .output()
+                .expect("dolt config");
+            assert!(out.status.success(), "dolt config {key} failed");
+        }
+
+        let init = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("init")
+            .output()
+            .expect("dolt init");
+        assert!(
+            init.status.success(),
+            "dolt init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+
+        let create = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE final_a_stock_eod_price (\
+                 symbol VARCHAR(20) NOT NULL, \
+                 tradedate DATE NOT NULL, \
+                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, \
+                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE, \
+                 PRIMARY KEY (symbol, tradedate))",
+            )
+            .output()
+            .expect("dolt sql create table");
+        assert!(
+            create.status.success(),
+            "create table failed: {}",
+            String::from_utf8_lossy(&create.stderr)
+        );
+
         let result = run_dolt_sql_parquet(
-            &dolt_dir,
+            tmp.path(),
             "SELECT tradedate, open, high, low, close, adjclose, volume, amount \
              FROM final_a_stock_eod_price \
              WHERE symbol = 'SZ999999' ORDER BY tradedate",
         );
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "query failed: {:?}", result.err());
         let data = result.unwrap();
         assert!(
             (data.len() as u64) < MIN_PARQUET_SIZE,

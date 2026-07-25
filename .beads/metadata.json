@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "compass",
+  "project_id": "402faa41-021d-4483-8d52-b8c71dee64f5"
+}
