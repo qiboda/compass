@@ -21,6 +21,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: true
+          prefix-key: ${{ github.job }}
       - run: cargo build --verbose
 
   clippy:
@@ -35,6 +36,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: true
+          prefix-key: ${{ github.job }}
       - run: cargo clippy -- -D warnings
 
   fmt:
@@ -59,6 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: true
+          prefix-key: ${{ github.job }}
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
@@ -74,6 +77,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: true
+          prefix-key: ${{ github.job }}
       - run: cargo bench --no-run
 
   nextest:
@@ -87,6 +91,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: true
+          prefix-key: ${{ github.job }}
       - name: Install Dolt
         run: |
           curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
@@ -109,6 +114,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: true
+          prefix-key: ${{ github.job }}
       - name: Install Dolt
         run: |
           curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
