@@ -134,17 +134,37 @@ feat/xxx       ●──●──●──┘   (feature branch, PR, squash merg
 
 ### Worktrees (isolated development)
 
-For complex features or experimental changes, use git worktrees via the
-`opencode-worktree` plugin. The agent can create isolated worktrees that
-spawn their own terminal with OpenCode running inside.
+For complex features or experimental changes, use git worktrees manually.
+Worktrees are stored under `.worktrees/` within the project (gitignored).
 
-| Tool | Purpose |
-|---|---|
-| `worktree_create("feat/xxx")` | Create a git worktree for isolated dev. Auto-spawns terminal. |
-| `worktree_delete("reason")` | Delete current worktree. Auto-commits changes and cleans up. |
+**Why manual**: The `opencode-worktree` plugin (kdco/worktree via OCX) was
+evaluated and found to have blocking issues:
 
-Worktrees are stored in `~/.local/share/opencode/worktree/<project>/<branch>/`
-outside the repository — no pollution of the main working directory.
+- `worktree_create` fails when the worktree path already exists — no idempotent re-open
+- Terminal spawn reports success blindly; actual session launch is unreliable
+- No way to reopen a terminal for an existing worktree without deleting/recreating
+- Session forking inherits spawning context, defeating isolation
+
+Manual worktrees avoid these issues and give full control.
+
+#### Creating a worktree
+
+```bash
+git worktree add .worktrees/<project-id>/<branch> <base-branch>
+# or with a new branch:
+git worktree add -b <branch> .worktrees/<project-id>/<branch> <base>
+```
+
+Then launch OpenCode in the worktree directory to start an isolated session.
+
+#### Removing a worktree
+
+```bash
+git worktree remove .worktrees/<project-id>/<branch> --force
+git branch -D <branch>  # if no longer needed
+```
+
+#### When to use
 
 Use worktrees when:
 - Experimenting with risky changes that might break the build
