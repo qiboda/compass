@@ -21,6 +21,29 @@ use citizens::logger::LoggerPanel;
 use tabs::{CHART_ID, LOGGER_ID, Tab, TabKind, TabViewer};
 use widgets::searchable_dropdown::StockPicker;
 
+fn setup_cjk_fonts(ctx: &egui::Context) {
+    let font_path = "/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Regular.otf";
+    let font_bytes = match std::fs::read(font_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(path = font_path, error = %e, "CJK font not found, Chinese may display as tofu");
+            return;
+        }
+    };
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert("SourceHanSansCN".into(), std::sync::Arc::new(egui::FontData::from_owned(font_bytes)));
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "SourceHanSansCN".into());
+    }
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        family.push("SourceHanSansCN".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -44,6 +67,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let egui_ctx = cc.egui_ctx.clone();
+
+            setup_cjk_fonts(&egui_ctx);
 
             // Load stock list from parquet at startup
             let stock_list = load_stock_list(&config);
@@ -220,11 +245,6 @@ impl eframe::App for CompassApp {
 impl CompassApp {
     fn render_toolbar(&mut self, ui: &mut egui::Ui, exchange: &Exchange) {
         ui.horizontal(|ui| {
-            ui.label("Symbol:");
-            self.stock_picker.show(ui, &self.stock_list, exchange);
-
-            ui.separator();
-
             ui.label("Exchange:");
             let mut idx = self.exchange_index;
             egui::ComboBox::from_id_salt("exchange_combo")
@@ -236,6 +256,11 @@ impl CompassApp {
                     }
                 });
             self.exchange_index = idx;
+
+            ui.separator();
+
+            ui.label("Symbol:");
+            self.stock_picker.show(ui, &self.stock_list, exchange);
 
             ui.separator();
 
