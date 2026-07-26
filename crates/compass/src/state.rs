@@ -34,7 +34,7 @@ impl SharedState {
             bars: Dynamic::new(Vec::new()),
             loading: Dynamic::new(false),
             error: Dynamic::new(None),
-            log: Dynamic::new(ReactiveEventLoggerState::default()),
+            log: Dynamic::new(ReactiveEventLoggerState::new()),
         }
     }
 }
