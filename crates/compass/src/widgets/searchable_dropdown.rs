@@ -68,7 +68,7 @@ impl StockPicker {
         };
 
         if self.popup_open {
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.popup_open = false;
                 return;
             }
