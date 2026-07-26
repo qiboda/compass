@@ -4,6 +4,18 @@ A-share stock chart desktop application built with egui. Data pipeline uses
 local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks),
 with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for querying.
 
+**项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
+
+---
+
+## 品质准则
+
+精益求精，追求完美。每一行代码、每一次提交、每一个决策，都应以最高标准衡量。容不得将就、凑合、差不多。
+
+- 代码不行就重构，不要留着凑合
+- 设计不对就推翻，不要叠加补丁
+- 流程有漏洞就堵，不要绕过去
+
 ---
 
 ## ⚡ GRILL-ME FIRST (ALWAYS)
@@ -14,6 +26,10 @@ This is NON-NEGOTIABLE. No exceptions.
 The grill-me interview must complete with "shared understanding reached" before
 you proceed to any other action — including reading files, classifying the
 request, creating todos, or writing code.
+
+**Grill-me completes → must enter PRE-IMPLEMENTATION GATE (below) for any
+feature or bugfix work. Grill-me is step 0; the gate is steps 1-4.
+Do NOT skip the gate just because grill-me reached shared understanding.**
 
 ---
 
@@ -70,6 +86,12 @@ checklist above. Do not skip any step.
 For isolated development (experiments, library migrations, multi-day features),
 load the `worktree` skill. Worktrees live at `.worktrees/<name>/` and map to
 `feature/<name>` branches. See `kb/dev/process.md#worktrees` for policy.
+
+After creating a worktree, the skill enforces MANDATORY post-creation steps:
+1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
+2. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
+3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
+4. Current session stays in master — do NOT cd into the worktree.
 
 ## Knowledge base
 

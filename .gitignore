@@ -20,3 +20,5 @@ collectors/.venv/
 collectors/__pycache__/
 collectors/*.csv
 collectors/*.state.json
+.opencode/package.json
+.opencode/package-lock.json
