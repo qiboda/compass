@@ -9,7 +9,6 @@
 //!
 //! ```text
 //! let mut dock_state = egui_dock::DockState::new(vec![
-//!     Tab::new(TabKind::Control),
 //!     Tab::new(TabKind::Chart),
 //!     Tab::new(TabKind::Logger),
 //! ]);
@@ -26,7 +25,6 @@
 use egui_citizen::{CitizenId, Dispatcher};
 
 use crate::citizens::chart::ChartCitizen;
-use crate::citizens::control::ControlCitizen;
 use crate::citizens::logger::LoggerPanel;
 use crate::state::SharedState;
 
@@ -34,7 +32,6 @@ use crate::state::SharedState;
 // Citizen ID constants
 // ---------------------------------------------------------------------------
 
-pub const CONTROL_ID: &str = "control";
 pub const CHART_ID: &str = "chart";
 pub const LOGGER_ID: &str = "logger";
 
@@ -48,25 +45,20 @@ pub const LOGGER_ID: &str = "logger";
 /// the dispatcher uses for one-hot activation tracking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabKind {
-    Control,
     Chart,
     Logger,
 }
 
 impl TabKind {
-    /// Human-readable label shown in the tab bar.
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Control => "Controls",
             Self::Chart => "Chart",
             Self::Logger => "Logger",
         }
     }
 
-    /// The corresponding [`CitizenId`] for dispatcher activation.
     pub fn citizen_id(&self) -> CitizenId {
         match self {
-            Self::Control => CitizenId::new(CONTROL_ID),
             Self::Chart => CitizenId::new(CHART_ID),
             Self::Logger => CitizenId::new(LOGGER_ID),
         }
@@ -112,19 +104,9 @@ impl Tab {
 /// Created inline each frame — the short-lived borrows satisfy egui_dock's
 /// borrowing requirements.
 pub struct TabViewer<'a> {
-    /// Central citizen dispatcher for one-hot activation.
     pub dispatcher: &'a mut Dispatcher,
-
-    /// Control panel citizen (symbol / timeframe input + fetch button).
-    pub control: &'a mut ControlCitizen,
-
-    /// Chart panel citizen (OHLCV candlestick chart).
     pub chart: &'a mut ChartCitizen,
-
-    /// Logger panel citizen (scrollable log entries).
     pub logger: &'a mut LoggerPanel,
-
-    /// Reactive shared state, passed to each citizen's `show()`.
     pub shared_state: &'a SharedState,
 }
 
@@ -137,7 +119,6 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.kind {
-            TabKind::Control => self.control.show(ui, self.shared_state),
             TabKind::Chart => self.chart.show(ui, self.shared_state),
             TabKind::Logger => self.logger.show(ui, self.shared_state),
         }

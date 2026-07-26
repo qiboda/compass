@@ -259,6 +259,54 @@ impl ParquetReader {
 
         Ok(Some(result))
     }
+
+    /// Load all rows from `stock_basic.parquet`.
+    ///
+    /// Returns the full stock list (symbol, name, exchange) for use in
+    /// the GUI symbol picker. If `stock_basic.parquet` doesn't exist,
+    /// returns an empty vec.
+    pub fn load_all_stock_basics(&self) -> Result<Vec<StockBasic>, DataError> {
+        if !self.basic_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let path_str = self.basic_path.to_string_lossy().to_string();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT symbol, name, exchange, area, industry, market,
+                    CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
+             FROM read_parquet('{path_str}')
+             ORDER BY symbol"
+        );
+
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<StockBasic> = stmt
+            .query_map([], |row| {
+                Ok(StockBasic {
+                    symbol: row.get(0)?,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    exchange: row.get::<_, Option<String>>(2)?,
+                    area: row.get::<_, Option<String>>(3)?,
+                    industry: row.get::<_, Option<String>>(4)?,
+                    market: row.get::<_, Option<String>>(5)?,
+                    list_date: row
+                        .get::<_, Option<String>>(6)?
+                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                    delist_date: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                })
+            })
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+
+        Ok(rows)
+    }
 }
 
 fn date_str_to_utc(date_str: &str) -> Option<DateTime<Utc>> {

@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use egui_citizen::{CitizenId, Dispatcher};
 use egui_dock::{DockArea, DockState};
-
 use tracing::info;
 
-use compass_core::model::AppConfig;
+use compass_core::data::parquet::ParquetReader;
+use compass_core::model::{AppConfig, Exchange};
 
 mod backend;
 mod citizens;
@@ -14,11 +14,12 @@ mod dispatcher;
 mod messages;
 mod state;
 mod tabs;
+mod widgets;
 
 use citizens::chart::ChartCitizen;
-use citizens::control::ControlCitizen;
 use citizens::logger::LoggerPanel;
-use tabs::{CHART_ID, CONTROL_ID, LOGGER_ID, Tab, TabKind, TabViewer};
+use tabs::{CHART_ID, LOGGER_ID, Tab, TabKind, TabViewer};
+use widgets::searchable_dropdown::StockPicker;
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -31,7 +32,6 @@ fn main() -> eframe::Result {
     // Create reactive shared state
     let shared_state = Arc::new(state::SharedState::new(
         &config.app.default_symbol,
-        &config.app.default_timeframe,
     ));
 
     let options = eframe::NativeOptions {
@@ -45,6 +45,9 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let egui_ctx = cc.egui_ctx.clone();
 
+            // Load stock list from parquet at startup
+            let stock_list = load_stock_list(&config);
+
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
             let (work_signal, _backend_handle) =
                 backend::wire_backend(config.clone(), shared_state.clone(), egui_ctx);
@@ -54,30 +57,30 @@ fn main() -> eframe::Result {
             let registered = dispatcher::register_citizens(&mut dispatcher);
 
             // Create citizen panels
-            let control = ControlCitizen::new(
-                CitizenId::new(CONTROL_ID),
-                registered.control,
-                &config.app.default_symbol,
-                &config.app.default_timeframe,
-            );
             let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
             let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
 
-            // Create initial dock state with all 3 tabs
+            // Create initial dock state with 2 tabs
             let dock_state = DockState::new(vec![
-                Tab::new(TabKind::Control),
                 Tab::new(TabKind::Chart),
                 Tab::new(TabKind::Logger),
             ]);
 
+            let stock_picker = StockPicker::new(
+                &config.app.default_symbol,
+                &stock_list,
+            );
+
             Ok(Box::new(CompassApp {
                 dock_state,
                 dispatcher,
-                control,
                 chart,
                 logger,
                 shared_state,
                 work_signal,
+                stock_list,
+                stock_picker,
+                exchange_index: 0usize,
                 _backend_handle,
             }))
         }),
@@ -149,6 +152,25 @@ fn load_config() -> AppConfig {
     }
 }
 
+fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
+    match ParquetReader::new(&config.parquet.dir) {
+        Ok(reader) => match reader.load_all_stock_basics() {
+            Ok(stocks) => {
+                info!(count = stocks.len(), "stock list loaded from parquet");
+                stocks
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to load stock list from parquet");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to create parquet reader");
+            Vec::new()
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CompassApp — citizen-based application
 // ---------------------------------------------------------------------------
@@ -156,38 +178,97 @@ fn load_config() -> AppConfig {
 struct CompassApp {
     dock_state: DockState<Tab>,
     dispatcher: Dispatcher,
-    control: ControlCitizen,
     chart: ChartCitizen,
     logger: LoggerPanel,
     shared_state: Arc<state::SharedState>,
     work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
+    stock_list: Vec<compass_core::model::StockBasic>,
+    stock_picker: StockPicker,
+    exchange_index: usize,
     _backend_handle: backend::BackendHandle,
 }
 
 impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Render dock area with citizen panels
+        let exchange = Exchange::from_index(self.exchange_index);
+
+        self.render_toolbar(ui, &exchange);
+
         DockArea::new(&mut self.dock_state).show_inside(
             ui,
             &mut TabViewer {
                 dispatcher: &mut self.dispatcher,
-                control: &mut self.control,
                 chart: &mut self.chart,
                 logger: &mut self.logger,
                 shared_state: &self.shared_state,
             },
         );
 
-        // Drain citizen lifecycle events
         dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
-        // Process control outbox
-        let outbox = std::mem::take(&mut self.control.outbox);
-        for msg in outbox {
-            dispatcher::handle(msg, &self.shared_state, &self.work_signal);
+        ui.ctx().request_repaint_after(Duration::from_millis(200));
+    }
+}
+
+impl CompassApp {
+    fn render_toolbar(&mut self, ui: &mut egui::Ui, exchange: &Exchange) -> bool {
+        let mut exchange_changed = false;
+
+        ui.horizontal(|ui| {
+            ui.label("Symbol:");
+            self.stock_picker.show(ui, &self.stock_list, exchange);
+
+            ui.separator();
+
+            ui.label("Exchange:");
+            let mut idx = self.exchange_index;
+            egui::ComboBox::from_id_salt("exchange_combo")
+                .selected_text(exchange_label(self.exchange_index))
+                .show_ui(ui, |ui| {
+                    for i in 0..=3 {
+                        let val = exchange_label(i);
+                        if ui.selectable_value(&mut idx, i, val).clicked() {
+                            exchange_changed = true;
+                        }
+                    }
+                });
+            self.exchange_index = idx;
+
+            ui.separator();
+
+            ui.label("TF: 1d");
+
+            if ui.button("Fetch").clicked() {
+                let qualified =
+                    Exchange::from_index(self.exchange_index)
+                        .prefix_code(&self.stock_picker.selected_symbol);
+                self.shared_state.symbol.set(qualified);
+                dispatcher::handle(
+                    messages::AppMessage::FetchBars,
+                    &self.shared_state,
+                    &self.work_signal,
+                );
+            }
+        });
+
+        if self.shared_state.loading.get() {
+            ui.label("Loading...");
+        }
+        if let Some(ref err) = self.shared_state.error.get() {
+            ui.colored_label(egui::Color32::RED, err);
         }
 
-        ui.ctx().request_repaint_after(Duration::from_millis(200));
+        exchange_changed
+    }
+}
+
+fn exchange_label(idx: usize) -> &'static str {
+    match idx {
+        0 => "全部",
+        1 => "SH",
+        2 => "SZ",
+        3 => "BJ",
+        _ => "全部",
     }
 }
 
@@ -197,13 +278,12 @@ impl eframe::App for CompassApp {
 
 #[cfg(test)]
 mod tests {
+    use compass_core::model::{Exchange, StockBasic};
+
     use crate::citizens::chart::ChartCitizen;
-    use crate::citizens::control::ControlCitizen;
     use crate::citizens::logger::LoggerPanel;
-    use crate::dispatcher;
-    use crate::messages::AppMessage;
     use crate::state::SharedState;
-    use crate::tabs::{CHART_ID, CONTROL_ID, LOGGER_ID};
+    use crate::tabs::{CHART_ID, LOGGER_ID};
     use egui_citizen::{CitizenId, Dispatcher};
 
     #[test]
@@ -214,9 +294,8 @@ mod tests {
 
     #[test]
     fn shared_state_initializes_with_defaults() {
-        let state = SharedState::new("000001", "1d");
+        let state = SharedState::new("000001");
         assert_eq!(state.symbol.get(), "000001");
-        assert_eq!(state.timeframe.get(), "1d");
         assert_eq!(state.bars.get().len(), 0);
         assert!(!state.loading.get());
         assert_eq!(state.error.get(), None);
@@ -224,39 +303,92 @@ mod tests {
     }
 
     #[test]
-    fn control_citizen_outbox_on_fetch_click() {
-        let state = SharedState::new("600519", "1d");
-        let mut dispatcher = Dispatcher::new();
-        let citizen_state = dispatcher.register(CitizenId::new(CONTROL_ID));
-        let mut control =
-            ControlCitizen::new(CitizenId::new(CONTROL_ID), citizen_state, "600519", "1d");
-
-        // Simulate a Fetch click: write symbol/timeframe, push to outbox
-        state.symbol.set(control.symbol_input.clone());
-        state.timeframe.set(control.timeframe_input.clone());
-        control.outbox.push(AppMessage::FetchBars);
-
-        assert_eq!(control.outbox.len(), 1);
-        assert_eq!(state.symbol.get(), "600519");
-        assert_eq!(state.timeframe.get(), "1d");
-    }
-
-    #[test]
     fn citizens_register_and_activate() {
         let mut dispatcher = Dispatcher::new();
-        let registered = dispatcher::register_citizens(&mut dispatcher);
+        let registered = crate::dispatcher::register_citizens(&mut dispatcher);
 
-        let control = ControlCitizen::new(
-            CitizenId::new(CONTROL_ID),
-            registered.control,
-            "000001",
-            "1d",
-        );
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
         let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
 
-        assert_eq!(control.citizen_id.0, CONTROL_ID);
         assert_eq!(chart.citizen_id.0, CHART_ID);
         assert_eq!(logger.citizen_id.0, LOGGER_ID);
+    }
+
+    fn make_stock_basic(symbol: &str, name: &str, exchange: &str) -> StockBasic {
+        StockBasic {
+            symbol: symbol.into(),
+            name: name.into(),
+            area: None,
+            industry: None,
+            market: None,
+            exchange: Some(exchange.into()),
+            list_date: None,
+            delist_date: None,
+        }
+    }
+
+    fn build_stock_list() -> Vec<StockBasic> {
+        vec![
+            make_stock_basic("000001", "平安银行", "SZ"),
+            make_stock_basic("000002", "万科A", "SZ"),
+            make_stock_basic("300750", "宁德时代", "SZ"),
+            make_stock_basic("600519", "贵州茅台", "SH"),
+            make_stock_basic("600036", "招商银行", "SH"),
+            make_stock_basic("688001", "华兴源创", "SH"),
+            make_stock_basic("830799", "艾融软件", "BJ"),
+        ]
+    }
+
+    #[test]
+    fn filter_stocks_code_prefix_match() {
+        let stocks = build_stock_list();
+        let result = crate::widgets::searchable_dropdown::filter_stocks(
+            &stocks, "600", &Exchange::All,
+        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].symbol, "600036");
+        assert_eq!(result[1].symbol, "600519");
+    }
+
+    #[test]
+    fn filter_stocks_name_substring_match() {
+        let stocks = build_stock_list();
+        let result = crate::widgets::searchable_dropdown::filter_stocks(
+            &stocks, "银行", &Exchange::All,
+        );
+        assert_eq!(result.len(), 2);
+        let found: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
+        assert!(found.contains(&"000001"));
+        assert!(found.contains(&"600036"));
+    }
+
+    #[test]
+    fn filter_stocks_exchange_filter_sh() {
+        let stocks = build_stock_list();
+        let result = crate::widgets::searchable_dropdown::filter_stocks(
+            &stocks, "", &Exchange::SH,
+        );
+        assert_eq!(result.len(), 3);
+        let symbols: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
+        assert!(symbols.contains(&"600519"));
+        assert!(symbols.contains(&"688001"));
+    }
+
+    #[test]
+    fn filter_stocks_exchange_filter_sz() {
+        let stocks = build_stock_list();
+        let result = crate::widgets::searchable_dropdown::filter_stocks(
+            &stocks, "", &Exchange::SZ,
+        );
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn filter_stocks_empty_query_returns_all_in_exchange() {
+        let stocks = build_stock_list();
+        let result = crate::widgets::searchable_dropdown::filter_stocks(
+            &stocks, "", &Exchange::All,
+        );
+        assert_eq!(result.len(), 7);
     }
 }

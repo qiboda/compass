@@ -8,35 +8,29 @@ use egui_mobius::signals::Signal;
 
 use crate::messages::{AppMessage, FetchRequest};
 use crate::state::SharedState;
-use crate::tabs::{CHART_ID, CONTROL_ID, LOGGER_ID};
+use crate::tabs::{CHART_ID, LOGGER_ID};
 
 /// Holds the `CitizenState` handles returned during registration.
 ///
 /// Each handle can be cloned and handed to the corresponding citizen
 /// panel so they share a single reactive lifecycle state.
 pub struct RegisteredCitizens {
-    pub control: CitizenState,
     pub chart: CitizenState,
     pub logger: CitizenState,
 }
 
-/// Register the three core citizens with the dispatcher and activate the
+/// Register the two core citizens with the dispatcher and activate the
 /// chart panel (one-hot: exactly one citizen is active at a time).
 ///
 /// Returns the `CitizenState` handles so callers can construct the citizen
 /// panel structs with the same reactive state that the dispatcher manages.
 pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
-    let control = dispatcher.register(CitizenId::new(CONTROL_ID));
     let chart = dispatcher.register(CitizenId::new(CHART_ID));
     let logger = dispatcher.register(CitizenId::new(LOGGER_ID));
 
     dispatcher.activate(&CitizenId::new(CHART_ID));
 
-    RegisteredCitizens {
-        control,
-        chart,
-        logger,
-    }
+    RegisteredCitizens { chart, logger }
 }
 
 /// Drain citizen lifecycle messages from the dispatcher and append them
@@ -61,7 +55,7 @@ pub fn handle(msg: AppMessage, state: &SharedState, work_signal: &Signal<FetchRe
     match msg {
         AppMessage::FetchBars => {
             let symbol = state.symbol.get();
-            let timeframe = state.timeframe.get();
+            let timeframe = "1d".to_string();
 
             let request = FetchRequest {
                 symbol,

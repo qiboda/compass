@@ -40,6 +40,12 @@ default_symbol = "000001"
 # Timeframe displayed when the app starts.
 # Default: "1d"
 default_timeframe = "1d"
+
+[parquet]
+# Directory containing stock_basic.parquet and stock_daily/.
+# Used by the GUI for the symbol search dropdown.
+# Default: "parquet_data"
+dir = "parquet_data"
 ```
 
 ## Defaults
@@ -53,6 +59,7 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 | `api` | `timeout_secs` | `10` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
+| `parquet` | `dir` | `parquet_data` |
 
 ## Examples
 
