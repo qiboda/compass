@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS no_data_marks (
 ///
 /// Use `new(Some(parquet_dir))` for production or `new_in_memory()` for tests.
 pub struct DuckDbProvider {
-    pub conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
     parquet_dir: Option<std::path::PathBuf>,
 }
 
@@ -179,6 +179,13 @@ impl DuckDbProvider {
     /// Convenience constructor for tests — opens an in-memory database.
     pub fn new_in_memory() -> Result<Self, DataError> {
         Self::new(None)
+    }
+
+    /// Access the underlying DuckDB connection for direct queries (tests only).
+    pub fn lock_connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, DataError> {
+        self.conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))
     }
 
     /// Execute an arbitrary SQL batch (for maintenance/export operations).
@@ -646,6 +653,7 @@ impl DataProvider for DuckDbProvider {
             if rows.is_empty()
                 && let Some(ref parquet_dir) = parquet_dir
             {
+                crate::data::parquet::validate_symbol(&symbol)?;
                 let exchange = crate::data::symbol::to_exchange(&symbol);
                 let prefixed = format!("{exchange}{symbol}");
                 let parquet_path = parquet_dir
@@ -674,6 +682,32 @@ impl DataProvider for DuckDbProvider {
                         .map_err(DataError::Database)?
                         .collect::<Result<Vec<_>, duckdb::Error>>()
                         .map_err(DataError::Database)?;
+
+                    // Cache-warm: persist parquet data into in-memory table
+                    if !rows.is_empty() {
+                        let mut insert = conn
+                            .prepare(
+                                "INSERT OR IGNORE INTO stock_daily
+                                 (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            )
+                            .map_err(DataError::Database)?;
+                        for (date_str, open, high, low, close, volume) in &rows {
+                            insert
+                                .execute(params![
+                                    symbol.as_str(),
+                                    date_str.as_str(),
+                                    open,
+                                    high,
+                                    low,
+                                    close,
+                                    close, // adjclose = close
+                                    volume,
+                                    0.0f64, // amount not available from parquet
+                                ])
+                                .map_err(DataError::Database)?;
+                        }
+                    }
                 }
             }
 
@@ -1441,5 +1475,58 @@ mod tests {
             bars.iter().any(|b| (b.open - 99.0).abs() < 0.01),
             "saved bar with open=99.0 should be present"
         );
+    }
+
+    /// SQL injection via symbol in parquet path must be rejected.
+    #[tokio::test]
+    async fn parquet_fallback_rejects_non_alphanumeric_symbols() {
+        let (_tmp, provider) =
+            setup_parquet_provider("SZ000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0)]);
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+
+        let result = provider
+            .fetch_bars("'; DROP TABLE stock_daily; --", "1d", start, end)
+            .await;
+
+        assert!(result.is_err(), "malicious symbol must be rejected");
+    }
+
+    /// After reading from parquet, data should be cached in-memory
+    /// so subsequent queries hit DuckDB, not the filesystem.
+    #[tokio::test]
+    async fn fetch_bars_caches_parquet_data_in_memory() {
+        let (_tmp, provider) = setup_parquet_provider(
+            "SZ000001",
+            &[
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0),
+                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 1500.0),
+            ],
+        );
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+
+        // First fetch — reads from parquet, should cache in-memory
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("first fetch");
+        assert_eq!(bars.len(), 2, "should read 2 bars from parquet");
+
+        // After first fetch, stored range should reflect the cached data
+        let range = provider
+            .get_stored_range("000001")
+            .await
+            .expect("get_stored_range");
+        assert!(
+            range.is_some(),
+            "data should be cached in-memory after parquet read"
+        );
+
+        let (min, max) = range.unwrap();
+        assert_eq!(min, chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap());
+        assert_eq!(max, chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap());
     }
 }

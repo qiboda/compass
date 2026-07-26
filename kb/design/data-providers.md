@@ -457,7 +457,7 @@ base_url = "https://push2his.eastmoney.com"
 timeout_secs = 10           # HTTP request timeout
 
 [database]
-path = "data/compass.db"         # DuckDB cache file location
+parquet_dir = "parquet_data"         # parquet data directory
 ```
 
 For the CLI, most settings are command-line arguments (see `compass-data --help`):

@@ -203,7 +203,7 @@ async fn e2e_two_symbols_kline_fetch_and_save_to_duckdb() {
     }
 
     let (count_000001, count_600519, basic_count) = {
-        let conn = db.conn.lock().expect("lock");
+        let conn = db.lock_connection().expect("lock");
         let c1: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM stock_daily WHERE symbol = '000001'",
@@ -448,7 +448,7 @@ async fn duckdb_in_memory_has_required_tables() {
         "no_data_marks",
     ];
 
-    let conn = db.conn.lock().expect("lock");
+    let conn = db.lock_connection().expect("lock");
     for table in &tables {
         let exists: bool = conn
             .query_row(
