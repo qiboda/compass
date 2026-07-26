@@ -65,6 +65,18 @@ and commit discipline.
 **After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
 checklist above. Do not skip any step.
 
+### Commit & Push
+
+Commit and push are **separate operations**. Do not chain them with `&&`.
+
+1. **Commit first**: stage changes, write a descriptive message, commit.
+2. **Verify locally**: ensure `cargo test`, `cargo clippy`, and `cargo fmt` pass.
+3. **Push separately**: only after local verification is clean.
+
+Never `git push` in the same command as `git commit`. The pre-push hook runs
+formatting, clippy, and doc checks — if they fail, the commit should remain
+local until fixed, not be amended mid-push.
+
 ## Worktrees
 
 For isolated development (experiments, library migrations, multi-day features),
@@ -213,7 +225,6 @@ path = "data/compass.duckdb"
 [api]
 base_url = "https://push2his.eastmoney.com"
 timeout_secs = 10
-retry_count = 3
 
 [app]
 default_symbol = "000001"
