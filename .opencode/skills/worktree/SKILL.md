@@ -43,6 +43,22 @@ git worktree add -b <full-branch> .worktrees/<dir-name> <base-ref>
 - Directory name = sanitized branch name (drop the `feature/` or `fix/` prefix, keep slashes as hyphens)
 - Never create worktrees outside `.worktrees/`
 
+**Post-Creation (MANDATORY)** — after every `git worktree add`:
+
+1. **Run `/handoff`** to save the current conversation context:
+   - The handoff file goes to `.worktrees/<name>/.omo/handoff.md`
+   - This captures: what was decided, what's next, relevant design context
+   - Use `write` tool to create the handoff file if `/handoff` command is unavailable
+
+2. **Tell the user** to open a new opencode session in the worktree:
+   ```
+   Worktree ready. Continue in a new terminal:
+       cd .worktrees/<name> && opencode
+   ```
+   The new opencode session will automatically read `.omo/handoff.md` for context.
+
+3. **Current session stays in master** — do NOT `cd` into the worktree in the current session.
+
 ### List
 
 ```bash
@@ -96,8 +112,15 @@ When the `compass-workflow` skill is also loaded:
 # User: "切一个使用egui_mobius的worktree"
 # → Fire this skill, then:
 git worktree add -b feature/egui-mobius .worktrees/egui-mobius master
-# → Work in /data/codes/compass/.worktrees/egui-mobius/
-# → When done, merge back and clean up:
-#   git worktree remove .worktrees/egui-mobius --force
-#   git branch -D feature/egui-mobius
+```
+
+**Then** (same turn, immediately after `git worktree add` succeeds):
+
+1. Run `/handoff` → writes `.worktrees/egui-mobius/.omo/handoff.md` with current context
+2. Tell user: `cd .worktrees/egui-mobius && opencode`
+
+**When done**, merge back and clean up:
+```bash
+git worktree remove .worktrees/egui-mobius --force
+git branch -D feature/egui-mobius
 ```

@@ -13,3 +13,5 @@ parquet_data/
 
 # Manual worktree storage
 .worktrees/
+.opencode/package.json
+.opencode/package-lock.json

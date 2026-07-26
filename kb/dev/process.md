@@ -159,6 +159,11 @@ the `/worktree` skill give full control without those issues.
 **When to use**: risky experiments, multi-day features, library migrations,
 parallel feature work. Skip for trivia, docs, lint, typos.
 
+**Post-creation**: after `git worktree add`, the worktree skill requires:
+1. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
+2. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
+3. Stay in master — don't switch session into the worktree directory
+
 ## Version control
 
 ```sh
