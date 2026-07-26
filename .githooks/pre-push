@@ -132,6 +132,12 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         || true)
 
     if [ -z "$issues" ]; then
+        echo ""
+        echo "ERROR: push rejected — no 'ref #N' found in commit messages."
+        echo "  Every commit must reference an open GitHub issue."
+        echo "  Add 'ref #N' to at least one commit in this push."
+        echo ""
+        has_error=1
         continue
     fi
 
