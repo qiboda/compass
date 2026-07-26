@@ -126,6 +126,55 @@ def import_fin_indicators():
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
+def sync_investment_data(restart: bool = False):
+    """Sync investment_data: fetch from chenditc, push to skwy fork."""
+    import os
+    import signal
+
+    invest_dir = PROJECT_ROOT / "investment_data"
+    upstream = "origin"
+    fork = "skwy"
+
+    if not (invest_dir / ".dolt").exists():
+        print("[sync-investment] ERROR: investment_data not found", file=sys.stderr)
+        return
+
+    dolt = lambda *args: subprocess.run(
+        ["dolt", "--data-dir", str(invest_dir)] + list(args),
+        capture_output=True, text=True, timeout=300
+    )
+
+    if restart:
+        print("[sync-investment] Stopping Dolt SQL server...", file=sys.stderr)
+        result = subprocess.run(["pkill", "-f", "dolt sql-server.*investment_data"], capture_output=True)
+        if result.returncode == 0:
+            print("  Server stopped", file=sys.stderr)
+
+    print(f"[sync-investment] Fetching from {upstream}...", file=sys.stderr)
+    dolt("fetch", upstream)
+
+    print(f"[sync-investment] Merging {upstream}/master...", file=sys.stderr)
+    dolt("checkout", "master")
+    dolt("pull", upstream, "master")
+
+    print(f"[sync-investment] Pushing to {fork}...", file=sys.stderr)
+    result = dolt("push", fork, "master")
+    if result.returncode == 0 or "up-to-date" in result.stderr + result.stdout:
+        print("[sync-investment] Done.", file=sys.stderr)
+    else:
+        print(f"  Push issue: {result.stderr}", file=sys.stderr)
+
+    if restart:
+        server_script = PROJECT_ROOT / "scripts" / "start-dolt-server.sh"
+        if server_script.exists():
+            print("[sync-investment] Restarting server...", file=sys.stderr)
+            subprocess.Popen(
+                ["nohup", "bash", str(server_script)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compass data pipeline")
     sub = parser.add_subparsers(dest="command")
@@ -141,6 +190,9 @@ def main():
     imp.add_argument("target", choices=["stock_basic", "fin_indicators"])
 
     sub.add_parser("sync", help="Fetch all + import all")
+
+    inv = sub.add_parser("sync-investment", help="Sync investment_data from upstream (chenditc) to fork (skwy)")
+    inv.add_argument("--restart", action="store_true", help="Stop server before sync, restart after")
 
     args = parser.parse_args()
 
@@ -183,6 +235,9 @@ def main():
         run_dolt("UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM stock_basic) WHERE table_name='stock_basic'")
         run_dolt("UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'")
         print("[sync] Complete.", file=sys.stderr)
+
+    elif args.command == "sync-investment":
+        sync_investment_data(args.restart)
 
     else:
         parser.print_help()
