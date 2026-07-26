@@ -247,13 +247,9 @@ async fn main() {
                 error!("{e}");
                 std::process::exit(1);
             });
-            if let Err(e) = import_compass::run(
-                dolt_dir,
-                output,
-                table,
-                overwrite,
-                since.as_deref(),
-            ) {
+            if let Err(e) =
+                import_compass::run(dolt_dir, output, table, overwrite, since.as_deref())
+            {
                 error!("ImportCompass failed: {e}");
                 std::process::exit(1);
             }
