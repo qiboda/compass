@@ -84,3 +84,21 @@ CI 修复等多项 feature 工作，全部跳过了 PRE-IMPLEMENTATION GATE（�
 1. GATE 对 "所有代码变更" 的约束力不足 — 已补充 SELF-CHECK 4 问硬性规则
 2. "feature 工作" 的边界太模糊，容易自欺"这不是 feature" — 改为白名单例外（仅 docs/lint/typofix）
 3. 流程违规本身即是 bug — 记录到 reflections 并修复流程
+
+---
+
+## 2026-07-26 — ref #43 feat: GUI layout rework + SH/SZ/BJ exchange selection
+
+**What was done**: Replaced the 3-citizen DockArea layout with a toolbar + 2-citizen
+DockArea (Chart, Logger). Added Exchange enum (SH/SZ/BJ/All), searchable symbol dropdown
+loaded from `stock_basic.parquet`, exchange-filtered symbol list, and exchange prefix
+auto-prepending. Removed ControlCitizen and the outbox pattern from the main loop.
+
+**What went well**: All gate steps completed (issue #43, ulw-plan, RED phase tests, docs).
+Momus review passed with no blocking issues. TDD approach caught sort order bug in
+filter_stocks() before manual testing.
+
+**Lessons learned**:
+1. egui 0.35 doesn't have `TopBottomPanel` — used inline horizontal toolbar instead
+2. Module visibility: `mod widgets` declared in main.rs makes `crate::widgets` accessible from test modules
+3. The `#![warn(missing_docs)]` lint is aggressive — every public item needs a doc comment, even enum variants

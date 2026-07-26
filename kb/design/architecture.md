@@ -29,16 +29,17 @@ compass (GUI binary)
   ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring
   ├── dispatcher.rs  ─ register_citizens, lifecycle draining, message routing
   ├── citizens/
-  │   ├── control.rs ─ ControlCitizen: symbol/timeframe input, outbox
   │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart
   │   └── logger.rs  ─ LoggerPanel: scrollable log viewer
+  ├── widgets/
+  │   └── searchable_dropdown.rs ─ StockPicker widget, filter_stocks()
   │
   ├── compass-core (library)
-  │     ├── model.rs      ─ shared types: AppConfig, Bar, Cmd (legacy)
-│     ├── data/mod.rs   ─ Module declarations
-│     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
-│     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
-│     ├── data/parquet.rs   ─ ParquetReader (main database)
+  │     ├── model.rs      ─ shared types: AppConfig, Exchange, StockBasic, Bar
+  │     ├── data/mod.rs   ─ Module declarations
+  │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
+  │     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
+  │     ├── data/parquet.rs   ─ ParquetReader (main database)
   │     ├── data/symbol.rs    ─ Exchange inference, code conversion
   │     └── data/synthetic.rs ─ Test data generator
   │
@@ -73,46 +74,46 @@ architecture inspired by Elm and Flux. Three layers handle the separation:
 
 ### Layer 1: Citizens and the DockArea
 
-The UI is split into three `Citizen` panels, each implementing the `egui_citizen::Citizen` trait:
+The UI is split into two `Citizen` panels inside an `egui_dock::DockArea`, with a
+toolbar rendered above:
 
 | Citizen | File | Role |
 |---|---|---|
-| **ControlCitizen** | `citizens/control.rs` | Symbol input, timeframe selector, Fetch button. Uses an **outbox** (`Vec<AppMessage>`) to emit events — never calls backends directly. |
 | **ChartCitizen** | `citizens/chart.rs` | OHLCV candlestick chart via `egui-charts`. Reads `bars` from shared state reactively and re-renders when the data changes. |
 | **LoggerPanel** | `citizens/logger.rs` | Scrollable log view. Reads log entries from shared state. |
 
 Panels are arranged inside an `egui_dock::DockArea`, giving the user a
-tabbed interface they can rearrange and resize. Each tab click triggers
-`Dispatcher::activate()` for one-hot lifecycle management.
+tabbed interface they can rearrange and resize. A toolbar at the top
+provides symbol search, exchange selection, and the Fetch button.
 
 ```
-┌────────────────────────────────────────┐
-│  egui_dock::DockArea                   │
-│  ┌─────────┬──────────────────────────┐│
-│  │ Controls │  Chart                   ││
-│  │ Symbol   │  ┌───┬───┬───┬───┐     ││
-│  │ [____]   │  │   │   │   │   │     ││
-│  │ TF: 1d   │  │   │   │   │   │     ││
-│  │ [Fetch]  │  │   │   │   │   │     ││
-│  │ Loading? │  │   │   │   │   │     ││
-│  │          │  └───┴───┴───┴───┘     ││
-│  ├──────────┴──────────────────────────┤│
-│  │ Logger (scrollable)                 ││
-│  └─────────────────────────────────────┘│
-└────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Toolbar                                     │
+│  [Symbol ▾] [Exchange ▾] [TF: 1d] [Fetch]   │
+├──────────────────────────────────────────────┤
+│  egui_dock::DockArea                         │
+│  ┌──────────────────────────────────────────┐│
+│  │  Chart (candlestick)                     ││
+│  │  ┌───┬───┬───┬───┬───┬───┐              ││
+│  │  │   │   │   │   │   │   │              ││
+│  │  │   │   │   │   │   │   │              ││
+│  │  └───┴───┴───┴───┴───┴───┘              ││
+│  ├──────────────────────────────────────────┤│
+│  │  Logger (scrollable)                     ││
+│  └──────────────────────────────────────────┘│
+└──────────────────────────────────────────────┘
 ```
 
-Each citizen is pure presentation. The **outbox pattern** keeps them decoupled:
-a citizen writes to its `outbox: Vec<AppMessage>` on user interaction, and the
-main loop drains it at the end of every frame via `std::mem::take`.
+The toolbar uses `CompassApp` local state (exchange index, stock picker)
+and directly calls `dispatcher::handle()` on Fetch. It replaces the
+outbox pattern previously used by ControlCitizen.
 
 ```
 CompassApp::ui() each frame:
-  1. Render DockArea → citizens write to outboxes
-  2. Drain citizen lifecycle messages from dispatcher
-  3. Drain control outbox → route AppMessage::FetchBars
-  4. Send FetchRequest on work_signal → AsyncDispatcher
-  5. request_repaint_after(200ms) for continuous update
+  1. Render toolbar (symbol picker, exchange combo, Fetch)
+  2. Render DockArea → Chart and Logger citizens
+  3. Drain citizen lifecycle messages from dispatcher
+  4. request_repaint_after(200ms) for continuous update
 ```
 
 ### Layer 2: Reactive state with Dynamic\<T\>

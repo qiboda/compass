@@ -2,18 +2,22 @@
 
 /// Extract the exchange code for a given A-share stock code.
 ///
-/// Supports explicit market prefixes for disambiguation (case-insensitive):
+/// Supports explicit market prefixes (case-insensitive):
 /// - `sh.000001` → `"SH"` (Shanghai, 上证指数)
 /// - `sz.000001` → `"SZ"` (Shenzhen, 平安银行)
 /// - `bj.8xxxxx` → `"BJ"` (Beijing, 北交所)
 ///
-/// Without prefix, infers the exchange from A-share code ranges:
-/// - `6xxxxx` → `"SH"` (Shanghai: 主板 600/601/603/605, 科创板 688)
-/// - `000xxx`–`004xxx` → `"SZ"` (Shenzhen 主板)
-/// - `300xxx`, `301xxx` → `"SZ"` (创业板)
-/// - `002xxx`, `003xxx` → `"SZ"` (Shenzhen)
-/// - `8xxxxx` → `"BJ"` (北交所)
-/// - everything else → `"SZ"` (default)
+/// ## ⚠️ Heuristic fallback (inaccurate — DO NOT RELY ON)
+///
+/// When no explicit prefix is present, this function guesses the exchange
+/// from the first digit of the code:
+/// - `6xxxxx` → `"SH"`, `8xxxxx` → `"BJ"`, everything else → `"SZ"`
+///
+/// **This heuristic is fundamentally inaccurate.** Many SZ/BJ stocks share
+/// code ranges with SH stocks. For example, `000001` could be SZ (平安银行)
+/// or SH (上证指数) — there is no way to distinguish from the code alone.
+///
+/// **Always prefer explicit prefixes (`sh.`/`sz.`/`bj.`) from stock metadata.**
 pub fn to_exchange(code: &str) -> &str {
     let lower = code.to_lowercase();
 
@@ -27,13 +31,15 @@ pub fn to_exchange(code: &str) -> &str {
         return "BJ";
     }
 
-    // Heuristic: strip any prefix before inferring from the numeric code.
-    // The code may contain a prefix like "sh."; after stripping, we have the numeric part.
-    let numeric = code;
+    // ⚠️ Heuristic fallback — inaccurate. Prefer explicit prefix from stock metadata.
+    tracing::warn!(
+        code = %code,
+        "to_exchange: using inaccurate heuristic fallback — exchange should be explicit"
+    );
 
-    if numeric.starts_with('6') {
+    if code.starts_with('6') {
         "SH"
-    } else if numeric.starts_with('8') {
+    } else if code.starts_with('8') {
         "BJ"
     } else {
         "SZ"
@@ -63,6 +69,32 @@ pub fn to_ts_code(symbol: &str) -> String {
 
     let exchange = to_exchange(symbol);
     format!("{}.{}", symbol, exchange)
+}
+
+/// Parse an explicit exchange prefix from a qualified symbol.
+///
+/// Returns `(exchange, bare_code)`:
+/// - `"sz.000001"` → `("SZ", "000001")`
+/// - `"SH.600519"` → `("SH", "600519")`
+/// - `"SZ000001"` → `("SZ", "000001")` (Dolt-native, no dot)
+///
+/// Returns `("", code)` if no prefix is found.
+pub fn parse_explicit_prefix(code: &str) -> (&str, &str) {
+    if code.len() >= 3 && code[..3].eq_ignore_ascii_case("sh.") {
+        ("SH", &code[3..])
+    } else if code.len() >= 3 && code[..3].eq_ignore_ascii_case("sz.") {
+        ("SZ", &code[3..])
+    } else if code.len() >= 3 && code[..3].eq_ignore_ascii_case("bj.") {
+        ("BJ", &code[3..])
+    } else if let Some(rest) = code.strip_prefix("SH") {
+        ("SH", rest)
+    } else if let Some(rest) = code.strip_prefix("SZ") {
+        ("SZ", rest)
+    } else if let Some(rest) = code.strip_prefix("BJ") {
+        ("BJ", rest)
+    } else {
+        ("", code)
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +146,25 @@ mod tests {
     fn to_ts_code_unknown_heuristic_defaults_to_sz() {
         assert_eq!(to_ts_code("FOOBAR"), "FOOBAR.SZ");
         assert_eq!(to_ts_code("999999"), "999999.SZ");
+    }
+
+    #[test]
+    fn parse_explicit_prefix_dot_format() {
+        assert_eq!(parse_explicit_prefix("sz.000001"), ("SZ", "000001"));
+        assert_eq!(parse_explicit_prefix("sh.600519"), ("SH", "600519"));
+        assert_eq!(parse_explicit_prefix("bj.830799"), ("BJ", "830799"));
+    }
+
+    #[test]
+    fn parse_explicit_prefix_dolt_native() {
+        assert_eq!(parse_explicit_prefix("SZ000001"), ("SZ", "000001"));
+        assert_eq!(parse_explicit_prefix("SH600519"), ("SH", "600519"));
+        assert_eq!(parse_explicit_prefix("BJ830799"), ("BJ", "830799"));
+    }
+
+    #[test]
+    fn parse_explicit_prefix_bare_code_returns_empty() {
+        assert_eq!(parse_explicit_prefix("000001"), ("", "000001"));
+        assert_eq!(parse_explicit_prefix("600519"), ("", "600519"));
     }
 }

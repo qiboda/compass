@@ -43,7 +43,17 @@ pub fn run(
 
 fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
     info!("Exporting stock_basic...");
-    let data = run_dolt_sql_parquet(dolt_dir, "SELECT * FROM stock_basic")?;
+    let data = run_dolt_sql_parquet(
+        dolt_dir,
+        "SELECT RIGHT(symbol, 6) AS symbol, \
+         name, \
+         CASE LEFT(symbol, 2) WHEN 'SH' THEN 'SH' WHEN 'SZ' THEN 'SZ' WHEN 'BJ' THEN 'BJ' ELSE '' END AS exchange, \
+         CAST(NULLIF(list_date, '-') AS DATE) AS list_date, \
+         CAST(NULL AS DATE) AS delist_date \
+         FROM stock_basic \
+         WHERE symbol LIKE 'SH%' OR symbol LIKE 'SZ%' OR symbol LIKE 'BJ%' \
+         ORDER BY symbol",
+    )?;
     let path = output.join("stock_basic.parquet");
     std::fs::write(&path, &data)?;
     info!("  → {}", path.display());
@@ -176,7 +186,7 @@ mod tests {
         Command::new("dolt")
             .arg("--data-dir").arg(tmp.path())
             .arg("sql").arg("-q")
-            .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), industry VARCHAR(50))")
+            .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), industry VARCHAR(50), list_date VARCHAR(20), member_count INT)")
             .output().expect("create table");
 
         Command::new("dolt")
@@ -184,7 +194,7 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg("INSERT INTO stock_basic VALUES ('SH600519', '贵州茅台', '白酒Ⅱ')")
+            .arg("INSERT INTO stock_basic VALUES ('SH600519', '贵州茅台', '白酒Ⅱ', '2001-08-27', NULL)")
             .output()
             .expect("insert");
 

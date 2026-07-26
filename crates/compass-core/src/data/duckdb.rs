@@ -665,15 +665,25 @@ impl DataProvider for DuckDbProvider {
                 && let Some(ref parquet_dir) = parquet_dir
             {
                 crate::data::parquet::validate_symbol(&symbol)?;
-                let exchange = crate::data::symbol::to_exchange(&symbol);
-                let prefixed = format!("{exchange}{symbol}");
+                let (exchange, bare_code) = crate::data::symbol::parse_explicit_prefix(&symbol);
+                let exchange = if exchange.is_empty() {
+                    let inferred = crate::data::symbol::to_exchange(&symbol);
+                    tracing::warn!(
+                        symbol = %symbol,
+                        inferred = %inferred,
+                        "no explicit exchange prefix — using inaccurate heuristic"
+                    );
+                    inferred
+                } else {
+                    exchange
+                };
                 let parquet_path = parquet_dir
                     .join("stock_daily")
-                    .join(format!("{prefixed}.parquet"));
+                    .join(format!("{exchange}{bare_code}.parquet"));
                 if parquet_path.exists() {
                     tracing::debug!(
                         symbol = %symbol,
-                        prefixed = %prefixed,
+                        parquet = %format!("{exchange}{bare_code}.parquet"),
                         "parquet fallback - reading from file"
                     );
                     let path_str = parquet_path.to_string_lossy();

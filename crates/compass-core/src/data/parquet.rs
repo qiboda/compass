@@ -15,15 +15,30 @@ use egui_charts::model::Bar;
 use crate::data::provider::{DataError, DataProvider};
 use crate::model::{StockBasic, SymbolInfo};
 
-/// Reject symbols that contain non-alphanumeric characters to prevent
-/// SQL injection and path traversal via `read_parquet()` file paths.
+/// Validate symbol for use in `read_parquet()` file paths.
+///
+/// Allows alphanumeric chars plus `.` (for exchange-prefixed symbols like `sh.600058`).
+/// Rejects empty strings, path traversal (`..`), and other special chars.
 pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
-    if symbol.is_empty() || !symbol.chars().all(|c| c.is_ascii_alphanumeric()) {
+    let valid = !symbol.is_empty()
+        && !symbol.contains("..")
+        && symbol
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.');
+    if !valid {
         return Err(DataError::NoData {
             symbol: symbol.to_string(),
         });
     }
     Ok(symbol)
+}
+
+/// Escape single quotes in path strings used inside `read_parquet('...')` SQL.
+///
+/// Paths derived from config files may contain quote characters that would
+/// close the string literal. Doubling the quote is the standard SQL escape.
+fn escape_sql_path(path: &str) -> String {
+    path.replace('\'', "''")
 }
 
 /// Read A-share OHLCV data from Parquet files partitioned by symbol.
@@ -85,6 +100,7 @@ impl ParquetReader {
         }
 
         let path_str = path.to_string_lossy();
+        let escaped = escape_sql_path(&path_str);
         let start_str = range_start.format("%Y-%m-%d").to_string();
         let end_str = range_end.format("%Y-%m-%d").to_string();
 
@@ -95,7 +111,7 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
-             FROM read_parquet('{path_str}')
+             FROM read_parquet('{escaped}')
              WHERE tradedate >= ? AND tradedate <= ?
              ORDER BY tradedate ASC"
         );
@@ -178,6 +194,7 @@ impl ParquetReader {
         }
 
         let path_str = self.parquet_path(symbol).to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
         let conn = self
             .conn
             .lock()
@@ -185,7 +202,7 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT CAST(MIN(tradedate) AS VARCHAR), CAST(MAX(tradedate) AS VARCHAR)
-             FROM read_parquet('{path_str}')"
+             FROM read_parquet('{escaped}')"
         );
 
         let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
@@ -221,6 +238,7 @@ impl ParquetReader {
         }
 
         let path_str = self.basic_path.to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
         let conn = self
             .conn
             .lock()
@@ -228,7 +246,7 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
-             FROM read_parquet('{path_str}')
+             FROM read_parquet('{escaped}')
              WHERE symbol = ?"
         );
 
@@ -258,6 +276,54 @@ impl ParquetReader {
             })?;
 
         Ok(Some(result))
+    }
+
+    /// Load all rows from `stock_basic.parquet`.
+    ///
+    /// Returns the full stock list (symbol, name, exchange) for use in
+    /// the GUI symbol picker. If `stock_basic.parquet` doesn't exist,
+    /// returns an empty vec.
+    pub fn load_all_stock_basics(&self) -> Result<Vec<StockBasic>, DataError> {
+        if !self.basic_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let path_str = self.basic_path.to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
+             FROM read_parquet('{escaped}')
+             ORDER BY symbol"
+        );
+
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<StockBasic> = stmt
+            .query_map([], |row| {
+                Ok(StockBasic {
+                    symbol: row.get(0)?,
+                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    exchange: row.get::<_, Option<String>>(2)?,
+                    area: None,
+                    industry: None,
+                    market: None,
+                    list_date: row
+                        .get::<_, Option<String>>(3)?
+                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                    delist_date: row
+                        .get::<_, Option<String>>(4)?
+                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                })
+            })
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+
+        Ok(rows)
     }
 }
 
@@ -409,13 +475,16 @@ mod tests {
 
     #[test]
     fn validate_symbol_allows_dolt_prefixed_codes() {
-        // Dolt symbols include uppercase prefixes: SZ, SH, BJ
+        // Dolt without dot: uppercase prefix + bare code
         validate_symbol("SZ000001").expect("SZ000001 should be valid");
         validate_symbol("SH600519").expect("SH600519 should be valid");
         validate_symbol("BJ830799").expect("BJ830799 should be valid");
-        // Special chars still rejected
-        assert!(validate_symbol("SZ.000001").is_err());
-        assert!(validate_symbol("SH/600519").is_err());
+        // Exchange-prefixed with dot: lowercase prefix.bare code
+        validate_symbol("sh.000001").expect("sh.000001 should be valid");
+        validate_symbol("sz.600059").expect("sz.600059 should be valid");
+        // Path traversal still blocked
+        assert!(validate_symbol("../../etc/passwd").is_err());
+        assert!(validate_symbol("a..b").is_err());
     }
 
     #[test]
