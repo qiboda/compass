@@ -117,6 +117,10 @@ Commit and push are **separate operations**. Do not chain them with `&&`.
 2. **Verify locally**: ensure `cargo test`, `cargo clippy`, and `cargo fmt` pass.
 3. **Push separately**: only after local verification is clean.
 
+**HARD BLOCK: Never auto-push.** Wait for the user to explicitly say "push" / "推送".
+Even if verification passes, do not push without user command. If you pushed without
+the user's permission, you violated the workflow — revert and apologize.
+
 Never `git push` in the same command as `git commit`. The pre-push hook runs
 formatting, clippy, and doc checks — if they fail, the commit should remain
 local until fixed, not be amended mid-push.
@@ -124,6 +128,14 @@ local until fixed, not be amended mid-push.
 **Follow the user's exact words.** If the user says "commit" / "提交", only
 commit — do not push. If the user says "push" / "推送", only push — do not
 amend and re-commit. Never assume one implies the other.
+
+### Issue Lifecycle
+
+**HARD BLOCK: Close issues only AFTER push.** An issue is not "done" until the fix is on
+`origin/master`. Do not close an issue after commit — wait for successful push.
+
+- commit → issue stays OPEN
+- push succeeds → close issue with `gh issue close`
 
 ### Scope Discipline
 
