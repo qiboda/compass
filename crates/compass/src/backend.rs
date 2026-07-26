@@ -61,6 +61,10 @@ pub fn wire_backend(
                 .fetch_bars(&req.symbol, &req.timeframe, req.range_start, req.range_end)
                 .await
             {
+                Ok(bars) if bars.is_empty() => FetchResponse {
+                    bars: vec![],
+                    error: Some(format!("no data for {}", req.symbol)),
+                },
                 Ok(bars) => FetchResponse { bars, error: None },
                 Err(e) => FetchResponse {
                     bars: vec![],
