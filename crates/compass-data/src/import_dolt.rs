@@ -73,6 +73,7 @@ fn filter_symbols(symbols: Vec<String>, filter: &str) -> Vec<String> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     dolt_dir: PathBuf,
     output: PathBuf,

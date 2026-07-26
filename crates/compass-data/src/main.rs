@@ -227,12 +227,10 @@ async fn main() {
             table,
             overwrite,
         } => {
-            let table: import_compass::CompassTable = table
-                .parse()
-                .unwrap_or_else(|e| {
-                    error!("{e}");
-                    std::process::exit(1);
-                });
+            let table: import_compass::CompassTable = table.parse().unwrap_or_else(|e| {
+                error!("{e}");
+                std::process::exit(1);
+            });
             if let Err(e) = import_compass::run(dolt_dir, output, table, overwrite) {
                 error!("ImportCompass failed: {e}");
                 std::process::exit(1);

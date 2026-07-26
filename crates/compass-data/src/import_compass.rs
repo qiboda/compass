@@ -94,7 +94,11 @@ mod tests {
                 .arg(val)
                 .output()
                 .expect("dolt config");
-            assert!(out.status.success(), "dolt config {key} failed: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "dolt config {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
         let init = Command::new("dolt")
             .arg("--data-dir")
@@ -102,7 +106,11 @@ mod tests {
             .arg("init")
             .output()
             .expect("dolt init");
-        assert!(init.status.success(), "dolt init failed: {}", String::from_utf8_lossy(&init.stderr));
+        assert!(
+            init.status.success(),
+            "dolt init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
     }
 
     #[test]
@@ -117,16 +125,22 @@ mod tests {
             .output().expect("create table");
 
         Command::new("dolt")
-            .arg("--data-dir").arg(tmp.path())
-            .arg("sql").arg("-q")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
             .arg("INSERT INTO stock_basic VALUES ('SH600519', '贵州茅台', '白酒Ⅱ')")
-            .output().expect("insert");
+            .output()
+            .expect("insert");
 
         import_stock_basic(tmp.path(), tmp.path()).expect("import_stock_basic");
 
         let parquet = tmp.path().join("stock_basic.parquet");
         assert!(parquet.exists(), "parquet file not created");
-        assert!(parquet.metadata().unwrap().len() > 500, "parquet file too small");
+        assert!(
+            parquet.metadata().unwrap().len() > 500,
+            "parquet file too small"
+        );
     }
 
     #[test]
@@ -165,6 +179,9 @@ mod tests {
 
         let parquet = tmp.path().join("fin_indicators.parquet");
         assert!(parquet.exists(), "parquet file not created");
-        assert!(parquet.metadata().unwrap().len() > 500, "parquet file too small");
+        assert!(
+            parquet.metadata().unwrap().len() > 500,
+            "parquet file too small"
+        );
     }
 }
