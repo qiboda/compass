@@ -106,13 +106,9 @@ impl StockPicker {
                 self.last_exchange = *exchange;
             }
 
-            let filtered: Vec<&StockBasic> = self
-                .cached_indices
-                .iter()
-                .map(|&i| &stock_list[i])
-                .collect();
+            let filtered_count = self.cached_indices.len();
 
-            let max_rows = 12.min(filtered.len());
+            let max_rows = 12.min(filtered_count);
             let row_height = 20.0;
             let popup_height = 8.0 + max_rows as f32 * row_height;
 
@@ -125,8 +121,9 @@ impl StockPicker {
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
                                 .max_height(popup_height)
-                                .show(ui, |ui| {
-                                    for stock in &filtered {
+                                .show_rows(ui, row_height, filtered_count, |ui, range| {
+                                    for &idx in &self.cached_indices[range] {
+                                        let stock = &stock_list[idx];
                                         let text = format!(
                                             "{} | {} | {}",
                                             stock.exchange.as_deref().unwrap_or(""),
@@ -144,7 +141,7 @@ impl StockPicker {
                                             self.filter_text.clear();
                                         }
                                     }
-                                    if filtered.is_empty() {
+                                    if filtered_count == 0 {
                                         ui.label("No results");
                                     }
                                 });
