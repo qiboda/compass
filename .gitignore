@@ -14,3 +14,9 @@ parquet_data/
 
 # Manual worktree storage
 .worktrees/
+
+# Python collectors
+collectors/.venv/
+collectors/__pycache__/
+collectors/*.csv
+collectors/*.state.json

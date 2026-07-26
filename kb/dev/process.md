@@ -354,6 +354,32 @@ let conn = Connection::open_in_memory()?;
 conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
 ```
 
+### collectors (Python data pipeline)
+
+Fetch data from EastMoney APIs into CSV, then import into `compass_data` Dolt.
+
+```sh
+cd collectors/
+uv sync                           # first time: install dependencies
+
+# Fetch all stock basic info
+uv run python fetch_stock_basic.py -o stock_basic.csv
+
+# Fetch financial indicators (incremental after first run)
+uv run python fetch_fin_indicators.py --years 2024,2025,2026
+uv run python fetch_fin_indicators.py --incremental   # resume from state file
+
+# Import CSV into Dolt (manual for now)
+dolt --data-dir ../compass_data table import -c _tmp_sb stock_basic.csv --continue
+dolt --data-dir ../compass_data sql -q "INSERT INTO stock_basic (...) SELECT ... FROM _tmp_sb"
+```
+
+Key concepts:
+- **curl_cffi** for TLS impersonation (EastMoney anti-crawler)
+- **CSV as intermediary** between API and Dolt
+- **`.state.json`** files track last fetch for incremental updates
+- **`--resume`** flag to continue interrupted fetches
+
 ### Dolt database queries
 
 ```sh
