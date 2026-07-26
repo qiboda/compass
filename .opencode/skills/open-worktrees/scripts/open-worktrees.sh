@@ -50,7 +50,7 @@ echo ""
 if command -v kitty &>/dev/null; then
     for wt in "${worktrees[@]}"; do
         echo "   ▶  $wt"
-        kitty --directory="$WT_DIR/$wt" sh -c "opencode; exec bash" 2>/dev/null & disown
+        kitty --directory="$WT_DIR/$wt" --hold opencode 2>/dev/null & disown
     done
     echo ""
     echo "✅  Launched in new kitty windows."
