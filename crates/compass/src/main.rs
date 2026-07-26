@@ -353,6 +353,8 @@ mod tests {
     use crate::citizens::logger::LoggerPanel;
     use crate::state::SharedState;
     use crate::tabs::{CHART_ID, LOGGER_ID};
+    use crate::timeframe_label;
+    use crate::timeframe_value;
     use egui_citizen::{CitizenId, Dispatcher};
 
     #[test]
@@ -459,5 +461,20 @@ mod tests {
             &stocks, "", &Exchange::All,
         );
         assert_eq!(result.len(), 7);
+    }
+
+    #[test]
+    fn timeframe_label_returns_correct_values() {
+        assert_eq!(timeframe_label(0), "1d");
+        assert_eq!(timeframe_label(1), "1w");
+        assert_eq!(timeframe_label(2), "1M");
+        assert_eq!(timeframe_label(99), "1d");
+    }
+
+    #[test]
+    fn timeframe_value_returns_correct_strings() {
+        assert_eq!(timeframe_value(0), "1d");
+        assert_eq!(timeframe_value(1), "1w");
+        assert_eq!(timeframe_value(2), "1M");
     }
 }
