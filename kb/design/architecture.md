@@ -228,6 +228,13 @@ Key design decisions:
 - Exports to DuckDB, CSV, or parquet-dir format
 - Used to create the final database the GUI reads from
 
+### backup: Parquet → Baidu Cloud
+- Zips `parquet_data/` using Python zipfile (no system `zip` dependency)
+- Uploads to Baidu Cloud via `baidupcs` CLI (`BaiduPCS-Go`)
+- Timestamped filenames: `parquet_data-YYYYMMDD-HHMMSS.zip`
+- Target folder: `/compass/` on Baidu Cloud
+- `--keep-zip` flag preserves local zip after upload
+
 **Default behavior everywhere**: merge/skip. Existing data is preserved; only
 new data is added. Pass `--overwrite` to replace. This migration-style behavior
 prevents accidental data loss.
