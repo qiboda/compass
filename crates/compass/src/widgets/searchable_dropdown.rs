@@ -120,6 +120,7 @@ impl StockPicker {
                 .fixed_pos(response.rect.left_bottom())
                 .constrain(true)
                 .show(ui.ctx(), |ui| {
+                    ui.set_min_width(320.0);
                     egui::Frame::popup(ui.style())
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
@@ -133,17 +134,22 @@ impl StockPicker {
                                             stock.symbol,
                                             stock.name
                                         );
-                                        let row = ui.selectable_label(
-                                            stock.symbol == self.selected_symbol,
-                                            &text,
-                                        );
-                                        if row.clicked() {
-                                            self.selected_symbol = stock.symbol.clone();
-                                            self.selected_name = stock.name.clone();
-                                            self.selected_exchange =
-                                                stock.exchange.clone().unwrap_or_default();
-                                            self.popup_open = false;
-                                            self.filter_text.clear();
+                                        let selected = stock.symbol == self.selected_symbol;
+                                        if selected {
+                                            ui.colored_label(
+                                                ui.visuals().selection.bg_fill,
+                                                &text,
+                                            );
+                                        } else {
+                                            let row = ui.selectable_label(false, &text);
+                                            if row.clicked() {
+                                                self.selected_symbol = stock.symbol.clone();
+                                                self.selected_name = stock.name.clone();
+                                                self.selected_exchange =
+                                                    stock.exchange.clone().unwrap_or_default();
+                                                self.popup_open = false;
+                                                self.filter_text.clear();
+                                            }
                                         }
                                     }
                                     if filtered_count == 0 {
