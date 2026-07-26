@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
       - run: cd collectors && uv sync && uv run ruff check *.py tests/
 
   python-test:
@@ -141,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
       - name: Install Dolt
         run: |
           curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
