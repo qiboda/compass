@@ -6,7 +6,7 @@ use egui_dock::{DockArea, DockState};
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
-use compass_core::model::{AppConfig, Exchange};
+use compass_core::model::AppConfig;
 
 mod backend;
 mod citizens;
@@ -111,7 +111,6 @@ fn main() -> eframe::Result {
                 work_signal,
                 stock_list,
                 stock_picker,
-                exchange_index: 0usize,
                 timeframe_index: 0usize,
                 _backend_handle,
             }))
@@ -216,19 +215,16 @@ struct CompassApp {
     work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
     stock_list: Vec<compass_core::model::StockBasic>,
     stock_picker: StockPicker,
-    exchange_index: usize,
     timeframe_index: usize,
     _backend_handle: backend::BackendHandle,
 }
 
 impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let exchange = Exchange::from_index(self.exchange_index);
-
         ui.horizontal(|ui| {
             ui.add_space(ui.spacing().item_spacing.x);
             ui.vertical(|ui| {
-                self.render_toolbar(ui, &exchange);
+                self.render_toolbar(ui);
             });
         });
 
@@ -251,26 +247,10 @@ impl eframe::App for CompassApp {
 }
 
 impl CompassApp {
-    fn render_toolbar(&mut self, ui: &mut egui::Ui, exchange: &Exchange) {
+    fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Exchange:");
-            let mut idx = self.exchange_index;
-            egui::ComboBox::from_id_salt("exchange_combo")
-                .selected_text(exchange_label(self.exchange_index))
-                .show_ui(ui, |ui| {
-                    for i in 0..=3 {
-                        let val = exchange_label(i);
-                        if ui.selectable_value(&mut idx, i, val).clicked() {
-                            debug!(exchange = exchange_label(i), "exchange changed");
-                        }
-                    }
-                });
-            self.exchange_index = idx;
-
-            ui.separator();
-
             ui.label("Symbol:");
-            self.stock_picker.show(ui, &self.stock_list, exchange);
+            self.stock_picker.show(ui, &self.stock_list);
 
             ui.separator();
 
@@ -289,17 +269,14 @@ impl CompassApp {
             self.timeframe_index = tf;
 
             if ui.button("Fetch").clicked() {
-                let qualified =
-                    Exchange::from_index(self.exchange_index)
-                        .prefix_code(&self.stock_picker.selected_symbol);
+                let symbol = self.stock_picker.selected_symbol.clone();
                 let timeframe = timeframe_value(self.timeframe_index);
                 info!(
-                    symbol = %qualified,
-                    exchange = exchange_label(self.exchange_index),
+                    symbol = %symbol,
                     timeframe = %timeframe,
                     "fetch requested"
                 );
-                self.shared_state.symbol.set(qualified);
+                self.shared_state.symbol.set(symbol);
                 dispatcher::handle(
                     messages::AppMessage::FetchBars,
                     &self.shared_state,
@@ -315,16 +292,6 @@ impl CompassApp {
                 ui.colored_label(egui::Color32::RED, err);
             }
         });
-    }
-}
-
-fn exchange_label(idx: usize) -> &'static str {
-    match idx {
-        0 => "全部",
-        1 => "SH",
-        2 => "SZ",
-        3 => "BJ",
-        _ => "全部",
     }
 }
 

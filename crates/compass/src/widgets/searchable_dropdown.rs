@@ -30,7 +30,6 @@ pub struct StockPicker {
     pub popup_open: bool,
     cached_indices: Vec<usize>,
     last_filter_text: String,
-    last_exchange: Exchange,
 }
 
 impl StockPicker {
@@ -49,7 +48,6 @@ impl StockPicker {
             popup_open: false,
             cached_indices: Vec::new(),
             last_filter_text: String::new(),
-            last_exchange: Exchange::All,
         }
     }
 
@@ -57,7 +55,6 @@ impl StockPicker {
         &mut self,
         ui: &mut egui::Ui,
         stock_list: &[StockBasic],
-        exchange: &Exchange,
     ) {
         let display_text = format_display(&self.selected_exchange, &self.selected_symbol, &self.selected_name);
 
@@ -79,20 +76,17 @@ impl StockPicker {
                 return;
             }
 
-            let needs_refilter =
-                self.filter_text != self.last_filter_text || *exchange != self.last_exchange;
+            let needs_refilter = self.filter_text != self.last_filter_text;
 
             if needs_refilter {
                 tracing::debug!(
                     filter = %self.filter_text,
-                    exchange = ?exchange,
                     "refiltering stock list"
                 );
                 let lower = self.filter_text.trim().to_lowercase();
                 self.cached_indices = stock_list
                     .iter()
                     .enumerate()
-                    .filter(|(_, s)| exchange.matches(s))
                     .filter(|(_, s)| {
                         if lower.is_empty() {
                             return true;
@@ -106,7 +100,6 @@ impl StockPicker {
                     stock_list[*a].symbol.cmp(&stock_list[*b].symbol)
                 });
                 self.last_filter_text.clone_from(&self.filter_text);
-                self.last_exchange = *exchange;
             }
 
             let filtered_count = self.cached_indices.len();
