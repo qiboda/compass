@@ -289,8 +289,7 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, area, industry, market,
-                    CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
+            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
              FROM read_parquet('{escaped}')
              ORDER BY symbol"
         );
@@ -302,14 +301,14 @@ impl ParquetReader {
                     symbol: row.get(0)?,
                     name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                     exchange: row.get::<_, Option<String>>(2)?,
-                    area: row.get::<_, Option<String>>(3)?,
-                    industry: row.get::<_, Option<String>>(4)?,
-                    market: row.get::<_, Option<String>>(5)?,
+                    area: None,
+                    industry: None,
+                    market: None,
                     list_date: row
-                        .get::<_, Option<String>>(6)?
+                        .get::<_, Option<String>>(3)?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                     delist_date: row
-                        .get::<_, Option<String>>(7)?
+                        .get::<_, Option<String>>(4)?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                 })
             })
