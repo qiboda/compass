@@ -6,6 +6,21 @@
 
 ---
 
+## 2026-07-26 — ref #31 fix: DuckDbProvider 直读 parquet_data，消除 cache miss
+
+**What was done**: 将 DuckDbProvider 从文件型 DuckDB (`compass.db`) 改为内存型 + Parquet 回退。
+`fetch_bars` 先查内存表（`save_bars` 的 EastMoney 数据），miss 时通过 `read_parquet()` 直接读取
+`parquet_data/stock_daily/{EXCHANGE}{code}.parquet`。GUI 启动即可命中本地数据，不再每次走 EastMoney HTTP。
+
+**What went well**: RED→GREEN 严格 TDD，3 个新测试精准覆盖首次查询、日期过滤、save_bars 优先级。
+
+**What went wrong**: 初期方案考虑了 glob VIEW 方案，但用户明确指向直读 parquet 文件，避免了过度设计。
+
+**Lessons learned**:
+1. 直读 parquet 文件比 glob VIEW 更简洁，DuckDB 的 `read_parquet()` 对单文件查询已足够高效
+2. 列名映射 (`tradedate` → `trade_date`) 和符号映射 (`000001` → `SZ000001.parquet`) 是跨存储格式的核心细节
+3. CLI 工具仍需文件型 DuckDB，保留 `new_file()` 构造函数是必要的分离
+
 ## 2026-07-26 — ref #24 refactor: integrate egui-mobius Level 3 citizen pattern
 
 **What was done**: Replaced manual mpsc + Arc<Mutex<CompassState>> architecture with

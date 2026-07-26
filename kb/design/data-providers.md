@@ -73,8 +73,15 @@ window (7 days) skip the HTTP call entirely.
 CachedProvider<R: DataProvider, C: DataProvider + NegativeCache + DataWriter>
     │
     ├── reader: EastMoneyProvider     ← remote HTTP (online)
-    └── cache:  DuckDbProvider        ← local SQL (cache + negative cache + write)
+    └── cache:  DuckDbProvider        ← in-memory + Parquet-backed (cache + negative cache + write)
 ```
+
+The DuckDbProvider now uses an in-memory DuckDB connection with optional
+Parquet backing (ref #31). On `fetch_bars`, it first checks the in-memory
+`stock_daily` table (for data saved by `save_bars`), then falls back to
+reading from `parquet_data/stock_daily/{EXCHANGE}{code}.parquet` via
+`read_parquet()`. No persistent `compass.db` file is used — `parquet_data/`
+is the sole source of truth for historical OHLCV data.
 
 The GUI always uses `CachedProvider`. The CLI uses `EastMoneyProvider` and
 `DuckDbProvider` directly — it doesn't need the caching layer because it's

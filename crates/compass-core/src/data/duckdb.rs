@@ -132,39 +132,53 @@ CREATE TABLE IF NOT EXISTS no_data_marks (
 ";
 
 // ---------------------------------------------------------------------------
-// DuckDbProvider — local persistent cache
+// DuckDbProvider — in-memory cache with optional Parquet backing
 // ---------------------------------------------------------------------------
 
-/// Local persistent cache backed by a DuckDB database file.
+/// In-memory DuckDB cache with optional Parquet backing (ref #31).
 ///
 /// Implements all three provider traits (`DataProvider`, `DataWriter`,
-/// `NegativeCache`) for a single DuckDB connection. The connection is
-/// wrapped in `Arc<Mutex<>>` — all queries go through `spawn_blocking`
-/// since DuckDB is synchronous.
+/// `NegativeCache`) on a single in-memory DuckDB connection wrapped in
+/// `Arc<Mutex<>>`. When `parquet_dir` is set, `fetch_bars` reads from
+/// the corresponding `stock_daily/{symbol}.parquet` file on cache miss.
 ///
-/// Use `new(path)` for file-backed storage or `new_in_memory()` for tests.
+/// Use `new(Some(parquet_dir))` for production or `new_in_memory()` for tests.
 pub struct DuckDbProvider {
     pub conn: Arc<Mutex<Connection>>,
+    parquet_dir: Option<std::path::PathBuf>,
 }
 
 impl DuckDbProvider {
-    /// Open (or create) the DuckDB database at `path` and ensure the schema exists.
-    pub fn new(path: &str) -> Result<Self, DataError> {
-        let conn = if path == ":memory:" {
-            Connection::open_in_memory().map_err(DataError::Database)?
-        } else {
-            Connection::open(path).map_err(DataError::Database)?
-        };
+    /// Open an in-memory DuckDB database with optional Parquet backing (ref #31).
+    ///
+    /// When `parquet_dir` is set, `fetch_bars` falls back to reading from
+    /// `{parquet_dir}/stock_daily/{EXCHANGE}{code}.parquet` on cache miss.
+    pub fn new(parquet_dir: Option<std::path::PathBuf>) -> Result<Self, DataError> {
+        let conn = Connection::open_in_memory().map_err(DataError::Database)?;
         conn.execute_batch(SCHEMA_SQL)
             .map_err(DataError::Database)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            parquet_dir,
+        })
+    }
+
+    /// Open (or create) a file-backed DuckDB at `path` and ensure the schema exists.
+    ///
+    /// Used by CLI tools (export, download) that need persistent storage.
+    pub fn new_file(path: &str) -> Result<Self, DataError> {
+        let conn = Connection::open(path).map_err(DataError::Database)?;
+        conn.execute_batch(SCHEMA_SQL)
+            .map_err(DataError::Database)?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            parquet_dir: None,
         })
     }
 
     /// Convenience constructor for tests — opens an in-memory database.
     pub fn new_in_memory() -> Result<Self, DataError> {
-        Self::new(":memory:")
+        Self::new(None)
     }
 
     /// Execute an arbitrary SQL batch (for maintenance/export operations).
@@ -594,6 +608,7 @@ impl DataProvider for DuckDbProvider {
         let start_str = range_start.format("%Y-%m-%d").to_string();
         let end_str = range_end.format("%Y-%m-%d").to_string();
         let conn = Arc::clone(&self.conn);
+        let parquet_dir = self.parquet_dir.clone();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn
@@ -609,20 +624,58 @@ impl DataProvider for DuckDbProvider {
                 )
                 .map_err(DataError::Database)?;
 
-            let rows: Vec<(String, f64, f64, f64, f64, f64)> = stmt
-                .query_map(params![symbol, start_str, end_str], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                })
+            let mut rows: Vec<(String, f64, f64, f64, f64, f64)> = stmt
+                .query_map(
+                    params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
                 .map_err(DataError::Database)?
                 .collect::<Result<Vec<_>, duckdb::Error>>()
                 .map_err(DataError::Database)?;
+
+            // Issue #31: fallback to parquet file on cache miss
+            if rows.is_empty()
+                && let Some(ref parquet_dir) = parquet_dir
+            {
+                let exchange = crate::data::symbol::to_exchange(&symbol);
+                let prefixed = format!("{exchange}{symbol}");
+                let parquet_path = parquet_dir
+                    .join("stock_daily")
+                    .join(format!("{prefixed}.parquet"));
+                if parquet_path.exists() {
+                    let path_str = parquet_path.to_string_lossy();
+                    let sql = format!(
+                        "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
+                         FROM read_parquet('{path_str}')
+                         WHERE tradedate >= ? AND tradedate <= ?
+                         ORDER BY tradedate ASC"
+                    );
+                    let mut pstmt = conn.prepare(&sql).map_err(DataError::Database)?;
+                    rows = pstmt
+                        .query_map(params![start_str.as_str(), end_str.as_str()], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, f64>(1)?,
+                                row.get::<_, f64>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, f64>(4)?,
+                                row.get::<_, f64>(5)?,
+                            ))
+                        })
+                        .map_err(DataError::Database)?
+                        .collect::<Result<Vec<_>, duckdb::Error>>()
+                        .map_err(DataError::Database)?;
+                }
+            }
 
             let bars: Vec<Bar> = rows
                 .into_iter()
@@ -1262,5 +1315,131 @@ mod tests {
             .await
             .expect("get_adj_factor_range failed");
         assert!(range.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Parquet-backed fetch_bars tests (ref #31)
+    // -----------------------------------------------------------------------
+
+    /// Create a minimal OHLCV parquet file in a temp directory for testing.
+    /// Returns the tempdir (must be kept alive) and the DuckDbProvider.
+    fn setup_parquet_provider(
+        symbol: &str,
+        rows: &[(&str, f64, f64, f64, f64, f64)],
+    ) -> (tempfile::TempDir, DuckDbProvider) {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let daily_dir = tmp.path().join("stock_daily");
+        std::fs::create_dir_all(&daily_dir).expect("create stock_daily dir");
+
+        // Write test data to a parquet file using DuckDB
+        let tmp_conn = duckdb::Connection::open_in_memory().expect("open temp conn");
+        tmp_conn
+            .execute_batch(
+                "CREATE TABLE t (tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE)",
+            )
+            .expect("create temp table");
+        let mut insert = tmp_conn
+            .prepare("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)")
+            .expect("prepare insert");
+        for (date_str, open, high, low, close, volume) in rows {
+            insert
+                .execute(params![*date_str, *open, *high, *low, *close, *volume])
+                .expect("insert row");
+        }
+        drop(insert);
+        let parquet_path = daily_dir.join(format!("{symbol}.parquet"));
+        let parquet_path_str = parquet_path.to_string_lossy();
+        tmp_conn
+            .execute_batch(&format!("COPY t TO '{parquet_path_str}' (FORMAT PARQUET)"))
+            .expect("write parquet");
+        drop(tmp_conn);
+
+        let provider =
+            DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("create provider");
+        (tmp, provider)
+    }
+
+    /// Issue #31: DuckDbProvider with parquet_dir should read data from
+    /// parquet files on the first fetch (before any save_bars).
+    #[tokio::test]
+    async fn fetch_bars_reads_from_parquet_on_first_query() {
+        let (_tmp, provider) = setup_parquet_provider(
+            "SZ000001",
+            &[
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0),
+                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 2000.0),
+                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 1500.0),
+            ],
+        );
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+
+        // Use bare 6-digit code — the provider should map it to SZ000001.parquet
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars should succeed");
+
+        assert_eq!(bars.len(), 3, "should return 3 bars from parquet");
+        assert!((bars[0].open - 10.0).abs() < 0.01);
+        assert!((bars[2].close - 11.2).abs() < 0.01);
+    }
+
+    /// Verify that when parquet data exists, fetch_bars filters by date range.
+    #[tokio::test]
+    async fn fetch_bars_respects_date_range_from_parquet() {
+        let (_tmp, provider) = setup_parquet_provider(
+            "SZ000001",
+            &[
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0),
+                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 2000.0),
+                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 1500.0),
+            ],
+        );
+
+        // Range that only covers the middle bar
+        let start = chrono::DateTime::parse_from_rfc3339("2020-01-03T00:00:00Z")
+            .expect("parse start")
+            .with_timezone(&chrono::Utc);
+        let end = chrono::DateTime::parse_from_rfc3339("2020-01-03T23:59:59Z")
+            .expect("parse end")
+            .with_timezone(&chrono::Utc);
+
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars should succeed");
+
+        assert_eq!(bars.len(), 1, "should return only 1 bar in range");
+        assert!((bars[0].open - 10.5).abs() < 0.01);
+    }
+
+    /// Verify that save_bars data (from EastMoney) takes priority over
+    /// parquet data for the same dates.
+    #[tokio::test]
+    async fn save_bars_takes_priority_over_parquet() {
+        let (_tmp, provider) =
+            setup_parquet_provider("SZ000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0)]);
+
+        // Simulate EastMoney fetching updated data for the same date
+        let updated_bar = make_bar(2, 99.0, 100.0, 5000.0);
+        provider
+            .save_bars("000001", "1d", &[updated_bar], true)
+            .await
+            .expect("save_bars should succeed");
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars should succeed");
+
+        // The saved bar (with 99.0 open) should be returned, not the parquet one (10.0)
+        assert!(
+            bars.iter().any(|b| (b.open - 99.0).abs() < 0.01),
+            "saved bar with open=99.0 should be present"
+        );
     }
 }

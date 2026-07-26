@@ -37,7 +37,7 @@ compass (GUI binary)
   │     ├── model.rs      ─ shared types: AppConfig, Bar, Cmd (legacy)
   │     ├── data/mod.rs   ─ CachedProvider (read-through cache + negative cache)
   │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
-  │     ├── data/duckdb.rs   ─ DuckDbProvider (local cache)
+  │     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
   │     ├── data/eastmoney.rs ─ EastMoneyProvider (HTTP API)
   │     ├── data/parquet.rs   ─ ParquetReader (main database)
   │     ├── data/symbol.rs    ─ Exchange inference, code conversion
