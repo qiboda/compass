@@ -99,6 +99,8 @@ Skip this for: refactors, docs, lint fixes, typos.
 
 Commit references: `ref #N` (feat/fix), no `fixes #N` / `closes #N` (auto-close unwanted).
 
+**This applies to ALL commits — chores, docs, scripts included. No exceptions.**
+
 ### 3. Plan First (`/ulw-plan`)
 
 **Non-negotiable for multi-step work.** Run `/ulw-plan` for: multi-step tasks (2+ modules), architecture changes, new data sources, ambiguous scope.

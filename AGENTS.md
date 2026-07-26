@@ -98,6 +98,17 @@ and commit discipline.
 **After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
 checklist above. Do not skip any step.
 
+### Issue-Driven Commits
+
+**Every commit must reference a GitHub issue.** No exceptions — not even for
+chores, docs, or scripts. The pre-push hook rejects commits without `ref #N`.
+
+```
+feat: add thing
+
+ref #26
+```
+
 ### Commit & Push
 
 Commit and push are **separate operations**. Do not chain them with `&&`.
