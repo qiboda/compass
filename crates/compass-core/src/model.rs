@@ -421,6 +421,24 @@ dir = "/custom/parquet"
     }
 
     #[test]
+    fn exchange_matches_none_exchange_returns_false_for_specific() {
+        let basic = StockBasic {
+            symbol: "UNKNOWN".into(),
+            name: "未知".into(),
+            area: None,
+            industry: None,
+            market: None,
+            exchange: None,
+            list_date: None,
+            delist_date: None,
+        };
+        assert!(!Exchange::SH.matches(&basic));
+        assert!(!Exchange::SZ.matches(&basic));
+        assert!(!Exchange::BJ.matches(&basic));
+        assert!(Exchange::All.matches(&basic));
+    }
+
+    #[test]
     fn parquet_config_default_dir() {
         let cfg = ParquetConfig::default();
         assert_eq!(cfg.dir, "parquet_data");

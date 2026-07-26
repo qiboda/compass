@@ -13,7 +13,8 @@ pub fn filter_stocks<'a>(
             if lower.is_empty() {
                 return true;
             }
-            s.symbol.starts_with(&lower) || s.name.to_lowercase().contains(&lower)
+            s.symbol.to_lowercase().starts_with(&lower)
+                || s.name.to_lowercase().contains(&lower)
         })
         .collect();
     result.sort_by(|a, b| a.symbol.cmp(&b.symbol));

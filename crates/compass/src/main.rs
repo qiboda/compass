@@ -211,9 +211,7 @@ impl eframe::App for CompassApp {
 }
 
 impl CompassApp {
-    fn render_toolbar(&mut self, ui: &mut egui::Ui, exchange: &Exchange) -> bool {
-        let mut exchange_changed = false;
-
+    fn render_toolbar(&mut self, ui: &mut egui::Ui, exchange: &Exchange) {
         ui.horizontal(|ui| {
             ui.label("Symbol:");
             self.stock_picker.show(ui, &self.stock_list, exchange);
@@ -227,9 +225,7 @@ impl CompassApp {
                 .show_ui(ui, |ui| {
                     for i in 0..=3 {
                         let val = exchange_label(i);
-                        if ui.selectable_value(&mut idx, i, val).clicked() {
-                            exchange_changed = true;
-                        }
+                        if ui.selectable_value(&mut idx, i, val).clicked() {}
                     }
                 });
             self.exchange_index = idx;
@@ -257,8 +253,6 @@ impl CompassApp {
         if let Some(ref err) = self.shared_state.error.get() {
             ui.colored_label(egui::Color32::RED, err);
         }
-
-        exchange_changed
     }
 }
 

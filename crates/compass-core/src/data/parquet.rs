@@ -26,6 +26,14 @@ pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
     Ok(symbol)
 }
 
+/// Escape single quotes in path strings used inside `read_parquet('...')` SQL.
+///
+/// Paths derived from config files may contain quote characters that would
+/// close the string literal. Doubling the quote is the standard SQL escape.
+fn escape_sql_path(path: &str) -> String {
+    path.replace('\'', "''")
+}
+
 /// Read A-share OHLCV data from Parquet files partitioned by symbol.
 ///
 /// Expected directory layout:
@@ -85,6 +93,7 @@ impl ParquetReader {
         }
 
         let path_str = path.to_string_lossy();
+        let escaped = escape_sql_path(&path_str);
         let start_str = range_start.format("%Y-%m-%d").to_string();
         let end_str = range_end.format("%Y-%m-%d").to_string();
 
@@ -95,7 +104,7 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
-             FROM read_parquet('{path_str}')
+             FROM read_parquet('{escaped}')
              WHERE tradedate >= ? AND tradedate <= ?
              ORDER BY tradedate ASC"
         );
@@ -178,6 +187,7 @@ impl ParquetReader {
         }
 
         let path_str = self.parquet_path(symbol).to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
         let conn = self
             .conn
             .lock()
@@ -185,7 +195,7 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT CAST(MIN(tradedate) AS VARCHAR), CAST(MAX(tradedate) AS VARCHAR)
-             FROM read_parquet('{path_str}')"
+             FROM read_parquet('{escaped}')"
         );
 
         let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
@@ -221,6 +231,7 @@ impl ParquetReader {
         }
 
         let path_str = self.basic_path.to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
         let conn = self
             .conn
             .lock()
@@ -228,7 +239,7 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
-             FROM read_parquet('{path_str}')
+             FROM read_parquet('{escaped}')
              WHERE symbol = ?"
         );
 
@@ -271,6 +282,7 @@ impl ParquetReader {
         }
 
         let path_str = self.basic_path.to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
         let conn = self
             .conn
             .lock()
@@ -279,7 +291,7 @@ impl ParquetReader {
         let sql = format!(
             "SELECT symbol, name, exchange, area, industry, market,
                     CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
-             FROM read_parquet('{path_str}')
+             FROM read_parquet('{escaped}')
              ORDER BY symbol"
         );
 

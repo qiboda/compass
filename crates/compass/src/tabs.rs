@@ -14,7 +14,6 @@
 //! ]);
 //! let mut tab_viewer = TabViewer {
 //!     dispatcher: &mut dispatcher,
-//!     control: &mut (),
 //!     chart: &mut (),
 //!     logger: &mut (),
 //! };
