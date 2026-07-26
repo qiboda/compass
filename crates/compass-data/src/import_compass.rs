@@ -4,7 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use tracing::info;
+use duckdb::Connection;
+use tracing::{info, warn};
 
 use crate::import_dolt::run_dolt_sql_parquet;
 
@@ -32,10 +33,11 @@ pub fn run(
     output: PathBuf,
     table: CompassTable,
     overwrite: bool,
+    since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match table {
         CompassTable::StockBasic => import_stock_basic(&dolt_dir, &output),
-        CompassTable::FinIndicators => import_fin_indicators(&dolt_dir, &output, overwrite),
+        CompassTable::FinIndicators => import_fin_indicators(&dolt_dir, &output, overwrite, since),
     }
 }
 
@@ -51,11 +53,16 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
 fn import_fin_indicators(
     dolt_dir: &Path,
     output: &Path,
-    _overwrite: bool,
+    overwrite: bool,
+    since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Exporting fin_indicators...");
-    let data = run_dolt_sql_parquet(
-        dolt_dir,
+    let path = output.join("fin_indicators.parquet");
+
+    let date_filter = match since {
+        Some(s) if !s.is_empty() => format!(" WHERE report_date >= '{s}'"),
+        _ => String::new(),
+    };
+    let query = format!(
         "SELECT report_date, update_date, notice_date, \
          data_type, qdate, data_year, date_label, \
          symbol, secucode, name, trade_market, trade_market_code, trade_market_zjg, \
@@ -65,10 +72,49 @@ fn import_fin_indicators(
          cash_flow_per_share, gross_margin, \
          revenue_yoy, net_profit_yoy, operating_profit_yoy, net_profit_qoq, \
          shares_growth, dividend_plan, dividend_year \
-         FROM fin_indicators ORDER BY symbol, report_date",
-    )?;
-    let path = output.join("fin_indicators.parquet");
-    std::fs::write(&path, &data)?;
+         FROM fin_indicators{} ORDER BY symbol, report_date",
+        date_filter
+    );
+
+    info!("Exporting fin_indicators...");
+    let new_data = run_dolt_sql_parquet(dolt_dir, &query)?;
+    if new_data.len() < 500 {
+        warn!("fin_indicators returned empty or tiny data, skipping");
+        return Ok(());
+    }
+
+    if since.is_some() && !overwrite && path.exists() {
+        // Incremental merge: old parquet (priority 1) + new dolt (priority 2)
+        info!("Merging incremental data with existing parquet...");
+        let work_dir = std::env::temp_dir().join("compass_parquet_work");
+        std::fs::create_dir_all(&work_dir)?;
+
+        let new_path = work_dir.join("fin.new.parquet");
+        std::fs::write(&new_path, &new_data)?;
+
+        let tmp_path = work_dir.join("fin.merged.parquet");
+        let duck = Connection::open_in_memory()?;
+        let sql = format!(
+            "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) AS rn \
+             FROM (SELECT *, 1 AS priority FROM read_parquet('{}') \
+             UNION ALL SELECT *, 2 FROM read_parquet('{}'))) WHERE rn = 1 ORDER BY symbol, report_date) \
+             TO '{}' (FORMAT PARQUET)",
+            path.display(),
+            new_path.display(),
+            tmp_path.display(),
+        );
+        if let Err(e) = duck.execute_batch(&sql) {
+            warn!("DuckDB merge failed: {e}, falling back to full export");
+            std::fs::write(&path, &new_data)?;
+        } else {
+            std::fs::copy(&tmp_path, &path)?;
+        }
+        let _ = std::fs::remove_file(&new_path);
+        let _ = std::fs::remove_file(&tmp_path);
+    } else {
+        std::fs::write(&path, &new_data)?;
+    }
+
     info!("  → {}", path.display());
     Ok(())
 }
@@ -170,7 +216,7 @@ mod tests {
                 ('SH600519', '2025-12-31', 1.72e11, 8.23e10, 65.66)")
             .output().expect("insert");
 
-        import_fin_indicators(tmp.path(), tmp.path(), false).expect("import");
+        import_fin_indicators(tmp.path(), tmp.path(), false, None).expect("import");
 
         let parquet = tmp.path().join("fin_indicators.parquet");
         assert!(parquet.exists());
@@ -201,7 +247,7 @@ mod tests {
             )
             .output().expect("insert");
 
-        import_fin_indicators(tmp.path(), tmp.path(), false).expect("import");
+        import_fin_indicators(tmp.path(), tmp.path(), false, None).expect("import");
 
         let parquet_path = tmp.path().join("fin_indicators.parquet");
         assert!(parquet_path.exists());

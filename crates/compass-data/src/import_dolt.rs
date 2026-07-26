@@ -91,6 +91,9 @@ pub fn run(
     // ------------------------------------------------------------------
     info!("Fetching symbol list...");
     let symbol_query = if let Some(since_date) = since {
+        if since_date.len() != 8 || !since_date.chars().all(|c| c.is_ascii_digit()) {
+            return Err("--since must be YYYYMMDD (8 digits)".into());
+        }
         format!(
             "SELECT DISTINCT symbol FROM final_a_stock_eod_price \
              WHERE tradedate >= '{since_date}' ORDER BY symbol"

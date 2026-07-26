@@ -119,6 +119,10 @@ enum Command {
         /// Overwrite existing data
         #[arg(long, default_value_t = false)]
         overwrite: bool,
+
+        /// Incremental: only import data with report_date >= since (YYYYMMDD)
+        #[arg(long)]
+        since: Option<String>,
     },
 
     /// Merge staging DuckDB into Parquet main database
@@ -237,12 +241,19 @@ async fn main() {
             output,
             table,
             overwrite,
+            since,
         } => {
             let table: import_compass::CompassTable = table.parse().unwrap_or_else(|e| {
                 error!("{e}");
                 std::process::exit(1);
             });
-            if let Err(e) = import_compass::run(dolt_dir, output, table, overwrite) {
+            if let Err(e) = import_compass::run(
+                dolt_dir,
+                output,
+                table,
+                overwrite,
+                since.as_deref(),
+            ) {
                 error!("ImportCompass failed: {e}");
                 std::process::exit(1);
             }
