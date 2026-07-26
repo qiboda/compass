@@ -140,8 +140,12 @@ Trivial fixes (typo, config, one-line change) can go directly to master.
 ```
 master  ●──●──●──●────────●  (trunk)
               \          /
-feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
+feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
 ```
+
+**Merge strategy**: Use regular merge (not squash). Preserves all commit
+history — each commit maps to an issue reference (`ref #N`), and losing that
+granularity would break traceability.
 
 ### PR merge workflow
 
