@@ -4,6 +4,18 @@ A-share stock chart desktop application built with egui. Data pipeline uses
 local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks),
 with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for querying.
 
+**项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
+
+---
+
+## 品质准则
+
+精益求精，追求完美。每一行代码、每一次提交、每一个决策，都应以最高标准衡量。容不得将就、凑合、差不多。
+
+- 代码不行就重构，不要留着凑合
+- 设计不对就推翻，不要叠加补丁
+- 流程有漏洞就堵，不要绕过去
+
 ---
 
 ## ⚡ GRILL-ME FIRST (ALWAYS)
@@ -15,11 +27,21 @@ The grill-me interview must complete with "shared understanding reached" before
 you proceed to any other action — including reading files, classifying the
 request, creating todos, or writing code.
 
+**Grill-me completes → must enter PRE-IMPLEMENTATION GATE (below) for any
+feature or bugfix work. Grill-me is step 0; the gate is steps 1-4.
+Do NOT skip the gate just because grill-me reached shared understanding.**
+
 ---
 
 ## 🛑 PRE-IMPLEMENTATION GATE (READ BEFORE ANY CODE CHANGE)
 
-**For ALL feature and bugfix work, you MUST complete this gate BEFORE writing any code.**
+**This gate applies to ALL code changes.** The only exceptions are:
+- Documentation-only changes (typos, formatting, adding explanations)
+- Cargo fmt / clippy fixes (already handled by CI)
+- Trivial typo fixes in comments or strings
+
+**Everything else — features, bugfixes, refactors, new commands, CI changes, hooks,
+scripts, dependency updates — MUST go through the gate.**
 
 Before you touch a single file, verbalize EACH step to the user and confirm completion:
 
@@ -32,13 +54,24 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
 
+### SELF-CHECK (MANDATORY — ask yourself these 4 questions before every code edit)
+
+1. **"Is there a GitHub issue for this work?"** — If not, create one NOW.
+2. **"Does my commit message include `ref #N`?"** — If not, add it before committing.
+3. **"Have I written a failing test first?"** — If not, write one NOW before the implementation.
+4. **"Have I updated the relevant kb/ file?"** — If not, identify the file and update it.
+
+These 4 questions are NOT optional. They are the minimum standard. If you skip any,
+you are violating the workflow.
+
 ### HARD BLOCK
 
 This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
 remind you of this gate. If you find yourself writing code without completing
 these steps, you are violating the workflow — stop immediately, `git stash` or revert, and go back to step 0.
 
-Exceptions (skip the gate): documentation-only changes, lint fixes, typo fixes.
+**Workflow violations are themselves a bug.** If the gate was skipped, the work
+is incomplete regardless of code quality. Record the violation in reflections.
 
 ### After implementation: Reflection Record
 
@@ -96,6 +129,12 @@ deviation — even a pragmatic workaround — requires user approval first.
 For isolated development (experiments, library migrations, multi-day features),
 load the `worktree` skill. Worktrees live at `.worktrees/<name>/` and map to
 `feature/<name>` branches. See `kb/dev/process.md#worktrees` for policy.
+
+After creating a worktree, the skill enforces MANDATORY post-creation steps:
+1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
+2. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
+3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
+4. Current session stays in master — do NOT cd into the worktree.
 
 ## Knowledge base
 

@@ -318,6 +318,41 @@ EastMoney API ──download──► staging.duckdb ──merge──► parque
 Dolt DB ───────import─────► parquet_data/
 ```
 
+The project also maintains its own Dolt repository `compass_data/` for
+custom mutable data (company profiles, financial indicators, watchlists),
+stored alongside the read-only `investment_data`. Queries join across both
+databases: `compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`.
+See `kb/dev/process.md#dolt-database-queries` for usage examples.
+
+### collectors: Python data pipeline
+
+```
+EastMoney API ──collectors──► CSV ──import──► compass_data (Dolt)
+```
+
+The `collectors/` directory contains Python scripts (uv + curl_cffi) for
+fetching data from EastMoney public APIs and importing into Dolt:
+
+| Script | Purpose | Data |
+|---|---|---|
+| `main.py` | 统一 CLI: fetch/import/sync/sync-investment | — |
+| `fetch_stock_basic.py` | 公司基本信息 | 12,388 stocks, 13 fields |
+| `fetch_fin_indicators.py` | 财务指标 | 473K rows, 37 fields, 2000-2026 |
+
+Toolchain: `uv` (Python dependency manager) + `ruff` (lint/formatter) +
+`pytest` (16 tests) + `mypy` (type checking). CI via GitHub Actions,
+pre-commit/pre-push hooks enforce lint + test on every change.
+
+Key design decisions:
+- **curl_cffi** over httpx/aiohttp: EastMoney checks TLS fingerprints (JA3/JA4);
+  curl_cffi impersonates Chrome to bypass detection
+- **CSV as intermediate**: eastmoney → CSV → Dolt, not direct
+- **Incremental mode**: state files (`.state.json`) track last fetch date;
+  `--incremental` flag fetches only new report periods
+- **Known limitation**: REPORTDATE-based increments cannot detect revisions to
+  already-fetched periods (e.g. 五粮液 2025Q1 revision). A periodic `--refresh N`
+  flag is planned (see issue #27).
+
 ### download: EastMoney → staging
 - Enumerates all A-share symbols via EastMoney search API
 - Fetches stock basic info (name, industry, list date)
@@ -343,6 +378,13 @@ Dolt DB ───────import─────► parquet_data/
 - Reads parquet_data/ directory
 - Exports to DuckDB, CSV, or parquet-dir format
 - Used to create the final database the GUI reads from
+
+### backup: Parquet → Baidu Cloud
+- Zips `parquet_data/` using Python zipfile (no system `zip` dependency)
+- Uploads to Baidu Cloud via `baidupcs` CLI (`BaiduPCS-Go`)
+- Timestamped filenames: `parquet_data-YYYYMMDD-HHMMSS.zip`
+- Target folder: `/compass/` on Baidu Cloud
+- `--keep-zip` flag preserves local zip after upload
 
 **Default behavior everywhere**: merge/skip. Existing data is preserved; only
 new data is added. Pass `--overwrite` to replace. This migration-style behavior

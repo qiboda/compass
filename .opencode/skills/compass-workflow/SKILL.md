@@ -13,6 +13,10 @@ This project follows a strict workflow. You MUST enforce these rules for every c
 
 **The moment this skill is loaded, you are in GATE MODE.**
 
+**Prerequisite**: grill-me (step 0) must have completed with "shared understanding
+reached" before entering this gate. If calling `/grill-me` was skipped, go back
+and do it first.
+
 Before you create any todos, before you read any source files, before you write
 a single line of code — you MUST verbalize the following checklist to the user.
 
@@ -20,6 +24,10 @@ a single line of code — you MUST verbalize the following checklist to the user
 🛑 PRE-IMPLEMENTATION GATE
 
 I will now check each gate step before proceeding:
+
+☐ STEP 0 — GRILL-ME (prerequisite)
+   Shared understanding reached
+   → [must confirm]
 
 ☐ STEP 1 — ISSUE
    Create gh issue from the requirement
@@ -42,7 +50,7 @@ I will now check each gate step before proceeding:
 until ALL four steps (1-4) above are completed and shown to the user.**
 
 If you find yourself writing code without completing the gate, STOP IMMEDIATELY
-and go back to step 1. This is a HARD BLOCK — no exceptions for feature/bugfix work.
+and go back to step 0. This is a HARD BLOCK — no exceptions for feature/bugfix work.
 
 ### Exceptions (skip the gate)
 
