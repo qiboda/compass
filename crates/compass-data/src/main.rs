@@ -119,6 +119,10 @@ enum Command {
         /// Overwrite existing data
         #[arg(long, default_value_t = false)]
         overwrite: bool,
+
+        /// Incremental: only import data with report_date >= since (YYYYMMDD)
+        #[arg(long)]
+        since: Option<String>,
     },
 
     /// Merge staging DuckDB into Parquet main database
@@ -153,6 +157,17 @@ enum Command {
         /// Overwrite existing data instead of skipping duplicates
         #[arg(long, default_value_t = false)]
         overwrite: bool,
+    },
+
+    /// Zip parquet_data and upload to Baidu Cloud via baidupcs
+    Backup {
+        /// Parquet data directory to backup
+        #[arg(long, default_value = "parquet_data")]
+        input: PathBuf,
+
+        /// Keep local zip file after upload
+        #[arg(long, default_value_t = false)]
+        keep_zip: bool,
     },
 }
 
@@ -226,12 +241,15 @@ async fn main() {
             output,
             table,
             overwrite,
+            since,
         } => {
             let table: import_compass::CompassTable = table.parse().unwrap_or_else(|e| {
                 error!("{e}");
                 std::process::exit(1);
             });
-            if let Err(e) = import_compass::run(dolt_dir, output, table, overwrite) {
+            if let Err(e) =
+                import_compass::run(dolt_dir, output, table, overwrite, since.as_deref())
+            {
                 error!("ImportCompass failed: {e}");
                 std::process::exit(1);
             }
@@ -250,6 +268,21 @@ async fn main() {
             overwrite,
         } => {
             export::run_export(input, format, output, overwrite).await;
+        }
+        Command::Backup { input, keep_zip } => {
+            let script = PathBuf::from("scripts/upload-parquet.sh");
+            let mut cmd = std::process::Command::new("bash");
+            cmd.arg(&script);
+            if keep_zip {
+                cmd.arg("--keep-zip");
+            }
+            // Set PARQUET_DIR via env to support custom input paths
+            cmd.env("PARQUET_DIR", input);
+            let status = cmd.status().expect("failed to run upload-parquet.sh");
+            if !status.success() {
+                error!("Backup failed");
+                std::process::exit(1);
+            }
         }
     }
 }

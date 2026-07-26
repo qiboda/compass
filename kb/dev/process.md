@@ -362,16 +362,10 @@ Fetch data from EastMoney APIs into CSV, then import into `compass_data` Dolt.
 cd collectors/
 uv sync                           # first time: install dependencies
 
-# Fetch all stock basic info
-uv run python fetch_stock_basic.py -o stock_basic.csv
-
-# Fetch financial indicators (incremental after first run)
-uv run python fetch_fin_indicators.py --years 2024,2025,2026
-uv run python fetch_fin_indicators.py --incremental   # resume from state file
-
-# Import CSV into Dolt (manual for now)
-dolt --data-dir ../compass_data table import -c _tmp_sb stock_basic.csv --continue
-dolt --data-dir ../compass_data sql -q "INSERT INTO stock_basic (...) SELECT ... FROM _tmp_sb"
+# Unified CLI
+uv run python main.py fetch stock_basic
+uv run python main.py sync       # fetch + import all
+uv run python main.py sync-investment --restart
 ```
 
 Key concepts:
@@ -379,6 +373,29 @@ Key concepts:
 - **CSV as intermediary** between API and Dolt
 - **`.state.json`** files track last fetch for incremental updates
 - **`--resume`** flag to continue interrupted fetches
+
+### compass-data CLI (Rust)
+
+```sh
+# Dolt → Parquet
+compass-data import-compass --table stock_basic
+compass-data import-compass --table fin_indicators
+
+# investment_data incremental import
+compass-data import --since 20260725
+
+# Backup to Baidu Cloud
+compass-data backup
+compass-data backup --keep-zip
+```
+
+### Baidu Cloud backup
+
+Sync `parquet_data/` snapshot to Baidu Cloud via `baidupcs` (BaiduPCS-Go):
+
+- Target: `/compass/` folder
+- Format: timestamped zip (`parquet_data-YYYYMMDD-HHMMSS.zip`)
+- Standalone: `scripts/upload-parquet.sh [--keep-zip]`
 
 ### Dolt database queries
 

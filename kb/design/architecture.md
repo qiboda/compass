@@ -189,8 +189,13 @@ fetching data from EastMoney public APIs and importing into Dolt:
 
 | Script | Purpose | Data |
 |---|---|---|
+| `main.py` | 统一 CLI: fetch/import/sync/sync-investment | — |
 | `fetch_stock_basic.py` | 公司基本信息 | 12,388 stocks, 13 fields |
 | `fetch_fin_indicators.py` | 财务指标 | 473K rows, 37 fields, 2000-2026 |
+
+Toolchain: `uv` (Python dependency manager) + `ruff` (lint/formatter) +
+`pytest` (16 tests) + `mypy` (type checking). CI via GitHub Actions,
+pre-commit/pre-push hooks enforce lint + test on every change.
 
 Key design decisions:
 - **curl_cffi** over httpx/aiohttp: EastMoney checks TLS fingerprints (JA3/JA4);
@@ -227,6 +232,13 @@ Key design decisions:
 - Reads parquet_data/ directory
 - Exports to DuckDB, CSV, or parquet-dir format
 - Used to create the final database the GUI reads from
+
+### backup: Parquet → Baidu Cloud
+- Zips `parquet_data/` using Python zipfile (no system `zip` dependency)
+- Uploads to Baidu Cloud via `baidupcs` CLI (`BaiduPCS-Go`)
+- Timestamped filenames: `parquet_data-YYYYMMDD-HHMMSS.zip`
+- Target folder: `/compass/` on Baidu Cloud
+- `--keep-zip` flag preserves local zip after upload
 
 **Default behavior everywhere**: merge/skip. Existing data is preserved; only
 new data is added. Pass `--overwrite` to replace. This migration-style behavior
