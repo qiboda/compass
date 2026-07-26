@@ -82,10 +82,10 @@ pub struct AdjFactor {
 // App command (UI → worker thread)
 // ---------------------------------------------------------------------------
 
-/// Commands sent from the UI thread to the worker thread via `mpsc::channel`.
+/// Commands sent from the UI to the backend worker.
 ///
-/// The worker receives these one at a time, processes them asynchronously,
-/// and writes results back through [`CompassState`].
+/// Kept for backward compatibility with compass-data CLI which
+/// uses `Cmd` internally for retry logic and batch processing.
 #[derive(Debug, Clone)]
 pub enum Cmd {
     /// Fetch OHLCV bars for a symbol/timeframe/date-range.
@@ -98,12 +98,6 @@ pub enum Cmd {
         range_start: DateTime<Utc>,
         /// Latest date to fetch.
         range_end: DateTime<Utc>,
-    },
-    /// Search symbols by keyword.
-    #[allow(dead_code)]
-    SearchSymbols {
-        /// Search query string.
-        query: String,
     },
 }
 
@@ -145,10 +139,6 @@ pub struct ApiConfig {
     #[serde(default = "default_timeout_secs")]
     /// HTTP request timeout in seconds.
     pub timeout_secs: u64,
-    #[serde(default = "default_retry_count")]
-    #[allow(dead_code)]
-    /// Number of retry attempts for transient failures.
-    pub retry_count: u32,
 }
 
 /// Application-level settings: default stock and timeframe on startup.
@@ -175,7 +165,6 @@ impl Default for ApiConfig {
         Self {
             base_url: default_base_url(),
             timeout_secs: default_timeout_secs(),
-            retry_count: default_retry_count(),
         }
     }
 }
@@ -198,9 +187,6 @@ fn default_base_url() -> String {
 fn default_timeout_secs() -> u64 {
     10
 }
-fn default_retry_count() -> u32 {
-    3
-}
 fn default_symbol() -> String {
     "000001".into()
 }
@@ -218,8 +204,11 @@ pub type BarsMap = std::collections::HashMap<(String, String), Vec<Bar>>;
 /// Shared mutable state between the UI (main) and worker (tokio) threads.
 ///
 /// Protected by `Arc<Mutex<>>` — the UI reads on every frame, the worker
-/// writes after each async operation. `bars_version` acts as a change
-/// notification: the UI rebuilds chart data when it differs from last frame.
+/// writes after each async operation.
+///
+/// Note: bar version tracking (`bars_version`) has been removed. The egui-mobius
+/// reactive architecture uses `Dynamic<T>` for automatic change propagation
+/// instead of manual version comparison.
 pub struct CompassState {
     /// All loaded OHLCV bars, keyed by (symbol, timeframe).
     pub bars: BarsMap,
@@ -229,12 +218,8 @@ pub struct CompassState {
     pub current_timeframe: String,
     /// True while a fetch is in-flight.
     pub loading: bool,
-    /// Search results (symbol list).
-    pub search_results: Vec<SymbolInfo>,
     /// Last error message, if any.
     pub error: Option<String>,
-    /// Incremented every time bars data changes (so UI knows to rebuild chart).
-    pub bars_version: u64,
 }
 
 impl CompassState {
@@ -247,17 +232,14 @@ impl CompassState {
             current_symbol: default_symbol.to_string(),
             current_timeframe: default_timeframe.to_string(),
             loading: false,
-            search_results: Vec::new(),
             error: None,
-            bars_version: 0,
         }
     }
 
-    /// Replace bars for a given key and bump version.
+    /// Replace bars for a given key.
     pub fn set_bars(&mut self, symbol: &str, timeframe: &str, new_bars: Vec<Bar>) {
         let key = (symbol.to_string(), timeframe.to_string());
         self.bars.insert(key, new_bars);
-        self.bars_version = self.bars_version.wrapping_add(1);
     }
 }
 
@@ -298,10 +280,9 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn set_bars_stores_and_bumps_version() {
+    fn set_bars_stores_data() {
         let mut s = CompassState::new("000001", "1d");
         s.set_bars("000001", "1d", vec![make_bar(10.0, 12.0)]);
-        assert_eq!(s.bars_version, 1);
         assert_eq!(s.bars.len(), 1);
     }
 
@@ -311,14 +292,6 @@ default_timeframe = "1w"
         s.set_bars("000001", "1d", vec![make_bar(10.0, 12.0)]);
         s.set_bars("000001", "1d", vec![make_bar(20.0, 22.0)]);
         assert_eq!(s.bars.len(), 1);
-    }
-
-    #[test]
-    fn set_bars_version_wraps() {
-        let mut s = CompassState::new("000001", "1d");
-        s.bars_version = u64::MAX;
-        s.set_bars("000001", "1d", vec![make_bar(1.0, 2.0)]);
-        assert_eq!(s.bars_version, 0);
     }
 
     #[test]

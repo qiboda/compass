@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-07-26 — ref #24 refactor: integrate egui-mobius Level 3 citizen pattern
+
+**What was done**: Replaced manual mpsc + Arc<Mutex<CompassState>> architecture with
+egui-mobius Level 3 (AsyncDispatcher + typed signal/slot + Dynamic<T>). Converted
+single-panel CentralPanel layout to 3-citizen DockArea (Control, Chart, Logger).
+Removed dead code: bars_version, search_results, Cmd::SearchSymbols, retry_count.
+Upgraded egui from 0.33 to 0.35, switched egui-charts to qiboda fork.
+
+**What went well**: Grill-me locked all architectural decisions before implementation.
+Plan-first approach produced a structured 14-task plan with wave-based parallelism.
+Zero compilation errors on first build after each wave.
+
+**What went wrong**: egui_citizen not published on crates.io — git dependency required.
+egui_lens 0.5.0 panic bug from `ReactiveEventLoggerState::default()` (max_logs=0) —
+fixed by using `new()` instead.
+
+**Lessons learned**:
+1. Grill-me as step 0 is effective — 9 decisions locked before plan creation.
+2. Wave-based plan decomposition enables true parallelism.
+3. Never silently change a planned approach — added Scope Discipline rule to AGENTS.md.
+
 ## 2026-07-25 — ref #16 fix: pre-push hook new-branch range scans only branch commits
 
 **What was done**: Changed issue-reference validation in `.beads/hooks/pre-push` to use

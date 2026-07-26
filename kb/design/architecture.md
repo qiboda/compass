@@ -22,8 +22,19 @@ model, provider traits, and all I/O logic.
 ```
 compass (GUI binary)
   │
+  ├── main.rs        ─ CompassApp (eframe::App), entry point, wiring
+  ├── state.rs       ─ SharedState with Dynamic<T> reactive fields
+  ├── messages.rs    ─ AppMessage, FetchRequest, FetchResponse
+  ├── tabs.rs        ─ Tab/TabKind/TabViewer (egui_dock bridge)
+  ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring
+  ├── dispatcher.rs  ─ register_citizens, lifecycle draining, message routing
+  ├── citizens/
+  │   ├── control.rs ─ ControlCitizen: symbol/timeframe input, outbox
+  │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart
+  │   └── logger.rs  ─ LoggerPanel: scrollable log viewer
+  │
   ├── compass-core (library)
-  │     ├── model.rs      ─ shared types: Cmd, CompassState, AppConfig, Bar
+  │     ├── model.rs      ─ shared types: AppConfig, Bar, Cmd (legacy)
   │     ├── data/mod.rs   ─ CachedProvider (read-through cache + negative cache)
   │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
   │     ├── data/duckdb.rs   ─ DuckDbProvider (local cache)
@@ -40,68 +51,203 @@ compass (GUI binary)
 for fetching, storing, and querying stock data. The GUI and CLI are thin
 orchestrators that wire up providers and dispatch work.
 
-## The threading model: why two threads?
+The GUI binary (`compass`) uses the **egui-mobius citizen pattern** — a
+reactive architecture where UI panels are modeled as `Citizen` structs with
+outbox-based event dispatch, shared state is managed via `Dynamic<T>` reactive
+fields, and async work is routed through `Signal`/`Slot` typed channels to an
+`AsyncDispatcher` running on a dedicated tokio runtime.
+
+## Citizen pattern architecture
 
 The core architectural challenge: **egui runs synchronously on the main thread,
 but all data I/O (HTTP, DuckDB) requires async tokio.** If we block the main
 thread on I/O, the UI freezes. If we use async on the main thread, egui breaks.
 
-The solution: separate the UI thread from the I/O thread.
+The solution uses the **egui-mobius citizen pattern**, a Level 3 reactive
+architecture inspired by Elm and Flux. Three layers handle the separation:
+
+| Layer | Name | Responsibility |
+|---|---|---|
+| **1. Presentation** | `Citizen` panels + `egui_dock` | Render UI, emit outbox messages |
+| **2. Reactive state** | `SharedState` with `Dynamic<T>` | Hold application state; auto-notify on change |
+| **3. Async backend** | `Signal`/`Slot` + `AsyncDispatcher` | Execute I/O on a tokio runtime; write results back to state |
+
+### Layer 1: Citizens and the DockArea
+
+The UI is split into three `Citizen` panels, each implementing the `egui_citizen::Citizen` trait:
+
+| Citizen | File | Role |
+|---|---|---|
+| **ControlCitizen** | `citizens/control.rs` | Symbol input, timeframe selector, Fetch button. Uses an **outbox** (`Vec<AppMessage>`) to emit events — never calls backends directly. |
+| **ChartCitizen** | `citizens/chart.rs` | OHLCV candlestick chart via `egui-charts`. Reads `bars` from shared state reactively and re-renders when the data changes. |
+| **LoggerPanel** | `citizens/logger.rs` | Scrollable log view. Reads log entries from shared state. |
+
+Panels are arranged inside an `egui_dock::DockArea`, giving the user a
+tabbed interface they can rearrange and resize. Each tab click triggers
+`Dispatcher::activate()` for one-hot lifecycle management.
 
 ```
-┌──────────────────────────┐     mpsc::channel      ┌──────────────────────────┐
-│   MAIN THREAD (eframe)    │ ──── Cmd::Fetch ─────► │   WORKER THREAD           │
-│                            │                        │   tokio Runtime           │
-│  eframe::App::update()    │                        │                            │
-│    lock state (read)      │ ◄── Arc<Mutex<State>> ─ │   loop {                   │
-│    read bars               │     (shared state)      │     cmd = rx.recv()       │
-│    draw chart              │                        │     bars = fetch()        │
-│    send Cmd on click       │                        │     update state           │
-│                            │   ctx.request_repaint()│     ctx.request_repaint()  │
-└──────────────────────────┘                        └──────────────────────────┘
+┌────────────────────────────────────────┐
+│  egui_dock::DockArea                   │
+│  ┌─────────┬──────────────────────────┐│
+│  │ Controls │  Chart                   ││
+│  │ Symbol   │  ┌───┬───┬───┬───┐     ││
+│  │ [____]   │  │   │   │   │   │     ││
+│  │ TF: 1d   │  │   │   │   │   │     ││
+│  │ [Fetch]  │  │   │   │   │   │     ││
+│  │ Loading? │  │   │   │   │   │     ││
+│  │          │  └───┴───┴───┴───┘     ││
+│  ├──────────┴──────────────────────────┤│
+│  │ Logger (scrollable)                 ││
+│  └─────────────────────────────────────┘│
+└────────────────────────────────────────┘
 ```
 
-Key design decisions:
+Each citizen is pure presentation. The **outbox pattern** keeps them decoupled:
+a citizen writes to its `outbox: Vec<AppMessage>` on user interaction, and the
+main loop drains it at the end of every frame via `std::mem::take`.
 
-- **mpsc channel** for commands: lightweight, unidirectional. The UI sends
-  `Cmd::FetchBars`, the worker processes it and writes results to shared state.
-  Data never flows back through the channel — no need for oneshot replies.
+```
+CompassApp::ui() each frame:
+  1. Render DockArea → citizens write to outboxes
+  2. Drain citizen lifecycle messages from dispatcher
+  3. Drain control outbox → route AppMessage::FetchBars
+  4. Send FetchRequest on work_signal → AsyncDispatcher
+  5. request_repaint_after(200ms) for continuous update
+```
 
-- **Arc<Mutex<CompassState>>** for shared state: both threads read/write the
-  same struct. Mutex was chosen over RwLock because the critical sections are
-  tiny (copying bars, setting a loading flag) — RwLock's overhead isn't
-  justified here.
+### Layer 2: Reactive state with Dynamic\<T\>
 
-- **No RefCell**: `RefCell` is `!Send`, so it can't cross thread boundaries.
-  Mutex is the only viable interior-mutability primitive for this use case.
+State lives in `SharedState` (defined in `state.rs`), a struct where every
+field is a `Dynamic<T>` from `egui_mobius_reactive`:
 
-- **request_repaint()**: after every state update, the worker tells egui to
-  redraw. The main thread checks `bars_version` on each frame — if it changed,
-  it rebuilds the chart data from shared state.
+```rust
+pub struct SharedState {
+    pub symbol:    Dynamic<String>,         // current symbol
+    pub timeframe: Dynamic<String>,         // current timeframe
+    pub bars:      Dynamic<Vec<Bar>>,        // OHLCV bars
+    pub loading:   Dynamic<bool>,            // fetch in-flight
+    pub error:     Dynamic<Option<String>>,  // last error
+    pub log:       Dynamic<Vec<String>>,     // log entries
+}
+```
 
-- **spawn_blocking for DuckDB**: DuckDB's C API is synchronous. All DuckDB
-  queries run inside `tokio::task::spawn_blocking`, which moves the blocking
-  work to a dedicated thread pool. This keeps the tokio runtime responsive
-  for other async tasks (HTTP fetches, timers).
+`Dynamic<T>` wraps the value behind an `Arc<RwLock<T>>` and provides
+`get()`, `set()`, and `subscribe()`. Multiple readers share the same
+underlying storage — no separate `Arc<Mutex<CompassState>>` wrapper is
+needed.
 
-The worker thread owns the tokio runtime. It's created with `std::thread::spawn`,
-then immediately calls `rt.block_on(async { ... })` to enter an async event
-loop. This is a common pattern when the outer application framework (eframe) is
-not async-aware.
+Key differences from the old `CompassState` + `Arc<Mutex<>>` approach:
+
+- **No manual version counter**: `bars_version` is gone. The chart citizen
+  compares `bars.len()` on each frame; a difference triggers data rebuild.
+  The reactive runtime could also notify subscribers automatically.
+
+- **No Mutex contention**: `Dynamic<T>` uses `RwLock` internally, but each
+  field is independent. Writing `bars` doesn't lock `loading`, so reads
+  from different fields never contend.
+
+- **Clone-free reads**: citizens read via `Dynamic::get()` which returns a
+  cloned value. For `Vec<Bar>` this is an O(n) clone — acceptable because
+  bar counts are small (under 10k per stock). The chart only re-renders
+  when the count changes.
+
+### Layer 3: Async backend via Signal/Slot
+
+Instead of a manual `mpsc` channel + worker thread loop, the app uses
+egui-mobius's Level 3 async dispatch:
+
+```
+┌─ UI THREAD (eframe) ─────────────────────┐
+│                                           │
+│  ControlCitizen::show()                   │
+│    user clicks Fetch                      │
+│    outbox.push(AppMessage::FetchBars)     │
+│         │                                 │
+│         ▼                                 │
+│  dispatcher::handle()                     │
+│    state.loading.set(true)                │
+│    work_signal.send(FetchRequest) ───┐    │
+│                                     │    │
+└─────────────────────────────────────│────┘
+                                     │
+                              ┌──────▼─────────────────────┐
+                              │  AsyncDispatcher (tokio)   │
+                              │                             │
+                              │  attach_async(work_slot,   │
+                              │    result_signal,          │
+                              │    |req| async {           │
+                              │      reader.fetch(req)     │
+                              │      → FetchResponse       │
+                              │    })                      │
+                              │                             │
+                              └──────┬─────────────────────┘
+                                     │
+                              ┌──────▼─────────────────────┐
+                              │  result_slot.start()       │
+                              │    |resp| {                │
+                              │      state.bars.set(bars)  │
+                              │      state.loading.set(false)
+                              │      egui_ctx.request_repaint()
+                              │    }                       │
+                              └────────────────────────────┘
+```
+
+The wiring happens once at startup in `backend.rs`:
+
+1. **`factory::create_signal_slot::<FetchRequest>()`** — creates a
+   `Signal<FetchRequest>` (sender) and `Slot<FetchRequest>` (receiver).
+
+2. **`AsyncDispatcher::new()`** — owns the tokio runtime. Its
+   `attach_async()` method connects a `Slot<FetchRequest>` (input),
+   a `Signal<FetchResponse>` (output), and an async worker function.
+
+3. **`result_slot::start()`** — a closure that runs on the UI thread
+   whenever a `FetchResponse` arrives. It writes results into the
+   `Dynamic<T>` fields and calls `request_repaint()`.
+
+The `BackendHandle` struct owns the `AsyncDispatcher`. As long as it's
+alive (stored on `CompassApp`), the tokio runtime keeps running. Dropping
+it shuts everything down cleanly.
+
+### Threading summary
+
+| Thread | Role | Code |
+|---|---|---|
+| **Main (UI)** | egui rendering, citizen outbox drain, event routing, result slot handler | `CompassApp::ui()` |
+| **AsyncDispatcher** | Tokio multi-thread runtime, receives `FetchRequest`, runs `CachedProvider`, sends `FetchResponse` | `AsyncDispatcher` via `backend.rs` |
+
+The old pattern used a manual `std::thread::spawn` + `mpsc::channel` +
+`Arc<Mutex<CompassState>>`. The new pattern replaces all three with
+framework-managed primitives: citizens own presentation, `Dynamic<T>`
+owns state, and `Signal`/`Slot` + `AsyncDispatcher` own async I/O.
+
+### spawn_blocking for DuckDB
+
+DuckDB's C API is synchronous. All DuckDB queries run inside
+`tokio::task::spawn_blocking`, which moves the blocking work to a dedicated
+thread pool. This keeps the tokio runtime responsive for other async tasks
+(HTTP fetches, timers). This part hasn't changed from the previous architecture.
 
 ## Data pipeline: from user click to chart
 
 When you type `600519`, select `1d`, and click "Fetch", here's what happens:
 
 ```
-UI (CompassApp::update)
-  │  user clicks "Fetch"
-  │  cmd_tx.send(Cmd::FetchBars { symbol: "600519", timeframe: "1d", ... })
+UI (CompassApp::ui)
+  │  user clicks "Fetch" button
+  │  state.symbol.set("600519")
+  │  state.timeframe.set("1d")
+  │  outbox.push(AppMessage::FetchBars)
+  │
+  ▼ (same frame, outbox drain loop)
+  dispatcher::handle(AppMessage::FetchBars, state, work_signal)
+  │  state.loading.set(true)
+  │  work_signal.send(FetchRequest { symbol:"600519", timeframe:"1d", ... })
   │
   ▼
-Worker thread (start_worker_thread)
-  │  cmd_rx.recv() → Cmd::FetchBars
-  │  state.loading = true
+AsyncDispatcher (tokio runtime)
+  │  work_slot receives FetchRequest
   │
   ▼
 CachedProvider::fetch_bars("600519", "1d", start, end)
@@ -121,20 +267,20 @@ CachedProvider::fetch_bars("600519", "1d", start, end)
   ├─ 5. If successful → DuckDbProvider::save_bars() (write-through to cache)
   │     If NoData → mark negative cache (skip this symbol for 7 days)
   │
-  └─ 6. Clear inflight, return bars to worker
+  └─ 6. Clear inflight, return FetchResponse to result_signal
   │
   ▼
-Worker updates CompassState
-  │  state.set_bars("600519", "1d", bars)
-  │  bars_version++  (UI detects this change next frame)
-  │  state.loading = false
-  │  ctx.request_repaint()
+result_slot handler (called on UI thread)
+  │  state.bars.set(resp.bars)
+  │  state.loading.set(false)
+  │  state.error.set(None or error)
+  │  egui_ctx.request_repaint()
   │
   ▼
 UI (next frame)
-  │  detects bars_version changed
-  │  rebuilds BarData from state.bars
-  │  draws candlestick chart
+  │  ChartCitizen::show() reads state.bars.get()
+  │  bars.len() differs from previous → rebuilds BarData
+  │  chart.show(ui) renders candlestick chart
 ```
 
 ### Why read-through cache?
@@ -341,7 +487,6 @@ path = "data/compass.db"           # where to store the cache
 [api]
 base_url = "https://push2his.eastmoney.com"
 timeout_secs = 10
-retry_count = 3
 
 [app]
 default_symbol = "000001"     # what to show on startup
@@ -380,7 +525,7 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 | 3 | Async runtime | tokio (rt-multi-thread) | reqwest requires tokio. Multi-thread runtime lets the worker handle concurrent fetches. CLI uses current_thread for simplicity. |
 | 4 | HTTP client | reqwest 0.12 (rustls-tls) | No OpenSSL dependency (rustls). Configurable timeout + retry. JSON deserialization built in. |
 | 5 | Database | duckdb 1.0 (bundled) | OLAP-optimized columnar engine. Reads/writes Parquet natively. The `bundled` feature ships the C library — no system duckdb required. |
-| 6 | DB threading | spawn_blocking + Arc<Mutex<>> | DuckDB is synchronous C. `spawn_blocking` moves queries to a thread pool so they don't block the async runtime. Mutex ensures exclusive connection access. |
+| 6 | DB threading | spawn_blocking + Mutex | DuckDB is synchronous C. `spawn_blocking` moves queries to a thread pool so they don't block the async runtime. Mutex on the DuckDB connection ensures exclusive access. |
 | 7 | Serialization | serde + serde_json | EastMoney API returns JSON. serde derives on all data types. |
 | 8 | Time handling | chrono 0.4 | UTC timestamps, date arithmetic (range_start/end calculation), JSON parse support. |
 | 9 | Error types | thiserror 2 (library), anyhow 1 (binaries) | Precise `DataError` enum with `From` impls for `?` propagation in the library. `anyhow` for context-wrapping in binary entry points. |
@@ -390,11 +535,13 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 | 13 | CLI args | clap 4 (derive) | Derive macro generates the CLI parser from a struct. Type-safe, self-documenting. |
 | 14 | Progress bars | indicatif 0.17 | Spinner + progress bar for long-running CLI operations (download, import). |
 | 15 | Concurrency | futures Semaphore + buffer_unordered | Bounded parallelism for CLI download. Semaphore caps concurrent requests; buffer_unordered preserves order while processing results as they arrive. |
-| 16 | State sharing | Arc<Mutex<CompassState>> | Shared between UI and worker threads. Mutex chosen over RwLock — critical sections are short, no write starvation risk. |
-| 17 | Command channel | std::sync::mpsc | Simple, well-understood. Lightweight commands flow one way; results flow back through shared state, not the channel. |
-| 18 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction lets us swap backends: DuckDB, EastMoney, Parquet — all behind the same interface. Testable with mock implementations. |
-| 19 | Parquet storage | DuckDB read_parquet + COPY TO | Columnar format partitioned by symbol. Queryable without loading into tables. |
-| 20 | Dolt import | dolt CLI → Parquet (direct) | Offline bulk import of 18M+ rows. Dolt `sql -r parquet` writes binary Parquet directly, skipping the CSV intermediary. |
+| 16 | Reactive state | egui_mobius_reactive `Dynamic<T>` | Per-field `Dynamic<T>` replaces monolithic `Arc<Mutex<CompassState>>`. No manual version counter, no cross-field lock contention. Each field is independently readable/writable. |
+| 17 | Citizen pattern | egui_citizen (Citizen trait) | Frameworks citizen lifecycle (register, activate, deactivate, drain) and eliminates manual thread wiring. Citizens use outbox pattern — no direct backend coupling. |
+| 18 | Dock layout | egui_dock 0.20 | Tabbed dockable panels with resize and rearrange. Bridges to citizen activation via TabViewer. Replaces manual panel layout. |
+| 19 | Async dispatch | egui_mobius `Signal`/`Slot` + `AsyncDispatcher` | Typed channels replace `mpsc::channel` for command dispatch. `AsyncDispatcher` manages its own tokio runtime — no `std::thread::spawn` + `rt.block_on` boilerplate. |
+| 20 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction lets us swap backends: DuckDB, EastMoney, Parquet — all behind the same interface. Testable with mock implementations. |
+| 21 | Parquet storage | DuckDB read_parquet + COPY TO | Columnar format partitioned by symbol. Queryable without loading into tables. |
+| 22 | Dolt import | dolt CLI → Parquet (direct) | Offline bulk import of 18M+ rows. Dolt `sql -r parquet` writes binary Parquet directly, skipping the CSV intermediary. |
 
 ## Where to go next
 

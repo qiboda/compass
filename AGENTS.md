@@ -98,6 +98,32 @@ and commit discipline.
 **After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
 checklist above. Do not skip any step.
 
+### Commit & Push
+
+Commit and push are **separate operations**. Do not chain them with `&&`.
+
+1. **Commit first**: stage changes, write a descriptive message, commit.
+2. **Verify locally**: ensure `cargo test`, `cargo clippy`, and `cargo fmt` pass.
+3. **Push separately**: only after local verification is clean.
+
+Never `git push` in the same command as `git commit`. The pre-push hook runs
+formatting, clippy, and doc checks — if they fail, the commit should remain
+local until fixed, not be amended mid-push.
+
+**Follow the user's exact words.** If the user says "commit" / "提交", only
+commit — do not push. If the user says "push" / "推送", only push — do not
+amend and re-commit. Never assume one implies the other.
+
+### Scope Discipline
+
+**Never silently change a planned approach.** If an external constraint
+(library bug, API incompatibility, missing crate) blocks the agreed-upon
+implementation, do NOT work around it by altering the feature design.
+Flag the issue to the user and ask for a decision.
+
+The grill-me decisions and the approved plan define the contract. Any
+deviation — even a pragmatic workaround — requires user approval first.
+
 ## Worktrees
 
 For isolated development of distinct functional zones, load the `worktree`
@@ -253,7 +279,6 @@ path = "data/compass.duckdb"
 [api]
 base_url = "https://push2his.eastmoney.com"
 timeout_secs = 10
-retry_count = 3
 
 [app]
 default_symbol = "000001"

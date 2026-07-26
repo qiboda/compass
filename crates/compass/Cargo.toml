@@ -9,12 +9,15 @@ path = "src/main.rs"
 
 [dependencies]
 compass-core = { path = "../compass-core" }
-anyhow = { workspace = true }
 chrono = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui-charts = { workspace = true }
-serde = { workspace = true }
+egui_dock = "0.20"
+egui_mobius = "0.5"
+egui_mobius_reactive = "0.5"
+egui_lens = "0.5"
+egui_citizen = { git = "https://github.com/saturn77/egui_mobius.git", rev = "cc286df7" }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

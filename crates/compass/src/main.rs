@@ -1,46 +1,39 @@
-use std::sync::{Arc, Mutex, mpsc};
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
-use egui_charts::ChartType;
-use egui_charts::model::BarData;
-use egui_charts::theme::Theme;
-use egui_charts::widget::Chart;
+use egui_citizen::{CitizenId, Dispatcher};
+use egui_dock::{DockArea, DockState};
+
 use tracing::info;
 
-use compass_core::data::{
-    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider, provider::DataProvider,
-};
-use compass_core::model::{AppConfig, Cmd, CompassState};
+use compass_core::model::AppConfig;
+
+mod backend;
+mod citizens;
+mod dispatcher;
+mod messages;
+mod state;
+mod tabs;
+
+use citizens::chart::ChartCitizen;
+use citizens::control::ControlCitizen;
+use citizens::logger::LoggerPanel;
+use tabs::{CHART_ID, CONTROL_ID, LOGGER_ID, Tab, TabKind, TabViewer};
 
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 fn main() -> eframe::Result {
-    // 1. Initialize tracing
     let _file_guard = init_tracing();
-
-    // 2. Load config
     let config = load_config();
 
-    // 3. Create shared state
-    let state = Arc::new(Mutex::new(CompassState::new(
+    // Create reactive shared state
+    let shared_state = Arc::new(state::SharedState::new(
         &config.app.default_symbol,
         &config.app.default_timeframe,
-    )));
+    ));
 
-    // 4. Create command channel
-    let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
-
-    // 5. Shared egui context holder (set after eframe app is created)
-    let ctx_holder: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
-
-    // 6. Spawn worker thread
-    start_worker_thread(cmd_rx, state.clone(), ctx_holder.clone(), config);
-
-    // 7. Run the eframe application
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
         ..Default::default()
@@ -50,12 +43,43 @@ fn main() -> eframe::Result {
         "Compass — Stock Chart",
         options,
         Box::new(move |cc| {
-            *ctx_holder.lock().unwrap() = Some(cc.egui_ctx.clone());
-            Ok(Box::new(CompassApp::new(
-                cc.egui_ctx.clone(),
-                state.clone(),
-                cmd_tx.clone(),
-            )))
+            let egui_ctx = cc.egui_ctx.clone();
+
+            // Wire Level 3 backend (signal/slot + AsyncDispatcher)
+            let (work_signal, _backend_handle) =
+                backend::wire_backend(config.clone(), shared_state.clone(), egui_ctx);
+
+            // Register citizens
+            let mut dispatcher = Dispatcher::new();
+            let registered = dispatcher::register_citizens(&mut dispatcher);
+
+            // Create citizen panels
+            let control = ControlCitizen::new(
+                CitizenId::new(CONTROL_ID),
+                registered.control,
+                &config.app.default_symbol,
+                &config.app.default_timeframe,
+            );
+            let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+            let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+
+            // Create initial dock state with all 3 tabs
+            let dock_state = DockState::new(vec![
+                Tab::new(TabKind::Control),
+                Tab::new(TabKind::Chart),
+                Tab::new(TabKind::Logger),
+            ]);
+
+            Ok(Box::new(CompassApp {
+                dock_state,
+                dispatcher,
+                control,
+                chart,
+                logger,
+                shared_state,
+                work_signal,
+                _backend_handle,
+            }))
         }),
     )
 }
@@ -126,253 +150,113 @@ fn load_config() -> AppConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Worker thread
-// ---------------------------------------------------------------------------
-
-/// Spawns a background worker that listens for `Cmd` messages, dispatches to
-/// the `CachedProvider`, and updates `CompassState`.
-fn start_worker_thread(
-    cmd_rx: mpsc::Receiver<Cmd>,
-    state: Arc<Mutex<CompassState>>,
-    ctx_holder: Arc<Mutex<Option<egui::Context>>>,
-    config: AppConfig,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-
-        rt.block_on(async move {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(config.api.timeout_secs))
-                .build()
-                .expect("failed to create HTTP client");
-
-            let reader = EastMoneyProvider::new(
-                client,
-                config.api.base_url,
-                "https://push2delay.eastmoney.com".to_string(),
-            );
-
-            let cache = match DuckDbProvider::new(&config.database.path) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(path = %config.database.path, error = %e, "failed to open duckdb cache, worker cannot start");
-                    return;
-                }
-            };
-
-            let provider = CachedProvider::new(reader, cache);
-
-            loop {
-                let cmd = match cmd_rx.recv() {
-                    Ok(cmd) => cmd,
-                    Err(_) => {
-                        tracing::info!("command channel closed, worker exiting");
-                        break;
-                    }
-                };
-
-                match cmd {
-                    Cmd::FetchBars {
-                        symbol,
-                        timeframe,
-                        range_start,
-                        range_end,
-                    } => {
-                        tracing::info!(%symbol, %timeframe, "fetching bars");
-
-                        {
-                            let mut s = state.lock().unwrap();
-                            s.loading = true;
-                            s.error = None;
-                        }
-
-                        match provider
-                            .fetch_bars(&symbol, &timeframe, range_start, range_end)
-                            .await
-                        {
-                            Ok(bars) => {
-                                let count = bars.len();
-                                let mut s = state.lock().unwrap();
-                                s.set_bars(&symbol, &timeframe, bars);
-                                s.current_symbol = symbol;
-                                s.current_timeframe = timeframe;
-                                s.loading = false;
-                                tracing::info!(count, "bars loaded");
-                            }
-                            Err(e) => {
-                                let mut s = state.lock().unwrap();
-                                s.loading = false;
-                                s.error = Some(format!("{e}"));
-                                tracing::error!(error = %e, "fetch failed");
-                            }
-                        }
-                    }
-                    Cmd::SearchSymbols { query } => {
-                        tracing::info!(%query, "searching symbols");
-
-                        match provider.search_symbols(&query).await {
-                            Ok(results) => {
-                                let mut s = state.lock().unwrap();
-                                s.search_results = results;
-                                tracing::info!("search complete");
-                            }
-                            Err(e) => {
-                                let mut s = state.lock().unwrap();
-                                s.error = Some(format!("{e}"));
-                                tracing::error!(error = %e, "search failed");
-                            }
-                        }
-                    }
-                }
-
-                if let Some(ctx) = ctx_holder.lock().unwrap().as_ref() {
-                    ctx.request_repaint();
-                }
-            }
-        });
-    })
-}
-
-// ---------------------------------------------------------------------------
-// CompassApp — interactive chart application
+// CompassApp — citizen-based application
 // ---------------------------------------------------------------------------
 
 struct CompassApp {
-    chart: Chart,
-    state: Arc<Mutex<CompassState>>,
-    cmd_tx: mpsc::Sender<Cmd>,
-    bars_version: u64,
-    symbol_input: String,
-    timeframe_input: String,
-}
-
-impl CompassApp {
-    fn new(
-        _egui_ctx: egui::Context,
-        state: Arc<Mutex<CompassState>>,
-        cmd_tx: mpsc::Sender<Cmd>,
-    ) -> Self {
-        let (symbol_input, timeframe_input) = {
-            let s = state.lock().unwrap();
-            (s.current_symbol.clone(), s.current_timeframe.clone())
-        };
-
-        let bars: Vec<egui_charts::model::Bar> = Vec::new();
-        let data = BarData::from_bars(bars);
-        let mut chart = Chart::new(data);
-        chart.set_chart_type(ChartType::Candles);
-        chart.set_visible_bars(100);
-        chart.set_symbol("COMPASS");
-        chart.set_timeframe_label("1d");
-
-        Self {
-            chart,
-            state,
-            cmd_tx,
-            bars_version: 0,
-            symbol_input,
-            timeframe_input,
-        }
-    }
+    dock_state: DockState<Tab>,
+    dispatcher: Dispatcher,
+    control: ControlCitizen,
+    chart: ChartCitizen,
+    logger: LoggerPanel,
+    shared_state: Arc<state::SharedState>,
+    work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
+    _backend_handle: backend::BackendHandle,
 }
 
 impl eframe::App for CompassApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let theme = custom_dark_theme();
-        egui_charts::theme::apply_to_egui(ctx, &theme);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Render dock area with citizen panels
+        DockArea::new(&mut self.dock_state).show_inside(
+            ui,
+            &mut TabViewer {
+                dispatcher: &mut self.dispatcher,
+                control: &mut self.control,
+                chart: &mut self.chart,
+                logger: &mut self.logger,
+                shared_state: &self.shared_state,
+            },
+        );
 
-        // Check whether the worker updated bars → rebuild chart data
-        {
-            let state = self.state.lock().unwrap();
-            if state.bars_version != self.bars_version {
-                let key = (
-                    state.current_symbol.clone(),
-                    state.current_timeframe.clone(),
-                );
-                if let Some(bars) = state.bars.get(&key) {
-                    self.chart.update_data(BarData::from_bars(bars.clone()));
-                }
-                self.bars_version = state.bars_version;
-            }
+        // Drain citizen lifecycle events
+        dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
+
+        // Process control outbox
+        let outbox = std::mem::take(&mut self.control.outbox);
+        for msg in outbox {
+            dispatcher::handle(msg, &self.shared_state, &self.work_signal);
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // --- Top controls row ---
-            let (loading, error) = {
-                let s = self.state.lock().unwrap();
-                (s.loading, s.error.clone())
-            };
-
-            ui.horizontal(|ui| {
-                ui.label("Symbol:");
-                ui.text_edit_singleline(&mut self.symbol_input);
-
-                ui.label("Timeframe:");
-                egui::ComboBox::from_id_salt("timeframe_combo")
-                    .selected_text(&self.timeframe_input)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.timeframe_input, "1d".into(), "1d");
-                    });
-
-                if ui.button("Fetch").clicked() {
-                    let cmd = Cmd::FetchBars {
-                        symbol: self.symbol_input.clone(),
-                        timeframe: self.timeframe_input.clone(),
-                        range_start: Utc::now() - chrono::Duration::days(365),
-                        range_end: Utc::now(),
-                    };
-                    let _ = self.cmd_tx.send(cmd);
-                }
-            });
-
-            // --- Status indicators ---
-            if loading {
-                ui.label("Loading...");
-            }
-
-            if let Some(ref err) = error {
-                ui.colored_label(egui::Color32::RED, err);
-            }
-
-            // --- Chart area ---
-            self.chart.show(ui);
-        });
-
-        ctx.request_repaint_after(Duration::from_millis(200));
+        ui.ctx().request_repaint_after(Duration::from_millis(200));
     }
 }
 
 // ---------------------------------------------------------------------------
-// Dark theme
+// Tests
 // ---------------------------------------------------------------------------
-
-fn custom_dark_theme() -> Theme {
-    Theme::dark()
-}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use compass_core::model::CompassState;
-
-    fn make_state() -> Arc<Mutex<CompassState>> {
-        Arc::new(Mutex::new(CompassState::new("000001", "1d")))
-    }
-
-    #[test]
-    fn compass_app_new_reads_initial_state() {
-        let state = make_state();
-        let (tx, _rx) = mpsc::channel::<Cmd>();
-        let ctx = egui::Context::default();
-        let app = CompassApp::new(ctx, state.clone(), tx);
-        assert_eq!(app.symbol_input, "000001");
-        assert_eq!(app.timeframe_input, "1d");
-        assert_eq!(app.bars_version, 0);
-    }
+    use crate::citizens::chart::ChartCitizen;
+    use crate::citizens::control::ControlCitizen;
+    use crate::citizens::logger::LoggerPanel;
+    use crate::dispatcher;
+    use crate::messages::AppMessage;
+    use crate::state::SharedState;
+    use crate::tabs::{CHART_ID, CONTROL_ID, LOGGER_ID};
+    use egui_citizen::{CitizenId, Dispatcher};
 
     #[test]
     #[cfg(feature = "tracy")]
     fn tracy_layer_constructs() {
         let _layer = tracing_tracy::TracyLayer::default();
+    }
+
+    #[test]
+    fn shared_state_initializes_with_defaults() {
+        let state = SharedState::new("000001", "1d");
+        assert_eq!(state.symbol.get(), "000001");
+        assert_eq!(state.timeframe.get(), "1d");
+        assert_eq!(state.bars.get().len(), 0);
+        assert!(!state.loading.get());
+        assert_eq!(state.error.get(), None);
+        assert_eq!(state.log.get().log_count(), 0);
+    }
+
+    #[test]
+    fn control_citizen_outbox_on_fetch_click() {
+        let state = SharedState::new("600519", "1d");
+        let mut dispatcher = Dispatcher::new();
+        let citizen_state = dispatcher.register(CitizenId::new(CONTROL_ID));
+        let mut control =
+            ControlCitizen::new(CitizenId::new(CONTROL_ID), citizen_state, "600519", "1d");
+
+        // Simulate a Fetch click: write symbol/timeframe, push to outbox
+        state.symbol.set(control.symbol_input.clone());
+        state.timeframe.set(control.timeframe_input.clone());
+        control.outbox.push(AppMessage::FetchBars);
+
+        assert_eq!(control.outbox.len(), 1);
+        assert_eq!(state.symbol.get(), "600519");
+        assert_eq!(state.timeframe.get(), "1d");
+    }
+
+    #[test]
+    fn citizens_register_and_activate() {
+        let mut dispatcher = Dispatcher::new();
+        let registered = dispatcher::register_citizens(&mut dispatcher);
+
+        let control = ControlCitizen::new(
+            CitizenId::new(CONTROL_ID),
+            registered.control,
+            "000001",
+            "1d",
+        );
+        let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+
+        assert_eq!(control.citizen_id.0, CONTROL_ID);
+        assert_eq!(chart.citizen_id.0, CHART_ID);
+        assert_eq!(logger.citizen_id.0, LOGGER_ID);
     }
 }
