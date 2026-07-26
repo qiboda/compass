@@ -1,5 +1,6 @@
 use compass_core::model::{Exchange, StockBasic};
 
+#[allow(dead_code)]
 pub fn filter_stocks<'a>(
     stocks: &'a [StockBasic],
     query: &str,
@@ -26,6 +27,9 @@ pub struct StockPicker {
     pub selected_symbol: String,
     pub selected_name: String,
     pub popup_open: bool,
+    cached_indices: Vec<usize>,
+    last_filter_text: String,
+    last_exchange: Exchange,
 }
 
 impl StockPicker {
@@ -41,6 +45,9 @@ impl StockPicker {
             selected_symbol: default_symbol.to_string(),
             selected_name: name,
             popup_open: false,
+            cached_indices: Vec::new(),
+            last_filter_text: String::new(),
+            last_exchange: Exchange::All,
         }
     }
 
@@ -74,7 +81,36 @@ impl StockPicker {
                 return;
             }
 
-            let filtered = filter_stocks(stock_list, &self.filter_text, exchange);
+            let needs_refilter =
+                self.filter_text != self.last_filter_text || *exchange != self.last_exchange;
+
+            if needs_refilter {
+                let lower = self.filter_text.trim().to_lowercase();
+                self.cached_indices = stock_list
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| exchange.matches(s))
+                    .filter(|(_, s)| {
+                        if lower.is_empty() {
+                            return true;
+                        }
+                        s.symbol.to_lowercase().starts_with(&lower)
+                            || s.name.to_lowercase().contains(&lower)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                self.cached_indices.sort_by(|a, b| {
+                    stock_list[*a].symbol.cmp(&stock_list[*b].symbol)
+                });
+                self.last_filter_text.clone_from(&self.filter_text);
+                self.last_exchange = *exchange;
+            }
+
+            let filtered: Vec<&StockBasic> = self
+                .cached_indices
+                .iter()
+                .map(|&i| &stock_list[i])
+                .collect();
 
             let max_rows = 12.min(filtered.len());
             let row_height = 20.0;
