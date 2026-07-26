@@ -189,8 +189,13 @@ fetching data from EastMoney public APIs and importing into Dolt:
 
 | Script | Purpose | Data |
 |---|---|---|
+| `main.py` | 统一 CLI: fetch/import/sync/sync-investment | — |
 | `fetch_stock_basic.py` | 公司基本信息 | 12,388 stocks, 13 fields |
 | `fetch_fin_indicators.py` | 财务指标 | 473K rows, 37 fields, 2000-2026 |
+
+Toolchain: `uv` (Python dependency manager) + `ruff` (lint/formatter) +
+`pytest` (16 tests) + `mypy` (type checking). CI via GitHub Actions,
+pre-commit/pre-push hooks enforce lint + test on every change.
 
 Key design decisions:
 - **curl_cffi** over httpx/aiohttp: EastMoney checks TLS fingerprints (JA3/JA4);
