@@ -6,6 +6,7 @@ compass.duckdb
 logs/
 *.log
 investment_data/
+compass_data/
 .dolt/
 /data
 parquet_data/
@@ -13,5 +14,11 @@ parquet_data/
 
 # Manual worktree storage
 .worktrees/
+
+# Python collectors
+collectors/.venv/
+collectors/__pycache__/
+collectors/*.csv
+collectors/*.state.json
 .opencode/package.json
 .opencode/package-lock.json

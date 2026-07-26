@@ -354,13 +354,75 @@ let conn = Connection::open_in_memory()?;
 conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
 ```
 
+### collectors (Python data pipeline)
+
+Fetch data from EastMoney APIs into CSV, then import into `compass_data` Dolt.
+
+```sh
+cd collectors/
+uv sync                           # first time: install dependencies
+
+# Fetch all stock basic info
+uv run python fetch_stock_basic.py -o stock_basic.csv
+
+# Fetch financial indicators (incremental after first run)
+uv run python fetch_fin_indicators.py --years 2024,2025,2026
+uv run python fetch_fin_indicators.py --incremental   # resume from state file
+
+# Import CSV into Dolt (manual for now)
+dolt --data-dir ../compass_data table import -c _tmp_sb stock_basic.csv --continue
+dolt --data-dir ../compass_data sql -q "INSERT INTO stock_basic (...) SELECT ... FROM _tmp_sb"
+```
+
+Key concepts:
+- **curl_cffi** for TLS impersonation (EastMoney anti-crawler)
+- **CSV as intermediary** between API and Dolt
+- **`.state.json`** files track last fetch for incremental updates
+- **`--resume`** flag to continue interrupted fetches
+
 ### Dolt database queries
 
 ```sh
+# investment_data (read-only, third-party)
 dolt --data-dir=investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
 dolt --data-dir=investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
 dolt --data-dir=investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
 ```
+
+### compass_data (custom mutable database)
+
+`compass_data` is our own Dolt repository for custom data — company profiles,
+financial indicators, watchlists, etc. It lives alongside `investment_data`.
+
+```sh
+# Run `dolt sql` from the parent directory to enable cross-database queries
+cd /path/to/compass
+dolt sql -q "SELECT * FROM compass_data.stock_basic LIMIT 5"
+dolt sql -q "SELECT * FROM compass_data.fin_indicators WHERE symbol='SH600519' ORDER BY report_date DESC"
+
+# Cross-database JOINs
+dolt sql -q "
+SELECT sb.name, sb.industry_l1, ts.list_date
+FROM compass_data.stock_basic sb
+JOIN investment_data.ts_a_stock_list ts ON sb.ts_code = ts.ts_code
+"
+
+dolt sql -q "
+SELECT sb.name, fi.report_date, fi.revenue / 1e8 AS rev_yi, fi.eps
+FROM compass_data.stock_basic sb
+JOIN compass_data.fin_indicators fi ON sb.symbol = fi.symbol
+JOIN investment_data.final_a_stock_eod_price e ON sb.symbol = e.symbol
+WHERE sb.symbol = 'SH600519'
+ORDER BY e.tradedate DESC
+LIMIT 3
+"
+```
+
+Key tables:
+| Table | Purpose | Key |
+|---|---|---|
+| `stock_basic` | Company profiles | `symbol` (`SZ000001`) + `ts_code` (`000001.SZ`) |
+| `fin_indicators` | Financial indicators per report period | `(symbol, report_date)` |
 
 ### Reset everything
 

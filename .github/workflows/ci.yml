@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'feature/**']
   pull_request:
     branches: [master]
 
@@ -127,3 +127,25 @@ jobs:
         with:
           name: coverage-report
           path: target/llvm-cov/html/
+
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      - run: cd collectors && uv sync && uv run ruff check *.py tests/
+
+  python-test:
+    name: Python Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Dolt
+        run: |
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
+          tar -xzf /tmp/dolt.tar.gz -C /tmp
+          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
+          dolt version
+      - run: cd collectors && uv sync && uv run pytest tests/ -v

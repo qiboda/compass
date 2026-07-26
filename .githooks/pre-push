@@ -57,6 +57,27 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1; then
     has_error=1
 fi
 
+# --- Quality gate: Python lint + test ---
+if [ -d "collectors" ] && [ -f "collectors/pyproject.toml" ]; then
+    echo "pre-push: Python ruff check..."
+    if ! (cd collectors && uv run ruff check *.py tests/ 2>&1); then
+        echo ""
+        echo "ERROR: Python lint found issues."
+        echo "  Run: cd collectors && uv run ruff check *.py tests/ --fix"
+        echo ""
+        has_error=1
+    fi
+
+    echo "pre-push: Python pytest..."
+    if ! (cd collectors && uv run pytest tests/ -q 2>&1); then
+        echo ""
+        echo "ERROR: Python tests failed."
+        echo "  Run: cd collectors && uv run pytest tests/ -v"
+        echo ""
+        has_error=1
+    fi
+fi
+
 # --- Issue reference validation ---
 
 while read -r local_ref local_oid remote_ref remote_oid; do

@@ -2,6 +2,7 @@ mod baostock;
 mod chunk;
 mod download;
 mod export;
+use compass_data::import_compass;
 use compass_data::import_dolt;
 mod merge;
 mod progress;
@@ -95,6 +96,29 @@ enum Command {
         /// Overwrite existing data instead of skipping duplicates
         #[arg(long, default_value_t = false)]
         overwrite: bool,
+
+        /// Incremental: only import symbols with tradedate >= since (YYYYMMDD)
+        #[arg(long)]
+        since: Option<String>,
+    },
+
+    /// Import data from compass_data Dolt into Parquet
+    ImportCompass {
+        /// Dolt data directory
+        #[arg(long, default_value = "compass_data")]
+        dolt_dir: PathBuf,
+
+        /// Output Parquet directory
+        #[arg(long, default_value = "parquet_data")]
+        output: PathBuf,
+
+        /// Table to import: stock_basic, fin_indicators
+        #[arg(long)]
+        table: String,
+
+        /// Overwrite existing data
+        #[arg(long, default_value_t = false)]
+        overwrite: bool,
     },
 
     /// Merge staging DuckDB into Parquet main database
@@ -181,6 +205,7 @@ async fn main() {
             start_date,
             end_date,
             overwrite,
+            since,
         } => {
             if let Err(e) = import_dolt::run(
                 dolt_dir,
@@ -190,8 +215,24 @@ async fn main() {
                 start_date.as_deref(),
                 end_date.as_deref(),
                 overwrite,
+                since.as_deref(),
             ) {
                 error!("Import failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::ImportCompass {
+            dolt_dir,
+            output,
+            table,
+            overwrite,
+        } => {
+            let table: import_compass::CompassTable = table.parse().unwrap_or_else(|e| {
+                error!("{e}");
+                std::process::exit(1);
+            });
+            if let Err(e) = import_compass::run(dolt_dir, output, table, overwrite) {
+                error!("ImportCompass failed: {e}");
                 std::process::exit(1);
             }
         }
