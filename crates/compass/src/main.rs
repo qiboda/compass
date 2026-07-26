@@ -269,7 +269,15 @@ impl CompassApp {
             self.timeframe_index = tf;
 
             if ui.button("Fetch").clicked() {
-                let symbol = self.stock_picker.selected_symbol.clone();
+                let symbol = if self.stock_picker.selected_exchange.is_empty() {
+                    self.stock_picker.selected_symbol.clone()
+                } else {
+                    format!(
+                        "{}.{}",
+                        self.stock_picker.selected_exchange.to_lowercase(),
+                        self.stock_picker.selected_symbol
+                    )
+                };
                 let timeframe = timeframe_value(self.timeframe_index);
                 info!(
                     symbol = %symbol,
