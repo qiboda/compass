@@ -22,7 +22,7 @@ pub struct SymbolInfo {
 
 /// Live market data for a stock.
 ///
-/// Fetched from EastMoney realtime API. All fields are optional — the API
+/// Fetched from realtime API. All fields are optional — the API
 /// may return `null` for any field, especially outside trading hours.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeQuote {

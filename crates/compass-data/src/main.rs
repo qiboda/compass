@@ -13,8 +13,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 /// compass-data — A-share stock data pipeline
 ///
-/// Manages OHLCV data from multiple sources (EastMoney, Dolt) into a
-/// Parquet-based main database, with a staging DuckDB for incremental updates.
+/// Manages OHLCV data from Dolt into a Parquet-based main database.
 #[derive(Parser)]
 #[command(name = "compass-data")]
 struct Cli {

@@ -214,7 +214,7 @@ it shuts everything down cleanly.
 | Thread | Role | Code |
 |---|---|---|
 | **Main (UI)** | egui rendering, citizen outbox drain, event routing, result slot handler | `CompassApp::ui()` |
-| **AsyncDispatcher** | Tokio multi-thread runtime, receives `FetchRequest`, runs `CachedProvider`, sends `FetchResponse` | `AsyncDispatcher` via `backend.rs` |
+| **AsyncDispatcher** | Tokio multi-thread runtime, receives `FetchRequest`, runs `DuckDbProvider`, sends `FetchResponse` | `AsyncDispatcher` via `backend.rs` |
 
 The old pattern used a manual `std::thread::spawn` + `mpsc::channel` +
 `Arc<Mutex<CompassState>>`. The new pattern replaces all three with
@@ -249,24 +249,17 @@ AsyncDispatcher (tokio runtime)
   │  work_slot receives FetchRequest
   │
   ▼
-CachedProvider::fetch_bars("600519", "1d", start, end)
+DuckDbProvider::fetch_bars("600519", "1d", start, end)
   │
-  ├─ 1. Check negative cache → is this symbol known to have no data? (TTL 7d)
-  │     If yes → return DataError::NoData immediately (no HTTP call)
+  ├─ 1. Query in-memory stock_daily table → cache hit? Return bars.
   │
-  ├─ 2. Check inflight dedup → is another fetch for this same symbol already running?
-  │     If yes → return NoData (caller will retry or ignore)
+  ├─ 2. Cache miss → read parquet_data/stock_daily/SH600519.parquet via read_parquet()
+  │     Validates symbol, maps exchange (to_exchange), reads file with date filter
   │
-  ├─ 3. Try DuckDB cache → SELECT FROM stock_daily WHERE symbol='600519'
-  │     If non-empty result → cache hit! Return bars. No remote call.
+  ├─ 3. Cache-warm: INSERT OR IGNORE parquet data into in-memory table
+  │     Subsequent queries hit memory, not disk
   │
-  ├─ 4. Cache miss → EastMoneyProvider::fetch_bars()
-  │     HTTP GET to push2his.eastmoney.com → parse JSON → Vec<Bar>
-  │
-  ├─ 5. If successful → DuckDbProvider::save_bars() (write-through to cache)
-  │     If NoData → mark negative cache (skip this symbol for 7 days)
-  │
-  └─ 6. Clear inflight, return FetchResponse to result_signal
+  └─ 4. Return FetchResponse to result_signal
   │
   ▼
 result_slot handler (called on UI thread)
@@ -282,39 +275,22 @@ UI (next frame)
   │  chart.show(ui) renders candlestick chart
 ```
 
-### Why read-through cache?
+### Why local-only?
 
-The CachedProvider pattern is "check local first, fetch remote on miss, write
-back to local." This gives three benefits:
-
-1. **Instant replay**: after the first fetch, repeated views of the same stock
-   load from DuckDB — no network, no rate limiting.
-2. **Offline capability**: once cached, you can view charts without internet.
-3. **API respect**: fewer HTTP calls to EastMoney means fewer chances of being
-   rate-limited or blocked.
-
-### Why negative cache?
-
-EastMoney returns `{"data": null}` for stocks that don't exist or delisted
-stocks. Without negative caching, every "Fetch" click would hit the API, get
-null, and waste a request. With negative caching (TTL 7 days), the first miss
-marks the symbol; subsequent fetches within 7 days return NoData instantly.
-
-### Why inflight dedup?
-
-If the user clicks "Fetch" twice before the first request completes, two
-identical HTTP calls would race. Inflight dedup tracks which
-(symbol, timeframe) pairs currently have an active request. The second click
-returns NoData instead of starting a duplicate fetch.
+With #31 and #32, the GUI reads all data from local Parquet files. No remote
+fallback, no negative cache, no inflight dedup. The data pipeline (import from
+Dolt, collectors from EastMoney) runs offline; the GUI only queries what's
+already on disk.
 
 ## Data pipeline: CLI (compass-data)
 
-The CLI manages data offline, before the GUI ever runs. It has four subcommands
+The CLI manages data offline, before the GUI ever runs. It has three subcommands
 that form a pipeline:
 
 ```
-EastMoney API ──download──► staging.duckdb ──merge──► parquet_data/ ──export──► compass.duckdb
 Dolt DB ───────import─────► parquet_data/
+staging.duckdb ──merge───► parquet_data/
+parquet_data/ ──export───► compass.duckdb
 ```
 
 The project also maintains its own Dolt repository `compass_data/` for
@@ -351,14 +327,6 @@ Key design decisions:
 - **Known limitation**: REPORTDATE-based increments cannot detect revisions to
   already-fetched periods (e.g. 五粮液 2025Q1 revision). A periodic `--refresh N`
   flag is planned (see issue #27).
-
-### download: EastMoney → staging
-- Enumerates all A-share symbols via EastMoney search API
-- Fetches stock basic info (name, industry, list date)
-- Detects gaps (compares existing data range with requested range)
-- Downloads OHLCV bars in chunks (max 2000 bars per request)
-- Rate-limited: configurable concurrency (default 2) and delay between requests (default 1s)
-- Writes to staging DuckDB via INSERT OR IGNORE (skip duplicates by default)
 
 ### import: Dolt → Parquet
 - Queries Dolt `investment_data` database via `dolt sql -r parquet`
@@ -516,24 +484,24 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 |---|---|---|---|
 | 1 | GUI framework | egui 0.33 + eframe | Pure-Rust immediate-mode GUI. No HTML/CSS/JS, no webview dependency. Compiles to a single native binary. |
 | 2 | Chart widget | egui-charts 0.2 | Candlestick chart with built-in pan, zoom, crosshair. Matches the egui ecosystem. |
-| 3 | Async runtime | tokio (rt-multi-thread) | reqwest requires tokio. Multi-thread runtime lets the worker handle concurrent fetches. CLI uses current_thread for simplicity. |
-| 4 | HTTP client | reqwest 0.12 (rustls-tls) | No OpenSSL dependency (rustls). Configurable timeout + retry. JSON deserialization built in. |
+| 3 | Async runtime | tokio (rt-multi-thread) | DuckDbProvider uses tokio::spawn_blocking for synchronous DuckDB queries. CLI uses current_thread for simplicity. |
+| 4 | HTTP client | reqwest 0.12 (rustls-tls) | Used only by compass-data CLI (kept for potential future use). GUI has no HTTP dependency. |
 | 5 | Database | duckdb 1.0 (bundled) | OLAP-optimized columnar engine. Reads/writes Parquet natively. The `bundled` feature ships the C library — no system duckdb required. |
 | 6 | DB threading | spawn_blocking + Mutex | DuckDB is synchronous C. `spawn_blocking` moves queries to a thread pool so they don't block the async runtime. Mutex on the DuckDB connection ensures exclusive access. |
-| 7 | Serialization | serde + serde_json | EastMoney API returns JSON. serde derives on all data types. |
+| 7 | Serialization | serde + serde_json | Config parsing and test data. serde derives on all data types. |
 | 8 | Time handling | chrono 0.4 | UTC timestamps, date arithmetic (range_start/end calculation), JSON parse support. |
 | 9 | Error types | thiserror 2 (library), anyhow 1 (binaries) | Precise `DataError` enum with `From` impls for `?` propagation in the library. `anyhow` for context-wrapping in binary entry points. |
 | 10 | Logging | tracing + subscriber + appender | Structured, async, level-filtered. Daily rolling files via tracing-appender. |
 | 11 | Async traits | async-trait 0.1 | Native async traits in Rust are still unstable. This macro is the standard workaround. |
 | 12 | Config | toml → Deserialize | Simple, readable format. `#[serde(default)]` on every field means partial configs work. |
 | 13 | CLI args | clap 4 (derive) | Derive macro generates the CLI parser from a struct. Type-safe, self-documenting. |
-| 14 | Progress bars | indicatif 0.17 | Spinner + progress bar for long-running CLI operations (download, import). |
+| 14 | Progress bars | indicatif 0.17 | Spinner + progress bar for long-running CLI operations (import). |
 | 15 | Concurrency | futures Semaphore + buffer_unordered | Bounded parallelism for CLI download. Semaphore caps concurrent requests; buffer_unordered preserves order while processing results as they arrive. |
 | 16 | Reactive state | egui_mobius_reactive `Dynamic<T>` | Per-field `Dynamic<T>` replaces monolithic `Arc<Mutex<CompassState>>`. No manual version counter, no cross-field lock contention. Each field is independently readable/writable. |
 | 17 | Citizen pattern | egui_citizen (Citizen trait) | Frameworks citizen lifecycle (register, activate, deactivate, drain) and eliminates manual thread wiring. Citizens use outbox pattern — no direct backend coupling. |
 | 18 | Dock layout | egui_dock 0.20 | Tabbed dockable panels with resize and rearrange. Bridges to citizen activation via TabViewer. Replaces manual panel layout. |
 | 19 | Async dispatch | egui_mobius `Signal`/`Slot` + `AsyncDispatcher` | Typed channels replace `mpsc::channel` for command dispatch. `AsyncDispatcher` manages its own tokio runtime — no `std::thread::spawn` + `rt.block_on` boilerplate. |
-| 20 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction lets us swap backends: DuckDB, EastMoney, Parquet — all behind the same interface. Testable with mock implementations. |
+| 20 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction for data backends: DuckDB, Parquet — all behind the same interface. Testable with mock implementations. |
 | 21 | Parquet storage | DuckDB read_parquet + COPY TO | Columnar format partitioned by symbol. Queryable without loading into tables. |
 | 22 | Dolt import | dolt CLI → Parquet (direct) | Offline bulk import of 18M+ rows. Dolt `sql -r parquet` writes binary Parquet directly, skipping the CSV intermediary. |
 

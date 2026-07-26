@@ -1,23 +1,18 @@
 # Data Providers
 
 Compass abstracts all stock data access behind a **trait system**. This lets us
-swap backends without changing the code that consumes them — the GUI doesn't
-care whether bars come from DuckDB or EastMoney; it just calls
-`provider.fetch_bars()`.
+swap backends without changing the code that consumes them — the GUI uses
+`DuckDbProvider` directly; it just calls `provider.fetch_bars()`.
 
 ## Why traits?
 
 Three problems demanded abstraction:
 
-1. **Multiple data sources**: Compass pulls from EastMoney (HTTP), Dolt (CSV
-   export), DuckDB (local cache), and Parquet (main database). Without a shared
-   interface, every consumer would need to know which backend it's talking to.
+1. **Multiple data sources**: Compass pulls from Dolt (CSV export), DuckDB
+   (in-memory cache), and Parquet (main database). Without a shared interface,
+   every consumer would need to know which backend it's talking to.
 
-2. **Caching layer**: The GUI needs read-through caching — check local first,
-   fetch remote on miss, write back to local. A generic `CachedProvider<R, C>`
-   can wrap any reader+cache pair without duplicating the cache logic.
-
-3. **Testability**: Unit tests can provide mock implementations that return
+2. **Testability**: Unit tests can provide mock implementations that return
    predefined data, avoiding real HTTP calls and real databases.
 
 ## The three traits
@@ -48,15 +43,14 @@ pub trait NegativeCache: Send + Sync {
 
 ### DataProvider — read-only access
 The core fetch interface. Anything that can produce `Vec<Bar>` for a given
-symbol/timeframe/date-range implements this. So far: EastMoneyProvider,
-DuckDbProvider, ParquetReader, CachedProvider, and mock implementations
-in tests.
+symbol/timeframe/date-range implements this. So far: DuckDbProvider,
+ParquetReader, and mock implementations in tests.
 
 `search_symbols` is secondary — it powers the symbol search box in the GUI.
 Returns a list of `SymbolInfo { code, name }` matching the query.
 
 ### DataWriter — write-through persistence
-Called by CachedProvider after a cache miss to persist freshly fetched bars.
+Called after a fetch to persist bars locally.
 The `overwrite` flag controls behavior: `false` = INSERT OR IGNORE (skip
 duplicates), `true` = INSERT OR REPLACE (update existing). DuckDbProvider
 is the only implementor.

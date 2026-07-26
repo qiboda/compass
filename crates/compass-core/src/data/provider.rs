@@ -32,7 +32,7 @@ pub enum DataError {
     #[error("parse: {0}")]
     Parse(String),
 
-    /// EastMoney rate limit hit. Contains retry-after seconds.
+    /// API rate limit hit. Contains retry-after seconds.
     #[error("rate limited, retry after {0}s")]
     #[allow(dead_code)]
     RateLimited(u64),
@@ -52,7 +52,7 @@ pub enum DataError {
 /// Read-only access to stock market data.
 ///
 /// Implementors fetch OHLCV bars and search symbols. This is the core
-/// abstraction that lets Compass swap between DuckDB, EastMoney, Parquet,
+/// abstraction that lets Compass swap between DuckDB, Parquet,
 /// and synthetic data without changing consumer code.
 #[async_trait]
 pub trait DataProvider: Send + Sync {
@@ -75,8 +75,7 @@ pub trait DataProvider: Send + Sync {
 
 /// Write-through persistence for fetched bars.
 ///
-/// Called by [`CachedProvider`](super::CachedProvider) after a cache miss
-/// to persist data locally. The `overwrite` parameter controls whether
+/// Called by the data pipeline after a cache miss to persist data locally.
 /// existing rows are skipped (`false`, migration-style) or replaced (`true`).
 #[async_trait]
 pub trait DataWriter: Send + Sync {
