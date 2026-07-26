@@ -4,6 +4,8 @@ A-share stock chart desktop application built with egui. Data pipeline uses
 local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks),
 with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for querying.
 
+**项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
+
 ---
 
 ## ⚡ GRILL-ME FIRST (ALWAYS)
@@ -14,6 +16,10 @@ This is NON-NEGOTIABLE. No exceptions.
 The grill-me interview must complete with "shared understanding reached" before
 you proceed to any other action — including reading files, classifying the
 request, creating todos, or writing code.
+
+**Grill-me completes → must enter PRE-IMPLEMENTATION GATE (below) for any
+feature or bugfix work. Grill-me is step 0; the gate is steps 1-4.
+Do NOT skip the gate just because grill-me reached shared understanding.**
 
 ---
 
