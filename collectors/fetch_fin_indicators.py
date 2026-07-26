@@ -32,7 +32,6 @@ import argparse
 import asyncio
 import csv
 import json
-import math
 import random
 import sys
 import time
@@ -77,6 +76,7 @@ EM_PAGE_SIZE = 100  # max for this API
 
 def _last_report_date(report_name: str, state_path: Path) -> str:
     import subprocess
+
     dolt_dir = Path(__file__).resolve().parent.parent / "compass_data"
     if not (dolt_dir / ".dolt").exists():
         if state_path.exists():
@@ -85,9 +85,19 @@ def _last_report_date(report_name: str, state_path: Path) -> str:
 
     table = "fin_indicators" if report_name == "RPT_LICO_FN_CPD" else report_name
     result = subprocess.run(
-        ["dolt", "--data-dir", str(dolt_dir), "sql", "-r", "csv", "-q",
-         f"SELECT MAX(report_date) FROM {table}"],
-        capture_output=True, text=True, timeout=30
+        [
+            "dolt",
+            "--data-dir",
+            str(dolt_dir),
+            "sql",
+            "-r",
+            "csv",
+            "-q",
+            f"SELECT MAX(report_date) FROM {table}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode == 0:
         lines = result.stdout.strip().split("\n")
@@ -101,6 +111,7 @@ def _last_report_date(report_name: str, state_path: Path) -> str:
 
 
 # ── Throttle ────────────────────────────────────────────────────
+
 
 class Throttle:
     def __init__(self, min_interval: float = EM_MIN_INTERVAL):
@@ -120,15 +131,14 @@ class Throttle:
 
 # ── Field flattener ─────────────────────────────────────────────
 
+
 def flatten_record(item: dict) -> dict:
     """Flatten nested fields and normalize types for CSV export."""
     record = {}
     for k, v in item.items():
         if v is None:
             record[k] = ""
-        elif isinstance(v, (int, float)):
-            record[k] = v
-        elif isinstance(v, str):
+        elif isinstance(v, (int, float, str)):
             record[k] = v
         else:
             record[k] = str(v)
@@ -136,6 +146,7 @@ def flatten_record(item: dict) -> dict:
 
 
 # ── Fetcher ─────────────────────────────────────────────────────
+
 
 async def fetch_period(
     session: AsyncSession,
@@ -153,7 +164,7 @@ async def fetch_period(
         params = {
             "reportName": report_name,
             "columns": "ALL",
-            "filter": f'(REPORTDATE=\'{report_date}\')',
+            "filter": f"(REPORTDATE='{report_date}')",
             "sortColumns": "SECURITY_CODE",
             "sortTypes": "1",
             "pageSize": page_size,
@@ -178,10 +189,12 @@ async def fetch_period(
                 break
 
             except Exception as e:
-                wait = min(2 ** attempt, 30) + random.uniform(0, 3)
+                wait = min(2**attempt, 30) + random.uniform(0, 3)
                 if attempt < EM_MAX_RETRIES - 1:
-                    print(f"    retry {attempt + 1}/{EM_MAX_RETRIES} in {wait:.0f}s: {e}",
-                          file=sys.stderr)
+                    print(
+                        f"    retry {attempt + 1}/{EM_MAX_RETRIES} in {wait:.0f}s: {e}",
+                        file=sys.stderr,
+                    )
                     await asyncio.sleep(wait)
                 else:
                     raise
@@ -209,6 +222,7 @@ async def fetch_period(
 
 # ── CSV writer ──────────────────────────────────────────────────
 
+
 def write_csv(records: list[dict], filepath: Path, append: bool = False):
     """Write records to CSV. Infers fieldnames from first record on first write."""
     if not records:
@@ -226,33 +240,35 @@ def write_csv(records: list[dict], filepath: Path, append: bool = False):
 
 # ── Main ────────────────────────────────────────────────────────
 
+
 async def main():
     parser = argparse.ArgumentParser(
         description="Fetch A-share financial indicators from EastMoney"
     )
     parser.add_argument(
-        "--report-name", default="RPT_LICO_FN_CPD",
-        help="EastMoney reportName (default: RPT_LICO_FN_CPD)"
+        "--report-name",
+        default="RPT_LICO_FN_CPD",
+        help="EastMoney reportName (default: RPT_LICO_FN_CPD)",
     )
     parser.add_argument(
-        "--years", default="",
-        help="Comma-separated years to fetch (default: all 2000-2026)"
+        "--years", default="", help="Comma-separated years to fetch (default: all 2000-2026)"
+    )
+    parser.add_argument("--output", default="", help="Output CSV path (default: {report_name}.csv)")
+    parser.add_argument(
+        "--periods",
+        default="Q1,Q2,Q3,FY",
+        help="Which quarters to fetch: Q1,Q2,Q3,FY (default: all)",
     )
     parser.add_argument(
-        "--output", default="",
-        help="Output CSV path (default: {report_name}.csv)"
+        "--page-size",
+        type=int,
+        default=EM_PAGE_SIZE,
+        help=f"Records per page (default: {EM_PAGE_SIZE})",
     )
     parser.add_argument(
-        "--periods", default="Q1,Q2,Q3,FY",
-        help="Which quarters to fetch: Q1,Q2,Q3,FY (default: all)"
-    )
-    parser.add_argument(
-        "--page-size", type=int, default=EM_PAGE_SIZE,
-        help=f"Records per page (default: {EM_PAGE_SIZE})"
-    )
-    parser.add_argument(
-        "--incremental", action="store_true",
-        help="Only fetch new report periods. Checks Dolt data_updates first, falls back to .state.json"
+        "--incremental",
+        action="store_true",
+        help="Only fetch new report periods. Checks Dolt data_updates first, falls back to .state.json",
     )
     args = parser.parse_args()
 
@@ -300,7 +316,10 @@ async def main():
     page_size = args.page_size
 
     print(f"Report: {report_name}", file=sys.stderr)
-    print(f"Periods: {len(all_dates)} ({periods}, {all_dates[0] if all_dates else 'none'}..{all_dates[-1] if all_dates else 'none'})", file=sys.stderr)
+    print(
+        f"Periods: {len(all_dates)} ({periods}, {all_dates[0] if all_dates else 'none'}..{all_dates[-1] if all_dates else 'none'})",
+        file=sys.stderr,
+    )
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
     print(f"Page size: {page_size}", file=sys.stderr)
     print(file=sys.stderr)
@@ -313,12 +332,12 @@ async def main():
     async with AsyncSession(impersonate="chrome142") as session:
         for i, report_date in enumerate(all_dates):
             date_label = report_date
-            print(f"[{i+1}/{len(all_dates)}] {date_label} ...", file=sys.stderr, end=" ", flush=True)
+            print(
+                f"[{i + 1}/{len(all_dates)}] {date_label} ...", file=sys.stderr, end=" ", flush=True
+            )
 
             try:
-                records = await fetch_period(
-                    session, throttle, report_name, report_date, page_size
-                )
+                records = await fetch_period(session, throttle, report_name, report_date, page_size)
             except Exception as e:
                 print(f"FAILED: {e}", file=sys.stderr)
                 continue
@@ -343,8 +362,10 @@ async def main():
 
     print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
     if state_path.exists():
-        print(f"State: {state_path} → last_report_date={state_path.read_text().strip()[:80]}...",
-              file=sys.stderr)
+        print(
+            f"State: {state_path} → last_report_date={state_path.read_text().strip()[:80]}...",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

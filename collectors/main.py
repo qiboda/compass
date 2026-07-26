@@ -44,8 +44,20 @@ def import_stock_basic():
 
     run_dolt("DROP TABLE IF EXISTS _tmp_sb")
     result = subprocess.run(
-        ["dolt", "--data-dir", str(DOLT_DIR), "table", "import", "-c", "_tmp_sb", "--continue", str(csv_path)],
-        capture_output=True, text=True, timeout=120
+        [
+            "dolt",
+            "--data-dir",
+            str(DOLT_DIR),
+            "table",
+            "import",
+            "-c",
+            "_tmp_sb",
+            "--continue",
+            str(csv_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         print(f"  Import failed: {result.stderr}", file=sys.stderr)
@@ -82,8 +94,20 @@ def import_fin_indicators():
 
     run_dolt("DROP TABLE IF EXISTS _tmp_fin")
     result = subprocess.run(
-        ["dolt", "--data-dir", str(DOLT_DIR), "table", "import", "-c", "_tmp_fin", "--continue", str(csv_path)],
-        capture_output=True, text=True, timeout=300
+        [
+            "dolt",
+            "--data-dir",
+            str(DOLT_DIR),
+            "table",
+            "import",
+            "-c",
+            "_tmp_fin",
+            "--continue",
+            str(csv_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if result.returncode != 0:
         print(f"  Import failed: {result.stderr}", file=sys.stderr)
@@ -123,14 +147,14 @@ def import_fin_indicators():
     count = run_dolt("SELECT COUNT(*) FROM fin_indicators", csv=True)
     lines = count.stdout.strip().split("\n")
     total = lines[-1] if len(lines) > 1 else "?"
-    run_dolt("UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'")
+    run_dolt(
+        "UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'"
+    )
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
 def sync_investment_data(restart: bool = False):
     """Sync investment_data: fetch from chenditc, push to skwy fork."""
-    import os
-    import signal
 
     invest_dir = PROJECT_ROOT / "investment_data"
     upstream = "origin"
@@ -140,14 +164,19 @@ def sync_investment_data(restart: bool = False):
         print("[sync-investment] ERROR: investment_data not found", file=sys.stderr)
         return
 
-    dolt = lambda *args: subprocess.run(
-        ["dolt", "--data-dir", str(invest_dir)] + list(args),
-        capture_output=True, text=True, timeout=300
-    )
+    def dolt(*args):
+        return subprocess.run(
+            ["dolt", "--data-dir", str(invest_dir)] + list(args),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
 
     if restart:
         print("[sync-investment] Stopping Dolt SQL server...", file=sys.stderr)
-        result = subprocess.run(["pkill", "-f", "dolt sql-server.*investment_data"], capture_output=True)
+        result = subprocess.run(
+            ["pkill", "-f", "dolt sql-server.*investment_data"], capture_output=True
+        )
         if result.returncode == 0:
             print("  Server stopped", file=sys.stderr)
 
@@ -171,8 +200,9 @@ def sync_investment_data(restart: bool = False):
             print("[sync-investment] Restarting server...", file=sys.stderr)
             subprocess.Popen(
                 ["nohup", "bash", str(server_script)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
 
 
@@ -183,8 +213,12 @@ def main():
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
     fetch.add_argument("target", choices=["stock_basic", "fin_indicators"])
     fetch.add_argument("--years", default="", help="Years to fetch (fin_indicators only)")
-    fetch.add_argument("--incremental", action="store_true", help="Incremental mode (fin_indicators only)")
-    fetch.add_argument("--resume", action="store_true", help="Resume interrupted fetch (stock_basic only)")
+    fetch.add_argument(
+        "--incremental", action="store_true", help="Incremental mode (fin_indicators only)"
+    )
+    fetch.add_argument(
+        "--resume", action="store_true", help="Resume interrupted fetch (stock_basic only)"
+    )
     fetch.add_argument("--max-pages", type=int, default=200, help="Max pages (stock_basic only)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
@@ -192,20 +226,26 @@ def main():
 
     sub.add_parser("sync", help="Fetch all + import all")
 
-    inv = sub.add_parser("sync-investment", help="Sync investment_data from upstream (chenditc) to fork (skwy)")
-    inv.add_argument("--restart", action="store_true", help="Stop server before sync, restart after")
+    inv = sub.add_parser(
+        "sync-investment", help="Sync investment_data from upstream (chenditc) to fork (skwy)"
+    )
+    inv.add_argument(
+        "--restart", action="store_true", help="Stop server before sync, restart after"
+    )
 
     args = parser.parse_args()
 
     if args.command == "fetch":
         if args.target == "stock_basic":
             from fetch_stock_basic import main as run
+
             sys.argv = ["fetch_stock_basic", "--max-pages", str(args.max_pages)]
             if args.resume:
                 sys.argv.append("--resume")
             asyncio.run(run())
         elif args.target == "fin_indicators":
             from fetch_fin_indicators import main as run
+
             sys.argv = ["fetch_fin_indicators"]
             if args.years:
                 sys.argv.extend(["--years", args.years])
@@ -223,18 +263,24 @@ def main():
         print("[sync] Fetching stock_basic...", file=sys.stderr)
         sys.argv = ["fetch_stock_basic", "--max-pages", "200"]
         from fetch_stock_basic import main as run_sb
+
         asyncio.run(run_sb())
         import_stock_basic()
 
         print("\n[sync] Fetching fin_indicators (incremental)...", file=sys.stderr)
         sys.argv = ["fetch_fin_indicators", "--incremental"]
         from fetch_fin_indicators import main as run_fi
+
         asyncio.run(run_fi())
         import_fin_indicators()
 
         print("\n[sync] Updating data_updates...", file=sys.stderr)
-        run_dolt("UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM stock_basic) WHERE table_name='stock_basic'")
-        run_dolt("UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'")
+        run_dolt(
+            "UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM stock_basic) WHERE table_name='stock_basic'"
+        )
+        run_dolt(
+            "UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'"
+        )
         print("[sync] Complete.", file=sys.stderr)
 
     elif args.command == "sync-investment":
