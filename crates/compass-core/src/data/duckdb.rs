@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, OptionalExt, params};
 use egui_charts::model::Bar;
+use tracing;
 
 use crate::data::provider::{DataError, DataProvider, DataWriter, NegativeCache};
 use crate::model::SymbolInfo;
@@ -229,9 +230,19 @@ impl DuckDbProvider {
     // -----------------------------------------------------------------------
 
     fn date_str_to_utc(date_str: &str) -> Option<DateTime<Utc>> {
-        let naive = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
-        let naive_dt = naive.and_hms_opt(0, 0, 0)?;
-        Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc))
+        if let Ok(naive) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            let naive_dt = naive.and_hms_opt(0, 0, 0)?;
+            return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
+        }
+        if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
+            return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
+        }
+        if let Ok(naive_dt) =
+            chrono::NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S%.f")
+        {
+            return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
+        }
+        None
     }
 
     // -----------------------------------------------------------------------
@@ -660,6 +671,11 @@ impl DataProvider for DuckDbProvider {
                     .join("stock_daily")
                     .join(format!("{prefixed}.parquet"));
                 if parquet_path.exists() {
+                    tracing::debug!(
+                        symbol = %symbol,
+                        prefixed = %prefixed,
+                        "parquet fallback - reading from file"
+                    );
                     let path_str = parquet_path.to_string_lossy();
                     let sql = format!(
                         "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
@@ -682,6 +698,12 @@ impl DataProvider for DuckDbProvider {
                         .map_err(DataError::Database)?
                         .collect::<Result<Vec<_>, duckdb::Error>>()
                         .map_err(DataError::Database)?;
+
+                    tracing::debug!(
+                        symbol = %symbol,
+                        rows_from_parquet = rows.len(),
+                        "parquet fallback result"
+                    );
 
                     // Cache-warm: persist parquet data into in-memory table
                     if !rows.is_empty() {
