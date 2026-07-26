@@ -210,10 +210,6 @@ cargo run --bin compass-data -- import                    # all 6000+ stocks (me
 cargo run --bin compass-data -- import --symbols 000001,600519  # specific stocks
 cargo run --bin compass-data -- import --overwrite        # full overwrite (ignore merge)
 
-# Download from EastMoney (fallback) into staging DuckDB
-cargo run --bin compass-data -- download --symbols 600519
-cargo run --bin compass-data -- download --symbols all --overwrite  # force overwrite
-
 # Merge staging DuckDB into Parquet main database
 cargo run --bin compass-data -- merge
 cargo run --bin compass-data -- merge --overwrite         # staging wins on conflict
@@ -225,7 +221,7 @@ cargo run --bin compass-data -- export --overwrite        # force overwrite
 
 All commands default to **merge/skip** behavior (migration-style):
 existing unique keys are preserved, only new data is added. Pass `--overwrite`
-to replace existing data. Applies to `import`, `download`, `merge`, `export`.
+to replace existing data. Applies to `import`, `merge`, `export`.
 
 ## Architecture
 

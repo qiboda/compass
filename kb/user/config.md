@@ -23,15 +23,6 @@ mkdir -p ~/.config/compass
 # Default: "parquet_data"
 parquet_dir = "parquet_data"
 
-[api]
-# EastMoney K-line API endpoint.
-# Default: "https://push2his.eastmoney.com"
-base_url = "https://push2his.eastmoney.com"
-
-# HTTP request timeout in seconds.
-# Default: 10
-timeout_secs = 10
-
 [app]
 # Stock code displayed when the app starts.
 # Default: "000001"
@@ -49,8 +40,6 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 | Section | Key | Default |
 |---|---|---|
 | `database` | `parquet_dir` | `parquet_data` |
-| `api` | `base_url` | `https://push2his.eastmoney.com` |
-| `api` | `timeout_secs` | `10` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
 

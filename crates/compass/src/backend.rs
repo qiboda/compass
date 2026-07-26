@@ -1,6 +1,6 @@
 //! Async backend: receives `FetchRequest` off the signal bus, dispatches
-//! to the `CachedProvider` (EastMoneyReader → DuckDb cache) on a Tokio
-//! runtime, and returns `FetchResponse` through the result slot.
+//! to the DuckDbProvider (local Parquet-backed) on a Tokio runtime, and
+//! returns `FetchResponse` through the result slot.
 //!
 //! `wire_backend` builds the full pipeline and returns the UI-side handles:
 //! a `Signal<FetchRequest>` the UI uses to submit work, and a `BackendHandle`
@@ -9,16 +9,13 @@
 //! Pattern reference: `citizen_signal_async` example from egui-mobius.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use egui_lens::ReactiveEventLogger;
 use egui_mobius::dispatching::AsyncDispatcher;
 use egui_mobius::factory;
 use egui_mobius::signals::Signal;
 
-use compass_core::data::{
-    CachedProvider, duckdb::DuckDbProvider, eastmoney::EastMoneyProvider, provider::DataProvider,
-};
+use compass_core::data::{duckdb::DuckDbProvider, provider::DataProvider};
 use compass_core::model::AppConfig;
 
 use crate::messages::{FetchRequest, FetchResponse};
@@ -44,46 +41,30 @@ pub fn wire_backend(
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
     let (result_signal, mut result_slot) = factory::create_signal_slot::<FetchResponse>();
 
-    // Capture config fields by-value so the async handler is 'static.
-    let base_url = config.api.base_url.clone();
     let parquet_dir = std::path::PathBuf::from(&config.database.parquet_dir);
-    let timeout_secs = config.api.timeout_secs;
-
-    // Create the HTTP client once — reqwest::Client holds an internal
-    // connection pool and is designed to be cloned and reused.
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-        .expect("failed to create HTTP client");
 
     let dispatcher = AsyncDispatcher::<FetchRequest, FetchResponse>::new();
     dispatcher.attach_async(work_slot, result_signal, move |req: FetchRequest| {
-        let client = client.clone();
-        let base_url = base_url.clone();
         let parquet_dir = parquet_dir.clone();
         async move {
-            let reader = EastMoneyProvider::new(
-                client,
-                base_url,
-                "https://push2delay.eastmoney.com".to_string(),
-            );
-
-            let cache = match DuckDbProvider::new(parquet_dir.exists().then_some(parquet_dir)) {
+            let provider = match DuckDbProvider::new(parquet_dir.exists().then_some(parquet_dir)) {
                 Ok(p) => p,
                 Err(e) => {
                     return FetchResponse {
                         bars: vec![],
-                        error: Some(format!("failed to open duckdb cache: {e}")),
+                        error: Some(format!("failed to open duckdb: {e}")),
                     };
                 }
             };
-
-            let provider = CachedProvider::new(reader, cache);
 
             match provider
                 .fetch_bars(&req.symbol, &req.timeframe, req.range_start, req.range_end)
                 .await
             {
+                Ok(bars) if bars.is_empty() => FetchResponse {
+                    bars: vec![],
+                    error: Some(format!("no data for {}", req.symbol)),
+                },
                 Ok(bars) => FetchResponse { bars, error: None },
                 Err(e) => FetchResponse {
                     bars: vec![],

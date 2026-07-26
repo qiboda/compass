@@ -756,7 +756,6 @@ impl DataProvider for DuckDbProvider {
 
     async fn search_symbols(&self, _query: &str) -> Result<Vec<SymbolInfo>, DataError> {
         // DuckDB provider does not store symbol metadata.
-        // Symbol search is handled by the remote provider (e.g. EastMoney).
         Ok(Vec::new())
     }
 }
@@ -1471,14 +1470,13 @@ mod tests {
         assert!((bars[0].open - 10.5).abs() < 0.01);
     }
 
-    /// Verify that save_bars data (from EastMoney) takes priority over
+    /// Verify that save_bars data takes priority over
     /// parquet data for the same dates.
     #[tokio::test]
     async fn save_bars_takes_priority_over_parquet() {
         let (_tmp, provider) =
             setup_parquet_provider("SZ000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0)]);
 
-        // Simulate EastMoney fetching updated data for the same date
         let updated_bar = make_bar(2, 99.0, 100.0, 5000.0);
         provider
             .save_bars("000001", "1d", &[updated_bar], true)
