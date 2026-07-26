@@ -6,7 +6,8 @@ Usage:
     uv run python main.py fetch fin_indicators [--years 2024,2025] [--incremental]
     uv run python main.py import stock_basic
     uv run python main.py import fin_indicators
-    uv run python main.py sync    # fetch all + import all
+    uv run python main.py sync              # fetch all + import all
+    uv run python main.py sync-investment   # sync investment_data from upstream
 """
 
 import argparse
