@@ -85,11 +85,17 @@ fn main() -> eframe::Result {
             let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
             let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
 
-            // Create initial dock state with 2 tabs
-            let dock_state = DockState::new(vec![
-                Tab::new(TabKind::Chart),
-                Tab::new(TabKind::Logger),
-            ]);
+            // Create initial dock state with 2 tabs in vertical stack
+            let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
+            if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
+                && let Some(tree) = surface.node_tree_mut()
+            {
+                let _ = tree.split_below(
+                    egui_dock::NodeIndex::root(),
+                    0.75,
+                    vec![Tab::new(TabKind::Logger)],
+                );
+            }
 
             let stock_picker = StockPicker::new(
                 &config.app.default_symbol,
