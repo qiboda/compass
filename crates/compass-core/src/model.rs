@@ -112,7 +112,7 @@ pub enum Cmd {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    /// DuckDB cache file location (default: "compass.db").
+    /// Data directory settings (default: parquet_dir = "parquet_data").
     pub database: DatabaseConfig,
     #[serde(default)]
     /// EastMoney API settings.
@@ -125,9 +125,9 @@ pub struct AppConfig {
 /// Database connection settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseConfig {
-    #[serde(default = "default_db_path")]
-    /// Path to the DuckDB database file.
-    pub path: String,
+    #[serde(default = "default_parquet_dir")]
+    /// Path to the parquet_data directory for OHLCV data.
+    pub parquet_dir: String,
 }
 
 /// EastMoney API connection settings.
@@ -155,7 +155,7 @@ pub struct AppSection {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            path: default_db_path(),
+            parquet_dir: default_parquet_dir(),
         }
     }
 }
@@ -178,8 +178,8 @@ impl Default for AppSection {
     }
 }
 
-fn default_db_path() -> String {
-    "data/compass.db".into()
+fn default_parquet_dir() -> String {
+    "parquet_data".into()
 }
 fn default_base_url() -> String {
     "https://push2his.eastmoney.com".into()
@@ -277,6 +277,23 @@ default_timeframe = "1w"
         .unwrap();
         assert_eq!(config.app.default_symbol, "600519");
         assert_eq!(config.app.default_timeframe, "1w");
+    }
+
+    #[test]
+    fn database_config_defaults_to_parquet_data() {
+        let config = DatabaseConfig::default();
+        assert_eq!(config.parquet_dir, "parquet_data");
+    }
+
+    #[test]
+    fn appconfig_parses_parquet_dir_from_toml() {
+        let config: AppConfig = toml::from_str(
+            r#"[database]
+parquet_dir = "/custom/parquet"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.database.parquet_dir, "/custom/parquet");
     }
 
     #[test]

@@ -46,7 +46,7 @@ pub fn wire_backend(
 
     // Capture config fields by-value so the async handler is 'static.
     let base_url = config.api.base_url.clone();
-    let db_path = config.database.path.clone();
+    let parquet_dir = std::path::PathBuf::from(&config.database.parquet_dir);
     let timeout_secs = config.api.timeout_secs;
 
     // Create the HTTP client once — reqwest::Client holds an internal
@@ -60,7 +60,7 @@ pub fn wire_backend(
     dispatcher.attach_async(work_slot, result_signal, move |req: FetchRequest| {
         let client = client.clone();
         let base_url = base_url.clone();
-        let db_path = db_path.clone();
+        let parquet_dir = parquet_dir.clone();
         async move {
             let reader = EastMoneyProvider::new(
                 client,
@@ -68,7 +68,7 @@ pub fn wire_backend(
                 "https://push2delay.eastmoney.com".to_string(),
             );
 
-            let cache = match DuckDbProvider::new(&db_path) {
+            let cache = match DuckDbProvider::new(parquet_dir.exists().then_some(parquet_dir)) {
                 Ok(p) => p,
                 Err(e) => {
                     return FetchResponse {

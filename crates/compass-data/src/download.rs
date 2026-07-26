@@ -44,7 +44,7 @@ pub async fn run(
 
     let eastmoney = EastMoneyProvider::new(http_client, base_url.clone(), realtime_url.clone());
     let db = Arc::new(
-        DuckDbProvider::new(db_path.to_str().expect("db path must be valid UTF-8"))
+        DuckDbProvider::new_file(db_path.to_str().expect("db path must be valid UTF-8"))
             .expect("failed to open DuckDB"),
     );
 
@@ -593,7 +593,7 @@ mod tests {
         )
         .await;
 
-        let db = DuckDbProvider::new(db_path.to_str().unwrap()).expect("open");
+        let db = DuckDbProvider::new_file(db_path.to_str().unwrap()).expect("open");
         let range = db.get_stored_range("000001").await.expect("range");
         assert!(range.is_some(), "data should be saved to DB");
     }

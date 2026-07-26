@@ -25,7 +25,7 @@ pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwri
                 }
             };
 
-            let db = match DuckDbProvider::new(output.to_str().unwrap_or("export.duckdb")) {
+            let db = match DuckDbProvider::new_file(output.to_str().unwrap_or("export.duckdb")) {
                 Ok(d) => d,
                 Err(e) => {
                     error!("Failed to create DuckDB: {e}");

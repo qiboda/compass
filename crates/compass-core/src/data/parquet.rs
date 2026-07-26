@@ -17,7 +17,7 @@ use crate::model::{StockBasic, SymbolInfo};
 
 /// Reject symbols that contain non-alphanumeric characters to prevent
 /// SQL injection and path traversal via `read_parquet()` file paths.
-fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
+pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
     if symbol.is_empty() || !symbol.chars().all(|c| c.is_ascii_alphanumeric()) {
         return Err(DataError::NoData {
             symbol: symbol.to_string(),

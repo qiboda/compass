@@ -37,7 +37,7 @@ compass (GUI binary)
   │     ├── model.rs      ─ shared types: AppConfig, Bar, Cmd (legacy)
   │     ├── data/mod.rs   ─ CachedProvider (read-through cache + negative cache)
   │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
-  │     ├── data/duckdb.rs   ─ DuckDbProvider (local cache)
+  │     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
   │     ├── data/eastmoney.rs ─ EastMoneyProvider (HTTP API)
   │     ├── data/parquet.rs   ─ ParquetReader (main database)
   │     ├── data/symbol.rs    ─ Exchange inference, code conversion
@@ -400,9 +400,9 @@ Compass uses two database formats for different purposes:
     ├─ Stock basic: stock_basic.parquet (one file for all symbols)
     └─ Stock daily: stock_daily/{symbol}.parquet (one file per symbol)
 
-  DuckDB (data/compass.db / data/staging.duckdb)
-    ├─ GUI cache — stores fetched bars for instant replay
-    ├─ CLI staging — temporary buffer during download
+  DuckDB (in-memory for GUI, file-backed for CLI staging)
+    ├─ GUI — in-memory with Parquet fallback (reads parquet_data/ on cache miss)
+    ├─ CLI staging — temporary buffer during download (data/staging.duckdb)
     └─ Negative cache — tracks no-data symbols with TTL
 ```
 
@@ -482,7 +482,7 @@ fields are optional — missing keys fall back to sensible defaults defined in
 
 ```toml
 [database]
-path = "data/compass.db"           # where to store the cache
+parquet_dir = "parquet_data"           # parquet data directory
 
 [api]
 base_url = "https://push2his.eastmoney.com"
