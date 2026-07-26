@@ -81,6 +81,16 @@ local until fixed, not be amended mid-push.
 commit — do not push. If the user says "push" / "推送", only push — do not
 amend and re-commit. Never assume one implies the other.
 
+### Scope Discipline
+
+**Never silently change a planned approach.** If an external constraint
+(library bug, API incompatibility, missing crate) blocks the agreed-upon
+implementation, do NOT work around it by altering the feature design.
+Flag the issue to the user and ask for a decision.
+
+The grill-me decisions and the approved plan define the contract. Any
+deviation — even a pragmatic workaround — requires user approval first.
+
 ## Worktrees
 
 For isolated development (experiments, library migrations, multi-day features),

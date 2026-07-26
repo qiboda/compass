@@ -1,13 +1,16 @@
 use egui_citizen::{Citizen, CitizenId, CitizenState};
-use egui_lens::ReactiveEventLogger;
 
 use crate::state::SharedState;
 
-/// Logger panel citizen — powered by egui_lens.
+/// Logger panel citizen — displays accumulated log entries.
 ///
-/// Wraps `ReactiveEventLogger` which provides a terminal-like log viewer
-/// with column toggles (timestamps, log levels, messages), filtering,
-/// color-coded entries, and export-to-file.
+/// Reads from `SharedState::log` (a reactive `Dynamic<ReactiveEventLoggerState>`) and
+/// renders entries in a scrollable area. When empty, shows a placeholder.
+///
+/// Note: egui_lens 0.5.0 has a panic bug in `ReactiveEventLogger::show()` on empty
+/// state (logger.rs:271 — removal index out of bounds). The `ReactiveEventLogger` API
+/// is still used for writing (log_info, log_error, log_custom), but rendering falls
+/// back to a simple ScrollArea + label loop.
 pub struct LoggerPanel {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
@@ -28,7 +31,6 @@ impl Citizen for LoggerPanel {
 }
 
 impl LoggerPanel {
-    /// Creates a new `LoggerPanel` with the given identity and lifecycle state.
     pub fn new(citizen_id: CitizenId, citizen_state: CitizenState) -> Self {
         Self {
             citizen_id,
@@ -36,12 +38,17 @@ impl LoggerPanel {
         }
     }
 
-    /// Renders the logger panel via egui_lens.
-    ///
-    /// `ReactiveEventLogger` reads from the shared `Dynamic<ReactiveEventLoggerState>`
-    /// and renders the full terminal-like log viewer.
     pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState) {
-        let logger = ReactiveEventLogger::new(&state.log);
-        logger.show(ui);
+        let logger_state = state.log.get();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if logger_state.logs.is_empty() {
+                ui.label("No log entries yet.");
+            } else {
+                for entry in &logger_state.logs {
+                    ui.label(format!("{:?}", entry.log_message));
+                }
+            }
+        });
     }
 }
