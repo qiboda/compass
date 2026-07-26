@@ -51,7 +51,12 @@ pub fn drain_citizen(dispatcher: &mut Dispatcher, state: &SharedState) {
 /// `FetchBars` snapshots the current symbol and timeframe from shared
 /// state, constructs a `FetchRequest` with a 365-day range, pushes it onto
 /// the work signal bus, and sets the loading indicator.
-pub fn handle(msg: AppMessage, state: &SharedState, work_signal: &Signal<FetchRequest>, timeframe: String) {
+pub fn handle(
+    msg: AppMessage,
+    state: &SharedState,
+    work_signal: &Signal<FetchRequest>,
+    timeframe: String,
+) {
     match msg {
         AppMessage::FetchBars => {
             let symbol = state.symbol.get();

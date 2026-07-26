@@ -32,9 +32,10 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
     };
 
     let mut fonts = egui::FontDefinitions::default();
-    fonts
-        .font_data
-        .insert("SourceHanSansCN".into(), std::sync::Arc::new(egui::FontData::from_owned(font_bytes)));
+    fonts.font_data.insert(
+        "SourceHanSansCN".into(),
+        std::sync::Arc::new(egui::FontData::from_owned(font_bytes)),
+    );
     if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
         family.insert(0, "SourceHanSansCN".into());
     }
@@ -53,9 +54,7 @@ fn main() -> eframe::Result {
     let config = load_config();
 
     // Create reactive shared state
-    let shared_state = Arc::new(state::SharedState::new(
-        &config.app.default_symbol,
-    ));
+    let shared_state = Arc::new(state::SharedState::new(&config.app.default_symbol));
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
@@ -97,10 +96,7 @@ fn main() -> eframe::Result {
                 );
             }
 
-            let stock_picker = StockPicker::new(
-                &config.app.default_symbol,
-                &stock_list,
-            );
+            let stock_picker = StockPicker::new(&config.app.default_symbol, &stock_list);
 
             Ok(Box::new(CompassApp {
                 dock_state,
@@ -388,9 +384,8 @@ mod tests {
     #[test]
     fn filter_stocks_code_prefix_match() {
         let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(
-            &stocks, "600", &Exchange::All,
-        );
+        let result =
+            crate::widgets::searchable_dropdown::filter_stocks(&stocks, "600", &Exchange::All);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].symbol, "600036");
         assert_eq!(result[1].symbol, "600519");
@@ -399,9 +394,8 @@ mod tests {
     #[test]
     fn filter_stocks_name_substring_match() {
         let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(
-            &stocks, "银行", &Exchange::All,
-        );
+        let result =
+            crate::widgets::searchable_dropdown::filter_stocks(&stocks, "银行", &Exchange::All);
         assert_eq!(result.len(), 2);
         let found: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
         assert!(found.contains(&"000001"));
@@ -411,9 +405,7 @@ mod tests {
     #[test]
     fn filter_stocks_exchange_filter_sh() {
         let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(
-            &stocks, "", &Exchange::SH,
-        );
+        let result = crate::widgets::searchable_dropdown::filter_stocks(&stocks, "", &Exchange::SH);
         assert_eq!(result.len(), 3);
         let symbols: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
         assert!(symbols.contains(&"600519"));
@@ -423,18 +415,15 @@ mod tests {
     #[test]
     fn filter_stocks_exchange_filter_sz() {
         let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(
-            &stocks, "", &Exchange::SZ,
-        );
+        let result = crate::widgets::searchable_dropdown::filter_stocks(&stocks, "", &Exchange::SZ);
         assert_eq!(result.len(), 3);
     }
 
     #[test]
     fn filter_stocks_empty_query_returns_all_in_exchange() {
         let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(
-            &stocks, "", &Exchange::All,
-        );
+        let result =
+            crate::widgets::searchable_dropdown::filter_stocks(&stocks, "", &Exchange::All);
         assert_eq!(result.len(), 7);
     }
 
