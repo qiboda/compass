@@ -16,8 +16,9 @@ Usage:
     # Balance sheet / income / cashflow
     uv run python fetch_fin_indicators.py --report-name RPT_DMSK_FN_BALANCE
 
-State file: {report_name}.state.json tracks last fetched date and total rows.
-TLS impersonation via curl_cffi to avoid EastMoney anti-crawler detection.
+State file: {report_name}.state.json caches last fetch.
+Primary source for incremental mode is Dolt data_updates / table MAX(report_date).
+CSV is temporary; Dolt is the source of truth.
 
 KNOWN LIMITATION: Incremental mode uses REPORTDATE for filtering, which cannot
 detect revisions to previously-fetched report periods.  A company may amend
@@ -72,6 +73,31 @@ EM_MIN_INTERVAL = 0.5
 EM_JITTER = (0.1, 0.3)
 EM_MAX_RETRIES = 4
 EM_PAGE_SIZE = 100  # max for this API
+
+
+def _last_report_date(report_name: str, state_path: Path) -> str:
+    import subprocess
+    dolt_dir = Path(__file__).resolve().parent.parent / "compass_data"
+    if not (dolt_dir / ".dolt").exists():
+        if state_path.exists():
+            return json.loads(state_path.read_text()).get("last_report_date", "")
+        return ""
+
+    table = "fin_indicators" if report_name == "RPT_LICO_FN_CPD" else report_name
+    result = subprocess.run(
+        ["dolt", "--data-dir", str(dolt_dir), "sql", "-r", "csv", "-q",
+         f"SELECT MAX(report_date) FROM {table}"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode == 0:
+        lines = result.stdout.strip().split("\n")
+        last = lines[-1].strip() if len(lines) > 1 else ""
+        if last and last != "NULL":
+            return last
+
+    if state_path.exists():
+        return json.loads(state_path.read_text()).get("last_report_date", "")
+    return ""
 
 
 # ── Throttle ────────────────────────────────────────────────────
@@ -226,7 +252,7 @@ async def main():
     )
     parser.add_argument(
         "--incremental", action="store_true",
-        help="Only fetch report dates after last saved state. Reads {report_name}.state.json"
+        help="Only fetch new report periods. Checks Dolt data_updates first, falls back to .state.json"
     )
     args = parser.parse_args()
 
@@ -260,17 +286,15 @@ async def main():
 
     # Handle incremental mode
     if args.incremental:
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            last_date = state.get("last_report_date", "2000-01-01")
-            print(f"Incremental: last fetch was {last_date} "
-                  f"({state.get('total_records', 0):,} records)", file=sys.stderr)
-            all_dates = [d for d in all_dates if d >= last_date]
-            if not all_dates:
-                print("No new report periods to fetch.", file=sys.stderr)
-                return
+        since = _last_report_date(report_name, state_path)
+        if since:
+            print(f"Incremental: last data from {since}", file=sys.stderr)
+            all_dates = [d for d in all_dates if d >= since]
         else:
-            print("No state file found, fetching full history.", file=sys.stderr)
+            print("No prior data found, fetching full history.", file=sys.stderr)
+        if not all_dates:
+            print("No new report periods to fetch.", file=sys.stderr)
+            return
 
     output_path = Path(args.output or f"{report_name}.csv")
     page_size = args.page_size
