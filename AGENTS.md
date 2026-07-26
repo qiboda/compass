@@ -77,6 +77,10 @@ Never `git push` in the same command as `git commit`. The pre-push hook runs
 formatting, clippy, and doc checks — if they fail, the commit should remain
 local until fixed, not be amended mid-push.
 
+**Follow the user's exact words.** If the user says "commit" / "提交", only
+commit — do not push. If the user says "push" / "推送", only push — do not
+amend and re-commit. Never assume one implies the other.
+
 ## Worktrees
 
 For isolated development (experiments, library migrations, multi-day features),
