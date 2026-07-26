@@ -115,9 +115,6 @@ pub struct AppConfig {
     /// Data directory settings (default: parquet_dir = "parquet_data").
     pub database: DatabaseConfig,
     #[serde(default)]
-    /// EastMoney API settings.
-    pub api: ApiConfig,
-    #[serde(default)]
     /// Application behavior (default symbol, timeframe).
     pub app: AppSection,
 }
@@ -128,17 +125,6 @@ pub struct DatabaseConfig {
     #[serde(default = "default_parquet_dir")]
     /// Path to the parquet_data directory for OHLCV data.
     pub parquet_dir: String,
-}
-
-/// EastMoney API connection settings.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ApiConfig {
-    #[serde(default = "default_base_url")]
-    /// EastMoney K-line API base URL.
-    pub base_url: String,
-    #[serde(default = "default_timeout_secs")]
-    /// HTTP request timeout in seconds.
-    pub timeout_secs: u64,
 }
 
 /// Application-level settings: default stock and timeframe on startup.
@@ -160,15 +146,6 @@ impl Default for DatabaseConfig {
     }
 }
 
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            base_url: default_base_url(),
-            timeout_secs: default_timeout_secs(),
-        }
-    }
-}
-
 impl Default for AppSection {
     fn default() -> Self {
         Self {
@@ -180,12 +157,6 @@ impl Default for AppSection {
 
 fn default_parquet_dir() -> String {
     "parquet_data".into()
-}
-fn default_base_url() -> String {
-    "https://push2his.eastmoney.com".into()
-}
-fn default_timeout_secs() -> u64 {
-    10
 }
 fn default_symbol() -> String {
     "000001".into()

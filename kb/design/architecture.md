@@ -35,16 +35,15 @@ compass (GUI binary)
   │
   ├── compass-core (library)
   │     ├── model.rs      ─ shared types: AppConfig, Bar, Cmd (legacy)
-  │     ├── data/mod.rs   ─ CachedProvider (read-through cache + negative cache)
-  │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
-  │     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
-  │     ├── data/eastmoney.rs ─ EastMoneyProvider (HTTP API)
-  │     ├── data/parquet.rs   ─ ParquetReader (main database)
+│     ├── data/mod.rs   ─ Module declarations
+│     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
+│     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
+│     ├── data/parquet.rs   ─ ParquetReader (main database)
   │     ├── data/symbol.rs    ─ Exchange inference, code conversion
   │     └── data/synthetic.rs ─ Test data generator
   │
   └── compass-data (CLI binary)
-        └── download / import / merge / export subcommands
+        └── import / merge / export subcommands
 ```
 
 `compass-core` contains zero UI code. It provides traits and implementations
@@ -483,11 +482,6 @@ fields are optional — missing keys fall back to sensible defaults defined in
 ```toml
 [database]
 parquet_dir = "parquet_data"           # parquet data directory
-
-[api]
-base_url = "https://push2his.eastmoney.com"
-timeout_secs = 10
-
 [app]
 default_symbol = "000001"     # what to show on startup
 default_timeframe = "1d"

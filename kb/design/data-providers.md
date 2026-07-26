@@ -69,23 +69,15 @@ window (7 days) skip the HTTP call entirely.
 
 ## The provider hierarchy
 
-```
-CachedProvider<R: DataProvider, C: DataProvider + NegativeCache + DataWriter>
-    │
-    ├── reader: EastMoneyProvider     ← remote HTTP (online)
-    └── cache:  DuckDbProvider        ← in-memory + Parquet-backed (cache + negative cache + write)
-```
+The GUI uses `DuckDbProvider` directly — it reads from `parquet_data/stock_daily/*.parquet`
+via `read_parquet()` with an in-memory DuckDB connection for caching recently fetched data.
+All data is local, no online fallback.
 
-The DuckDbProvider now uses an in-memory DuckDB connection with optional
-Parquet backing (ref #31). On `fetch_bars`, it first checks the in-memory
-`stock_daily` table (for data saved by `save_bars`), then falls back to
-reading from `parquet_data/stock_daily/{EXCHANGE}{code}.parquet` via
-`read_parquet()`. No persistent `compass.db` file is used — `parquet_data/`
-is the sole source of truth for historical OHLCV data.
-
-The GUI always uses `CachedProvider`. The CLI uses `EastMoneyProvider` and
-`DuckDbProvider` directly — it doesn't need the caching layer because it's
-explicitly managing the download/storage lifecycle.
+```rust
+// backend.rs: DuckDbProvider is the sole data provider
+let provider = DuckDbProvider::new(parquet_dir.exists().then_some(parquet_dir))?;
+provider.fetch_bars(symbol, timeframe, start, end).await
+```
 
 ## CachedProvider: the read-through pattern
 
