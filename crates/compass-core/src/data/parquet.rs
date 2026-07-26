@@ -15,10 +15,17 @@ use egui_charts::model::Bar;
 use crate::data::provider::{DataError, DataProvider};
 use crate::model::{StockBasic, SymbolInfo};
 
-/// Reject symbols that contain non-alphanumeric characters to prevent
-/// SQL injection and path traversal via `read_parquet()` file paths.
+/// Validate symbol for use in `read_parquet()` file paths.
+///
+/// Allows alphanumeric chars plus `.` (for exchange-prefixed symbols like `sh.600058`).
+/// Rejects empty strings, path traversal (`..`), and other special chars.
 pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
-    if symbol.is_empty() || !symbol.chars().all(|c| c.is_ascii_alphanumeric()) {
+    let valid = !symbol.is_empty()
+        && !symbol.contains("..")
+        && symbol
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.');
+    if !valid {
         return Err(DataError::NoData {
             symbol: symbol.to_string(),
         });
@@ -468,13 +475,16 @@ mod tests {
 
     #[test]
     fn validate_symbol_allows_dolt_prefixed_codes() {
-        // Dolt symbols include uppercase prefixes: SZ, SH, BJ
+        // Dolt without dot: uppercase prefix + bare code
         validate_symbol("SZ000001").expect("SZ000001 should be valid");
         validate_symbol("SH600519").expect("SH600519 should be valid");
         validate_symbol("BJ830799").expect("BJ830799 should be valid");
-        // Special chars still rejected
-        assert!(validate_symbol("SZ.000001").is_err());
-        assert!(validate_symbol("SH/600519").is_err());
+        // Exchange-prefixed with dot: lowercase prefix.bare code
+        validate_symbol("sh.000001").expect("sh.000001 should be valid");
+        validate_symbol("sz.600059").expect("sz.600059 should be valid");
+        // Path traversal still blocked
+        assert!(validate_symbol("../../etc/passwd").is_err());
+        assert!(validate_symbol("a..b").is_err());
     }
 
     #[test]

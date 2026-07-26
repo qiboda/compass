@@ -277,11 +277,13 @@ impl CompassApp {
             ui.label("TF:");
             let mut tf = self.timeframe_index;
             egui::ComboBox::from_id_salt("timeframe_combo")
-                .selected_text(timeframe_label(self.timeframe_index))
+                .selected_text(timeframe_label(tf))
                 .show_ui(ui, |ui| {
                     for i in 0..=2 {
                         let val = timeframe_label(i);
-                        ui.selectable_value(&mut tf, i, val);
+                        if ui.selectable_value(&mut tf, i, val).clicked() {
+                            debug!(timeframe = val, "timeframe changed");
+                        }
                     }
                 });
             self.timeframe_index = tf;
