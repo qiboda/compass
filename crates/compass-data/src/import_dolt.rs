@@ -81,6 +81,7 @@ pub fn run(
     start_date: Option<&str>,
     end_date: Option<&str>,
     overwrite: bool,
+    since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&output)?;
 
@@ -88,10 +89,15 @@ pub fn run(
     // 1. Get distinct symbols
     // ------------------------------------------------------------------
     info!("Fetching symbol list...");
-    let symbols_csv = run_dolt_sql_csv(
-        &dolt_dir,
-        "SELECT DISTINCT symbol FROM final_a_stock_eod_price ORDER BY symbol",
-    )?;
+    let symbol_query = if let Some(since_date) = since {
+        format!(
+            "SELECT DISTINCT symbol FROM final_a_stock_eod_price \
+             WHERE tradedate >= '{since_date}' ORDER BY symbol"
+        )
+    } else {
+        "SELECT DISTINCT symbol FROM final_a_stock_eod_price ORDER BY symbol".to_string()
+    };
+    let symbols_csv = run_dolt_sql_csv(&dolt_dir, &symbol_query)?;
 
     let symbols: Vec<String> = symbols_csv
         .lines()
