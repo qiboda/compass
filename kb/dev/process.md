@@ -134,7 +134,8 @@ Push immediately after completing each issue. Do not batch.
 
 ## Git branching
 
-**Feature-branch + PR workflow.**
+**Feature-branch workflow.** Most work happens on feature branches, merged via PR.
+Trivial fixes (typo, config, one-line change) can go directly to master.
 
 ```
 master  ●──●──●──●────────●  (trunk)
@@ -142,7 +143,7 @@ master  ●──●──●──●────────●  (trunk)
 feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
 ```
 
-### Worktrees (functional zone isolation)
+## Worktrees (functional zone isolation)
 
 Worktrees divide the project into persistent functional zones. Each worktree
 hosts multiple features in its domain — it is NOT deleted after a single
@@ -155,9 +156,6 @@ one per functional area (e.g. `custom-dolt`, `egui-mobius`).
 was evaluated and found to have blocking issues (no idempotent re-open,
 unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
-
-**Trunk-based**: each worktree pushes directly to master. Features within a
-worktree still go through the compass-workflow gate.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
 1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
