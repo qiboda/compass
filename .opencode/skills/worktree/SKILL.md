@@ -1,46 +1,43 @@
 ---
 name: worktree
-description: Manage git worktrees for isolated feature development. Use when creating, listing, or removing worktrees under .worktrees/. Trigger when user says "worktree", "切一个worktree", or asks to isolate work on a branch.
+description: Manage git worktrees for persistent functional zone isolation. Use when creating, listing, or removing worktrees under .worktrees/. Trigger when user says "worktree", "切一个worktree", or asks to isolate a functional area.
 ---
 
 # Worktree
 
-Git worktrees provide isolated working directories for parallel or experimental
-development without `git stash` / branch-switching overhead.
+Git worktrees provide isolated working directories for different functional
+zones of the project. Each worktree is a **persistent workspace** for a
+distinct area — a single worktree can host multiple features over its lifetime.
+Not deleted after a feature ships.
 
 ## Convention
 
-All worktrees live under `.worktrees/<name>/` (gitignored).
+All worktrees live under `.worktrees/<name>/` (gitignored). They are for
+**functional zone division**, not one-per-feature.
 
 ```
 .worktrees/
-├── compass-mobius/    # → branch: feature/compass-mobius
-├── egui-upgrade/      # → branch: feature/egui-upgrade
-└── fix-auth/          # → branch: fix/auth
+├── custom-dolt/       # Dolt 扩展相关的一切工作
+├── egui-mobius/       # egui_mobius 迁移及所有后续相关改动
+└── data-pipeline/     # 数据管线优化、新增Provider
 ```
 
-| Worktree path | Branch name | Rule |
-|---|---|---|
-| `.worktrees/<name>` | `feature/<name>` | Default for feature work |
-| `.worktrees/<name>` | `fix/<name>` | For bugfix isolation |
-| `.worktrees/<name>` | `<name>` | When branch name already includes prefix |
+| Worktree path | Purpose |
+|---|---|
+| `.worktrees/<name>` | Persistent functional zone — hosts multiple features |
+| `.worktrees/<name>` | Long-lived: created once, kept indefinitely |
 
 ## Commands
 
 ### Create
 
 ```bash
-# Feature branch (most common)
-git worktree add -b feature/<name> .worktrees/<name> <base-ref>
-
-# With explicit branch prefix
-git worktree add -b <full-branch> .worktrees/<dir-name> <base-ref>
+git worktree add -b feature/<name> .worktrees/<name> master
 ```
 
 **Rules**:
-- `<name>` = kebab-case slug matching the work's purpose (e.g. `egui-mobius`, `fix-download`)
-- `<base-ref>` defaults to `master` (HEAD)
-- Directory name = sanitized branch name (drop the `feature/` or `fix/` prefix, keep slashes as hyphens)
+- `<name>` = kebab-case slug matching the functional area (e.g. `custom-dolt`, `egui-mobius`)
+- Based on `master` — push directly per trunk-based convention
 - Never create worktrees outside `.worktrees/`
 
 **Post-Creation (MANDATORY)** — after every `git worktree add`:
@@ -76,13 +73,12 @@ git worktree list
 
 ### Remove
 
+Only when the functional zone is permanently retired:
+
 ```bash
 # Remove worktree + its branch
 git worktree remove .worktrees/<name> --force
 git branch -D <branch-name>
-
-# Safer: check branch first, then remove
-git worktree list | grep <name>
 ```
 
 ### Clean orphans
@@ -99,38 +95,25 @@ for d in .worktrees/*/; do
 done
 ```
 
-## When to use
-
-| Use worktree | Don't use worktree |
-|---|---|
-| Risky / experimental changes | Trivial fixes |
-| Multi-day features | Single-commit changes |
-| Library migration / API upgrade | Documentation updates |
-| Parallel features without stash | Typo / lint fixes |
-
 ## Integration with compass-workflow
 
 When the `compass-workflow` skill is also loaded:
-- Worktrees replace the branch-switching step — you work in the isolated directory
-- The pre-implementation gate still applies (issue → plan → tests → docs)
+- Each feature within a worktree still goes through the gate (issue → plan → tests → docs)
 - Quality gates (`cargo test`, `cargo clippy`, `cargo fmt`) run inside the worktree
+- Push directly to master per trunk-based convention
 
-## Example: creating a library migration worktree
+## Example: creating a Dolt extension worktree
 
 ```bash
-# User: "切一个使用egui_mobius的worktree"
+# User: "切一个dolt扩展的worktree"
 # → Fire this skill, then:
-git worktree add -b feature/egui-mobius .worktrees/egui-mobius master
+git worktree add -b feature/custom-dolt .worktrees/custom-dolt master
 ```
 
 **Then** (same turn, immediately after `git worktree add` succeeds):
 
-1. Symlink data dirs: `ln -s "$PWD/investment_data" .worktrees/egui-mobius/investment_data`
-2. Run `/handoff` → writes `.worktrees/egui-mobius/.omo/handoff.md` with current context
-3. Tell user: `cd .worktrees/egui-mobius && opencode`
+1. Symlink data dirs: `ln -s "$PWD/investment_data" .worktrees/custom-dolt/investment_data`
+2. Run `/handoff` → writes `.worktrees/custom-dolt/.omo/handoff.md` with current context
+3. Tell user: `cd .worktrees/custom-dolt && opencode`
 
-**When done**, merge back and clean up:
-```bash
-git worktree remove .worktrees/egui-mobius --force
-git branch -D feature/egui-mobius
-```
+The worktree persists — all Dolt-related features are developed here.

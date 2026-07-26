@@ -142,22 +142,22 @@ master  ●──●──●──●────────●  (trunk)
 feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
 ```
 
-### Worktrees (isolated development)
+### Worktrees (functional zone isolation)
 
-For complex features or experimental changes, use git worktrees. The
-`/worktree` skill provides conventions and commands — load it when
-creating, listing, or removing worktrees.
+Worktrees divide the project into persistent functional zones. Each worktree
+hosts multiple features in its domain — it is NOT deleted after a single
+feature ships. The `/worktree` skill provides conventions and commands.
 
 **Convention**: worktrees live at `.worktrees/<name>/` (gitignored),
-mapping to `feature/<name>` branches.
+one per functional area (e.g. `custom-dolt`, `egui-mobius`).
 
 **Why not plugins**: The `opencode-worktree` plugin (kdco/worktree via OCX)
 was evaluated and found to have blocking issues (no idempotent re-open,
 unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
 
-**When to use**: risky experiments, multi-day features, library migrations,
-parallel feature work. Skip for trivia, docs, lint, typos.
+**Trunk-based**: each worktree pushes directly to master. Features within a
+worktree still go through the compass-workflow gate.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
 1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo

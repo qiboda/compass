@@ -100,9 +100,10 @@ checklist above. Do not skip any step.
 
 ## Worktrees
 
-For isolated development (experiments, library migrations, multi-day features),
-load the `worktree` skill. Worktrees live at `.worktrees/<name>/` and map to
-`feature/<name>` branches. See `kb/dev/process.md#worktrees` for policy.
+For isolated development of distinct functional zones, load the `worktree`
+skill. Worktrees live at `.worktrees/<name>/` — each is a **persistent
+functional workspace**, not a transient feature branch. One worktree hosts
+multiple features over its lifetime.
 
 After creating a worktree, the skill enforces MANDATORY post-creation steps:
 1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
