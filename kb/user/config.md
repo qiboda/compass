@@ -19,18 +19,9 @@ mkdir -p ~/.config/compass
 
 ```toml
 [database]
-# Path to the DuckDB cache file used by the GUI.
-# Default: "compass.db"
-path = "data/compass.db"
-
-[api]
-# EastMoney K-line API endpoint.
-# Default: "https://push2his.eastmoney.com"
-base_url = "https://push2his.eastmoney.com"
-
-# HTTP request timeout in seconds.
-# Default: 10
-timeout_secs = 10
+# Path to the parquet_data directory containing OHLCV data.
+# Default: "parquet_data"
+parquet_dir = "parquet_data"
 
 [app]
 # Stock code displayed when the app starts.
@@ -54,9 +45,7 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 
 | Section | Key | Default |
 |---|---|---|
-| `database` | `path` | `compass.db` |
-| `api` | `base_url` | `https://push2his.eastmoney.com` |
-| `api` | `timeout_secs` | `10` |
+| `database` | `parquet_dir` | `parquet_data` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
 | `parquet` | `dir` | `parquet_data` |

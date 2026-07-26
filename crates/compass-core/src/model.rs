@@ -79,7 +79,7 @@ pub struct SymbolInfo {
 
 /// Live market data for a stock.
 ///
-/// Fetched from EastMoney realtime API. All fields are optional — the API
+/// Fetched from realtime API. All fields are optional — the API
 /// may return `null` for any field, especially outside trading hours.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeQuote {
@@ -172,9 +172,6 @@ pub struct AppConfig {
     /// DuckDB cache file location (default: "compass.db").
     pub database: DatabaseConfig,
     #[serde(default)]
-    /// EastMoney API settings.
-    pub api: ApiConfig,
-    #[serde(default)]
     /// Application behavior (default symbol, timeframe).
     pub app: AppSection,
     #[serde(default)]
@@ -210,17 +207,6 @@ pub struct DatabaseConfig {
     pub path: String,
 }
 
-/// EastMoney API connection settings.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ApiConfig {
-    #[serde(default = "default_base_url")]
-    /// EastMoney K-line API base URL.
-    pub base_url: String,
-    #[serde(default = "default_timeout_secs")]
-    /// HTTP request timeout in seconds.
-    pub timeout_secs: u64,
-}
-
 /// Application-level settings: default stock and timeframe on startup.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppSection {
@@ -240,15 +226,6 @@ impl Default for DatabaseConfig {
     }
 }
 
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            base_url: default_base_url(),
-            timeout_secs: default_timeout_secs(),
-        }
-    }
-}
-
 impl Default for AppSection {
     fn default() -> Self {
         Self {
@@ -260,12 +237,6 @@ impl Default for AppSection {
 
 fn default_db_path() -> String {
     "data/compass.db".into()
-}
-fn default_base_url() -> String {
-    "https://push2his.eastmoney.com".into()
-}
-fn default_timeout_secs() -> u64 {
-    10
 }
 fn default_symbol() -> String {
     "000001".into()
@@ -357,6 +328,23 @@ default_timeframe = "1w"
         .unwrap();
         assert_eq!(config.app.default_symbol, "600519");
         assert_eq!(config.app.default_timeframe, "1w");
+    }
+
+    #[test]
+    fn database_config_defaults_to_parquet_data() {
+        let config = ParquetConfig::default();
+        assert_eq!(config.dir, "parquet_data");
+    }
+
+    #[test]
+    fn appconfig_parses_parquet_dir_from_toml() {
+        let config: AppConfig = toml::from_str(
+            r#"[parquet]
+dir = "/custom/parquet"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.parquet.dir, "/custom/parquet");
     }
 
     #[test]

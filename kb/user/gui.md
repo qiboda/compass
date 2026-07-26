@@ -83,13 +83,14 @@ See [Config](config.md) for all options.
 
 ## Data prerequisites
 
-The chart app reads from the local DuckDB cache (`data/compass.db`). Before first use,
-you need data available:
+The chart app reads OHLCV data directly from `parquet_data/stock_daily/*.parquet`
+via DuckDB's `read_parquet()` (in-memory, no persistent DuckDB file needed).
+Before first use, ensure data is available:
 
 ```sh
 # Option A: Import from Dolt (complete history)
 cargo run --bin compass-data -- import
-cargo run --bin compass-data -- export   # → data/compass.db
+# Data is ready — parquet_data/stock_daily/ is the source of truth
 
 # Option B: Download from EastMoney (specific stocks)
 cargo run --bin compass-data -- download --symbols 000001,600519

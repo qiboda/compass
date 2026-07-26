@@ -12,8 +12,8 @@
 //! - `DataWriter` — write-through persistence
 //! - `NegativeCache` — cache for known-empty symbols
 //!
-//! [`data::CachedProvider`] implements a read-through cache pattern,
-//! checking a local DuckDB first before falling back to remote APIs.
+//! The GUI uses [`data::duckdb::DuckDbProvider`] to read OHLCV data from
+//! local Parquet files via `read_parquet()`.
 
 pub mod data;
 pub mod model;

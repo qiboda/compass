@@ -35,11 +35,3 @@ harness = false
 [[bench]]
 name = "duckdb_bench"
 harness = false
-
-[[bench]]
-name = "cached_bench"
-harness = false
-
-[[bench]]
-name = "eastmoney_bench"
-harness = false
