@@ -160,9 +160,10 @@ the `/worktree` skill give full control without those issues.
 parallel feature work. Skip for trivia, docs, lint, typos.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
-1. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
-2. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
-3. Stay in master — don't switch session into the worktree directory
+1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
+2. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
+3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
+4. Stay in master — don't switch session into the worktree directory
 
 ## Version control
 

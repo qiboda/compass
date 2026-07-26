@@ -78,9 +78,10 @@ load the `worktree` skill. Worktrees live at `.worktrees/<name>/` and map to
 `feature/<name>` branches. See `kb/dev/process.md#worktrees` for policy.
 
 After creating a worktree, the skill enforces MANDATORY post-creation steps:
-1. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
-2. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
-3. Current session stays in master — do NOT cd into the worktree.
+1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
+2. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
+3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
+4. Current session stays in master — do NOT cd into the worktree.
 
 ## Knowledge base
 

@@ -45,19 +45,28 @@ git worktree add -b <full-branch> .worktrees/<dir-name> <base-ref>
 
 **Post-Creation (MANDATORY)** — after every `git worktree add`:
 
-1. **Run `/handoff`** to save the current conversation context:
+1. **Symlink local data directories** from the main repo into the worktree.
+   These are gitignored and won't exist in the worktree otherwise:
+   ```bash
+   # From repo root — create symlinks to shared data
+   ln -s "$PWD/investment_data" .worktrees/<name>/investment_data
+   ln -s "$PWD/parquet_data"    .worktrees/<name>/parquet_data
+   ```
+   Only create symlinks for directories that actually exist in the main repo.
+
+2. **Run `/handoff`** to save the current conversation context:
    - The handoff file goes to `.worktrees/<name>/.omo/handoff.md`
    - This captures: what was decided, what's next, relevant design context
    - Use `write` tool to create the handoff file if `/handoff` command is unavailable
 
-2. **Tell the user** to open a new opencode session in the worktree:
+3. **Tell the user** to open a new opencode session in the worktree:
    ```
    Worktree ready. Continue in a new terminal:
        cd .worktrees/<name> && opencode
    ```
    The new opencode session will automatically read `.omo/handoff.md` for context.
 
-3. **Current session stays in master** — do NOT `cd` into the worktree in the current session.
+4. **Current session stays in master** — do NOT `cd` into the worktree in the current session.
 
 ### List
 
@@ -116,8 +125,9 @@ git worktree add -b feature/egui-mobius .worktrees/egui-mobius master
 
 **Then** (same turn, immediately after `git worktree add` succeeds):
 
-1. Run `/handoff` → writes `.worktrees/egui-mobius/.omo/handoff.md` with current context
-2. Tell user: `cd .worktrees/egui-mobius && opencode`
+1. Symlink data dirs: `ln -s "$PWD/investment_data" .worktrees/egui-mobius/investment_data`
+2. Run `/handoff` → writes `.worktrees/egui-mobius/.omo/handoff.md` with current context
+3. Tell user: `cd .worktrees/egui-mobius && opencode`
 
 **When done**, merge back and clean up:
 ```bash
