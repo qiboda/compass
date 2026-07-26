@@ -35,7 +35,13 @@ Do NOT skip the gate just because grill-me reached shared understanding.**
 
 ## 🛑 PRE-IMPLEMENTATION GATE (READ BEFORE ANY CODE CHANGE)
 
-**For ALL feature and bugfix work, you MUST complete this gate BEFORE writing any code.**
+**This gate applies to ALL code changes.** The only exceptions are:
+- Documentation-only changes (typos, formatting, adding explanations)
+- Cargo fmt / clippy fixes (already handled by CI)
+- Trivial typo fixes in comments or strings
+
+**Everything else — features, bugfixes, refactors, new commands, CI changes, hooks,
+scripts, dependency updates — MUST go through the gate.**
 
 Before you touch a single file, verbalize EACH step to the user and confirm completion:
 
@@ -48,13 +54,24 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
 
+### SELF-CHECK (MANDATORY — ask yourself these 4 questions before every code edit)
+
+1. **"Is there a GitHub issue for this work?"** — If not, create one NOW.
+2. **"Does my commit message include `ref #N`?"** — If not, add it before committing.
+3. **"Have I written a failing test first?"** — If not, write one NOW before the implementation.
+4. **"Have I updated the relevant kb/ file?"** — If not, identify the file and update it.
+
+These 4 questions are NOT optional. They are the minimum standard. If you skip any,
+you are violating the workflow.
+
 ### HARD BLOCK
 
 This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
 remind you of this gate. If you find yourself writing code without completing
 these steps, you are violating the workflow — stop immediately, `git stash` or revert, and go back to step 0.
 
-Exceptions (skip the gate): documentation-only changes, lint fixes, typo fixes.
+**Workflow violations are themselves a bug.** If the gate was skipped, the work
+is incomplete regardless of code quality. Record the violation in reflections.
 
 ### After implementation: Reflection Record
 
