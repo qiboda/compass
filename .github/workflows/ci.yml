@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [master, 'feature/**']
+    paths-ignore:
+      - '**.md'
   pull_request:
     branches: [master]
+    paths-ignore:
+      - '**.md'
 
 env:
   CARGO_TERM_COLOR: always
