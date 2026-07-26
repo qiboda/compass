@@ -192,7 +192,14 @@ impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let exchange = Exchange::from_index(self.exchange_index);
 
-        self.render_toolbar(ui, &exchange);
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().item_spacing.x);
+            ui.vertical(|ui| {
+                self.render_toolbar(ui, &exchange);
+            });
+        });
+
+        ui.separator();
 
         DockArea::new(&mut self.dock_state).show_inside(
             ui,
@@ -245,14 +252,14 @@ impl CompassApp {
                     &self.work_signal,
                 );
             }
-        });
 
-        if self.shared_state.loading.get() {
-            ui.label("Loading...");
-        }
-        if let Some(ref err) = self.shared_state.error.get() {
-            ui.colored_label(egui::Color32::RED, err);
-        }
+            if self.shared_state.loading.get() {
+                ui.spinner();
+            }
+            if let Some(ref err) = self.shared_state.error.get() {
+                ui.colored_label(egui::Color32::RED, err);
+            }
+        });
     }
 }
 
