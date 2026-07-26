@@ -13,9 +13,14 @@ class TestDoltIntegration:
 
     @pytest.fixture
     def dolt_dir(self):
-        """Create a temporary Dolt database."""
         with tempfile.TemporaryDirectory() as tmp:
             dolt = Path(tmp)
+            for key, val in [("user.email", "ci@compass.local"), ("user.name", "CI")]:
+                subprocess.run(
+                    ["dolt", "config", "--global", "--add", key, val],
+                    capture_output=True,
+                    text=True,
+                )
             result = subprocess.run(
                 ["dolt", "--data-dir", str(dolt), "init"],
                 capture_output=True,
