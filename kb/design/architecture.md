@@ -172,6 +172,12 @@ EastMoney API ──download──► staging.duckdb ──merge──► parque
 Dolt DB ───────import─────► parquet_data/
 ```
 
+The project also maintains its own Dolt repository `compass_data/` for
+custom mutable data (company profiles, financial indicators, watchlists),
+stored alongside the read-only `investment_data`. Queries join across both
+databases: `compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`.
+See `kb/dev/process.md#dolt-database-queries` for usage examples.
+
 ### download: EastMoney → staging
 - Enumerates all A-share symbols via EastMoney search API
 - Fetches stock basic info (name, industry, list date)
