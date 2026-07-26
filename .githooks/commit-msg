@@ -20,4 +20,30 @@ if ! grep -qiE "ref[[:space:]]+#[0-9]+" "$COMMIT_MSG_FILE"; then
     exit 1
 fi
 
+# Validate issue references exist and are OPEN
+issues=$(grep -ioE "ref[[:space:]]+#[0-9]+" "$COMMIT_MSG_FILE" \
+    | grep -oE '#[0-9]+' \
+    | tr -d '#' \
+    | sort -u \
+    || true)
+
+if [ -n "$issues" ]; then
+    for n in $issues; do
+        state=$(unset GITHUB_TOKEN 2>/dev/null; gh issue view "$n" --repo qiboda/compass --json state --jq '.state' 2>/dev/null || echo "MISSING")
+
+        if [ "$state" != "OPEN" ]; then
+            echo ""
+            echo "ERROR: commit rejected — issue #$n is $state (must be OPEN)."
+            echo ""
+            if [ "$state" = "MISSING" ]; then
+                echo "  Issue #$n does not exist. Create it with 'gh issue create'."
+            else
+                echo "  Issue #$n is $state. Reopen it with 'gh issue reopen $n'."
+            fi
+            echo ""
+            exit 1
+        fi
+    done
+fi
+
 exit 0
