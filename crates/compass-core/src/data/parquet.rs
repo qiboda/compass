@@ -324,7 +324,6 @@ impl Clone for ParquetReader {
 }
 
 impl ParquetReader {
-    #[allow(dead_code)]
     fn clone_reader(&self) -> Self {
         self.clone()
     }

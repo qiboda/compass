@@ -448,7 +448,6 @@ Provider configuration flows from `~/.config/compass/config.toml`:
 [api]
 base_url = "https://push2his.eastmoney.com"
 timeout_secs = 10           # HTTP request timeout
-retry_count = 3             # retry attempts on transient failure
 
 [database]
 path = "data/compass.db"         # DuckDB cache file location

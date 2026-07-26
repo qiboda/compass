@@ -32,10 +32,6 @@ base_url = "https://push2his.eastmoney.com"
 # Default: 10
 timeout_secs = 10
 
-# Number of retry attempts on transient HTTP failures.
-# Default: 3
-retry_count = 3
-
 [app]
 # Stock code displayed when the app starts.
 # Default: "000001"
@@ -55,7 +51,6 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 | `database` | `path` | `compass.db` |
 | `api` | `base_url` | `https://push2his.eastmoney.com` |
 | `api` | `timeout_secs` | `10` |
-| `api` | `retry_count` | `3` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
 
@@ -81,7 +76,6 @@ default_symbol = "600519"
 ```toml
 [api]
 timeout_secs = 30
-retry_count = 5
 ```
 
 ### Custom database location

@@ -5,7 +5,32 @@ captures what was done, what went wrong, and what to do differently.
 
 ---
 
-## 2026-07-23 — ref #8 feat: all imports default to skip-existing, --overwrite to force replace
+## 2026-07-26 — ref #24 refactor: integrate egui-mobius Level 3 citizen pattern
+
+**What was done**: Replaced manual mpsc + Arc\<Mutex\<CompassState\>\> architecture with
+egui-mobius Level 3 (AsyncDispatcher + typed signal/slot + Dynamic\<T\>). Converted
+single-panel CentralPanel layout to 3-citizen DockArea (Control, Chart, Logger).
+Removed dead code: bars_version, search_results, Cmd::SearchSymbols, retry_count.
+Upgraded egui from 0.33 to 0.35, switched egui-charts to qiboda fork.
+
+**What went well**: Grill-me interviews locked all architectural decisions before
+implementation, eliminating mid-stream redesign. Plan-first approach (`/ulw-plan`)
+produced a structured 14-task plan with wave-based parallelism. 4 subagents created
+new modules in parallel (Wave 2), 3 more for citizens (Wave 3), 2 for dispatcher
++ main.rs rewrite (Wave 4). Zero compilation errors on first build after each wave.
+
+**What went wrong**: egui_citizen crate is not published on crates.io — requires
+git dependency (`saturn77/egui_mobius` master branch). egui_dock 0.20.1 requires
+rust 1.92 (project already on 1.96, non-issue). The egui 0.35 migration step was
+committed separately (`3a58fc3`) to isolate version upgrade from architecture change.
+
+**Lessons learned**:
+1. Grill-me as step 0 is effective for architectural decisions — the 9 decisions
+   locked before plan creation prevented scope creep.
+2. Wave-based plan decomposition enables true parallelism: 4 new files created
+   simultaneously by separate subagents, cutting Wave 2 time by ~75%.
+3. Keep the egui version upgrade as a separate commit — it isolates API breakage
+   from the architectural refactor.
 
 **What was done**: Added `overwrite: bool` parameter to all DuckDB write methods
 and CLI subcommands. Default `false` (skip existing rows, migration-style),
