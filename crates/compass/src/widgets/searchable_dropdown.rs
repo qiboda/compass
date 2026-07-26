@@ -26,6 +26,7 @@ pub struct StockPicker {
     pub filter_text: String,
     pub selected_symbol: String,
     pub selected_name: String,
+    pub selected_exchange: String,
     pub popup_open: bool,
     cached_indices: Vec<usize>,
     last_filter_text: String,
@@ -34,16 +35,17 @@ pub struct StockPicker {
 
 impl StockPicker {
     pub fn new(default_symbol: &str, stock_list: &[StockBasic]) -> Self {
-        let name = stock_list
-            .iter()
-            .find(|s| s.symbol == default_symbol)
-            .map(|s| s.name.clone())
+        let stock = stock_list.iter().find(|s| s.symbol == default_symbol);
+        let name = stock.map(|s| s.name.clone()).unwrap_or_default();
+        let exchange = stock
+            .and_then(|s| s.exchange.clone())
             .unwrap_or_default();
 
         Self {
             filter_text: String::new(),
             selected_symbol: default_symbol.to_string(),
             selected_name: name,
+            selected_exchange: exchange,
             popup_open: false,
             cached_indices: Vec::new(),
             last_filter_text: String::new(),
@@ -57,11 +59,7 @@ impl StockPicker {
         stock_list: &[StockBasic],
         exchange: &Exchange,
     ) {
-        let display_text = if self.selected_name.is_empty() {
-            &self.selected_symbol
-        } else {
-            &self.selected_name
-        };
+        let display_text = format_display(&self.selected_exchange, &self.selected_symbol, &self.selected_name);
 
         let response = if self.popup_open {
             ui.text_edit_singleline(&mut self.filter_text)
@@ -85,6 +83,11 @@ impl StockPicker {
                 self.filter_text != self.last_filter_text || *exchange != self.last_exchange;
 
             if needs_refilter {
+                tracing::debug!(
+                    filter = %self.filter_text,
+                    exchange = ?exchange,
+                    "refiltering stock list"
+                );
                 let lower = self.filter_text.trim().to_lowercase();
                 self.cached_indices = stock_list
                     .iter()
@@ -137,6 +140,8 @@ impl StockPicker {
                                         if row.clicked() {
                                             self.selected_symbol = stock.symbol.clone();
                                             self.selected_name = stock.name.clone();
+                                            self.selected_exchange =
+                                                stock.exchange.clone().unwrap_or_default();
                                             self.popup_open = false;
                                             self.filter_text.clear();
                                         }
@@ -148,5 +153,19 @@ impl StockPicker {
                         });
                 });
         }
+    }
+}
+
+fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
+    if name.is_empty() {
+        if exchange.is_empty() {
+            symbol.to_string()
+        } else {
+            format!("{exchange} | {symbol}")
+        }
+    } else if exchange.is_empty() {
+        format!("{symbol} | {name}")
+    } else {
+        format!("{exchange} | {symbol} | {name}")
     }
 }

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use egui_citizen::{CitizenId, Dispatcher};
 use egui_dock::{DockArea, DockState};
-use tracing::info;
+use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
 use compass_core::model::{AppConfig, Exchange};
@@ -258,7 +258,9 @@ impl CompassApp {
                 .show_ui(ui, |ui| {
                     for i in 0..=3 {
                         let val = exchange_label(i);
-                        if ui.selectable_value(&mut idx, i, val).clicked() {}
+                        if ui.selectable_value(&mut idx, i, val).clicked() {
+                            debug!(exchange = exchange_label(i), "exchange changed");
+                        }
                     }
                 });
             self.exchange_index = idx;
@@ -276,6 +278,11 @@ impl CompassApp {
                 let qualified =
                     Exchange::from_index(self.exchange_index)
                         .prefix_code(&self.stock_picker.selected_symbol);
+                info!(
+                    symbol = %qualified,
+                    exchange = exchange_label(self.exchange_index),
+                    "fetch requested"
+                );
                 self.shared_state.symbol.set(qualified);
                 dispatcher::handle(
                     messages::AppMessage::FetchBars,
