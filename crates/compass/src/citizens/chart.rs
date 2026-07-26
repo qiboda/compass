@@ -34,7 +34,7 @@ impl ChartCitizen {
     ///
     /// The chart is pre-configured with 100 visible bars, symbol label
     /// "COMPASS", and "1d" timeframe label — the real data is loaded
-    /// reactively on each frame in [`show`].
+    /// reactively on each frame in `show`.
     pub fn new(citizen_id: CitizenId, citizen_state: CitizenState) -> Self {
         let bars: Vec<egui_charts::model::Bar> = Vec::new();
         let data = BarData::from_bars(bars);

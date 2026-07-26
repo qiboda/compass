@@ -1,7 +1,7 @@
 //! egui_dock TabViewer bridge for the citizen pattern.
 //!
 //! Each tab is a [`Tab`] wrapping a [`TabKind`] variant. When a tab button is
-//! clicked, the [`TabViewer::on_tab_button`] hook calls
+//! clicked, the `on_tab_button` hook calls
 //! [`Dispatcher::activate`] with the tab's [`CitizenId`], enabling one-hot
 //! panel activation across the dock layout.
 //!
@@ -107,7 +107,7 @@ impl Tab {
 // ---------------------------------------------------------------------------
 
 /// egui_dock [`TabViewer`] that bridges tab clicks to citizen activation
-/// and delegates rendering to each citizen's [`show`] method.
+/// and delegates rendering to each citizen's `show` method.
 ///
 /// Created inline each frame — the short-lived borrows satisfy egui_dock's
 /// borrowing requirements.
