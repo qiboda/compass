@@ -143,6 +143,22 @@ master  ●──●──●──●────────●  (trunk)
 feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
 ```
 
+### PR merge workflow
+
+After a PR is merged but before closing the related issue, add a comment on the
+issue noting any deviations between the actual changes and the PR description:
+
+- What was implemented differently from the PR description
+- What was omitted or deferred
+- Any unplanned changes that were included
+
+This keeps issues as an accurate record of what was actually shipped.
+
+```
+gh issue comment <N> --body "PR #M 已合并。与 PR 描述不一致之处：
+- ..."
+```
+
 ## Worktrees (functional zone isolation)
 
 Worktrees divide the project into persistent functional zones. Each worktree
