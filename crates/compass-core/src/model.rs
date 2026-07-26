@@ -169,14 +169,14 @@ pub enum Cmd {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    /// DuckDB cache file location (default: "compass.db").
-    pub database: DatabaseConfig,
-    #[serde(default)]
     /// Application behavior (default symbol, timeframe).
     pub app: AppSection,
     #[serde(default)]
     /// Parquet directory for stock_basic.parquet and stock_daily/.
     pub parquet: ParquetConfig,
+    #[serde(default)]
+    /// Dolt data directories for investment_data and compass_data.
+    pub dolt: DoltConfig,
 }
 
 /// Parquet data directory configuration.
@@ -196,15 +196,35 @@ impl Default for ParquetConfig {
 }
 
 fn default_parquet_dir() -> String {
-    "parquet_data".into()
+    "/data/compass-data/parquet_data".into()
 }
 
-/// Database connection settings.
+/// Dolt data directories — used by the data pipeline CLI.
 #[derive(Debug, Clone, Deserialize)]
-pub struct DatabaseConfig {
-    #[serde(default = "default_db_path")]
-    /// Path to the DuckDB database file.
-    pub path: String,
+pub struct DoltConfig {
+    #[serde(default = "default_investment_data_dir")]
+    /// Directory for the Dolt `investment_data` repository (primary OHLCV source).
+    pub investment_data_dir: String,
+    #[serde(default = "default_compass_data_dir")]
+    /// Directory for the Dolt `compass_data` repository (fundamentals, custom data).
+    pub compass_data_dir: String,
+}
+
+impl Default for DoltConfig {
+    fn default() -> Self {
+        Self {
+            investment_data_dir: default_investment_data_dir(),
+            compass_data_dir: default_compass_data_dir(),
+        }
+    }
+}
+
+fn default_investment_data_dir() -> String {
+    "/data/compass-data/investment_data".into()
+}
+
+fn default_compass_data_dir() -> String {
+    "/data/compass-data/compass_data".into()
 }
 
 /// Application-level settings: default stock and timeframe on startup.
@@ -218,14 +238,6 @@ pub struct AppSection {
     pub default_timeframe: String,
 }
 
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            path: default_db_path(),
-        }
-    }
-}
-
 impl Default for AppSection {
     fn default() -> Self {
         Self {
@@ -235,9 +247,6 @@ impl Default for AppSection {
     }
 }
 
-fn default_db_path() -> String {
-    "data/compass.db".into()
-}
 fn default_symbol() -> String {
     "000001".into()
 }
@@ -328,12 +337,6 @@ default_timeframe = "1w"
         .unwrap();
         assert_eq!(config.app.default_symbol, "600519");
         assert_eq!(config.app.default_timeframe, "1w");
-    }
-
-    #[test]
-    fn database_config_defaults_to_parquet_data() {
-        let config = ParquetConfig::default();
-        assert_eq!(config.dir, "parquet_data");
     }
 
     #[test]
@@ -441,7 +444,7 @@ dir = "/custom/parquet"
     #[test]
     fn parquet_config_default_dir() {
         let cfg = ParquetConfig::default();
-        assert_eq!(cfg.dir, "parquet_data");
+        assert_eq!(cfg.dir, "/data/compass-data/parquet_data");
     }
 
     #[test]
@@ -458,6 +461,32 @@ dir = "/custom/parquet/path"
     #[test]
     fn appconfig_parquet_section_falls_back_to_default() {
         let config: AppConfig = toml::from_str("").unwrap();
-        assert_eq!(config.parquet.dir, "parquet_data");
+        assert_eq!(config.parquet.dir, "/data/compass-data/parquet_data");
+    }
+
+    #[test]
+    fn dolt_config_default_values() {
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            config.dolt.investment_data_dir,
+            "/data/compass-data/investment_data"
+        );
+        assert_eq!(
+            config.dolt.compass_data_dir,
+            "/data/compass-data/compass_data"
+        );
+    }
+
+    #[test]
+    fn dolt_config_overrides_from_toml() {
+        let config: AppConfig = toml::from_str(
+            r#"[dolt]
+investment_data_dir = "/custom/investment"
+compass_data_dir = "/custom/compass"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.dolt.investment_data_dir, "/custom/investment");
+        assert_eq!(config.dolt.compass_data_dir, "/custom/compass");
     }
 }

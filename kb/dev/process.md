@@ -178,7 +178,7 @@ unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
-1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
+1. Symlink data dirs from `/data/compass-data/` if available
 2. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
 3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
 4. Stay in master — don't switch session into the worktree directory
@@ -201,27 +201,26 @@ RUST_LOG=debug cargo run        # verbose logging
 ### CLI (compass-data)
 
 ```sh
-# Download from EastMoney to staging DuckDB
-cargo run --bin compass-data -- download --symbols "000001,600519"
-cargo run --bin compass-data -- download --symbols all --concurrency 2 --delay-ms 2000
-cargo run --bin compass-data -- download --symbols all --overwrite  # force overwrite
-
-# Import from Dolt into Parquet main database
+# Import from Dolt investment_data into Parquet main database
 cargo run --bin compass-data -- import
 cargo run --bin compass-data -- import --limit 100
+cargo run --bin compass-data -- import --symbols 000001,600519
 cargo run --bin compass-data -- import --overwrite  # full replace (skip merge)
 
-# Merge staging DuckDB into Parquet
-cargo run --bin compass-data -- merge
-cargo run --bin compass-data -- merge --overwrite   # staging wins on conflict
+# Import custom data from compass_data Dolt
+cargo run --bin compass-data -- import-compass --table stock_basic
+cargo run --bin compass-data -- import-compass --table fin_indicators
 
-# Export Parquet to DuckDB
+# Export Parquet to DuckDB (default: /data/compass-data/compass.duckdb)
 cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite  # force overwrite
 
+# Custom paths via CLI flags (override config.toml defaults)
+cargo run --bin compass-data -- import --dolt-dir /custom/investment_data --output /custom/parquet
+
 # Full help
 cargo run --bin compass-data -- --help
-cargo run --bin compass-data -- download --help
+cargo run --bin compass-data -- import --help
 ```
 
 ## Adding a feature (manual)
@@ -348,20 +347,11 @@ curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=1
 curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281"
 ```
 
-### Inspect the staging DuckDB
-
-```sh
-# DuckDB CLI not installed by default. Use the export command instead:
-cargo run --bin compass-data -- export
-
-# Or query via Python duckdb package if available
-```
-
 ### Inspect Parquet files
 
 ```sh
-ls -lh parquet_data/stock_daily/ | head -20
-wc -l parquet_data/stock_daily/     # file count = symbol count
+ls -lh /data/compass-data/parquet_data/stock_daily/ | head -20
+wc -l /data/compass-data/parquet_data/stock_daily/     # file count = symbol count
 ```
 
 ### Query Parquet with DuckDB
@@ -369,7 +359,7 @@ wc -l parquet_data/stock_daily/     # file count = symbol count
 ```rust
 use duckdb::Connection;
 let conn = Connection::open_in_memory()?;
-conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
+conn.execute_batch("SELECT * FROM read_parquet('/data/compass-data/parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
 ```
 
 ### collectors (Python data pipeline)
@@ -418,20 +408,20 @@ Sync `parquet_data/` snapshot to Baidu Cloud via `baidupcs` (BaiduPCS-Go):
 ### Dolt database queries
 
 ```sh
-# investment_data (read-only, third-party)
-dolt --data-dir=investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
-dolt --data-dir=investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
-dolt --data-dir=investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
+# investment_data (read-only, primary data source)
+dolt --data-dir=/data/compass-data/investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
+dolt --data-dir=/data/compass-data/investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
+dolt --data-dir=/data/compass-data/investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
 ```
 
 ### compass_data (custom mutable database)
 
 `compass_data` is our own Dolt repository for custom data — company profiles,
-financial indicators, watchlists, etc. It lives alongside `investment_data`.
+financial indicators, watchlists, etc. It lives at `/data/compass-data/compass_data`.
 
 ```sh
 # Run `dolt sql` from the parent directory to enable cross-database queries
-cd /path/to/compass
+cd /data/compass-data
 dolt sql -q "SELECT * FROM compass_data.stock_basic LIMIT 5"
 dolt sql -q "SELECT * FROM compass_data.fin_indicators WHERE symbol='SH600519' ORDER BY report_date DESC"
 
@@ -462,7 +452,6 @@ Key tables:
 ### Reset everything
 
 ```sh
-rm data/compass.duckdb logs/compass.log         # GUI cache
-rm -rf data/                                 # staging cache
-rm -rf parquet_data/                        # main Parquet data
+rm /data/compass-data/compass.duckdb logs/compass.log  # GUI cache
+rm -rf /data/compass-data/parquet_data/                 # main Parquet data (re-import to restore)
 ```

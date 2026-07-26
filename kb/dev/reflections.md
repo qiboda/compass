@@ -102,3 +102,21 @@ filter_stocks() before manual testing.
 1. egui 0.35 doesn't have `TopBottomPanel` — used inline horizontal toolbar instead
 2. Module visibility: `mod widgets` declared in main.rs makes `crate::widgets` accessible from test modules
 3. The `#![warn(missing_docs)]` lint is aggressive — every public item needs a doc comment, even enum variants
+
+## 2026-07-26 — ref #52 data directories configurable, moved to /data/compass-data/
+
+**What was done**: Moved parquet_data, investment_data, compass_data out of project to
+`/data/compass-data/`, made all paths configurable via `[parquet]` / `[dolt]` in
+config.toml, removed dead `DatabaseConfig` and `merge` command, updated all kb/
+docs and AGENTS.md, added `scripts/link-data-dirs.sh` for worktree data access.
+
+**What went wrong**: `dolt clone chenditc/investment_data` is too large for tool
+timeouts (~4GB, 16M chunks). Had to background it with `nohup`. Push to
+skwy/investment_data and `import --overwrite` still pending.
+
+**Lessons learned**:
+1. Large data operations should always go through background/nohup, never inline
+2. `cargo check` is fast but doesn't catch missing deps in Cargo.toml — compass-data
+   needed `toml` and `serde` added for config loading
+3. Removing structs from AppConfig is safe as long as no production code consumes them
+   (confirmed via grep before deleting DatabaseConfig)

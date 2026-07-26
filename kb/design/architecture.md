@@ -12,7 +12,7 @@ It has two faces:
 | Face | Binary | Purpose |
 |---|---|---|
 | **Chart app** | `compass` | Interactive candlestick chart with symbol search, timeframe selection, crosshair, zoom, pan. Runs as a native desktop window via egui. |
-| **Data pipeline** | `compass-data` | Offline data management — download from EastMoney, import from Dolt, merge staging into production, export to other formats. |
+| **Data pipeline** | `compass-data` | Offline data management — import from Dolt, export to DuckDB. |
 
 Both share the same library crate (`compass-core`), which defines the data
 model, provider traits, and all I/O logic.
@@ -44,7 +44,7 @@ compass (GUI binary)
   │     └── data/synthetic.rs ─ Test data generator
   │
   └── compass-data (CLI binary)
-        └── import / merge / export subcommands
+        └── import / export / backup subcommands
 ```
 
 `compass-core` contains zero UI code. It provides traits and implementations
@@ -285,14 +285,16 @@ already on disk.
 
 ## Data pipeline: CLI (compass-data)
 
-The CLI manages data offline, before the GUI ever runs. It has three subcommands
+The CLI manages data offline, before the GUI ever runs. It has subcommands
 that form a pipeline:
 
 ```
-Dolt DB ───────import─────► parquet_data/
-staging.duckdb ──merge───► parquet_data/
-parquet_data/ ──export───► compass.duckdb
+Dolt DB ────import────► parquet_data/
+parquet_data/ ─export──► compass.duckdb
 ```
+
+Data directories default to `/data/compass-data/` and are configurable
+via `[parquet]` and `[dolt]` sections in `~/.config/compass/config.toml`.
 
 The project also maintains its own Dolt repository `compass_data/` for
 custom mutable data (company profiles, financial indicators, watchlists),
@@ -333,18 +335,13 @@ Key design decisions:
 - Queries Dolt `investment_data` database via `dolt sql -r parquet`
 - Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
 - Writes Parquet bytes directly — no CSV or DuckDB intermediary
-- Filenames use the full Dolt symbol: `parquet_data/stock_daily/SZ000001.parquet`
+- Filenames use the full Dolt symbol: `stock_daily/SZ000001.parquet`
 - Merge mode (default): uses DuckDB `read_parquet` to merge existing + new
 - Overwrite mode: bytes written directly to target file
 
-### merge: staging → Parquet
-- Lists symbols in staging DuckDB not yet in Parquet
-- For each new symbol: COPY staging → Parquet file
-- Incremental: only moves data for symbols that don't already exist
-
 ### export: Parquet → other formats
 - Reads parquet_data/ directory
-- Exports to DuckDB, CSV, or parquet-dir format
+- Exports to DuckDB (default: `/data/compass-data/compass.duckdb`), CSV, or parquet-dir format
 - Used to create the final database the GUI reads from
 
 ### backup: Parquet → Baidu Cloud

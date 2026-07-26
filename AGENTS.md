@@ -155,7 +155,7 @@ functional workspace**, not a transient feature branch. One worktree hosts
 multiple features over its lifetime.
 
 After creating a worktree, the skill enforces MANDATORY post-creation steps:
-1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
+1. Symlink data dirs via `scripts/link-data-dirs.sh` (from `/data/compass-data/`)
 2. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
 3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
 4. Current session stays in master — do NOT cd into the worktree.
@@ -180,7 +180,7 @@ Detailed docs under `kb/` — organized into three sections:
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
 | `kb/user/index.md` | User overview — what Compass is, quickstart, prereqs |
 | `kb/user/gui.md` | Chart app — interface, controls, data flow, stock codes |
-| `kb/user/cli.md` | Data pipeline — download, import, merge, export, workflows, troubleshooting |
+| `kb/user/cli.md` | Data pipeline — import, export, workflows, troubleshooting |
 | `kb/user/config.md` | Config reference — all options, defaults, examples |
 
 ## Setup
@@ -210,10 +210,6 @@ cargo run --bin compass-data -- import                    # all 6000+ stocks (me
 cargo run --bin compass-data -- import --symbols 000001,600519  # specific stocks
 cargo run --bin compass-data -- import --overwrite        # full overwrite (ignore merge)
 
-# Merge staging DuckDB into Parquet main database
-cargo run --bin compass-data -- merge
-cargo run --bin compass-data -- merge --overwrite         # staging wins on conflict
-
 # Export Parquet to DuckDB
 cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite        # force overwrite
@@ -221,7 +217,7 @@ cargo run --bin compass-data -- export --overwrite        # force overwrite
 
 All commands default to **merge/skip** behavior (migration-style):
 existing unique keys are preserved, only new data is added. Pass `--overwrite`
-to replace existing data. Applies to `import`, `merge`, `export`.
+to replace existing data. Applies to `import` and `export`.
 
 ## Architecture
 
@@ -292,12 +288,12 @@ CREATE TABLE stock_limit (
 `~/.config/compass/config.toml` (all fields optional):
 
 ```toml
-[database]
-path = "data/compass.duckdb"
+[parquet]
+dir = "/data/compass-data/parquet_data"
 
-[api]
-base_url = "https://push2his.eastmoney.com"
-timeout_secs = 10
+[dolt]
+investment_data_dir = "/data/compass-data/investment_data"
+compass_data_dir = "/data/compass-data/compass_data"
 
 [app]
 default_symbol = "000001"
