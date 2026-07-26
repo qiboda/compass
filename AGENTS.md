@@ -8,6 +8,16 @@ with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for que
 
 ---
 
+## 品质准则
+
+精益求精，追求完美。每一行代码、每一次提交、每一个决策，都应以最高标准衡量。容不得将就、凑合、差不多。
+
+- 代码不行就重构，不要留着凑合
+- 设计不对就推翻，不要叠加补丁
+- 流程有漏洞就堵，不要绕过去
+
+---
+
 ## ⚡ GRILL-ME FIRST (ALWAYS)
 
 **On EVERY user message in this repo, you MUST load `/grill-me` before responding.**
