@@ -35,3 +35,16 @@ final_a_stock_eod_price）。
 investment_data 的 exchange 值并非文档中的 `SHSE/BSE` 而是 `SSE/BSE`，跨库映射需以实际值为准。
 
 **Lessons learned**: Dolt 方言和 MySQL 一致，`||` 不等于拼接；跨库查询需从父目录运行 `dolt sql` 无 `--data-dir`。
+
+---
+
+## 2026-07-26 — 流程违规: import-compass/backup 等多项 feature 工作跳过 PRE-IMPLEMENTATION GATE
+
+**What went wrong**: 当天完成了 import-compass 命令、Backup 上传、fin_indicators 增量、
+CI 修复等多项 feature 工作，全部跳过了 PRE-IMPLEMENTATION GATE（无 GitHub issue、
+无 plan、无 test-first）。
+
+**Lessons learned**:
+1. GATE 对 "所有代码变更" 的约束力不足 — 已补充 SELF-CHECK 4 问硬性规则
+2. "feature 工作" 的边界太模糊，容易自欺"这不是 feature" — 改为白名单例外（仅 docs/lint/typofix）
+3. 流程违规本身即是 bug — 记录到 reflections 并修复流程
