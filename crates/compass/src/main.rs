@@ -112,6 +112,7 @@ fn main() -> eframe::Result {
                 stock_list,
                 stock_picker,
                 exchange_index: 0usize,
+                timeframe_index: 0usize,
                 _backend_handle,
             }))
         }),
@@ -216,6 +217,7 @@ struct CompassApp {
     stock_list: Vec<compass_core::model::StockBasic>,
     stock_picker: StockPicker,
     exchange_index: usize,
+    timeframe_index: usize,
     _backend_handle: backend::BackendHandle,
 }
 
@@ -272,15 +274,27 @@ impl CompassApp {
 
             ui.separator();
 
-            ui.label("TF: 1d");
+            ui.label("TF:");
+            let mut tf = self.timeframe_index;
+            egui::ComboBox::from_id_salt("timeframe_combo")
+                .selected_text(timeframe_label(self.timeframe_index))
+                .show_ui(ui, |ui| {
+                    for i in 0..=2 {
+                        let val = timeframe_label(i);
+                        ui.selectable_value(&mut tf, i, val);
+                    }
+                });
+            self.timeframe_index = tf;
 
             if ui.button("Fetch").clicked() {
                 let qualified =
                     Exchange::from_index(self.exchange_index)
                         .prefix_code(&self.stock_picker.selected_symbol);
+                let timeframe = timeframe_value(self.timeframe_index);
                 info!(
                     symbol = %qualified,
                     exchange = exchange_label(self.exchange_index),
+                    timeframe = %timeframe,
                     "fetch requested"
                 );
                 self.shared_state.symbol.set(qualified);
@@ -288,6 +302,7 @@ impl CompassApp {
                     messages::AppMessage::FetchBars,
                     &self.shared_state,
                     &self.work_signal,
+                    timeframe,
                 );
             }
 
@@ -309,6 +324,19 @@ fn exchange_label(idx: usize) -> &'static str {
         3 => "BJ",
         _ => "全部",
     }
+}
+
+fn timeframe_label(idx: usize) -> &'static str {
+    match idx {
+        0 => "1d",
+        1 => "1w",
+        2 => "1M",
+        _ => "1d",
+    }
+}
+
+fn timeframe_value(idx: usize) -> String {
+    timeframe_label(idx).to_string()
 }
 
 // ---------------------------------------------------------------------------
