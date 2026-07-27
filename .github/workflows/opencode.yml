@@ -8,7 +8,7 @@ on:
 
 jobs:
   ask:
-    if: contains(github.event.comment.body, '/ask')
+    if: startsWith(github.event.comment.body, '/ask')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -31,7 +31,7 @@ jobs:
             for your full role instructions. Follow them exactly.
 
   fix:
-    if: contains(github.event.comment.body, '/fix')
+    if: startsWith(github.event.comment.body, '/fix')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -54,7 +54,7 @@ jobs:
             for your full role instructions. Follow them exactly.
 
   review:
-    if: contains(github.event.comment.body, '/review')
+    if: startsWith(github.event.comment.body, '/review')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -76,7 +76,7 @@ jobs:
             for your full role instructions. Follow them exactly.
 
   impl:
-    if: contains(github.event.comment.body, '/impl')
+    if: startsWith(github.event.comment.body, '/impl')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
