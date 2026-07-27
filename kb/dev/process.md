@@ -155,13 +155,13 @@ Push immediately after completing each issue. Do not batch.
 
 ## Git branching
 
-**Feature-branch workflow.** Most work happens on feature branches, merged via PR.
+**Feature-branch workflow.** Most work happens on branches, merged via PR.
 Trivial fixes (typo, config, one-line change) can go directly to master.
 
 ```
 master  ●──●──●──●────────●  (trunk)
               \          /
-feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
+pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
 ```
 
 **Merge strategy**: Use regular merge (not squash). Preserves all commit
@@ -184,14 +184,15 @@ gh issue comment <N> --body "PR #M 已合并。与 PR 描述不一致之处：
 - ..."
 ```
 
-## Worktrees (functional zone isolation)
+## Worktrees (PR development)
 
-Worktrees divide the project into persistent functional zones. Each worktree
-hosts multiple features in its domain — it is NOT deleted after a single
-feature ships. The `/worktree` skill provides conventions and commands.
+Worktrees provide isolated working directories for PR development.
+Each worktree is a **transient workspace** for a single PR — created
+when development starts, removed after the PR is merged.
+The `/worktree` skill provides conventions and commands.
 
-**Convention**: worktrees live at `.worktrees/<name>/` (gitignored),
-one per functional area (e.g. `custom-dolt`, `egui-mobius`).
+**Convention**: worktrees live at `.worktrees/<name>/` (gitignored).
+Branch naming: `pr/<short-description>`.
 
 **Why not plugins**: The `opencode-worktree` plugin (kdco/worktree via OCX)
 was evaluated and found to have blocking issues (no idempotent re-open,
@@ -199,10 +200,13 @@ unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
-1. Symlink data dirs from `/data/compass-data/` if available
-2. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
-3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
-4. Stay in master — don't switch session into the worktree directory
+1. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
+2. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
+3. Stay in master — don't switch session into the worktree directory
+
+**Post-merge cleanup**: after PR merge:
+1. Remove worktree: `git worktree remove .worktrees/<name> --force`
+2. Delete PR branch: `git branch -D pr/<name>`
 
 ## Version control
 

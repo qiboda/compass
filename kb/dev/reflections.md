@@ -137,3 +137,18 @@ skwy/investment_data and `import --overwrite` still pending.
    needed `toml` and `serde` added for config loading
 3. Removing structs from AppConfig is safe as long as no production code consumes them
    (confirmed via grep before deleting DatabaseConfig)
+
+## 2026-07-28 — ref #55 worktree 改为 PR-only + 删除 symlink 脚本 + issue 关闭记录 PR
+
+**What was done**: Changed worktree from persistent functional zones to transient
+PR-only workspaces (create per PR, cleanup on merge). Deleted `scripts/link-data-dirs.sh`
+(no longer needed — paths are config-driven). Added PR recording step to issue
+close flow. Fixed branching rule in compass-workflow skill (was "trunk-based, no
+feature branches" — corrected to feature-branch workflow with `pr/` naming).
+Standardized branch naming to `pr/<short-description>` across all docs.
+
+**What went wrong**: Compass-workflow SKILL.md still had stale "no feature branches"
+rule conflicting with the new PR-only workflow. Caught during cross-file review.
+
+**Lessons learned**: When changing a convention that spans multiple files, grep
+ALL markdown files for the old pattern — not just the ones you're editing.

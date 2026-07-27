@@ -138,7 +138,14 @@ All three must pass before `git push`.
 
 ### 8. Branching
 
-Trunk-based: push directly to `master`. No feature branches.
+Feature-branch workflow: most work happens on branches, merged via PR.
+Trivial fixes (typo, config, one-line change) can go directly to master.
+
+```
+master  ●──●──●──●────────●  (trunk)
+              \          /
+pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
+```
 
 ---
 

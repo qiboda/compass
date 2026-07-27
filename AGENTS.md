@@ -136,6 +136,7 @@ amend and re-commit. Never assume one implies the other.
 
 - commit → issue stays OPEN
 - push succeeds → close issue with `gh issue close`
+- When closing, record the PR that implemented it: `gh issue comment <N> --body "Fixed by #<PR>"`
 
 ### Scope Discipline
 
@@ -149,16 +150,18 @@ deviation — even a pragmatic workaround — requires user approval first.
 
 ## Worktrees
 
-For isolated development of distinct functional zones, load the `worktree`
-skill. Worktrees live at `.worktrees/<name>/` — each is a **persistent
-functional workspace**, not a transient feature branch. One worktree hosts
-multiple features over its lifetime.
+For PR development, load the `worktree` skill. Worktrees live at
+`.worktrees/<name>/` — each is a **transient PR workspace**, created for
+a single PR and cleaned up after merge. Branch naming: `pr/<short-description>`.
 
 After creating a worktree, the skill enforces MANDATORY post-creation steps:
-1. Symlink data dirs via `scripts/link-data-dirs.sh` (from `/data/compass-data/`)
-2. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
-3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
-4. Current session stays in master — do NOT cd into the worktree.
+1. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
+2. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
+3. Current session stays in master — do NOT cd into the worktree.
+
+After PR merge, the skill enforces MANDATORY cleanup:
+1. Remove worktree: `git worktree remove .worktrees/<name> --force`
+2. Delete PR branch: `git branch -D pr/<name>`
 
 ## Knowledge base
 
