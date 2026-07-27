@@ -22,8 +22,10 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TOKEN: ${{ github.token }}
         with:
           model: deepseek/deepseek-v4-pro
+          use_github_token: "true"
           prompt: |
             Read AGENTS.md for project conventions, then read kb/github/pr-review.md
             for your full role instructions. Follow them exactly.
