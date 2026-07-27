@@ -6,7 +6,11 @@ The complete development cycle for features and bugs:
 
 ```
 User raises requirement
-  →  OpenCode grills (/grill-me) to clarify scope and decisions
+  →  User comments /ask or /fix or /impl on issue/PR
+  →  OpenCode GitHub Action triggers, loads role-specific kb/github/*.md
+  →  /ask: answers only. /fix: evaluates complexity, fixes or reports.
+      /impl: implements with test-first + ref #N
+  →  (If working locally) OpenCode grills (/grill-me) to clarify scope
   →  Shared understanding reached → summarize locked-in decisions
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
@@ -55,6 +59,23 @@ test, refactor, docs, chore → no issue reference required
 The hook is activated via `git config core.hooksPath .githooks` (already configured).
 
 ## OpenCode workflow
+
+### GitHub Action commands
+
+OpenCode runs as a GitHub Action bot. Use these commands in issue/PR comments:
+
+| Command | Usage | Behavior |
+|---|---|---|
+| `/ask` | Issue or PR comment | Read-only Q&A — answers questions, explains code |
+| `/fix` | Issue or PR comment | Bug fix: simple → fix+commit; complex → analyze+suggest PR |
+| `/review` | PR comment | Code review — checks correctness, conventions, Rust best practices |
+| `/impl` | Issue or PR comment | Feature implementation — follows full compass workflow |
+| (auto) | CI workflow failure | Diagnoses CI failure, reports root cause |
+
+Each command maps to a workflow file in `.github/workflows/opencode-*.yml` and a
+role instruction file in `kb/github/*.md`. GitHub roles layer on top of AGENTS.md
+(Common Baseline + Role Overlay) — AGENTS.md provides project conventions, role
+files add role-specific constraints.
 
 ### When to plan first
 

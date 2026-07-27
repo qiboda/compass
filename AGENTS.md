@@ -162,13 +162,14 @@ After creating a worktree, the skill enforces MANDATORY post-creation steps:
 
 ## Knowledge base
 
-Detailed docs under `kb/` — organized into three sections:
+Detailed docs under `kb/` — organized into four sections:
 
 | Section | Purpose |
-|---|---|
+|---|---|---|
 | `kb/design/` | Project design — architecture, data providers, symbols |
 | `kb/dev/` | Development aids — workflow, process, testing, reflections |
 | `kb/user/` | User reference — installation, GUI, CLI, config |
+| `kb/github/` | GitHub Action bot role instructions (/ask, /fix, /review, /impl, ci-fix) |
 
 | File | Content |
 |---|---|

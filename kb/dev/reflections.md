@@ -103,7 +103,24 @@ filter_stocks() before manual testing.
 2. Module visibility: `mod widgets` declared in main.rs makes `crate::widgets` accessible from test modules
 3. The `#![warn(missing_docs)]` lint is aggressive — every public item needs a doc comment, even enum variants
 
-## 2026-07-26 — ref #52 data directories configurable, moved to /data/compass-data/
+## 2026-07-27 — ref #54 feat: OpenCode GitHub 多工作流架构
+
+**What was done**: 将单一 `opencode.yml` 拆分为 5 个专用工作流（/ask、/fix、/review、
+/impl、CI-fix），每个工作流有独立的触发条件、权限和角色指令。AGENTS.md 采用 Common
+Baseline + Role Overlay 策略——AGENTS.md 保持不变作为项目约定基线，GitHub 角色专用指令
+放在 `kb/github/*.md`，workflow prompt 仅做文件路由。Momus 审议通过，actionlint 零错误。
+
+**What went wrong**: 源码审查发现 opencode GitHub Action 的 `assertPayloadKeyword()`
+硬编码了 `/opencode` 和 `/oc` 关键词检查，自定义命令（/ask、/fix 等）可能在 action
+内部被拒绝。待部署后实测验证 `mentions` 输入是否生效。
+
+**Lessons learned**:
+1. GitHub Actions 的 `workflow_run` 事件仅从默认分支触发 workflow 定义，但可以响应
+   任意分支的 workflow 完成事件——只要 workflow 文件在默认分支上。
+2. prompt 输入的行为应实测确认（覆盖 vs 追加），计划中采用保守策略：prompt 只做文件路由。
+3. YAML workflow 的 actionlint 验证可替代传统 TDD 的 RED 阶段（config 文件无编译/运行测试）。
+
+
 
 **What was done**: Moved parquet_data, investment_data, compass_data out of project to
 `/data/compass-data/`, made all paths configurable via `[parquet]` / `[dolt]` in
