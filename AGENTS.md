@@ -109,6 +109,18 @@ feat: add thing
 ref #26
 ```
 
+### Commit Strategy
+
+Commit frequently during implementation — small, atomic commits make it
+easy to revert individual changes when agents make mistakes.
+
+- **Large changes** (>3 files or significant logic across modules):
+  commit the implementation first, then run automated review. Keeps the
+  implementation commit clean; review fixes go in follow-up commits.
+- **Small changes** (≤3 files, localized): run review first, fix in
+  working tree, then commit everything together. Avoids churn commits.
+- If review fixes create too many follow-ups, squash before push.
+
 ### Commit & Push
 
 Commit and push are **separate operations**. Do not chain them with `&&`.

@@ -152,3 +152,16 @@ rule conflicting with the new PR-only workflow. Caught during cross-file review.
 
 **Lessons learned**: When changing a convention that spans multiple files, grep
 ALL markdown files for the old pattern — not just the ones you're editing.
+
+## 2026-07-28 — ref #56 自动 review + 修复 + 提 issue + 提交策略全局化
+
+**What was done**: Replaced manual POST-IMPLEMENTATION SELF-AUDIT checklist
+with an automated 5-step review flow: commit strategy decision → `/review-work`
+→ auto-fix (≤3 files, related) or create issue (unrelated or >3 files) →
+re-review (max 2 rounds) → finalize. Added global commit strategy rule to
+AGENTS.md (large changes commit-first, small changes fix-first).
+
+**What went wrong**: Nothing. Grill-me decision tree resolved cleanly.
+
+**Lessons learned**: A single `>3 files` threshold is clear enough — no need
+to define "large" vs "small" change through subjective criteria.

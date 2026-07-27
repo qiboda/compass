@@ -149,23 +149,49 @@ pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
 
 ---
 
-## 🔄 POST-IMPLEMENTATION SELF-AUDIT
+## 🔍 POST-IMPLEMENTATION REVIEW (AUTOMATED)
 
-After completing implementation, review your own work against this checklist:
+After completing implementation, run an automated review to catch issues
+before they reach the repo. The old manual checklist is replaced by this.
 
-```
-🔍 POST-IMPLEMENTATION AUDIT
+### Step 1: Commit Strategy Decision
 
-☐ Were all gate steps (0-4) completed before code was written?
-☐ Does every changed kb/ file reflect the actual changes?
-☐ Do all tests pass? (cargo test)
-☐ Is cargo clippy clean?
-☐ Is cargo fmt --check clean?
-☐ Does the commit include ref #N?
-☐ Are kb/ updates in the same commit as code changes?
-```
+Follow the global commit strategy in AGENTS.md:
+- **Large changes** (>3 files or cross-module): commit the implementation
+  first with `ref #N`, then run review. Fixes go in follow-up commits.
+- **Small changes** (≤3 files, localized): run review first, fix in
+  working tree, then commit everything together.
 
-If any box is unchecked, fix it before pushing.
+### Step 2: Run Review
+
+Trigger `/review-work` against the current changes. The review runs 5
+agents in parallel: goal verification, QA execution, code quality,
+security audit, and context mining.
+
+### Step 3: Handle Findings
+
+For each finding reported by the review:
+
+| Finding Type | Action |
+|---|---|
+| Related to current work, ≤3 files affected | Auto-fix directly |
+| Unrelated to current work | Create a GitHub issue (`gh issue create`) |
+| Related but >3 files affected | Create a GitHub issue |
+
+Use the review agent's `blocking_issues` as the primary input.
+In-scope = fixes within the files and modules touched by this PR/change.
+
+### Step 4: Re-review (max 2 rounds)
+
+After fixing issues, re-run the review to verify fixes are correct.
+If the review still reports blocking issues after 2 rounds, create
+issues for the remaining problems and note them in the commit message.
+
+### Step 5: Finalize
+
+- All in-scope issues resolved → proceed to commit (or push)
+- Reflection record: append to `kb/dev/reflections.md` summarizing
+  review results and any issues created
 
 ---
 
