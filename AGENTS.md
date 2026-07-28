@@ -184,7 +184,7 @@ Detailed docs under `kb/` — organized into four sections:
 | `kb/design/` | Project design — architecture, data providers, symbols |
 | `kb/dev/` | Development aids — workflow, process, testing, reflections |
 | `kb/user/` | User reference — installation, GUI, CLI, config |
-| `kb/github/` | GitHub Action bot role instructions (/ask, /fix, /review, /impl, ci-fix) |
+| `kb/github/` | GitHub Action bot role instructions (/ask, /fix, /review, /impl, ci-fix) and label conventions |
 
 | File | Content |
 |---|---|
@@ -198,6 +198,7 @@ Detailed docs under `kb/` — organized into four sections:
 | `kb/user/gui.md` | Chart app — interface, controls, data flow, stock codes |
 | `kb/user/cli.md` | Data pipeline — import, export, workflows, troubleshooting |
 | `kb/user/config.md` | Config reference — all options, defaults, examples |
+| `kb/github/labels.md` | Issue/PR label taxonomy — Bevy-style C/A/D/P/S prefixes |
 
 ## Setup
 

@@ -76,7 +76,7 @@ Post a comment on the issue/PR with:
 
 ## CI Failure Issues
 
-When the issue has the `ci-failure` label, it was auto-created by the
+When the issue has the `S-CI-Failure` label, it was auto-created by the
 `opencode-ci-fix` workflow after a CI run failed. The issue body contains:
 
 - The failing branch name

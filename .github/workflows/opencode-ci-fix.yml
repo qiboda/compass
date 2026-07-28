@@ -19,7 +19,7 @@ jobs:
         run: |
           ISSUE_URL=$(gh issue create \
             --title "CI Failure: ${{ github.event.workflow_run.head_branch }}" \
-            --label "ci-failure" \
+            --label "S-CI-Failure" \
             --body "CI workflow **failed** on branch \`${{ github.event.workflow_run.head_branch }}\`.
 
           **Commit**: ${{ github.event.workflow_run.head_sha }}
