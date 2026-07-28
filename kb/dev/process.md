@@ -6,7 +6,11 @@ The complete development cycle for features and bugs:
 
 ```
 User raises requirement
-  →  OpenCode grills (/grill-me) to clarify scope and decisions
+  →  User comments /ask or /fix or /impl on issue/PR
+  →  OpenCode GitHub Action triggers, loads role-specific kb/github/*.md
+  →  /ask: answers only. /fix: evaluates complexity, fixes or reports.
+      /impl: implements with test-first + ref #N
+  →  (If working locally) OpenCode grills (/grill-me) to clarify scope
   →  Shared understanding reached → summarize locked-in decisions
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
@@ -55,6 +59,37 @@ test, refactor, docs, chore → no issue reference required
 The hook is activated via `git config core.hooksPath .githooks` (already configured).
 
 ## OpenCode workflow
+
+### GitHub Action commands
+
+OpenCode runs as a GitHub Action bot. Use these commands in issue/PR comments:
+
+| Command | Usage | Behavior |
+|---|---|---|
+| `/ask` | Issue or PR comment | Read-only Q&A — answers questions, explains code |
+| `/fix` | Issue or PR comment | Bug fix: simple → fix+commit; complex → analyze+suggest PR |
+| `/review` | PR comment | Code review — checks correctness, conventions, Rust best practices |
+| `/impl` | Issue or PR comment | Feature implementation — follows full compass workflow |
+| (auto) | CI workflow failure | Diagnoses CI failure, reports root cause |
+
+Each command maps to a workflow file in `.github/workflows/opencode-*.yml` and a
+role instruction file in `kb/github/*.md`. GitHub roles layer on top of AGENTS.md
+(Common Baseline + Role Overlay) — AGENTS.md provides project conventions, role
+files add role-specific constraints.
+
+### Local slash commands (OpenCode skills)
+
+These slash commands run locally in an OpenCode session (not via GitHub Actions):
+
+| Command | Usage | Behavior |
+|---|---|---|
+| `/test` | Feature/bugfix work | Write failing tests (RED phase), BDD test scenarios, coverage analysis |
+| `/rustdoc` | Feature/bugfix work | Verify `#[deny(missing_docs)]` compliance via `cargo doc --no-deps` |
+| `/docs` | Feature/bugfix work | Identify and update `kb/` files based on code changes |
+| `/reflect` | After feature/bugfix | Write post-implementation reflection + trend analysis to `kb/dev/reflections.md` |
+
+Each command maps to a skill file in `.opencode/skills/<name>/SKILL.md`. Skills
+are auto-discovered by OpenCode from the filesystem — no registration needed.
 
 ### When to plan first
 
@@ -134,23 +169,44 @@ Push immediately after completing each issue. Do not batch.
 
 ## Git branching
 
-**Feature-branch workflow.** Most work happens on feature branches, merged via PR.
+**Feature-branch workflow.** Most work happens on branches, merged via PR.
 Trivial fixes (typo, config, one-line change) can go directly to master.
 
 ```
 master  ●──●──●──●────────●  (trunk)
               \          /
-feat/xxx       ●──●──●──┘   (feature branch, PR, squash merge)
+pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
 ```
 
-## Worktrees (functional zone isolation)
+**Merge strategy**: Use regular merge (not squash). Preserves all commit
+history — each commit maps to an issue reference (`ref #N`), and losing that
+granularity would break traceability.
 
-Worktrees divide the project into persistent functional zones. Each worktree
-hosts multiple features in its domain — it is NOT deleted after a single
-feature ships. The `/worktree` skill provides conventions and commands.
+### PR merge workflow
 
-**Convention**: worktrees live at `.worktrees/<name>/` (gitignored),
-one per functional area (e.g. `custom-dolt`, `egui-mobius`).
+After a PR is merged but before closing the related issue, add a comment on the
+issue noting any deviations between the actual changes and the PR description:
+
+- What was implemented differently from the PR description
+- What was omitted or deferred
+- Any unplanned changes that were included
+
+This keeps issues as an accurate record of what was actually shipped.
+
+```
+gh issue comment <N> --body "PR #M 已合并。与 PR 描述不一致之处：
+- ..."
+```
+
+## Worktrees (PR development)
+
+Worktrees provide isolated working directories for PR development.
+Each worktree is a **transient workspace** for a single PR — created
+when development starts, removed after the PR is merged.
+The `/worktree` skill provides conventions and commands.
+
+**Convention**: worktrees live at `.worktrees/<name>/` (gitignored).
+Branch naming: `pr/<short-description>`.
 
 **Why not plugins**: The `opencode-worktree` plugin (kdco/worktree via OCX)
 was evaluated and found to have blocking issues (no idempotent re-open,
@@ -158,10 +214,13 @@ unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
-1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
-2. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
-3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
-4. Stay in master — don't switch session into the worktree directory
+1. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
+2. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
+3. Stay in master — don't switch session into the worktree directory
+
+**Post-merge cleanup**: after PR merge:
+1. Remove worktree: `git worktree remove .worktrees/<name> --force`
+2. Delete PR branch: `git branch -D pr/<name>`
 
 ## Version control
 
@@ -181,27 +240,26 @@ RUST_LOG=debug cargo run        # verbose logging
 ### CLI (compass-data)
 
 ```sh
-# Download from EastMoney to staging DuckDB
-cargo run --bin compass-data -- download --symbols "000001,600519"
-cargo run --bin compass-data -- download --symbols all --concurrency 2 --delay-ms 2000
-cargo run --bin compass-data -- download --symbols all --overwrite  # force overwrite
-
-# Import from Dolt into Parquet main database
+# Import from Dolt investment_data into Parquet main database
 cargo run --bin compass-data -- import
 cargo run --bin compass-data -- import --limit 100
+cargo run --bin compass-data -- import --symbols 000001,600519
 cargo run --bin compass-data -- import --overwrite  # full replace (skip merge)
 
-# Merge staging DuckDB into Parquet
-cargo run --bin compass-data -- merge
-cargo run --bin compass-data -- merge --overwrite   # staging wins on conflict
+# Import custom data from compass_data Dolt
+cargo run --bin compass-data -- import-compass --table stock_basic
+cargo run --bin compass-data -- import-compass --table fin_indicators
 
-# Export Parquet to DuckDB
+# Export Parquet to DuckDB (default: /data/compass-data/compass.duckdb)
 cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite  # force overwrite
 
+# Custom paths via CLI flags (override config.toml defaults)
+cargo run --bin compass-data -- import --dolt-dir /custom/investment_data --output /custom/parquet
+
 # Full help
 cargo run --bin compass-data -- --help
-cargo run --bin compass-data -- download --help
+cargo run --bin compass-data -- import --help
 ```
 
 ## Adding a feature (manual)
@@ -328,20 +386,11 @@ curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=1
 curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281"
 ```
 
-### Inspect the staging DuckDB
-
-```sh
-# DuckDB CLI not installed by default. Use the export command instead:
-cargo run --bin compass-data -- export
-
-# Or query via Python duckdb package if available
-```
-
 ### Inspect Parquet files
 
 ```sh
-ls -lh parquet_data/stock_daily/ | head -20
-wc -l parquet_data/stock_daily/     # file count = symbol count
+ls -lh /data/compass-data/parquet_data/stock_daily/ | head -20
+wc -l /data/compass-data/parquet_data/stock_daily/     # file count = symbol count
 ```
 
 ### Query Parquet with DuckDB
@@ -349,7 +398,7 @@ wc -l parquet_data/stock_daily/     # file count = symbol count
 ```rust
 use duckdb::Connection;
 let conn = Connection::open_in_memory()?;
-conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
+conn.execute_batch("SELECT * FROM read_parquet('/data/compass-data/parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
 ```
 
 ### collectors (Python data pipeline)
@@ -398,20 +447,20 @@ Sync `parquet_data/` snapshot to Baidu Cloud via `baidupcs` (BaiduPCS-Go):
 ### Dolt database queries
 
 ```sh
-# investment_data (read-only, third-party)
-dolt --data-dir=investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
-dolt --data-dir=investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
-dolt --data-dir=investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
+# investment_data (read-only, primary data source)
+dolt --data-dir=/data/compass-data/investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
+dolt --data-dir=/data/compass-data/investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
+dolt --data-dir=/data/compass-data/investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
 ```
 
 ### compass_data (custom mutable database)
 
 `compass_data` is our own Dolt repository for custom data — company profiles,
-financial indicators, watchlists, etc. It lives alongside `investment_data`.
+financial indicators, watchlists, etc. It lives at `/data/compass-data/compass_data`.
 
 ```sh
 # Run `dolt sql` from the parent directory to enable cross-database queries
-cd /path/to/compass
+cd /data/compass-data
 dolt sql -q "SELECT * FROM compass_data.stock_basic LIMIT 5"
 dolt sql -q "SELECT * FROM compass_data.fin_indicators WHERE symbol='SH600519' ORDER BY report_date DESC"
 
@@ -442,7 +491,6 @@ Key tables:
 ### Reset everything
 
 ```sh
-rm data/compass.duckdb logs/compass.log         # GUI cache
-rm -rf data/                                 # staging cache
-rm -rf parquet_data/                        # main Parquet data
+rm /data/compass-data/compass.duckdb logs/compass.log  # GUI cache
+rm -rf /data/compass-data/parquet_data/                 # main Parquet data (re-import to restore)
 ```

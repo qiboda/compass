@@ -38,11 +38,15 @@ I will now check each gate step before proceeding:
    → [must show plan summary]
 
 ☐ STEP 3 — TESTS (RED phase)
-   Write failing test FIRST, confirm it fails for the right reason
+   → Invoke /test (qa skill) to write failing tests
    → [must show test failure output]
 
-☐ STEP 4 — DOCS
-   Identify which kb/ files need updating:
+☐ STEP 4a — RUSTDOC
+   → Invoke /rustdoc to verify #[deny(missing_docs)] compliance
+   → [must show cargo doc --no-deps is warning-free]
+
+☐ STEP 4b — DOCS (kb/)
+   → Invoke /docs to identify and update kb/ files
    → [must list files]
 ```
 
@@ -59,6 +63,11 @@ The gate does NOT apply to:
 - Lint fixes
 - Typo fixes
 - Test additions for existing code
+
+> ⚠️ **Skipping the gate does NOT skip the post-implementation review.**
+> The `POST-IMPLEMENTATION REVIEW` section below applies to ALL changes,
+> including documentation-only. The gate and the review are separate
+> processes — gate is pre-implementation, review is post-implementation.
 
 ### Gate completion signal
 
@@ -138,54 +147,99 @@ All three must pass before `git push`.
 
 ### 8. Branching
 
-Trunk-based: push directly to `master`. No feature branches.
+Feature-branch workflow: most work happens on branches, merged via PR.
+Trivial fixes (typo, config, one-line change) can go directly to master.
+
+```
+master  ●──●──●──●────────●  (trunk)
+              \          /
+pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
+```
+
+### 9. Label Enforcement
+
+When creating a GitHub issue or PR:
+- Attach at least one **A-** (area) and one **C-** (category) label.
+- **D-** (difficulty), **P-** (priority), and **S-** (status) are optional but recommended.
+
+See `kb/github/labels.md` for the complete taxonomy.
+
+`gh issue create --label "C-Bug,A-Data"` or `gh pr create --label "C-Feature,A-GUI"`.
 
 ---
 
-## 🔄 POST-IMPLEMENTATION SELF-AUDIT
+## 📋 Available Skills
 
-After completing implementation, review your own work against this checklist:
+The compass project provides these opencode skills for specific workflow steps:
 
-```
-🔍 POST-IMPLEMENTATION AUDIT
+| Skill | Slash Command | Purpose | Gate Step |
+|---|---|---|---|
+| qa (test) | `/test` | Write failing tests (TDD/BDD), test coverage | Step 3 — TESTS |
+| rustdoc | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance | Step 4a — RUSTDOC |
+| docs | `/docs` | Identify and update kb/ files | Step 4b — DOCS |
+| reflect | `/reflect` | Write post-implementation reflection + trend analysis | Post-implementation |
 
-☐ Were all gate steps (0-4) completed before code was written?
-☐ Does every changed kb/ file reflect the actual changes?
-☐ Do all tests pass? (cargo test)
-☐ Is cargo clippy clean?
-☐ Is cargo fmt --check clean?
-☐ Does the commit include ref #N?
-☐ Are kb/ updates in the same commit as code changes?
-```
-
-If any box is unchecked, fix it before pushing.
+When the gate checklist says `→ Invoke /<command>`, load that skill and follow
+its workflow. Each skill has a `SKILL.md` file in `.opencode/skills/<name>/`.
 
 ---
 
-## 📝 REFLECTION RECORD (MANDATORY)
+## 🔍 POST-IMPLEMENTATION REVIEW (AUTOMATED)
 
-After EVERY feature or bugfix implementation, you MUST write a brief reflection
-and append it to `kb/dev/reflections.md`. This is NOT optional.
+After completing implementation, run an automated review to catch issues
+before they reach the repo. The old manual checklist is replaced by this.
 
-### Format
+### Step 1: Commit
 
-```markdown
-## [date] — [issue ref] [brief title]
+Commit the implementation first — always. Do not run review before committing.
 
-**What was done**: [1-2 sentences summarizing the change]
+```
+git add <files>
+git commit -m "feat: description
 
-**What went wrong** (if any): [process failures, missed steps, surprises]
-
-**Lessons learned**: [what to do differently next time]
+ref #N"
 ```
 
-### Purpose
+### Step 2: Run Review
 
-Reflections compound. They prevent the same mistakes from recurring. If you
-skipped the gate or violated a rule, that MUST appear in the reflection.
+Trigger `/review-work` against the current changes. The review runs 5
+agents in parallel: goal verification, QA execution, code quality,
+security audit, and context mining.
 
-The reflection MUST be committed in the same commit as the implementation,
-or as a follow-up commit immediately after.
+### Step 3: Handle Findings
+
+For each finding reported by the review:
+
+| Finding Type | Action |
+|---|---|
+| Related to current work, ≤3 files affected | Auto-fix directly |
+| Unrelated to current work | Create a GitHub issue (`gh issue create`) |
+| Related but >3 files affected | Create a GitHub issue |
+
+Use the review agent's `blocking_issues` as the primary input.
+In-scope = fixes within the files and modules touched by this PR/change.
+
+### Step 4: Re-review (max 2 rounds)
+
+After fixing issues, re-run the review to verify fixes are correct.
+If the review still reports blocking issues after 2 rounds, create
+issues for the remaining problems and note them in the commit message.
+
+### Step 5: Finalize
+
+- All in-scope issues resolved → proceed to commit (or push)
+- → Invoke /reflect to write post-implementation reflection
+
+---
+
+## 📝 REFLECTION RECORD
+
+After EVERY feature or bugfix implementation, invoke `/reflect` (reflect skill)
+to write a post-implementation reflection and append it to `kb/dev/reflections.md`.
+This replaces the old manual reflection mandate — the reflect skill handles
+writing, format, and trend analysis.
+
+See `.opencode/skills/reflect/SKILL.md` for the full reflection workflow.
 
 ---
 

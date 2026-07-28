@@ -141,7 +141,7 @@ fn bench_warm_read(c: &mut Criterion) {
 /// Benchmark against the production SZ000001 dataset (warm read).
 /// Skipped gracefully when `parquet_data/` is not present.
 fn bench_real_data(c: &mut Criterion) {
-    let real_dir = Path::new("../../parquet_data");
+    let real_dir = Path::new("/data/compass-data/parquet_data");
     let test_file = real_dir.join("stock_daily/SZ000001.parquet");
 
     if !test_file.exists() {

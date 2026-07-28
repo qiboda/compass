@@ -8,6 +8,63 @@ use egui_charts::model::Bar;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
+// Exchange
+// ---------------------------------------------------------------------------
+
+/// Stock exchange identifier for A-share markets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exchange {
+    /// No exchange filter — matches all stocks.
+    All,
+    /// Shanghai Stock Exchange.
+    SH,
+    /// Shenzhen Stock Exchange.
+    SZ,
+    /// Beijing Stock Exchange.
+    BJ,
+}
+
+impl Exchange {
+    /// Two-letter exchange code ("SH", "SZ", "BJ") or "" for All.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::All => "",
+            Self::SH => "SH",
+            Self::SZ => "SZ",
+            Self::BJ => "BJ",
+        }
+    }
+
+    /// Maps a ComboBox index to an Exchange variant. 0=All, 1=SH, 2=SZ, 3=BJ.
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            1 => Self::SH,
+            2 => Self::SZ,
+            3 => Self::BJ,
+            _ => Self::All,
+        }
+    }
+
+    /// Prefixes a bare code with exchange marker (sh./sz./bj.). No prefix for All.
+    pub fn prefix_code(&self, code: &str) -> String {
+        match self {
+            Self::All => code.to_string(),
+            Self::SH => format!("sh.{code}"),
+            Self::SZ => format!("sz.{code}"),
+            Self::BJ => format!("bj.{code}"),
+        }
+    }
+
+    /// True if the stock's exchange field matches this variant. All always matches.
+    pub fn matches(&self, stock: &StockBasic) -> bool {
+        match self {
+            Self::All => true,
+            _ => stock.exchange.as_deref() == Some(self.as_str()),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Symbol identifiers
 // ---------------------------------------------------------------------------
 
@@ -112,21 +169,63 @@ pub enum Cmd {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    /// Data directory settings (default: parquet_dir = "parquet_data").
-    pub database: DatabaseConfig,
-    #[serde(default)]
     /// Application behavior (default symbol, timeframe).
     pub app: AppSection,
+    #[serde(default)]
+    /// Parquet directory for stock_basic.parquet and stock_daily/.
+    pub parquet: ParquetConfig,
+    #[serde(default)]
+    /// Dolt data directories for investment_data and compass_data.
+    pub dolt: DoltConfig,
 }
 
-/// Database connection settings.
+/// Parquet data directory configuration.
 #[derive(Debug, Clone, Deserialize)]
-pub struct DatabaseConfig {
+pub struct ParquetConfig {
     #[serde(default = "default_parquet_dir")]
-    /// Path to the parquet_data directory for OHLCV data.
-    pub parquet_dir: String,
+    /// Directory containing `stock_basic.parquet` and `stock_daily/` subdirectory.
+    pub dir: String,
 }
 
+impl Default for ParquetConfig {
+    fn default() -> Self {
+        Self {
+            dir: default_parquet_dir(),
+        }
+    }
+}
+
+fn default_parquet_dir() -> String {
+    "/data/compass-data/parquet_data".into()
+}
+
+/// Dolt data directories — used by the data pipeline CLI.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DoltConfig {
+    #[serde(default = "default_investment_data_dir")]
+    /// Directory for the Dolt `investment_data` repository (primary OHLCV source).
+    pub investment_data_dir: String,
+    #[serde(default = "default_compass_data_dir")]
+    /// Directory for the Dolt `compass_data` repository (fundamentals, custom data).
+    pub compass_data_dir: String,
+}
+
+impl Default for DoltConfig {
+    fn default() -> Self {
+        Self {
+            investment_data_dir: default_investment_data_dir(),
+            compass_data_dir: default_compass_data_dir(),
+        }
+    }
+}
+
+fn default_investment_data_dir() -> String {
+    "/data/compass-data/investment_data".into()
+}
+
+fn default_compass_data_dir() -> String {
+    "/data/compass-data/compass_data".into()
+}
 /// Application-level settings: default stock and timeframe on startup.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppSection {
@@ -138,14 +237,6 @@ pub struct AppSection {
     pub default_timeframe: String,
 }
 
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            parquet_dir: default_parquet_dir(),
-        }
-    }
-}
-
 impl Default for AppSection {
     fn default() -> Self {
         Self {
@@ -155,9 +246,6 @@ impl Default for AppSection {
     }
 }
 
-fn default_parquet_dir() -> String {
-    "parquet_data".into()
-}
 fn default_symbol() -> String {
     "000001".into()
 }
@@ -251,20 +339,14 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn database_config_defaults_to_parquet_data() {
-        let config = DatabaseConfig::default();
-        assert_eq!(config.parquet_dir, "parquet_data");
-    }
-
-    #[test]
     fn appconfig_parses_parquet_dir_from_toml() {
         let config: AppConfig = toml::from_str(
-            r#"[database]
-parquet_dir = "/custom/parquet"
+            r#"[parquet]
+dir = "/custom/parquet"
 "#,
         )
         .unwrap();
-        assert_eq!(config.database.parquet_dir, "/custom/parquet");
+        assert_eq!(config.parquet.dir, "/custom/parquet");
     }
 
     #[test]
@@ -288,5 +370,122 @@ parquet_dir = "/custom/parquet"
         s.set_bars("000001", "1d", vec![make_bar(10.0, 12.0)]);
         s.set_bars("600519", "1d", vec![make_bar(20.0, 22.0)]);
         assert_eq!(s.bars.len(), 2);
+    }
+
+    #[test]
+    fn exchange_as_str_returns_correct_codes() {
+        assert_eq!(Exchange::SH.as_str(), "SH");
+        assert_eq!(Exchange::SZ.as_str(), "SZ");
+        assert_eq!(Exchange::BJ.as_str(), "BJ");
+        assert_eq!(Exchange::All.as_str(), "");
+    }
+
+    #[test]
+    fn exchange_from_index_roundtrips() {
+        let indices = [
+            (0, Exchange::All),
+            (1, Exchange::SH),
+            (2, Exchange::SZ),
+            (3, Exchange::BJ),
+        ];
+        for (idx, expected) in indices {
+            assert_eq!(Exchange::from_index(idx), expected);
+        }
+    }
+
+    #[test]
+    fn exchange_all_does_not_prefix() {
+        assert_eq!(Exchange::All.prefix_code("000001"), "000001");
+        assert_eq!(Exchange::All.prefix_code("600519"), "600519");
+    }
+
+    #[test]
+    fn exchange_sh_prefixes_code() {
+        assert_eq!(Exchange::SH.prefix_code("000001"), "sh.000001");
+        assert_eq!(Exchange::SH.prefix_code("600519"), "sh.600519");
+    }
+
+    #[test]
+    fn exchange_filter_matches_correct_records() {
+        let basic = StockBasic {
+            symbol: "000001".into(),
+            name: "平安银行".into(),
+            area: None,
+            industry: None,
+            market: None,
+            exchange: Some("SZ".into()),
+            list_date: None,
+            delist_date: None,
+        };
+        assert!(!Exchange::SH.matches(&basic));
+        assert!(Exchange::SZ.matches(&basic));
+        assert!(Exchange::All.matches(&basic));
+    }
+
+    #[test]
+    fn exchange_matches_none_exchange_returns_false_for_specific() {
+        let basic = StockBasic {
+            symbol: "UNKNOWN".into(),
+            name: "未知".into(),
+            area: None,
+            industry: None,
+            market: None,
+            exchange: None,
+            list_date: None,
+            delist_date: None,
+        };
+        assert!(!Exchange::SH.matches(&basic));
+        assert!(!Exchange::SZ.matches(&basic));
+        assert!(!Exchange::BJ.matches(&basic));
+        assert!(Exchange::All.matches(&basic));
+    }
+
+    #[test]
+    fn parquet_config_default_dir() {
+        let cfg = ParquetConfig::default();
+        assert_eq!(cfg.dir, "/data/compass-data/parquet_data");
+    }
+
+    #[test]
+    fn appconfig_parquet_section_parses_from_toml() {
+        let config: AppConfig = toml::from_str(
+            r#"[parquet]
+dir = "/custom/parquet/path"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.parquet.dir, "/custom/parquet/path");
+    }
+
+    #[test]
+    fn appconfig_parquet_section_falls_back_to_default() {
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(config.parquet.dir, "/data/compass-data/parquet_data");
+    }
+
+    #[test]
+    fn dolt_config_default_values() {
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            config.dolt.investment_data_dir,
+            "/data/compass-data/investment_data"
+        );
+        assert_eq!(
+            config.dolt.compass_data_dir,
+            "/data/compass-data/compass_data"
+        );
+    }
+
+    #[test]
+    fn dolt_config_overrides_from_toml() {
+        let config: AppConfig = toml::from_str(
+            r#"[dolt]
+investment_data_dir = "/custom/investment"
+compass_data_dir = "/custom/compass"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.dolt.investment_data_dir, "/custom/investment");
+        assert_eq!(config.dolt.compass_data_dir, "/custom/compass");
     }
 }

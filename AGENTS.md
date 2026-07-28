@@ -49,8 +49,9 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 |---|---|---|
 | **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
 | **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
-| **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
-| **4. Docs** | Identify which `kb/` files need updating | List of files to user |
+| **3. Tests** | Invoke `/test` (qa skill) to write failing tests | Test output showing failure |
+| **4a. Rustdoc** | Invoke `/rustdoc` to verify `#[deny(missing_docs)]` compliance | `cargo doc --no-deps` is warning-free |
+| **4b. Docs** | Invoke `/docs` to identify which `kb/` files need updating | List of files to user |
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
 
@@ -75,15 +76,8 @@ is incomplete regardless of code quality. Record the violation in reflections.
 
 ### After implementation: Reflection Record
 
-After EVERY feature/bugfix, append a brief reflection to `kb/dev/reflections.md`:
-
-```markdown
-## [date] — ref #[N] [title]
-
-**What was done**: [1-2 sentences]
-**What went wrong**: [process failures, if any]
-**Lessons learned**: [what to do differently]
-```
+After EVERY feature/bugfix, invoke `/reflect` (reflect skill) to write a
+post-implementation reflection and append it to `kb/dev/reflections.md`.
 
 This is MANDATORY — commit it with the implementation or immediately after.
 
@@ -98,6 +92,21 @@ and commit discipline.
 **After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
 checklist above. Do not skip any step.
 
+### Available Skills
+
+| Skill | Slash Command | Purpose |
+|---|---|---|
+| `compass-workflow` | `/compass-workflow` | Enforces issue-driven dev, doc-sync, test-first, per-step-verify, commit discipline |
+| `worktree` | `/worktree` | Manage git worktrees for PR development |
+| `open-worktrees` | `//open-worktrees` | Launch all worktree zones in separate kitty windows |
+| `qa` (test) | `/test` | Write unit/integration tests (TDD/BDD), test coverage |
+| `rustdoc` | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance |
+| `docs` | `/docs` | Identify and update `kb/` files based on code changes |
+| `reflect` | `/reflect` | Write post-implementation reflections with trend analysis |
+
+All skills are located under `.opencode/skills/<name>/SKILL.md`. OpenCode
+auto-discovers skills from the filesystem — no registration needed.
+
 ### Issue-Driven Commits
 
 **Every commit must reference a GitHub issue.** No exceptions — not even for
@@ -108,6 +117,16 @@ feat: add thing
 
 ref #26
 ```
+
+### Commit → Review (MANDATORY)
+
+After every commit, always run review. No exceptions.
+
+1. **Commit**: stage changes, write a descriptive message with `ref #N`, commit.
+2. **Review**: run review on the committed changes.
+3. **Fix**: if review finds issues, fix them and recommit.
+4. **Repeat**: review again after the fix commit. Max 2 rounds; remaining
+   issues → create GitHub issues and note in commit message.
 
 ### Commit & Push
 
@@ -136,6 +155,10 @@ amend and re-commit. Never assume one implies the other.
 
 - commit → issue stays OPEN
 - push succeeds → close issue with `gh issue close`
+- When closing, record the PR that implemented it: `gh issue comment <N> --body "Fixed by #<PR>"`
+
+Every issue and PR must include labels at creation time. See `kb/github/labels.md`
+for the Bevy-style A-/C-/D-/P-/S- taxonomy. Minimum: one A- and one C- label.
 
 ### Scope Discipline
 
@@ -149,26 +172,29 @@ deviation — even a pragmatic workaround — requires user approval first.
 
 ## Worktrees
 
-For isolated development of distinct functional zones, load the `worktree`
-skill. Worktrees live at `.worktrees/<name>/` — each is a **persistent
-functional workspace**, not a transient feature branch. One worktree hosts
-multiple features over its lifetime.
+For PR development, load the `worktree` skill. Worktrees live at
+`.worktrees/<name>/` — each is a **transient PR workspace**, created for
+a single PR and cleaned up after merge. Branch naming: `pr/<short-description>`.
 
 After creating a worktree, the skill enforces MANDATORY post-creation steps:
-1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
-2. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
-3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
-4. Current session stays in master — do NOT cd into the worktree.
+1. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
+2. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
+3. Current session stays in master — do NOT cd into the worktree.
+
+After PR merge, the skill enforces MANDATORY cleanup:
+1. Remove worktree: `git worktree remove .worktrees/<name> --force`
+2. Delete PR branch: `git branch -D pr/<name>`
 
 ## Knowledge base
 
-Detailed docs under `kb/` — organized into three sections:
+Detailed docs under `kb/` — organized into four sections:
 
 | Section | Purpose |
-|---|---|
+|---|---|---|
 | `kb/design/` | Project design — architecture, data providers, symbols |
 | `kb/dev/` | Development aids — workflow, process, testing, reflections |
 | `kb/user/` | User reference — installation, GUI, CLI, config |
+| `kb/github/` | GitHub Action bot role instructions (/ask, /fix, /review, /impl, ci-fix), label conventions, and comment rules |
 
 | File | Content |
 |---|---|
@@ -180,8 +206,10 @@ Detailed docs under `kb/` — organized into three sections:
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
 | `kb/user/index.md` | User overview — what Compass is, quickstart, prereqs |
 | `kb/user/gui.md` | Chart app — interface, controls, data flow, stock codes |
-| `kb/user/cli.md` | Data pipeline — download, import, merge, export, workflows, troubleshooting |
+| `kb/user/cli.md` | Data pipeline — import, export, workflows, troubleshooting |
 | `kb/user/config.md` | Config reference — all options, defaults, examples |
+| `kb/github/labels.md` | Issue/PR label taxonomy — Bevy-style C/A/D/P/S prefixes |
+| `kb/github/comments.md` | Comment convention — always append, never edit existing |
 
 ## Setup
 
@@ -210,10 +238,6 @@ cargo run --bin compass-data -- import                    # all 6000+ stocks (me
 cargo run --bin compass-data -- import --symbols 000001,600519  # specific stocks
 cargo run --bin compass-data -- import --overwrite        # full overwrite (ignore merge)
 
-# Merge staging DuckDB into Parquet main database
-cargo run --bin compass-data -- merge
-cargo run --bin compass-data -- merge --overwrite         # staging wins on conflict
-
 # Export Parquet to DuckDB
 cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite        # force overwrite
@@ -221,7 +245,7 @@ cargo run --bin compass-data -- export --overwrite        # force overwrite
 
 All commands default to **merge/skip** behavior (migration-style):
 existing unique keys are preserved, only new data is added. Pass `--overwrite`
-to replace existing data. Applies to `import`, `merge`, `export`.
+to replace existing data. Applies to `import` and `export`.
 
 ## Architecture
 
@@ -292,12 +316,12 @@ CREATE TABLE stock_limit (
 `~/.config/compass/config.toml` (all fields optional):
 
 ```toml
-[database]
-path = "data/compass.duckdb"
+[parquet]
+dir = "/data/compass-data/parquet_data"
 
-[api]
-base_url = "https://push2his.eastmoney.com"
-timeout_secs = 10
+[dolt]
+investment_data_dir = "/data/compass-data/investment_data"
+compass_data_dir = "/data/compass-data/compass_data"
 
 [app]
 default_symbol = "000001"

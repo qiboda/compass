@@ -41,7 +41,7 @@ pub fn wire_backend(
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
     let (result_signal, mut result_slot) = factory::create_signal_slot::<FetchResponse>();
 
-    let parquet_dir = std::path::PathBuf::from(&config.database.parquet_dir);
+    let parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
 
     let dispatcher = AsyncDispatcher::<FetchRequest, FetchResponse>::new();
     dispatcher.attach_async(work_slot, result_signal, move |req: FetchRequest| {
