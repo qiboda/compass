@@ -402,4 +402,111 @@ mod tests {
         let result = filter_symbols(input, "000001");
         assert!(result.is_empty());
     }
+
+    /// When `stock_daily/` directory already exists in the output path,
+    /// `run()` should still complete successfully (the directory is detected
+    /// and a warning is logged via tracing, but import proceeds normally).
+    #[test]
+    fn run_completes_when_legacy_stock_daily_dir_exists() {
+        let dolt_tmp = tempfile::tempdir().expect("create dolt temp dir");
+
+        // Set up Dolt config
+        for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
+            let out = std::process::Command::new("dolt")
+                .arg("config")
+                .arg("--global")
+                .arg("--add")
+                .arg(key)
+                .arg(val)
+                .output()
+                .expect("dolt config");
+            assert!(out.status.success(), "dolt config {key} failed");
+        }
+
+        // Init Dolt repo
+        let init = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("init")
+            .output()
+            .expect("dolt init");
+        assert!(init.status.success(), "dolt init failed: {}", String::from_utf8_lossy(&init.stderr));
+
+        // Create final_a_stock_eod_price table with sample data
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE final_a_stock_eod_price (\
+                 symbol VARCHAR(20) NOT NULL, \
+                 tradedate DATE NOT NULL, \
+                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, \
+                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE, \
+                 PRIMARY KEY (symbol, tradedate))",
+            )
+            .output()
+            .expect("dolt create table");
+        assert!(out.status.success(), "create eod table failed: {}", String::from_utf8_lossy(&out.stderr));
+
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO final_a_stock_eod_price VALUES ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)")
+            .output()
+            .expect("dolt insert");
+        assert!(out.status.success(), "insert failed: {}", String::from_utf8_lossy(&out.stderr));
+
+        // Create ts_a_stock_list table for stock_basic export
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE ts_a_stock_list (\
+                 symbol VARCHAR(20) PRIMARY KEY, \
+                 name VARCHAR(100), \
+                 exchange VARCHAR(10), \
+                 list_date DATE, \
+                 delist_date DATE)",
+            )
+            .output()
+            .expect("dolt create stock list");
+        assert!(out.status.success(), "create stock list failed: {}", String::from_utf8_lossy(&out.stderr));
+
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO ts_a_stock_list VALUES ('000001', '平安银行', 'SZSE', '1991-04-03', NULL)")
+            .output()
+            .expect("dolt insert stock");
+        assert!(out.status.success(), "insert stock failed: {}", String::from_utf8_lossy(&out.stderr));
+
+        // Create output dir with legacy stock_daily/ subdirectory
+        let output_tmp = tempfile::tempdir().expect("create output dir");
+        let legacy_dir = output_tmp.path().join("stock_daily");
+        std::fs::create_dir(&legacy_dir).expect("create legacy dir");
+
+        // Run import — should succeed despite legacy directory
+        let result = run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok(), "import should succeed with legacy dir: {:?}", result.err());
+
+        // Verify both output files were created
+        assert!(output_tmp.path().join("stock_daily.parquet").exists(), "stock_daily.parquet should exist");
+        assert!(output_tmp.path().join("stock_basic.parquet").exists(), "stock_basic.parquet should exist");
+    }
 }

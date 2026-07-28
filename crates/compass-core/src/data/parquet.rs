@@ -706,6 +706,49 @@ mod tests {
     }
 
     #[test]
+    fn list_symbols_falls_back_to_sql_when_symbols_txt_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Create stock_daily.parquet WITHOUT symbols.txt
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);
+             INSERT INTO t VALUES ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0);
+             INSERT INTO t VALUES ('SH600519', '2024-01-02', 1499, 1501, 1498, 1500, 1500, 2000, 0);",
+        ).expect("create");
+        conn.execute_batch(&format!(
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_daily.parquet").display()
+        )).expect("copy");
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let symbols = reader.list_symbols().expect("list");
+        assert_eq!(symbols.len(), 2, "should find both symbols via SQL fallback");
+        assert!(symbols.iter().any(|s| s.code == "SZ000001"));
+        assert!(symbols.iter().any(|s| s.code == "SH600519"));
+    }
+
+    #[test]
+    fn get_stored_range_filters_by_symbol() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[
+                ("SZ000001", &[("2024-01-02", 10.0), ("2024-01-03", 11.0)]),
+                ("SH600519", &[("2024-06-01", 1500.0), ("2024-06-30", 1520.0)]),
+            ],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let range_01 = reader.get_stored_range("SZ000001").expect("range").expect("some");
+        assert_eq!(range_01.0.to_string(), "2024-01-02");
+        assert_eq!(range_01.1.to_string(), "2024-01-03");
+
+        let range_519 = reader.get_stored_range("SH600519").expect("range").expect("some");
+        assert_eq!(range_519.0.to_string(), "2024-06-01");
+        assert_eq!(range_519.1.to_string(), "2024-06-30");
+    }
+
+    #[test]
     fn get_stored_range_returns_none_for_missing_symbol() {
         let tmp = tempfile::tempdir().expect("tempdir");
         create_test_stock_daily_parquet(
