@@ -62,7 +62,7 @@ Read the issue/PR context. Understand:
    (identify the kb file from the doc-sync table in AGENTS.md)
 6. Commit with format: `fix: <description>\n\nref #<issue_number>`
    - Include kb/ updates in the same commit
-7. Create a PR: `gh pr create --title "fix: <description>" --body "Addresses #<issue_number>"`
+7. Create a PR: `gh pr create --title "fix: <description>" --body "Addresses #<issue_number>" --label "C-Bug,<A-label>"`
 8. Comment on the issue with the PR link — a human will review and merge
 
 ### Step 3b: Complex → Report

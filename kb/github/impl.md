@@ -46,7 +46,7 @@ Follow the compass workflow exactly:
 - Commit with format: `feat: <description>\n\nref #<issue_number>`
 - Atomic: one logical unit per commit
 - Include kb/ updates in the same commit
-- Create a PR: `gh pr create --title "feat: <description>" --body "Implements #<issue_number>"`
+- Create a PR: `gh pr create --title "feat: <description>" --body "Implements #<issue_number>" --label "C-Feature,<A-label>"`
 - Comment on the issue with the PR link — a human will review and merge
 
 ## Constraints

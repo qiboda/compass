@@ -2,7 +2,7 @@
 name: Feature Request
 about: Propose a new feature or enhancement
 title: "[feat] "
-labels: enhancement
+labels: C-Feature
 assignees: qiboda
 ---
 

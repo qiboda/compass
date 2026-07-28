@@ -150,6 +150,9 @@ amend and re-commit. Never assume one implies the other.
 - push succeeds → close issue with `gh issue close`
 - When closing, record the PR that implemented it: `gh issue comment <N> --body "Fixed by #<PR>"`
 
+Every issue and PR must include labels at creation time. See `kb/github/labels.md`
+for the Bevy-style A-/C-/D-/P-/S- taxonomy. Minimum: one A- and one C- label.
+
 ### Scope Discipline
 
 **Never silently change a planned approach.** If an external constraint

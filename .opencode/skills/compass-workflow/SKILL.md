@@ -152,6 +152,16 @@ master  ●──●──●──●────────●  (trunk)
 pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
 ```
 
+### 9. Label Enforcement
+
+When creating a GitHub issue or PR:
+- Attach at least one **A-** (area) and one **C-** (category) label.
+- **D-** (difficulty), **P-** (priority), and **S-** (status) are optional but recommended.
+
+See `kb/github/labels.md` for the complete taxonomy.
+
+`gh issue create --label "C-Bug,A-Data"` or `gh pr create --label "C-Feature,A-GUI"`.
+
 ---
 
 ## 🔍 POST-IMPLEMENTATION REVIEW (AUTOMATED)
