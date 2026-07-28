@@ -1,0 +1,99 @@
+name: opencode
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  ask:
+    if: startsWith(github.event.comment.body, '/ask')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      issues: write
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: anomalyco/opencode/github@latest
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          model: deepseek/deepseek-v4-pro
+          use_github_token: "true"
+          prompt: |
+            Read AGENTS.md for project conventions, then read kb/github/ask.md
+            for your full role instructions. Follow them exactly.
+
+  fix:
+    if: startsWith(github.event.comment.body, '/fix')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      issues: write
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: anomalyco/opencode/github@latest
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          model: deepseek/deepseek-v4-pro
+          use_github_token: "true"
+          prompt: |
+            Read AGENTS.md for project conventions, then read kb/github/fix.md
+            for your full role instructions. Follow them exactly.
+
+  review:
+    if: startsWith(github.event.comment.body, '/review')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: anomalyco/opencode/github@latest
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          model: deepseek/deepseek-v4-pro
+          use_github_token: "true"
+          prompt: |
+            Read AGENTS.md for project conventions, then read kb/github/pr-review.md
+            for your full role instructions. Follow them exactly.
+
+  impl:
+    if: startsWith(github.event.comment.body, '/impl')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: anomalyco/opencode/github@latest
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          model: deepseek/deepseek-v4-pro
+          use_github_token: "true"
+          prompt: |
+            Read AGENTS.md for project conventions, then read kb/github/impl.md
+            for your full role instructions. Follow them exactly.

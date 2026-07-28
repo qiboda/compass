@@ -34,8 +34,8 @@ async fn duckdb_in_memory_has_required_tables() {
 #[tokio::test]
 #[ignore = "requires parquet_data/ with stock_daily.parquet — run `cargo run --bin compass-data -- import --limit 3`"]
 async fn parquet_reader_loads_exported_data() {
-    let reader =
-        ParquetReader::new("parquet_data").expect("failed to open ParquetReader (run import)");
+    let reader = ParquetReader::new("/data/compass-data/parquet_data")
+        .expect("failed to open ParquetReader (run import)");
 
     let symbols = reader.list_symbols().expect("failed to list symbols");
     assert!(

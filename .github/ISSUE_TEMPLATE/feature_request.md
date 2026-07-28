@@ -2,9 +2,11 @@
 name: Feature Request
 about: Propose a new feature or enhancement
 title: "[feat] "
-labels: enhancement
+labels: C-Feature
 assignees: qiboda
 ---
+
+<!-- ⚠️ Add an A- label before submitting: A-GUI / A-Data / A-CLI / A-CI / A-Docs. See kb/github/labels.md. -->
 
 ## Problem
 

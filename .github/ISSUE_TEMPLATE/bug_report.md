@@ -2,9 +2,11 @@
 name: Bug Report
 about: Report a bug or unexpected behavior
 title: "[bug] "
-labels: bug
+labels: C-Bug
 assignees: qiboda
 ---
+
+<!-- ⚠️ Add an A- label before submitting: A-GUI / A-Data / A-CLI / A-CI / A-Docs. See kb/github/labels.md. -->
 
 ## Description
 

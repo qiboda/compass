@@ -2,11 +2,11 @@ mod baostock;
 mod export;
 use compass_data::import_compass;
 use compass_data::import_dolt;
-mod merge;
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use compass_core::model::AppConfig;
 use tracing::error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -25,13 +25,13 @@ struct Cli {
 enum Command {
     /// Import data from Dolt investment_data into Parquet main database
     Import {
-        /// Dolt data directory
-        #[arg(long, default_value = "investment_data")]
-        dolt_dir: PathBuf,
+        /// Dolt data directory (default from config.toml [dolt].investment_data_dir)
+        #[arg(long)]
+        dolt_dir: Option<PathBuf>,
 
-        /// Output Parquet directory
-        #[arg(long, default_value = "parquet_data")]
-        output: PathBuf,
+        /// Output Parquet directory (default from config.toml [parquet].dir)
+        #[arg(long)]
+        output: Option<PathBuf>,
 
         /// Max symbols (0 = all)
         #[arg(long, default_value_t = 0)]
@@ -56,13 +56,13 @@ enum Command {
 
     /// Import data from compass_data Dolt into Parquet
     ImportCompass {
-        /// Dolt data directory
-        #[arg(long, default_value = "compass_data")]
-        dolt_dir: PathBuf,
+        /// Dolt data directory (default from config.toml [dolt].compass_data_dir)
+        #[arg(long)]
+        dolt_dir: Option<PathBuf>,
 
-        /// Output Parquet directory
-        #[arg(long, default_value = "parquet_data")]
-        output: PathBuf,
+        /// Output Parquet directory (default from config.toml [parquet].dir)
+        #[arg(long)]
+        output: Option<PathBuf>,
 
         /// Table to import: stock_basic, fin_indicators
         #[arg(long)]
@@ -77,34 +77,19 @@ enum Command {
         since: Option<String>,
     },
 
-    /// Merge staging DuckDB into Parquet main database
-    Merge {
-        /// Staging DuckDB path
-        #[arg(long, default_value = "data/staging.duckdb")]
-        db: PathBuf,
-
-        /// Main Parquet directory
-        #[arg(long, default_value = "parquet_data")]
-        output: PathBuf,
-
-        /// Overwrite existing data instead of skipping duplicates
-        #[arg(long, default_value_t = false)]
-        overwrite: bool,
-    },
-
     /// Export Parquet main database to other formats
     Export {
-        /// Parquet data directory
-        #[arg(long, default_value = "parquet_data")]
-        input: PathBuf,
+        /// Parquet data directory (default from config.toml [parquet].dir)
+        #[arg(long)]
+        input: Option<PathBuf>,
 
         /// Output format: parquet-dir, duckdb, csv
         #[arg(long, default_value = "duckdb")]
         format: String,
 
-        /// Output path
-        #[arg(long, default_value = "data/compass.duckdb")]
-        output: PathBuf,
+        /// Output path (default: /data/compass-data/compass.duckdb)
+        #[arg(long)]
+        output: Option<PathBuf>,
 
         /// Overwrite existing data instead of skipping duplicates
         #[arg(long, default_value_t = false)]
@@ -113,14 +98,37 @@ enum Command {
 
     /// Zip parquet_data and upload to Baidu Cloud via baidupcs
     Backup {
-        /// Parquet data directory to backup
-        #[arg(long, default_value = "parquet_data")]
-        input: PathBuf,
+        /// Parquet data directory to backup (default from config.toml [parquet].dir)
+        #[arg(long)]
+        input: Option<PathBuf>,
 
         /// Keep local zip file after upload
         #[arg(long, default_value_t = false)]
         keep_zip: bool,
     },
+}
+
+fn load_config() -> AppConfig {
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    match std::fs::read_to_string(&config_path) {
+        Ok(contents) => match toml::from_str(&contents) {
+            Ok(cfg) => {
+                tracing::info!(path = %config_path.display(), "config loaded");
+                cfg
+            }
+            Err(e) => {
+                tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
+                AppConfig::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(path = %config_path.display(), error = %e, "config file not found, using defaults");
+            AppConfig::default()
+        }
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -137,7 +145,9 @@ async fn main() {
 
     registry.init();
 
+    let config = load_config();
     let cli = Cli::parse();
+    let default_export_output = PathBuf::from("/data/compass-data/compass.duckdb");
 
     match cli.command {
         Command::Import {
@@ -149,6 +159,9 @@ async fn main() {
             end_date,
             since,
         } => {
+            let dolt_dir =
+                dolt_dir.unwrap_or_else(|| PathBuf::from(&config.dolt.investment_data_dir));
+            let output = output.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
             if let Err(e) = import_dolt::run(
                 dolt_dir,
                 output,
@@ -169,6 +182,8 @@ async fn main() {
             overwrite,
             since,
         } => {
+            let dolt_dir = dolt_dir.unwrap_or_else(|| PathBuf::from(&config.dolt.compass_data_dir));
+            let output = output.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
             let table: import_compass::CompassTable = table.parse().unwrap_or_else(|e| {
                 error!("{e}");
                 std::process::exit(1);
@@ -180,29 +195,24 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Merge {
-            db,
-            output,
-            overwrite,
-        } => {
-            merge::run(db, output, overwrite).await;
-        }
         Command::Export {
             input,
             format,
             output,
             overwrite,
         } => {
+            let input = input.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
+            let output = output.unwrap_or(default_export_output);
             export::run_export(input, format, output, overwrite).await;
         }
         Command::Backup { input, keep_zip } => {
+            let input = input.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
             let script = PathBuf::from("scripts/upload-parquet.sh");
             let mut cmd = std::process::Command::new("bash");
             cmd.arg(&script);
             if keep_zip {
                 cmd.arg("--keep-zip");
             }
-            // Set PARQUET_DIR via env to support custom input paths
             cmd.env("PARQUET_DIR", input);
             let status = cmd.status().expect("failed to run upload-parquet.sh");
             if !status.success() {

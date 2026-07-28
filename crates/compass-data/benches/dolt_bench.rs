@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use compass_data::import_dolt::{run_dolt_sql_csv, run_dolt_sql_parquet};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
-/// Path to the Dolt `investment_data` directory, relative to the crate root.
+/// Path to the Dolt `investment_data` directory.
 fn dolt_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../investment_data")
+    PathBuf::from("/data/compass-data/investment_data")
 }
 
 /// Check whether Dolt and investment_data are available at runtime.
