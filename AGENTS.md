@@ -1,8 +1,9 @@
 # AGENTS.md — compass
 
 A-share stock chart desktop application built with egui. Data pipeline uses
-local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks),
-with EastMoney (online) as a fallback. Parquet-based storage with DuckDB for querying.
+local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks).
+The GUI reads exclusively from local Parquet files via DuckDB — no online fallback.
+Python collectors use EastMoney API to fetch data into Dolt.
 
 **项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
 
@@ -199,7 +200,7 @@ Detailed docs under `kb/` — organized into four sections:
 | File | Content |
 |---|---|
 | `kb/design/architecture.md` | System overview, crate relationships, threading rationale, data pipeline flows, storage strategy, library decisions |
-| `kb/design/data-providers.md` | Trait system design, CachedProvider read-through pattern, EastMoney/DuckDB/Parquet providers, error handling |
+| `kb/design/data-providers.md` | Trait system design, DuckDbProvider read-through pattern, Parquet/DuckDB/Dolt providers, error handling |
 | `kb/design/symbols.md` | A-share market segments, symbol convention rationale, exchange inference, secid mapping, timeframe handling |
 | `kb/dev/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
 | `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
@@ -249,14 +250,14 @@ to replace existing data. Applies to `import` and `export`.
 
 ## Architecture
 
-See `kb/design/architecture.md` — threading model, data pipeline, CachedProvider, schema, source layout, libraries.
+See `kb/design/architecture.md` — threading model, data pipeline, schema, source layout, libraries.
 
 ## Data providers
 
-See `kb/design/data-providers.md` — EastMoney, DuckDB, Dolt, ParquetReader, DataError.
+See `kb/design/data-providers.md` — DuckDB, Dolt, ParquetReader, DataError.
 
 **Priority**: Dolt `investment_data` (local) is the **primary** data source.
-EastMoney is a fallback for data not available locally.
+All GUI data access is local-only — no online fallback.
 
 ### Dolt import (`crates/compass-data/src/import_dolt.rs`)
 
@@ -264,19 +265,11 @@ Reads from Dolt `investment_data` (`final_a_stock_eod_price` and `ts_a_stock_lis
 tables) via `dolt sql -r parquet` (direct binary Parquet) and `dolt sql -r csv`
 (for symbol enumeration), partitioned by Dolt symbol.
 
-### EastMoneyProvider (`crates/compass-core/src/data/eastmoney.rs`)
+### Python collectors
 
-Fetches K-line data from `push2his.eastmoney.com`. Symbol → secid conversion via `to_secid()`:
-
-| Input | secid | Description |
-|---|---|---|
-| `000001` | `0.000001` | 平安银行 (SZ, heuristic default) |
-| `600519` | `1.600519` | 贵州茅台 (SH, heuristic: 6xxxxx) |
-| `688001` | `1.688001` | 华兴源创 (科创板) |
-| `300750` | `0.300750` | 宁德时代 (创业板) |
-| `sh.000001` | `1.000001` | 上证指数 (explicit SH prefix) |
-| `sz.000001` | `0.000001` | 显式深圳 |
-| `bj.8xxxxx` | `0.8xxxxx` | 北交所 |
+EastMoney data is fetched by Python scripts in `collectors/` using `curl_cffi`
+to bypass TLS fingerprinting. Data flows: EastMoney API → CSV → Dolt `compass_data` →
+`compass-data import` → Parquet. For secid mapping details, see `kb/design/symbols.md`.
 
 ## Parquet schema (main database)
 

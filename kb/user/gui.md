@@ -25,7 +25,7 @@ The top toolbar provides all controls in a single row:
 
 | Indicator | Meaning |
 |---|---|
-| **Loading...** | Data is being fetched from local cache or EastMoney |
+| **Loading...** | Data is being read from local Parquet files |
 | **Red text** | An error occurred (network, no data, etc.) |
 
 ### Chart area
@@ -46,13 +46,13 @@ A scrollable log panel shows fetch status, errors, and citizen lifecycle events.
 When you click "Fetch":
 
 1. The selected exchange prefixes the symbol (e.g., `sh.600519`)
-2. **Check cache** — if this stock was viewed before, bars load instantly from local DuckDB
-3. **Fetch online** — if not cached, calls EastMoney API (requires internet)
-4. **Save to cache** — downloaded bars are saved for next time
+2. **Check cache** — if this stock was viewed before, bars load instantly from in-memory DuckDB
+3. **Read Parquet** — if not cached, reads from `parquet_data/stock_daily/{symbol}.parquet`
+4. **Cache-warm** — loaded data is persisted to in-memory DuckDB for next time
 5. **Display chart** — bars appear as candlesticks
 
-First view of a stock requires a network call (~1–3 seconds). Subsequent
-views are instant (no network).
+First view of a stock requires a single Parquet file read (~1 second). Subsequent
+views are instant (in-memory).
 
 ## Stock codes
 
@@ -88,16 +88,13 @@ via DuckDB's `read_parquet()` (in-memory, no persistent DuckDB file needed).
 Before first use, ensure data is available:
 
 ```sh
-# Option A: Import from Dolt (complete history)
+# Import from Dolt (complete history)
 cargo run --bin compass-data -- import
 # Data is ready — parquet_data/stock_daily/ is the source of truth
-
-# Option B: Download from EastMoney (specific stocks)
-cargo run --bin compass-data -- download --symbols 000001,600519
 ```
 
-If no local data exists, the app falls back to fetching from EastMoney online
-on each "Fetch" click.
+If no local data exists, the app shows "no data" for that symbol. Run
+`compass-data import` to populate the Parquet store before using the GUI.
 
 For the symbol dropdown to be populated, `stock_basic.parquet` must exist in the
 parquet data directory (default: `parquet_data/`). This file is created by `import`

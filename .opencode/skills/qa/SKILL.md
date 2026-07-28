@@ -160,7 +160,7 @@ Group all direct `db.conn.lock()` calls into ONE scope before any async
 | Doc-only change (no code to test) | Skip — report "no code changes, testing not needed" |
 | No test framework in project | Report and stop — do not create ad-hoc test infrastructure |
 | Test compilation fails (not logic failure) | Report the compilation error separately from test logic |
-| Integration test needs external data | Use httpmock for EastMoney, tempdir for Dolt |
+| Integration test needs external data | Use in-memory DuckDB for stock data, tempdir for Dolt |
 | Existing tests break after new test | Report which tests broke — may indicate test interaction bug |
 
 ## Must NOT

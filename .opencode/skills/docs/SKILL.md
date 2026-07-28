@@ -25,7 +25,7 @@ The project book contains exactly 17 files across 4 directories:
 | File | Purpose | Updated when |
 |---|---|---|
 | `kb/design/architecture.md` | System overview, crate relationships, threading model, data pipeline, storage strategy | Threading changes, pipeline changes, library additions/removals, storage format changes |
-| `kb/design/data-providers.md` | Provider trait system, CachedProvider pattern, EastMoney/DuckDB/Parquet providers, error handling | New data source, API call changes, schema changes, provider additions |
+| `kb/design/data-providers.md` | Provider trait system, DuckDbProvider read-through pattern, Parquet/DuckDB/Dolt providers, error handling | New data source, schema changes, provider additions |
 | `kb/design/symbols.md` | A-share market segments, symbol conventions, exchange inference, secid mapping, timeframe handling | Symbol format changes, timeframe mapping changes, exchange logic changes |
 
 ### kb/dev/ — Development (3 files)

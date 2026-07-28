@@ -58,10 +58,12 @@ REPLACE (update existing). DuckDbProvider is the only implementor.
 
 ### NegativeCache — avoid repeated failures
 
-When no data exists for a symbol (delisted, doesn't exist, never imported),
-the negative cache marks the (symbol, timeframe) pair with a timestamp.
-Subsequent fetches within the TTL window skip the read attempt entirely,
-avoiding wasted Parquet file I/O and DuckDB queries.
+NegativeCache provides a mechanism to mark symbols that have no data.
+The `no_data_marks` table in DuckDB tracks (symbol, timeframe) pairs
+with timestamps, allowing callers to skip repeated lookups within a TTL
+window. Currently implemented but not invoked in the `fetch_bars`
+read path — available for future use by the CLI pipeline or batch
+operations that need to track "no data" symbols across sessions.
 
 ## The provider hierarchy
 
@@ -94,34 +96,31 @@ provider.fetch_bars(symbol, timeframe, start, end).await
 ```
 fetch_bars(symbol, timeframe, start, end)
     │
-    ├─ 1. NEGATIVE CACHE CHECK
-    │     cache.is_no_data(symbol, timeframe, now, TTL_7DAYS)?
-    │     → If true: return DataError::NoData (skip I/O)
-    │     → If false: continue
-    │
-    ├─ 2. IN-MEMORY CACHE READ
+    ├─ 1. IN-MEMORY CACHE READ
     │     SELECT * FROM stock_daily WHERE symbol=? AND trade_date BETWEEN ? AND ?
     │     → If non-empty: return bars ✓
     │     → If empty: cache miss → read from Parquet
     │
-    ├─ 3. PARQUET FALLBACK
-    │     read_parquet('parquet_data/stock_daily/{symbol}.parquet')
-    │     → If data exists: cache-warm into in-memory tables, return bars
-    │     → If no data: mark_no_data() → return DataError::NoData
+    ├─ 2. PARQUET FALLBACK
+    │     Determine parquet path: parquet_data/stock_daily/{exchange}{code}.parquet
+    │     → File exists: read_parquet() → cache-warm → return bars
+    │     → File missing: return empty vec (caller converts to DataError::NoData)
     │
-    └─ 4. RETURN
+    └─ 3. RETURN
           result to caller
 ```
 
 Key behaviors:
 
-- **Cache hit requires non-empty bars.** An empty result means "not cached" —
-  we never short-circuit with zero bars back to the caller.
-- **Empty results from Parquet are marked no-data.** A missing Parquet file or
-  empty result means the symbol was never imported — we mark it in the negative
-  cache to avoid repeated disk I/O.
-- **save_bars uses overwrite=true** when cache-warming. We just confirmed the
-  cache is empty, so there's nothing to merge — we can safely replace.
+- **Cache hit requires non-empty bars.** An empty result from the in-memory
+  query means "not cached" — the provider falls through to the Parquet fallback.
+- **Parquet fallback on cache miss.** If the in-memory DuckDB has no data for
+  the symbol, the provider reads directly from `parquet_data/stock_daily/{symbol}.parquet`
+  via `read_parquet()`. If the file exists, the data is cache-warmed with
+  `INSERT OR IGNORE` (overwrite=false) and returned.
+- **Missing symbol returns empty vec.** If neither the in-memory cache nor the
+  Parquet file has data, the provider returns an empty `Vec<Bar>`. The caller
+  (`backend.rs`) converts this to a `FetchResponse` with an error message.
 
 ## EastMoney data pipeline (Python collectors)
 
@@ -183,7 +182,7 @@ Five tables, all created automatically on first use:
 | `stock_limit` | `(symbol, trade_date)` | Daily price ceiling/floor |
 | `no_data_marks` | `(symbol, timeframe)` | Negative cache entries with TTL timestamps |
 
-The full DDL is in `architecture.md` and `AGENTS.md`.
+The full DDL is in `AGENTS.md`.
 
 ### Gap detection
 

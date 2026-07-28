@@ -48,7 +48,7 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 
 | Section | Key | Default |
 |---|---|---|
-│ `parquet` | `dir` | `/data/compass-data/parquet_data` |
+| `parquet` | `dir` | `/data/compass-data/parquet_data` |
 | `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
 | `app` | `default_symbol` | `000001` |

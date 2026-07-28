@@ -164,7 +164,6 @@ Results are written to `target/criterion/` as HTML reports.
 |---|---|---|
 | `compass-core` | `parquet_bench` | ParquetReader cold/warm read at 100/1000/5000 rows, real SZ000001 |
 | `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
-| `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
 | `compass-data` | `dolt_bench` | Dolt sql -r parquet per-symbol, 300KB file write, symbol enumeration |
 
 ### Data requirements
