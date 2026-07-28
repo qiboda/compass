@@ -106,7 +106,7 @@ Before applying the standard decision tree, gather CI context:
 
 ### Example
 
-Issue: "CI Failure: feat/new-provider" (label: ci-failure)
+Issue: "CI Failure: feat/new-provider" (label: S-CI-Failure)
 
 You:
 - Read CI logs → `clippy` job failed with `unwrap()` on `src/data/provider.rs:42`
