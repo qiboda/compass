@@ -973,7 +973,7 @@ mod tests {
     #[rstest]
     #[case("000001", "1d", 2)] // daily: 2 bars → 2 bars
     #[case("600519", "1w", 1)] // weekly: 2 daily bars same week → 1 bar
-    #[case("AAPL",   "1M", 1)] // monthly: 2 daily bars same month → 1 bar
+    #[case("AAPL", "1M", 1)] // monthly: 2 daily bars same month → 1 bar
     #[tokio::test]
     async fn save_and_fetch_preserves_symbol_and_timeframe(
         #[case] symbol: &str,
@@ -997,7 +997,11 @@ mod tests {
             .await
             .expect("fetch_bars failed");
 
-        assert_eq!(fetched.len(), expected_count, "wrong count for {symbol}/{timeframe}");
+        assert_eq!(
+            fetched.len(),
+            expected_count,
+            "wrong count for {symbol}/{timeframe}"
+        );
         if expected_count == 2 {
             assert_eq!(fetched[0].open, 10.0);
             assert_eq!(fetched[0].close, 10.5);
@@ -1468,15 +1472,7 @@ mod tests {
         for (date_str, open, high, low, close, adjclose, volume, amount) in rows {
             insert
                 .execute(params![
-                    symbol,
-                    *date_str,
-                    *open,
-                    *high,
-                    *low,
-                    *close,
-                    *adjclose,
-                    *volume,
-                    *amount,
+                    symbol, *date_str, *open, *high, *low, *close, *adjclose, *volume, *amount,
                 ])
                 .expect("insert row");
         }
@@ -1553,8 +1549,10 @@ mod tests {
     /// parquet data for the same dates.
     #[tokio::test]
     async fn save_bars_takes_priority_over_parquet() {
-        let (_tmp, provider) =
-            setup_parquet_provider("000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0)]);
+        let (_tmp, provider) = setup_parquet_provider(
+            "000001",
+            &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0)],
+        );
 
         let updated_bar = make_bar(2, 99.0, 100.0, 5000.0);
         provider
@@ -1580,8 +1578,10 @@ mod tests {
     /// results without error (parameterized queries prevent SQL injection).
     #[tokio::test]
     async fn parquet_fallback_handles_non_matching_symbols() {
-        let (_tmp, provider) =
-            setup_parquet_provider("000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0)]);
+        let (_tmp, provider) = setup_parquet_provider(
+            "000001",
+            &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0)],
+        );
 
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
@@ -1591,8 +1591,14 @@ mod tests {
             .fetch_bars("'; DROP TABLE stock_daily; --", "1d", start, end)
             .await;
 
-        assert!(result.is_ok(), "parameterized query should handle any symbol safely");
-        assert!(result.unwrap().is_empty(), "non-matching symbol should return empty");
+        assert!(
+            result.is_ok(),
+            "parameterized query should handle any symbol safely"
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "non-matching symbol should return empty"
+        );
     }
 
     /// After reading from parquet, data should be cached in-memory
@@ -1655,15 +1661,14 @@ mod tests {
     /// Weekly aggregation: open=Mon open, high=week max, low=week min,
     /// close=Fri close, volume=week sum.
     #[rstest]
-    #[case("1w", 2)]   // 2 weeks → 2 weekly bars
-    #[case("1M", 1)]   // all in July → 1 monthly bar
+    #[case("1w", 2)] // 2 weeks → 2 weekly bars
+    #[case("1M", 1)] // all in July → 1 monthly bar
     #[tokio::test]
     async fn fetch_bars_aggregates_daily_to_non_daily_timeframe(
         #[case] timeframe: &str,
         #[case] expected_count: usize,
     ) {
-        let provider =
-            DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 
         // Week 1: 2026-07-06 (Mon) – 2026-07-10 (Fri)
         // Week 2: 2026-07-13 (Mon) – 2026-07-17 (Fri)
@@ -1740,8 +1745,7 @@ mod tests {
     /// Daily timeframe returns raw bars unchanged.
     #[tokio::test]
     async fn fetch_bars_daily_returns_raw_daily_bars() {
-        let provider =
-            DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 
         let daily_bars = vec![
             make_dated_bar("2026-07-06", 10.0, 11.0, 100.0),

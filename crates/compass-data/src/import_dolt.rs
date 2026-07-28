@@ -430,7 +430,11 @@ mod tests {
             .arg("init")
             .output()
             .expect("dolt init");
-        assert!(init.status.success(), "dolt init failed: {}", String::from_utf8_lossy(&init.stderr));
+        assert!(
+            init.status.success(),
+            "dolt init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
 
         // Create final_a_stock_eod_price table with sample data
         let out = std::process::Command::new("dolt")
@@ -448,7 +452,11 @@ mod tests {
             )
             .output()
             .expect("dolt create table");
-        assert!(out.status.success(), "create eod table failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "create eod table failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         let out = std::process::Command::new("dolt")
             .arg("--data-dir")
@@ -458,7 +466,11 @@ mod tests {
             .arg("INSERT INTO final_a_stock_eod_price VALUES ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)")
             .output()
             .expect("dolt insert");
-        assert!(out.status.success(), "insert failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "insert failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         // Create ts_a_stock_list table for stock_basic export
         let out = std::process::Command::new("dolt")
@@ -476,7 +488,11 @@ mod tests {
             )
             .output()
             .expect("dolt create stock list");
-        assert!(out.status.success(), "create stock list failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "create stock list failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         let out = std::process::Command::new("dolt")
             .arg("--data-dir")
@@ -486,7 +502,11 @@ mod tests {
             .arg("INSERT INTO ts_a_stock_list VALUES ('000001', '平安银行', 'SZSE', '1991-04-03', NULL)")
             .output()
             .expect("dolt insert stock");
-        assert!(out.status.success(), "insert stock failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "insert stock failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         // Create output dir with legacy stock_daily/ subdirectory
         let output_tmp = tempfile::tempdir().expect("create output dir");
@@ -503,10 +523,20 @@ mod tests {
             None,
             None,
         );
-        assert!(result.is_ok(), "import should succeed with legacy dir: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "import should succeed with legacy dir: {:?}",
+            result.err()
+        );
 
         // Verify both output files were created
-        assert!(output_tmp.path().join("stock_daily.parquet").exists(), "stock_daily.parquet should exist");
-        assert!(output_tmp.path().join("stock_basic.parquet").exists(), "stock_basic.parquet should exist");
+        assert!(
+            output_tmp.path().join("stock_daily.parquet").exists(),
+            "stock_daily.parquet should exist"
+        );
+        assert!(
+            output_tmp.path().join("stock_basic.parquet").exists(),
+            "stock_basic.parquet should exist"
+        );
     }
 }

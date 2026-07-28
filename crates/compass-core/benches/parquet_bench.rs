@@ -79,11 +79,7 @@ fn create_synthetic_parquet_dir(rows: usize) -> tempfile::TempDir {
     ))
     .unwrap();
 
-    std::fs::write(
-        tmp.path().join("stock_daily.symbols.txt"),
-        "SZ000001\n",
-    )
-    .unwrap();
+    std::fs::write(tmp.path().join("stock_daily.symbols.txt"), "SZ000001\n").unwrap();
 
     tmp
 }

@@ -54,7 +54,10 @@ fn main() -> eframe::Result {
     let config = load_config();
 
     // Create reactive shared state
-    let shared_state = Arc::new(state::SharedState::new(&config.app.default_symbol, &config.app.default_timeframe));
+    let shared_state = Arc::new(state::SharedState::new(
+        &config.app.default_symbol,
+        &config.app.default_timeframe,
+    ));
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
