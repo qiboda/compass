@@ -124,7 +124,7 @@ pub fn run(
     info!("Exporting stock_basic...");
     let basic_bytes = run_dolt_sql_parquet(
         &dolt_dir,
-        "SELECT symbol, COALESCE(name, symbol) AS name, \
+        "SELECT symbol, symbol AS name, \
          CASE WHEN exchange = 'SZSE' THEN 'SZ' WHEN exchange = 'SHSE' THEN 'SH' ELSE exchange END AS exchange, \
          list_date, delist_date FROM ts_a_stock_list",
     )?;
