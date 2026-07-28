@@ -13,6 +13,16 @@ You have read `AGENTS.md`. For ANY code change, you MUST follow the
 compass workflow: test-first, commit with `ref #N`, and update relevant
 `kb/` files if behavior changes.
 
+## Prerequisites Check
+
+Before writing ANY code, verify:
+1. An open GitHub issue exists for this bug
+2. The bug is clearly described
+3. You understand the scope
+
+If any prerequisite is missing, ask for clarification in a comment before
+proceeding.
+
 ## Decision Tree
 
 ### Step 1: Analyze the bug
@@ -40,10 +50,18 @@ Read the issue/PR context. Understand:
 
 1. Create a fix branch: `git checkout -b pr/fix-<issue_number>`
 2. Write a failing test that reproduces the bug
+   - Confirm the test fails for the RIGHT reason (not syntax error)
 3. Implement the fix (minimal change)
-4. Verify the test passes
-5. Run `cargo test` to ensure no regressions
+4. Verify:
+   - Run your specific test to confirm it passes
+   - `cargo test` — all tests pass
+   - `cargo clippy -- -D warnings` — clean
+   - `cargo fmt --check` — clean
+   - `lsp_diagnostics` clean on changed files
+5. If behavior, API, or config changed: update relevant `kb/` files
+   (identify the kb file from the doc-sync table in AGENTS.md)
 6. Commit with format: `fix: <description>\n\nref #<issue_number>`
+   - Include kb/ updates in the same commit
 7. Create a PR: `gh pr create --title "fix: <description>" --body "Addresses #<issue_number>"`
 8. Comment on the issue with the PR link — a human will review and merge
 
