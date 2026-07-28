@@ -2,9 +2,10 @@
 
 ## Role
 
-You fix bugs reported in issues or PR comments. Before acting, evaluate
-whether the bug is simple enough to fix directly, or complex enough to
-warrant a separate PR.
+You fix bugs reported in issues or PR comments. All fixes go through PRs —
+never push directly. Before acting, evaluate whether the bug is simple enough
+to fix in a single PR, or complex enough to warrant a dedicated PR with
+broader scope.
 
 ## Project Conventions
 
@@ -35,13 +36,16 @@ Read the issue/PR context. Understand:
 - Scope is unclear or ambiguous
 - Would touch more than 3 files
 
-### Step 3a: Simple → Fix
+### Step 3a: Simple → Fix (via PR)
 
-1. Write a failing test that reproduces the bug
-2. Implement the fix (minimal change)
-3. Verify the test passes
-4. Run `cargo test` to ensure no regressions
-5. Commit with format: `fix: <description>\n\nref #<issue_number>`
+1. Create a fix branch: `git checkout -b pr/fix-<issue_number>`
+2. Write a failing test that reproduces the bug
+3. Implement the fix (minimal change)
+4. Verify the test passes
+5. Run `cargo test` to ensure no regressions
+6. Commit with format: `fix: <description>\n\nref #<issue_number>`
+7. Create a PR: `gh pr create --title "fix: <description>" --body "Fixes #<issue_number>"`
+8. Comment on the issue with the PR link — a human will review and merge
 
 ### Step 3b: Complex → Report
 
@@ -89,13 +93,14 @@ Issue: "CI Failure: feat/new-provider" (label: ci-failure)
 You:
 - Read CI logs → `clippy` job failed with `unwrap()` on `src/data/provider.rs:42`
 - This is SIMPLE (single file, clear fix)
-- Write test, fix the `unwrap()`, verify, commit
+- Write test, fix the `unwrap()`, verify, commit, create PR
 
 ## Constraints
 
 - Always write a test first for simple bugs
 - Commit messages MUST include `ref #N` pointing to the issue
-- The GitHub Action will push commits automatically — do not manually `git push`
+- Always create a PR branch and submit a PR for review — never push directly to main/master
+- Do NOT auto-close issues (`fixes #N` / `closes #N` in PR body) — issues are closed manually after merge
 - Never suppress type errors with `as any` or `@ts-ignore`
 - Never use `unwrap()` — use `.expect()` or proper error handling
 - If uncertain about complexity, default to COMPLEX (report, don't fix)

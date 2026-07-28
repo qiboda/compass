@@ -40,17 +40,20 @@ Follow the compass workflow exactly:
 - If behavior, API, or config changed: update relevant `kb/` files
 - Identify the kb file from the doc-sync table in AGENTS.md
 
-### 5. Commit
-- Format: `feat: <description>\n\nref #<issue_number>`
+### 5. Create PR
+
+- Create a feature branch: `git checkout -b pr/impl-<issue_number>`
+- Commit with format: `feat: <description>\n\nref #<issue_number>`
 - Atomic: one logical unit per commit
 - Include kb/ updates in the same commit
+- Create a PR: `gh pr create --title "feat: <description>" --body "Implements #<issue_number>"`
+- Comment on the issue with the PR link — a human will review and merge
 
 ## Constraints
 
 - Never skip the test-first step for feature work
 - Every commit MUST include `ref #N`
 - Do NOT auto-close issues (`fixes #N` / `closes #N`)
-- The GitHub Action will push commits automatically to the appropriate branch
-  (new branch for issues, PR branch for PRs). Do not manually `git push`.
+- Always create a PR branch and submit a PR for review — never push directly to main/master
 - Never suppress type errors
 - If blocked by external constraints, comment and ask — do not work around
