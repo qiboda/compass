@@ -165,3 +165,23 @@ AGENTS.md (large changes commit-first, small changes fix-first).
 
 **Lessons learned**: A single `>3 files` threshold is clear enough — no need
 to define "large" vs "small" change through subjective criteria.
+
+## 2026-07-28 — ref #57 docs: /fix /impl role instructions mandate PR-based commits
+
+**What was done**: Modified `kb/github/fix.md` and `kb/github/impl.md` to
+mandate PR-based commit workflow — all code changes from OpenCode bots must
+go through PR branches, never direct push to main. Review caught a `Fixes #N`
+vs `Addresses #N` auto-close contradiction, and fix.md quality gate asymmetry
+with impl.md.
+
+**What went wrong**: Skipped the post-implementation review before first commit.
+Correctly identified that PRE-IMPLEMENTATION GATE has a "doc-only" exception,
+but incorrectly assumed the POST-IMPLEMENTATION REVIEW also has one. The two
+are separate processes — the gate is for starting work, the review is for
+finishing work. Doc-only only skips the gate, not the review.
+
+**Lessons learned**:
+1. PRE-IMPLEMENTATION GATE exceptions ≠ POST-IMPLEMENTATION REVIEW exceptions.
+   If you skip the gate because of an exception, the review still applies.
+2. Added explicit warning to compass-workflow SKILL.md gate exceptions section
+   to prevent this mental shortcut from recurring.

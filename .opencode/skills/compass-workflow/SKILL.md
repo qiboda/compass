@@ -60,6 +60,11 @@ The gate does NOT apply to:
 - Typo fixes
 - Test additions for existing code
 
+> ⚠️ **Skipping the gate does NOT skip the post-implementation review.**
+> The `POST-IMPLEMENTATION REVIEW` section below applies to ALL changes,
+> including documentation-only. The gate and the review are separate
+> processes — gate is pre-implementation, review is post-implementation.
+
 ### Gate completion signal
 
 When all five steps are complete, announce explicitly:
