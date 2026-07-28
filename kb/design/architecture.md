@@ -36,10 +36,6 @@ compass (GUI binary)
   │
   ├── compass-core (library)
   │     ├── model.rs      ─ shared types: AppConfig, Exchange, StockBasic, Bar
-  │     ├── data/mod.rs   ─ Module declarations
-  │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
-  │     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
-  │     ├── data/parquet.rs   ─ ParquetReader (main database)
   │     ├── data/symbol.rs    ─ Exchange inference, code conversion
   │     └── data/synthetic.rs ─ Test data generator
   │
@@ -279,9 +275,10 @@ UI (next frame)
 ### Why local-only?
 
 With #31 and #32, the GUI reads all data from local Parquet files. No remote
-fallback, no negative cache, no inflight dedup. The data pipeline (import from
-Dolt, collectors from EastMoney) runs offline; the GUI only queries what's
-already on disk.
+fallback, no inflight dedup. The negative cache (NegativeCache trait) exists
+for marking "no data" symbols but is not invoked in the fetch_bars read path.
+The data pipeline (import from Dolt, collectors from EastMoney) runs offline;
+the GUI only queries what's already on disk.
 
 ## Data pipeline: CLI (compass-data)
 
@@ -292,7 +289,6 @@ that form a pipeline:
 Dolt DB ────import────► parquet_data/
 parquet_data/ ─export──► compass.duckdb
 ```
-
 Data directories default to `/data/compass-data/` and are configurable
 via `[parquet]` and `[dolt]` sections in `~/.config/compass/config.toml`.
 

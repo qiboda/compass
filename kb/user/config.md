@@ -24,6 +24,7 @@ mkdir -p ~/.config/compass
 # Default: "/data/compass-data/parquet_data"
 dir = "/data/compass-data/parquet_data"
 
+
 [dolt]
 # Dolt repository directories used by the data pipeline CLI.
 # Default: "/data/compass-data/investment_data"
