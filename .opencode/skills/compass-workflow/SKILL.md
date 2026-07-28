@@ -38,11 +38,15 @@ I will now check each gate step before proceeding:
    → [must show plan summary]
 
 ☐ STEP 3 — TESTS (RED phase)
-   Write failing test FIRST, confirm it fails for the right reason
+   → Invoke /test (qa skill) to write failing tests
    → [must show test failure output]
 
-☐ STEP 4 — DOCS
-   Identify which kb/ files need updating:
+☐ STEP 4a — RUSTDOC
+   → Invoke /rustdoc to verify #[deny(missing_docs)] compliance
+   → [must show cargo doc --no-deps is warning-free]
+
+☐ STEP 4b — DOCS (kb/)
+   → Invoke /docs to identify and update kb/ files
    → [must list files]
 ```
 
@@ -164,6 +168,22 @@ See `kb/github/labels.md` for the complete taxonomy.
 
 ---
 
+## 📋 Available Skills
+
+The compass project provides these opencode skills for specific workflow steps:
+
+| Skill | Slash Command | Purpose | Gate Step |
+|---|---|---|---|
+| qa (test) | `/test` | Write failing tests (TDD/BDD), test coverage | Step 3 — TESTS |
+| rustdoc | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance | Step 4a — RUSTDOC |
+| docs | `/docs` | Identify and update kb/ files | Step 4b — DOCS |
+| reflect | `/reflect` | Write post-implementation reflection + trend analysis | Post-implementation |
+
+When the gate checklist says `→ Invoke /<command>`, load that skill and follow
+its workflow. Each skill has a `SKILL.md` file in `.opencode/skills/<name>/`.
+
+---
+
 ## 🔍 POST-IMPLEMENTATION REVIEW (AUTOMATED)
 
 After completing implementation, run an automated review to catch issues
@@ -208,35 +228,18 @@ issues for the remaining problems and note them in the commit message.
 ### Step 5: Finalize
 
 - All in-scope issues resolved → proceed to commit (or push)
-- Reflection record: append to `kb/dev/reflections.md` summarizing
-  review results and any issues created
+- → Invoke /reflect to write post-implementation reflection
 
 ---
 
-## 📝 REFLECTION RECORD (MANDATORY)
+## 📝 REFLECTION RECORD
 
-After EVERY feature or bugfix implementation, you MUST write a brief reflection
-and append it to `kb/dev/reflections.md`. This is NOT optional.
+After EVERY feature or bugfix implementation, invoke `/reflect` (reflect skill)
+to write a post-implementation reflection and append it to `kb/dev/reflections.md`.
+This replaces the old manual reflection mandate — the reflect skill handles
+writing, format, and trend analysis.
 
-### Format
-
-```markdown
-## [date] — [issue ref] [brief title]
-
-**What was done**: [1-2 sentences summarizing the change]
-
-**What went wrong** (if any): [process failures, missed steps, surprises]
-
-**Lessons learned**: [what to do differently next time]
-```
-
-### Purpose
-
-Reflections compound. They prevent the same mistakes from recurring. If you
-skipped the gate or violated a rule, that MUST appear in the reflection.
-
-The reflection MUST be committed in the same commit as the implementation,
-or as a follow-up commit immediately after.
+See `.opencode/skills/reflect/SKILL.md` for the full reflection workflow.
 
 ---
 

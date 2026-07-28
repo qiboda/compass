@@ -77,6 +77,20 @@ role instruction file in `kb/github/*.md`. GitHub roles layer on top of AGENTS.m
 (Common Baseline + Role Overlay) — AGENTS.md provides project conventions, role
 files add role-specific constraints.
 
+### Local slash commands (OpenCode skills)
+
+These slash commands run locally in an OpenCode session (not via GitHub Actions):
+
+| Command | Usage | Behavior |
+|---|---|---|
+| `/test` | Feature/bugfix work | Write failing tests (RED phase), BDD test scenarios, coverage analysis |
+| `/rustdoc` | Feature/bugfix work | Verify `#[deny(missing_docs)]` compliance via `cargo doc --no-deps` |
+| `/docs` | Feature/bugfix work | Identify and update `kb/` files based on code changes |
+| `/reflect` | After feature/bugfix | Write post-implementation reflection + trend analysis to `kb/dev/reflections.md` |
+
+Each command maps to a skill file in `.opencode/skills/<name>/SKILL.md`. Skills
+are auto-discovered by OpenCode from the filesystem — no registration needed.
+
 ### When to plan first
 
 Use `/ulw-plan` (plan → approve → execute) for:

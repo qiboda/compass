@@ -75,15 +75,8 @@ is incomplete regardless of code quality. Record the violation in reflections.
 
 ### After implementation: Reflection Record
 
-After EVERY feature/bugfix, append a brief reflection to `kb/dev/reflections.md`:
-
-```markdown
-## [date] — ref #[N] [title]
-
-**What was done**: [1-2 sentences]
-**What went wrong**: [process failures, if any]
-**Lessons learned**: [what to do differently]
-```
+After EVERY feature/bugfix, invoke `/reflect` (reflect skill) to write a
+post-implementation reflection and append it to `kb/dev/reflections.md`.
 
 This is MANDATORY — commit it with the implementation or immediately after.
 
@@ -97,6 +90,21 @@ and commit discipline.
 
 **After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
 checklist above. Do not skip any step.
+
+### Available Skills
+
+| Skill | Slash Command | Purpose |
+|---|---|---|
+| `compass-workflow` | `/compass-workflow` | Enforces issue-driven dev, doc-sync, test-first, per-step-verify, commit discipline |
+| `worktree` | `/worktree` | Manage git worktrees for PR development |
+| `open-worktrees` | `//open-worktrees` | Launch all worktree zones in separate kitty windows |
+| `qa` (test) | `/test` | Write unit/integration tests (TDD/BDD), test coverage |
+| `rustdoc` | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance |
+| `docs` | `/docs` | Identify and update `kb/` files based on code changes |
+| `reflect` | `/reflect` | Write post-implementation reflections with trend analysis |
+
+All skills are located under `.opencode/skills/<name>/SKILL.md`. OpenCode
+auto-discovers skills from the filesystem — no registration needed.
 
 ### Issue-Driven Commits
 
