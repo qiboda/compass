@@ -185,3 +185,15 @@ finishing work. Doc-only only skips the gate, not the review.
    If you skip the gate because of an exception, the review still applies.
 2. Added explicit warning to compass-workflow SKILL.md gate exceptions section
    to prevent this mental shortcut from recurring.
+
+## 2026-07-28 — ref #60 docs: add comments convention — always append, never edit existing
+
+**What was done**: 创建 `kb/github/comments.md` 文档，规定 GitHub issues/PRs 上的 comment
+规则：永远追加新 comment，绝不修改已有 comment（事实性错误除外）。在 `AGENTS.md` 中添加引用。
+
+**What went wrong**: 初次 commit 后忘记补 reflection record，被用户指出未走完整工作流。
+
+**Lessons learned**:
+1. 即使是文档级修改，AGENTS.md 中 "After EVERY feature/bugfix, append a brief reflection"
+   依然适用——这是事后反思，不是 gate 的一部分
+2. commit 后、report completion 前，检查工作流 checklist 是否每一项都闭环
