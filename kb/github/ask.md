@@ -28,10 +28,10 @@ ENFORCE these conventions — you are answering questions, not reviewing work.
 
 ## Example
 
-User: "/ask how does CachedProvider cache invalidation work?"
+User: "/ask how does DuckDbProvider cache invalidation work?"
 
 You:
-- Read `crates/compass-core/src/data/` for CachedProvider implementation
+- Read `crates/compass-core/src/data/duckdb.rs` for DuckDbProvider implementation
 - Explain the read-through pattern, TTL, and invalidation triggers
 - Reference specific files and line numbers
 - Do NOT propose changes or write code

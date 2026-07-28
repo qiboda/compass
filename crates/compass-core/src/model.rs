@@ -226,7 +226,6 @@ fn default_investment_data_dir() -> String {
 fn default_compass_data_dir() -> String {
     "/data/compass-data/compass_data".into()
 }
-
 /// Application-level settings: default stock and timeframe on startup.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppSection {
