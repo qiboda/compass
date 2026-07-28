@@ -63,7 +63,7 @@ window (7 days) skip the HTTP call entirely.
 
 ## The provider hierarchy
 
-The GUI uses `DuckDbProvider` directly — it reads from `parquet_data/stock_daily/*.parquet`
+The GUI uses `DuckDbProvider` directly — it reads from `parquet_data/stock_daily.parquet`
 via `read_parquet()` with an in-memory DuckDB connection for caching recently fetched data.
 All data is local, no online fallback.
 
@@ -303,33 +303,72 @@ All write methods accept an `overwrite: bool`:
 This is the same semantic used by the CLI subcommands — `--overwrite` controls
 whether existing data is preserved or replaced.
 
+### Timeframe aggregation (ref #46)
+
+`DuckDbProvider::fetch_bars()` supports three timeframes:
+
+| Timeframe | Behavior |
+|---|---|
+| `"1d"` | Returns raw daily bars — no aggregation |
+| `"1w"` | Aggregates daily → weekly: `open` = Monday's open, `high` = week max, `low` = week min, `close` = Friday's close, `volume` = week sum |
+| `"1M"` | Aggregates daily → monthly: same OHLCV aggregation, `date_trunc('month', ...)` |
+
+Aggregation runs as a DuckDB SQL re-query after daily data is loaded into the
+in-memory `stock_daily` table (including parquet fallback cache-warm):
+
+```sql
+SELECT DATE_TRUNC('week', trade_date) as grp_date,
+       FIRST(open) as open,
+       MAX(high) as high,
+       MIN(low) as low,
+       LAST(close) as close,
+       SUM(volume) as volume
+FROM (
+    SELECT * FROM stock_daily
+    WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+    ORDER BY trade_date ASC
+)
+GROUP BY grp_date
+ORDER BY grp_date
+```
+
+The subquery's `ORDER BY trade_date ASC` guarantees `FIRST`/`LAST` return the
+chronologically earliest/latest values per time bucket. Only DuckDB's
+`stock_daily` path performs aggregation; the `ParquetReader` (direct parquet
+read) always returns daily data.
+
 ## ParquetReader — the main database
 
 ParquetReader reads from the Parquet files produced by `compass-data import`
 and `merge`. It implements `DataProvider` but NOT `DataWriter` — the Parquet
-store is append-only (new symbols are added as new files, existing data is
+store is append-only (data is merged into the single file, existing data is
 never modified in-place).
 
 ### How it works
 
 `ParquetReader` wraps a DuckDB in-memory connection and uses `read_parquet()`
-to query Parquet files directly:
+to query the single Parquet file with `WHERE symbol = ?` filtering:
 
 ```sql
 SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
-FROM read_parquet('parquet_data/stock_daily/SH600519.parquet')
-WHERE tradedate >= '2025-01-01' AND tradedate <= '2025-07-21'
+FROM read_parquet('parquet_data/stock_daily.parquet')
+WHERE symbol = ? AND tradedate >= ? AND tradedate <= ?
 ORDER BY tradedate ASC
 ```
 
+Symbols are bound as DuckDB parameters (`?`), not interpolated into the SQL string.
 No data is loaded into tables. DuckDB reads the Parquet file on each query,
 exploiting columnar projection and predicate pushdown for efficiency.
 
 ### Symbol discovery
 
-`list_symbols()` scans the filesystem: `std::fs::read_dir("parquet_data/stock_daily/")`.
-Each `.parquet` filename (minus extension) is a symbol. This is fast because
-there's no database to query — it's just a directory listing.
+`list_symbols()` first checks for `stock_daily.symbols.txt` (one symbol per
+line, sorted), which is generated alongside `stock_daily.parquet` by the import
+pipeline. This is the fast path — a simple file read.
+
+If `symbols.txt` doesn't exist, it falls back to `SELECT DISTINCT symbol FROM
+read_parquet('stock_daily.parquet') ORDER BY symbol`. If neither source exists,
+returns an empty vec.
 
 `search_symbols()` loads `stock_basic.parquet` into DuckDB and runs a LIKE
 query against the `name` column. First time is slow (full scan), but the
@@ -362,8 +401,9 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     ├─ For each symbol:
     │     dolt sql -r parquet -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001'"
     │       → binary Parquet bytes (no CSV intermediation)
-    │       → written directly to parquet_data/stock_daily/SZ000001.parquet
-    │
+│       → written directly to parquet_data/stock_daily.parquet (single file with symbol column)
+│
+│       → symbols list written to parquet_data/stock_daily.symbols.txt
     └─ Stock basic info → parquet_data/stock_basic.parquet
 ```
 
@@ -416,7 +456,7 @@ When data is available from multiple sources, this is the priority order:
 ```
 1. Dolt investment_data (local, 18M+ rows, 1990–2026)
      └─ Imported via: compass-data import
-     └─ Stored as: parquet_data/stock_daily/*.parquet
+     └─ Stored as: parquet_data/stock_daily.parquet (single file)
      └─ Queried via: ParquetReader
      │
      ▼ (fallback if not imported)

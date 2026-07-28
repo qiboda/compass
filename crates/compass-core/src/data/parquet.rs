@@ -1,8 +1,8 @@
 //! Parquet-based main database reader.
 //!
-//! Queries Parquet files directly via DuckDB's `read_parquet()` function
-//! without loading data into tables. One file per symbol under
-//! `parquet_data/stock_daily/`.
+//! Queries a single `stock_daily.parquet` file directly via DuckDB's
+//! `read_parquet()` function with `WHERE symbol = ?` filtering, without
+//! loading data into DuckDB tables.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -15,13 +15,14 @@ use egui_charts::model::Bar;
 use crate::data::provider::{DataError, DataProvider};
 use crate::model::{StockBasic, SymbolInfo};
 
-/// Validate symbol for use in `read_parquet()` file paths.
+/// Validate symbol for use in DuckDB parameter bindings.
 ///
-/// Allows alphanumeric chars plus `.` (for exchange-prefixed symbols like `sh.600058`).
-/// Rejects empty strings, path traversal (`..`), and other special chars.
+/// With the single-file format, symbols are bound as DuckDB parameters (`?`),
+/// not inserted into SQL strings. This function provides defense-in-depth:
+/// allows alphanumeric chars plus `.` (for exchange-prefixed symbols like
+/// `sh.600058`). Rejects empty strings and other special chars.
 pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
     let valid = !symbol.is_empty()
-        && !symbol.contains("..")
         && symbol
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.');
@@ -41,50 +42,38 @@ fn escape_sql_path(path: &str) -> String {
     path.replace('\'', "''")
 }
 
-/// Read A-share OHLCV data from Parquet files partitioned by symbol.
+/// Read A-share OHLCV data from a single Parquet file with a `symbol` column.
 ///
 /// Expected directory layout:
 /// ```text
 /// parquet_data/
 ///   stock_basic.parquet
-///   stock_daily/
-///     SZ000001.parquet
-///     SH600519.parquet
-///     ...
+///   stock_daily.parquet
+///   stock_daily.symbols.txt     (optional companion, one symbol per line)
 /// ```
 pub struct ParquetReader {
     conn: Arc<Mutex<Connection>>,
-    daily_dir: PathBuf,
+    daily_path: PathBuf,
     basic_path: PathBuf,
 }
 
 impl ParquetReader {
     /// Create a new reader pointing at `parquet_dir`.
     ///
-    /// The directory must contain `stock_basic.parquet` and a `stock_daily/`
-    /// subdirectory with per-symbol Parquet files.
+    /// The directory must contain `stock_basic.parquet` and a `stock_daily.parquet`
+    /// file with a `symbol` column.
     pub fn new(parquet_dir: impl AsRef<Path>) -> Result<Self, DataError> {
         let dir = parquet_dir.as_ref();
         let conn = Connection::open_in_memory().map_err(DataError::Database)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
-            daily_dir: dir.join("stock_daily"),
+            daily_path: dir.join("stock_daily.parquet"),
             basic_path: dir.join("stock_basic.parquet"),
         })
     }
 
-    /// Return the parquet file path for a given symbol.
-    fn parquet_path(&self, symbol: &str) -> PathBuf {
-        self.daily_dir.join(format!("{symbol}.parquet"))
-    }
-
-    /// Check whether a parquet file exists for this symbol.
-    fn file_exists(&self, symbol: &str) -> bool {
-        self.parquet_path(symbol).exists()
-    }
-
-    /// Fetch bars for a symbol and date range from the per-symbol Parquet file.
+    /// Fetch bars for a symbol and date range from the single Parquet file.
     pub fn fetch_bars_blocking(
         &self,
         symbol: &str,
@@ -92,14 +81,13 @@ impl ParquetReader {
         range_end: DateTime<Utc>,
     ) -> Result<Vec<Bar>, DataError> {
         validate_symbol(symbol)?;
-        let path = self.parquet_path(symbol);
-        if !path.exists() {
+        if !self.daily_path.exists() {
             return Err(DataError::NoData {
                 symbol: symbol.to_string(),
             });
         }
 
-        let path_str = path.to_string_lossy();
+        let path_str = self.daily_path.to_string_lossy();
         let escaped = escape_sql_path(&path_str);
         let start_str = range_start.format("%Y-%m-%d").to_string();
         let end_str = range_end.format("%Y-%m-%d").to_string();
@@ -112,12 +100,12 @@ impl ParquetReader {
         let sql = format!(
             "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
              FROM read_parquet('{escaped}')
-             WHERE tradedate >= ? AND tradedate <= ?
+             WHERE symbol = ? AND tradedate >= ? AND tradedate <= ?
              ORDER BY tradedate ASC"
         );
         let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
         let rows: Vec<(String, f64, f64, f64, f64, f64)> = stmt
-            .query_map(params![start_str, end_str], |row| {
+            .query_map(params![symbol, start_str, end_str], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
@@ -155,45 +143,82 @@ impl ParquetReader {
         Ok(bars)
     }
 
-    /// List all available symbols (from filesystem, fast).
+    /// List all available symbols.
+    ///
+    /// First tries `stock_daily.symbols.txt` (fast, one symbol per line).
+    /// Falls back to `SELECT DISTINCT symbol FROM read_parquet(...)` if the
+    /// text file is missing. Returns empty vec if neither source exists.
     pub fn list_symbols(&self) -> Result<Vec<SymbolInfo>, DataError> {
-        let mut symbols = Vec::new();
+        let symbols_txt = self
+            .daily_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("stock_daily.symbols.txt");
 
-        let dir = match std::fs::read_dir(&self.daily_dir) {
-            Ok(d) => d,
-            Err(_) => return Ok(symbols),
-        };
-
-        for entry in dir.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "parquet")
-                && let Some(stem) = path.file_stem()
-            {
-                let code = stem.to_string_lossy().to_string();
-                if !code.is_empty() {
-                    symbols.push(SymbolInfo {
-                        code,
-                        name: String::new(),
-                    });
+        // Fast path: read from companion text file
+        if symbols_txt.exists() {
+            match std::fs::read_to_string(&symbols_txt) {
+                Ok(content) => {
+                    let symbols: Vec<SymbolInfo> = content
+                        .lines()
+                        .map(|l| l.trim())
+                        .filter(|l| !l.is_empty())
+                        .map(|code| SymbolInfo {
+                            code: code.to_string(),
+                            name: String::new(),
+                        })
+                        .collect();
+                    return Ok(symbols);
+                }
+                Err(_) => {
+                    // If read fails, fall through to SQL fallback
                 }
             }
         }
 
-        symbols.sort_by(|a, b| a.code.cmp(&b.code));
+        // Slow path: query the parquet file directly
+        if !self.daily_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let path_str = self.daily_path.to_string_lossy();
+        let escaped = escape_sql_path(&path_str);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT DISTINCT symbol FROM read_parquet('{escaped}') ORDER BY symbol"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+
+        let symbols = rows
+            .into_iter()
+            .map(|code| SymbolInfo {
+                code,
+                name: String::new(),
+            })
+            .collect();
         Ok(symbols)
     }
 
-    /// Get stored date range for a symbol from its Parquet file.
+    /// Get stored date range for a symbol from the single Parquet file.
     pub fn get_stored_range(
         &self,
         symbol: &str,
     ) -> Result<Option<(NaiveDate, NaiveDate)>, DataError> {
         validate_symbol(symbol)?;
-        if !self.file_exists(symbol) {
+        if !self.daily_path.exists() {
             return Ok(None);
         }
 
-        let path_str = self.parquet_path(symbol).to_string_lossy().to_string();
+        let path_str = self.daily_path.to_string_lossy().to_string();
         let escaped = escape_sql_path(&path_str);
         let conn = self
             .conn
@@ -202,12 +227,13 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT CAST(MIN(tradedate) AS VARCHAR), CAST(MAX(tradedate) AS VARCHAR)
-             FROM read_parquet('{escaped}')"
+             FROM read_parquet('{escaped}')
+             WHERE symbol = ?"
         );
 
         let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
         let result = stmt
-            .query_row([], |row| {
+            .query_row(params![symbol], |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, Option<String>>(1)?,
@@ -383,7 +409,7 @@ impl Clone for ParquetReader {
     fn clone(&self) -> Self {
         Self {
             conn: Arc::clone(&self.conn),
-            daily_dir: self.daily_dir.clone(),
+            daily_path: self.daily_path.clone(),
             basic_path: self.basic_path.clone(),
         }
     }
@@ -402,12 +428,11 @@ impl ParquetReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
-    /// Helper: create a temporary Parquet dataset with one stock_basic row.
+    /// Helper: create a temporary Parquet dataset with stock_basic rows.
     fn create_test_parquet_dir() -> (tempfile::TempDir, ParquetReader) {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let daily_dir = tmp.path().join("stock_daily");
-        std::fs::create_dir_all(&daily_dir).expect("mkdir");
 
         let conn = duckdb::Connection::open_in_memory().expect("duckdb");
         conn.execute_batch(
@@ -429,10 +454,53 @@ mod tests {
         (tmp, reader)
     }
 
+    /// Helper: create a single `stock_daily.parquet` with a `symbol` column.
+    /// `data` is a list of (symbol, [(date_str, close), ...]).
+    /// Also writes `stock_daily.symbols.txt` for fast list_symbols().
+    fn create_test_stock_daily_parquet(
+        tmp: &tempfile::TempDir,
+        data: &[(&str, &[(&str, f64)])],
+    ) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE)",
+        ).expect("create");
+        for (symbol, rows) in data {
+            for (date, close) in *rows {
+                conn.execute(
+                    "INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    duckdb::params![
+                        *symbol,
+                        *date,
+                        close - 1.0,
+                        close + 1.0,
+                        close - 0.5,
+                        *close,
+                        *close,
+                        1000.0,
+                        0.0
+                    ],
+                )
+                .expect("insert");
+            }
+        }
+        let path = tmp.path().join("stock_daily.parquet");
+        conn.execute_batch(&format!("COPY t TO '{}' (FORMAT PARQUET)", path.display()))
+            .expect("copy");
+
+        // Write companion symbols.txt
+        let mut symbols: Vec<&str> = data.iter().map(|(s, _)| *s).collect();
+        symbols.sort();
+        let symbols_txt_path = tmp.path().join("stock_daily.symbols.txt");
+        let mut f = std::fs::File::create(&symbols_txt_path).expect("create symbols.txt");
+        for s in symbols {
+            writeln!(f, "{}", s).expect("write");
+        }
+    }
+
     #[test]
     fn parquet_reader_returns_error_for_missing_symbol() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let start = DateTime::from_timestamp(0, 0).unwrap();
@@ -450,21 +518,29 @@ mod tests {
     }
 
     #[test]
-    fn parquet_path_constructs_correctly() {
+    fn list_symbols_reads_from_symbols_txt() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        std::fs::write(tmp.path().join("stock_daily/SZ000001.parquet"), b"").expect("write");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[
+                ("SZ000001", &[("2024-01-01", 10.0)]),
+                ("SH600519", &[("2024-01-01", 1500.0)]),
+            ],
+        );
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        assert!(reader.file_exists("SZ000001"));
-        assert!(!reader.file_exists("999999"));
+        let symbols = reader.list_symbols().expect("list");
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].code, "SH600519");
+        assert_eq!(symbols[1].code, "SZ000001");
     }
 
     #[test]
     fn sql_injection_via_symbol_is_blocked() {
         let (_tmp, reader) = create_test_parquet_dir();
 
-        // Malicious symbol that would cause SQL injection if not parameterized
+        // Malicious symbol that would cause SQL issues if not parameterized.
+        // Since symbols are bound as DuckDB parameters, injection is not possible.
         let malicious = "' OR 1=1 --";
         let result = reader.get_stock_basic_blocking(malicious);
         assert!(
@@ -474,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_symbol_allows_dolt_prefixed_codes() {
+    fn validate_symbol_allows_valid_codes() {
         // Dolt without dot: uppercase prefix + bare code
         validate_symbol("SZ000001").expect("SZ000001 should be valid");
         validate_symbol("SH600519").expect("SH600519 should be valid");
@@ -482,23 +558,16 @@ mod tests {
         // Exchange-prefixed with dot: lowercase prefix.bare code
         validate_symbol("sh.000001").expect("sh.000001 should be valid");
         validate_symbol("sz.600059").expect("sz.600059 should be valid");
-        // Path traversal still blocked
-        assert!(validate_symbol("../../etc/passwd").is_err());
-        assert!(validate_symbol("a..b").is_err());
+        // Empty and special chars still rejected
+        assert!(validate_symbol("").is_err());
+        assert!(validate_symbol("DROP TABLE").is_err());
+        assert!(validate_symbol("foo;bar").is_err());
     }
 
     #[test]
-    fn path_traversal_via_symbol_is_blocked() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-
-        let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        // Symbol with path traversal should not read files outside stock_daily/
-        let malicious = "../../etc/passwd";
-        assert!(
-            !reader.file_exists(malicious),
-            "path traversal symbol should not match any file"
-        );
+    fn validate_symbol_rejects_slashes() {
+        // Slashes are not alphanumeric, so they are rejected
+        assert!(validate_symbol("../../etc/passwd").is_err());
     }
 
     #[test]
@@ -524,48 +593,19 @@ mod tests {
     // Happy-path tests with real temp Parquet OHLCV data
     // -----------------------------------------------------------------------
 
-    /// Create a temp Parquet dataset with stock_daily data for 2 symbols.
-    fn create_test_ohlcv_parquet(tmp: &tempfile::TempDir, symbol: &str, rows: &[(&str, f64)]) {
-        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
-        conn.execute_batch(
-            "CREATE TABLE t (tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE)",
-        ).expect("create");
-        for (date, close) in rows {
-            conn.execute(
-                "INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                duckdb::params![
-                    date,
-                    close - 1.0,
-                    close + 1.0,
-                    close - 0.5,
-                    *close,
-                    *close,
-                    1000.0,
-                    0.0
-                ],
-            )
-            .expect("insert");
-        }
-        let path = tmp
-            .path()
-            .join("stock_daily")
-            .join(format!("{symbol}.parquet"));
-        conn.execute_batch(&format!("COPY t TO '{}' (FORMAT PARQUET)", path.display()))
-            .expect("copy");
-    }
-
     #[test]
     fn fetch_bars_returns_sorted_ohlcv() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        create_test_ohlcv_parquet(
+        create_test_stock_daily_parquet(
             &tmp,
-            "SZ000001",
-            &[
-                ("2024-01-02", 10.0),
-                ("2024-01-03", 11.0),
-                ("2024-01-04", 10.5),
-            ],
+            &[(
+                "SZ000001",
+                &[
+                    ("2024-01-02", 10.0),
+                    ("2024-01-03", 11.0),
+                    ("2024-01-04", 10.5),
+                ],
+            )],
         );
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
@@ -585,15 +625,16 @@ mod tests {
     #[test]
     fn fetch_bars_filters_by_date_range() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        create_test_ohlcv_parquet(
+        create_test_stock_daily_parquet(
             &tmp,
-            "SZ000001",
-            &[
-                ("2024-01-02", 10.0),
-                ("2024-01-03", 11.0),
-                ("2024-02-01", 12.0),
-            ],
+            &[(
+                "SZ000001",
+                &[
+                    ("2024-01-02", 10.0),
+                    ("2024-01-03", 11.0),
+                    ("2024-02-01", 12.0),
+                ],
+            )],
         );
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
@@ -618,17 +659,41 @@ mod tests {
     }
 
     #[test]
+    fn fetch_bars_only_returns_requested_symbol() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[
+                ("SZ000001", &[("2024-01-02", 10.0)]),
+                ("SH600519", &[("2024-01-02", 1500.0)]),
+            ],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let start = DateTime::from_timestamp(0, 0).unwrap();
+        let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
+
+        // Should only get SZ000001 rows, not SH600519
+        let bars = reader
+            .fetch_bars_blocking("SZ000001", start, end)
+            .expect("fetch");
+        assert_eq!(bars.len(), 1);
+        assert!((bars[0].close - 10.0).abs() < 0.01);
+    }
+
+    #[test]
     fn get_stored_range_returns_min_max() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        create_test_ohlcv_parquet(
+        create_test_stock_daily_parquet(
             &tmp,
-            "SH600519",
-            &[
-                ("2024-06-01", 1500.0),
-                ("2024-06-15", 1510.0),
-                ("2024-06-30", 1520.0),
-            ],
+            &[(
+                "SH600519",
+                &[
+                    ("2024-06-01", 1500.0),
+                    ("2024-06-15", 1510.0),
+                    ("2024-06-30", 1520.0),
+                ],
+            )],
         );
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
@@ -641,16 +706,15 @@ mod tests {
     }
 
     #[test]
-    fn list_symbols_finds_parquet_files() {
+    fn get_stored_range_returns_none_for_missing_symbol() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(tmp.path().join("stock_daily")).expect("mkdir");
-        create_test_ohlcv_parquet(&tmp, "SZ000001", &[("2024-01-01", 10.0)]);
-        create_test_ohlcv_parquet(&tmp, "SH600519", &[("2024-01-01", 1500.0)]);
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[("SZ000001", &[("2024-01-02", 10.0)])],
+        );
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        let symbols = reader.list_symbols().expect("list");
-        assert_eq!(symbols.len(), 2);
-        assert_eq!(symbols[0].code, "SH600519");
-        assert_eq!(symbols[1].code, "SZ000001");
+        let range = reader.get_stored_range("NONEXIST").expect("range");
+        assert!(range.is_none(), "nonexistent symbol should return None");
     }
 }

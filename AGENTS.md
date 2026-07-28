@@ -259,10 +259,8 @@ Fetches K-line data from `push2his.eastmoney.com`. Symbol → secid conversion v
 ```
 parquet_data/
 ├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date
-└── stock_daily/
-    ├── SZ000001.parquet      # tradedate, open, high, low, close, adjclose, volume, amount
-    ├── SH600519.parquet
-    └── ...
+├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
+└── stock_daily.symbols.txt    # one symbol per line (fast listing)
 ```
 
 DuckDB schema (staging):

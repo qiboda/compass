@@ -84,16 +84,14 @@ cargo run --bin compass-data -- import [OPTIONS]
 
 ```
 parquet_data/
-├── stock_basic.parquet          # Stock metadata (one file)
-└── stock_daily/
-    ├── SZ000001.parquet          # One file per Dolt symbol
-    ├── SH600519.parquet
-    └── ...                       # ~6123 files total
+├── stock_basic.parquet             # Stock metadata (one file)
+├── stock_daily.parquet             # OHLCV data (single file with symbol column)
+└── stock_daily.symbols.txt         # Symbol index (one per line)
 ```
 
-**Note**: Files are named by Dolt's native symbol format (e.g. `SZ000001`, `SH600519`).
-The 2-letter exchange prefix is part of the filename — a stock (SZ) and an index
-(SH) sharing the same 6-digit code go into separate files.
+The `symbol` column in `stock_daily.parquet` stores Dolt's native symbol format
+(e.g. `SZ000001`, `SH600519`). A stock (SZ) and an index (SH) sharing the same
+6-digit code are disambiguated by the exchange prefix.
 
 ### Examples
 

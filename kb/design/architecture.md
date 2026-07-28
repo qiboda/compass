@@ -254,8 +254,8 @@ DuckDbProvider::fetch_bars("600519", "1d", start, end)
   │
   ├─ 1. Query in-memory stock_daily table → cache hit? Return bars.
   │
-  ├─ 2. Cache miss → read parquet_data/stock_daily/SH600519.parquet via read_parquet()
-  │     Validates symbol, maps exchange (to_exchange), reads file with date filter
+  ├─ 2. Cache miss → read parquet_data/stock_daily.parquet via read_parquet()
+  │     with WHERE symbol = ? filtering
   │
   ├─ 3. Cache-warm: INSERT OR IGNORE parquet data into in-memory table
   │     Subsequent queries hit memory, not disk
@@ -332,8 +332,7 @@ Key design decisions:
 ### import: Dolt → Parquet
 - Queries Dolt `investment_data` database via `dolt sql -r parquet`
 - Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
-- Writes Parquet bytes directly — no CSV or DuckDB intermediary
-- Filenames use the full Dolt symbol: `parquet_data/stock_daily/SZ000001.parquet`
+- Writes to a single `parquet_data/stock_daily.parquet` with a `symbol` column
 - Merge mode (default): uses DuckDB `read_parquet` to merge existing + new
 - Overwrite mode: bytes written directly to target file
 
@@ -366,7 +365,7 @@ Compass uses two database formats for different purposes:
   Parquet files (parquet_data/)
     ├─ Source of truth — the canonical data store
     ├─ Stock basic: stock_basic.parquet (one file for all symbols)
-    └─ Stock daily: stock_daily/{symbol}.parquet (one file per symbol)
+    ├─ Stock daily: stock_daily.parquet (single file with symbol column)
 
   DuckDB (in-memory for GUI, file-backed for CLI staging)
     ├─ GUI — in-memory with Parquet fallback (reads parquet_data/ on cache miss)

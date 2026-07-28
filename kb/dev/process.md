@@ -360,8 +360,8 @@ cargo run --bin compass-data -- export
 ### Inspect Parquet files
 
 ```sh
-ls -lh parquet_data/stock_daily/ | head -20
-wc -l parquet_data/stock_daily/     # file count = symbol count
+ls -lh parquet_data/stock_daily.parquet
+wc -l parquet_data/stock_daily.symbols.txt    # symbol count
 ```
 
 ### Query Parquet with DuckDB
@@ -369,7 +369,7 @@ wc -l parquet_data/stock_daily/     # file count = symbol count
 ```rust
 use duckdb::Connection;
 let conn = Connection::open_in_memory()?;
-conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily/SH600519.parquet') LIMIT 5")?;
+conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily.parquet') WHERE symbol = 'SH600519' LIMIT 5")?;
 ```
 
 ### collectors (Python data pipeline)

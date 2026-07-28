@@ -27,10 +27,10 @@ alongside every data row.
 ## Why Dolt-native symbols?
 
 Compass uses the Dolt-native prefixed format (`"SZ000001"`, `"SH600519"`,
-`"BJ830799"`) as the canonical identifier everywhere: in Parquet filenames,
-in the DuckDB `symbol` column, and as the primary key. Bare 6-digit codes
-are accepted as user input for convenience and resolved to the canonical
-format via exchange inference.
+`"BJ830799"`) as the canonical identifier everywhere: in the `symbol` column
+of `stock_daily.parquet`, in the DuckDB `symbol` column, and as the primary
+key. Bare 6-digit codes are accepted as user input for convenience and
+resolved to the canonical format via exchange inference.
 
 The older format `"000001.SZ"` (ts_code convention) has been retired. Here's why:
 
@@ -42,10 +42,9 @@ redundancy breeds inconsistency — what if someone writes `"000001.SH"` by
 mistake?
 
 **What we gain from Dolt-native symbols**:
-- No dots in filenames: `SZ000001.parquet` instead of `000001.SZ.parquet`
-- No cross-exchange collisions: `SZ000852` (stock) and `SH000852` (index) are separate files
-- One-to-one mapping: each Dolt symbol is a unique Parquet file
+- No cross-exchange collisions: `SZ000852` (stock) and `SH000852` (index) are distinct rows in `stock_daily.parquet`
 - Clear exchange at a glance: the 2-letter prefix is immediately visible
+- Simpler format: all symbols live in one `stock_daily.parquet` file, identified by the `symbol` column
 
 The `to_ts_code()` helper still exists in the codebase for backward
 compatibility, but it's no longer used as a primary key.
@@ -151,14 +150,14 @@ HTTP GET ...?secid=1.600519&klt=101...
 ## Dolt symbol mapping
 
 Dolt's `investment_data` database stores symbols with exchange prefixes.
-These prefixes are the canonical identifier everywhere — in filenames,
-in the database, and in user-facing interfaces:
+These prefixes are the canonical identifier — in the `symbol` column of
+`stock_daily.parquet`, in the database, and in user-facing interfaces:
 
-| Symbol | Parquet filename | Stock |
-|---|---|---|
-| `SZ000001` | `SZ000001.parquet` | 平安银行 |
-| `SH600519` | `SH600519.parquet` | 贵州茅台 |
-| `BJ830799` | `BJ830799.parquet` | 艾融软件 |
+| Symbol | Stock |
+|---|---|
+| `SZ000001` | 平安银行 |
+| `SH600519` | 贵州茅台 |
+| `BJ830799` | 艾融软件 |
 
 The `strip_prefix()` function exists for backward compatibility when matching
 bare 6-digit input, but the canonical format always includes the prefix.

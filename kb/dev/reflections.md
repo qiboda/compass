@@ -6,11 +6,41 @@
 
 ---
 
+---
+
+## 2026-07-28 — ref #62 rewrite: ParquetReader 改为单文件 stock_daily.parquet
+
+**What was done**: 将 ParquetReader 从 per-symbol 文件布局（`stock_daily/SZ000001.parquet`）
+改为单一 `stock_daily.parquet`（带 `symbol` 列），使用 `WHERE symbol = ?` 参数绑定过滤。
+`list_symbols()` 改为先读 `stock_daily.symbols.txt` 再回退 SQL DISTINCT。删除了
+`parquet_path()` 和 `file_exists()` 方法，放宽了 `validate_symbol()` 的路径穿越检查。
+
+**What went wrong**: 首次编译时 Cargo 使用了旧的构建缓存导致 duckdb.rs 测试报告类型不匹配
+（文件实际已更新），刷新后通过。
+
+**Lessons learned**:
+1. 单文件 + `WHERE symbol = ?` 参数绑定比 per-symbol 文件更安全（消除路径穿越面）
+2. `symbols.txt` 伴生文件提供 O(1) 符号枚举，避免每次都查询大 parquet 文件
+3. 参数绑定（`params![symbol]`）优于字符串插值，在整个代码库中应保持一致
+
+## 2026-07-28 — ref #62 Wave 3: 更新测试与文档以匹配单文件 parquet 格式
+
+**What was done**: 将 export.rs 测试、parquet_bench.rs、integration_test.rs 从 per-symbol
+文件布局迁移到单一 `stock_daily.parquet`（带 `symbol` 列）。同步更新 AGENTS.md 和
+`kb/design/symbols.md` 中的文件树描述和文件名引用。
+
+**What went wrong**: （无）— 测试修改简单直接，无意外。
+
+**Lessons learned**:
+1. 测试中的旧格式设置（单文件无 symbol 列）虽然"通过"但未真正测试数据路径 — 只是空操作。
+   更新后测试实际执行了 export 流程，验证效果更好。
+2. symbols.md 中有多处"Parquet 文件名"引用过时，需一并更新保持一致性。
+
 ## 2026-07-26 — ref #31 fix: DuckDbProvider 直读 parquet_data，消除 cache miss
 
 **What was done**: 将 DuckDbProvider 从文件型 DuckDB (`compass.db`) 改为内存型 + Parquet 回退。
 `fetch_bars` 先查内存表（`save_bars` 的 EastMoney 数据），miss 时通过 `read_parquet()` 直接读取
-`parquet_data/stock_daily/{EXCHANGE}{code}.parquet`。GUI 启动即可命中本地数据，不再每次走 EastMoney HTTP。
+`parquet_data/stock_daily.parquet` (single file with symbol column). GUI 启动即可命中本地数据，不再每次走 EastMoney HTTP。
 
 **What went well**: RED→GREEN 严格 TDD，3 个新测试精准覆盖首次查询、日期过滤、save_bars 优先级。
 
@@ -18,7 +48,7 @@
 
 **Lessons learned**:
 1. 直读 parquet 文件比 glob VIEW 更简洁，DuckDB 的 `read_parquet()` 对单文件查询已足够高效
-2. 列名映射 (`tradedate` → `trade_date`) 和符号映射 (`000001` → `SZ000001.parquet`) 是跨存储格式的核心细节
+2. 列名映射 (`tradedate` → `trade_date`) 和符号映射 (`000001` → `SZ000001` in symbol column) 是跨存储格式的核心细节
 3. CLI 工具仍需文件型 DuckDB，保留 `new_file()` 构造函数是必要的分离
 
 ## 2026-07-26 — ref #24 refactor: integrate egui-mobius Level 3 citizen pattern
@@ -102,3 +132,24 @@ filter_stocks() before manual testing.
 1. egui 0.35 doesn't have `TopBottomPanel` — used inline horizontal toolbar instead
 2. Module visibility: `mod widgets` declared in main.rs makes `crate::widgets` accessible from test modules
 3. The `#![warn(missing_docs)]` lint is aggressive — every public item needs a doc comment, even enum variants
+
+## 2026-07-26 — ref #46 feat: DuckDbProvider timeframe aggregation (daily→weekly/monthly)
+
+**What was done**: Implemented daily→weekly and daily→monthly OHLCV resample in
+`DuckDbProvider::fetch_bars()` using DuckDB SQL `date_trunc` + `FIRST`/`LAST`/`MAX`/`MIN`/`SUM`
+aggregates. The `_timeframe` underscore prefix was removed and timeframe is now used for
+aggregation. Added `Dynamic<String> timeframe` to `SharedState` for dynamic chart label updates.
+Fixed hardcoded `set_timeframe_label("1d")` in ChartCitizen.
+
+**What went well**: TDD approach caught two pre-existing test failures immediately
+(`save_and_fetch_preserves_symbol_and_timeframe` expected old ignore-timeframe behavior).
+DuckDB's `FIRST(open)`/`LAST(close)` with ordered subquery worked correctly for
+chronological OHLC within each time bucket.
+
+**Lessons learned**:
+1. `FIRST()`/`LAST()` in DuckDB respect subquery ORDER BY — essential for correct
+   OHLC aggregation where open=earliest, close=latest
+2. Pre-existing tests that saved/fetched bars with `"1w"`/`"1M"` but expected daily
+   results revealed the artificial test assumptions made before aggregation was implemented
+3. Merge conflicts in worktree branches exposed `.gitignore`'d symlink data directories
+   tracked on master — needed manual resolution

@@ -165,7 +165,7 @@ Results are written to `target/criterion/` as HTML reports.
 | `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
 | `compass-core` | `cached_bench` | CachedProvider cache hit, cache miss (read-through), negative cache |
 | `compass-core` | `eastmoney_bench` | Kline parse latency/throughput, httpmock round-trip, error paths |
-| `compass-data` | `dolt_bench` | Dolt sql -r parquet per-symbol, 300KB file write, symbol enumeration |
+| `compass-data` | `dolt_bench` | Dolt sql -r parquet single-file export, symbol enumeration |
 
 ### Data requirements
 

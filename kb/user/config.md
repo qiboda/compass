@@ -33,7 +33,7 @@ default_symbol = "000001"
 default_timeframe = "1d"
 
 [parquet]
-# Directory containing stock_basic.parquet and stock_daily/.
+# Directory containing stock_basic.parquet and stock_daily.parquet.
 # Used by the GUI for the symbol search dropdown.
 # Default: "parquet_data"
 dir = "parquet_data"

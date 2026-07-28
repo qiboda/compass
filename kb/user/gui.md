@@ -18,7 +18,7 @@ The top toolbar provides all controls in a single row:
 |---|---|
 | **Symbol** | Searchable dropdown — type a code prefix (e.g. `600`) or name substring (e.g. `平安`) to filter the list. Displays `EXCHANGE \| CODE \| NAME` format. Click to select. |
 | **Exchange** | Dropdown — filter by `全部`/`SH`/`SZ`/`BJ`. Narrows the symbol list to the selected exchange. |
-| **TF** | Static label `1d` — daily timeframe (only option currently). |
+| **TF** | ComboBox — select `1d` (daily), `1w` (weekly), or `1M` (monthly). Controls OHLCV bar aggregation. |
 | **Fetch** | Button — load chart data for the selected symbol with the selected exchange prefix. |
 
 ### Status indicators
@@ -83,14 +83,14 @@ See [Config](config.md) for all options.
 
 ## Data prerequisites
 
-The chart app reads OHLCV data directly from `parquet_data/stock_daily/*.parquet`
+The chart app reads OHLCV data directly from `parquet_data/stock_daily.parquet`
 via DuckDB's `read_parquet()` (in-memory, no persistent DuckDB file needed).
 Before first use, ensure data is available:
 
 ```sh
 # Option A: Import from Dolt (complete history)
 cargo run --bin compass-data -- import
-# Data is ready — parquet_data/stock_daily/ is the source of truth
+# Data is ready — parquet_data/stock_daily.parquet is the source of truth
 
 # Option B: Download from EastMoney (specific stocks)
 cargo run --bin compass-data -- download --symbols 000001,600519
