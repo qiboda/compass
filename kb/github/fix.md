@@ -44,7 +44,7 @@ Read the issue/PR context. Understand:
 4. Verify the test passes
 5. Run `cargo test` to ensure no regressions
 6. Commit with format: `fix: <description>\n\nref #<issue_number>`
-7. Create a PR: `gh pr create --title "fix: <description>" --body "Fixes #<issue_number>"`
+7. Create a PR: `gh pr create --title "fix: <description>" --body "Addresses #<issue_number>"`
 8. Comment on the issue with the PR link — a human will review and merge
 
 ### Step 3b: Complex → Report
