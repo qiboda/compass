@@ -6,11 +6,41 @@
 
 ---
 
+---
+
+## 2026-07-28 — ref #62 rewrite: ParquetReader 改为单文件 stock_daily.parquet
+
+**What was done**: 将 ParquetReader 从 per-symbol 文件布局（`stock_daily/SZ000001.parquet`）
+改为单一 `stock_daily.parquet`（带 `symbol` 列），使用 `WHERE symbol = ?` 参数绑定过滤。
+`list_symbols()` 改为先读 `stock_daily.symbols.txt` 再回退 SQL DISTINCT。删除了
+`parquet_path()` 和 `file_exists()` 方法，放宽了 `validate_symbol()` 的路径穿越检查。
+
+**What went wrong**: 首次编译时 Cargo 使用了旧的构建缓存导致 duckdb.rs 测试报告类型不匹配
+（文件实际已更新），刷新后通过。
+
+**Lessons learned**:
+1. 单文件 + `WHERE symbol = ?` 参数绑定比 per-symbol 文件更安全（消除路径穿越面）
+2. `symbols.txt` 伴生文件提供 O(1) 符号枚举，避免每次都查询大 parquet 文件
+3. 参数绑定（`params![symbol]`）优于字符串插值，在整个代码库中应保持一致
+
+## 2026-07-28 — ref #62 Wave 3: 更新测试与文档以匹配单文件 parquet 格式
+
+**What was done**: 将 export.rs 测试、parquet_bench.rs、integration_test.rs 从 per-symbol
+文件布局迁移到单一 `stock_daily.parquet`（带 `symbol` 列）。同步更新 AGENTS.md 和
+`kb/design/symbols.md` 中的文件树描述和文件名引用。
+
+**What went wrong**: （无）— 测试修改简单直接，无意外。
+
+**Lessons learned**:
+1. 测试中的旧格式设置（单文件无 symbol 列）虽然"通过"但未真正测试数据路径 — 只是空操作。
+   更新后测试实际执行了 export 流程，验证效果更好。
+2. symbols.md 中有多处"Parquet 文件名"引用过时，需一并更新保持一致性。
+
 ## 2026-07-26 — ref #31 fix: DuckDbProvider 直读 parquet_data，消除 cache miss
 
 **What was done**: 将 DuckDbProvider 从文件型 DuckDB (`compass.db`) 改为内存型 + Parquet 回退。
 `fetch_bars` 先查内存表（`save_bars` 的 EastMoney 数据），miss 时通过 `read_parquet()` 直接读取
-`parquet_data/stock_daily/{EXCHANGE}{code}.parquet`。GUI 启动即可命中本地数据，不再每次走 EastMoney HTTP。
+`parquet_data/stock_daily.parquet` (single file with symbol column). GUI 启动即可命中本地数据，不再每次走 EastMoney HTTP。
 
 **What went well**: RED→GREEN 严格 TDD，3 个新测试精准覆盖首次查询、日期过滤、save_bars 优先级。
 
@@ -18,7 +48,7 @@
 
 **Lessons learned**:
 1. 直读 parquet 文件比 glob VIEW 更简洁，DuckDB 的 `read_parquet()` 对单文件查询已足够高效
-2. 列名映射 (`tradedate` → `trade_date`) 和符号映射 (`000001` → `SZ000001.parquet`) 是跨存储格式的核心细节
+2. 列名映射 (`tradedate` → `trade_date`) 和符号映射 (`000001` → `SZ000001` in symbol column) 是跨存储格式的核心细节
 3. CLI 工具仍需文件型 DuckDB，保留 `new_file()` 构造函数是必要的分离
 
 ## 2026-07-26 — ref #24 refactor: integrate egui-mobius Level 3 citizen pattern
@@ -103,120 +133,23 @@ filter_stocks() before manual testing.
 2. Module visibility: `mod widgets` declared in main.rs makes `crate::widgets` accessible from test modules
 3. The `#![warn(missing_docs)]` lint is aggressive — every public item needs a doc comment, even enum variants
 
-## 2026-07-27 — ref #54 feat: OpenCode GitHub 多工作流架构
+## 2026-07-26 — ref #46 feat: DuckDbProvider timeframe aggregation (daily→weekly/monthly)
 
-**What was done**: 将单一 `opencode.yml` 拆分为 5 个专用工作流（/ask、/fix、/review、
-/impl、CI-fix），每个工作流有独立的触发条件、权限和角色指令。AGENTS.md 采用 Common
-Baseline + Role Overlay 策略——AGENTS.md 保持不变作为项目约定基线，GitHub 角色专用指令
-放在 `kb/github/*.md`，workflow prompt 仅做文件路由。Momus 审议通过，actionlint 零错误。
+**What was done**: Implemented daily→weekly and daily→monthly OHLCV resample in
+`DuckDbProvider::fetch_bars()` using DuckDB SQL `date_trunc` + `FIRST`/`LAST`/`MAX`/`MIN`/`SUM`
+aggregates. The `_timeframe` underscore prefix was removed and timeframe is now used for
+aggregation. Added `Dynamic<String> timeframe` to `SharedState` for dynamic chart label updates.
+Fixed hardcoded `set_timeframe_label("1d")` in ChartCitizen.
 
-**What went wrong**: 源码审查发现 opencode GitHub Action 的 `assertPayloadKeyword()`
-硬编码了 `/opencode` 和 `/oc` 关键词检查，自定义命令（/ask、/fix 等）可能在 action
-内部被拒绝。待部署后实测验证 `mentions` 输入是否生效。
-
-**Lessons learned**:
-1. GitHub Actions 的 `workflow_run` 事件仅从默认分支触发 workflow 定义，但可以响应
-   任意分支的 workflow 完成事件——只要 workflow 文件在默认分支上。
-2. prompt 输入的行为应实测确认（覆盖 vs 追加），计划中采用保守策略：prompt 只做文件路由。
-3. YAML workflow 的 actionlint 验证可替代传统 TDD 的 RED 阶段（config 文件无编译/运行测试）。
-
-
-
-**What was done**: Moved parquet_data, investment_data, compass_data out of project to
-`/data/compass-data/`, made all paths configurable via `[parquet]` / `[dolt]` in
-config.toml, removed dead `DatabaseConfig` and `merge` command, updated all kb/
-docs and AGENTS.md, added `scripts/link-data-dirs.sh` for worktree data access.
-
-**What went wrong**: `dolt clone chenditc/investment_data` is too large for tool
-timeouts (~4GB, 16M chunks). Had to background it with `nohup`. Push to
-skwy/investment_data and `import --overwrite` still pending.
+**What went well**: TDD approach caught two pre-existing test failures immediately
+(`save_and_fetch_preserves_symbol_and_timeframe` expected old ignore-timeframe behavior).
+DuckDB's `FIRST(open)`/`LAST(close)` with ordered subquery worked correctly for
+chronological OHLC within each time bucket.
 
 **Lessons learned**:
-1. Large data operations should always go through background/nohup, never inline
-2. `cargo check` is fast but doesn't catch missing deps in Cargo.toml — compass-data
-   needed `toml` and `serde` added for config loading
-3. Removing structs from AppConfig is safe as long as no production code consumes them
-   (confirmed via grep before deleting DatabaseConfig)
-
-## 2026-07-28 — ref #55 worktree 改为 PR-only + 删除 symlink 脚本 + issue 关闭记录 PR
-
-**What was done**: Changed worktree from persistent functional zones to transient
-PR-only workspaces (create per PR, cleanup on merge). Deleted `scripts/link-data-dirs.sh`
-(no longer needed — paths are config-driven). Added PR recording step to issue
-close flow. Fixed branching rule in compass-workflow skill (was "trunk-based, no
-feature branches" — corrected to feature-branch workflow with `pr/` naming).
-Standardized branch naming to `pr/<short-description>` across all docs.
-
-**What went wrong**: Compass-workflow SKILL.md still had stale "no feature branches"
-rule conflicting with the new PR-only workflow. Caught during cross-file review.
-
-**Lessons learned**: When changing a convention that spans multiple files, grep
-ALL markdown files for the old pattern — not just the ones you're editing.
-
-## 2026-07-28 — ref #56 自动 review + 修复 + 提 issue + 提交策略全局化
-
-**What was done**: Replaced manual POST-IMPLEMENTATION SELF-AUDIT checklist
-with an automated 5-step review flow: commit strategy decision → `/review-work`
-→ auto-fix (≤3 files, related) or create issue (unrelated or >3 files) →
-re-review (max 2 rounds) → finalize. Added global commit strategy rule to
-AGENTS.md (large changes commit-first, small changes fix-first).
-
-**What went wrong**: Nothing. Grill-me decision tree resolved cleanly.
-
-**Lessons learned**: A single `>3 files` threshold is clear enough — no need
-to define "large" vs "small" change through subjective criteria.
-
-## 2026-07-28 — ref #57 docs: /fix /impl role instructions mandate PR-based commits
-
-**What was done**: Modified `kb/github/fix.md` and `kb/github/impl.md` to
-mandate PR-based commit workflow — all code changes from OpenCode bots must
-go through PR branches, never direct push to main. Review caught a `Fixes #N`
-vs `Addresses #N` auto-close contradiction, and fix.md quality gate asymmetry
-with impl.md.
-
-**What went wrong**: Skipped the post-implementation review before first commit.
-Correctly identified that PRE-IMPLEMENTATION GATE has a "doc-only" exception,
-but incorrectly assumed the POST-IMPLEMENTATION REVIEW also has one. The two
-are separate processes — the gate is for starting work, the review is for
-finishing work. Doc-only only skips the gate, not the review.
-
-**Lessons learned**:
-1. PRE-IMPLEMENTATION GATE exceptions ≠ POST-IMPLEMENTATION REVIEW exceptions.
-   If you skip the gate because of an exception, the review still applies.
-2. Added explicit warning to compass-workflow SKILL.md gate exceptions section
-   to prevent this mental shortcut from recurring.
-
-## 2026-07-28 — ref #60 docs: add comments convention — always append, never edit existing
-
-**What was done**: 创建 `kb/github/comments.md` 文档，规定 GitHub issues/PRs 上的 comment
-规则：永远追加新 comment，绝不修改已有 comment（事实性错误除外）。在 `AGENTS.md` 中添加引用。
-
-**What went wrong**: 初次 commit 后忘记补 reflection record，被用户指出未走完整工作流。
-
-**Lessons learned**:
-1. 即使是文档级修改，AGENTS.md 中 "After EVERY feature/bugfix, append a brief reflection"
-   依然适用——这是事后反思，不是 gate 的一部分
-2. commit 后、report completion 前，检查工作流 checklist 是否每一项都闭环
-
-## 2026-07-28 — ref #61 docs: simplify commit workflow — always review after commit
-
-**What was done**: 将 AGENTS.md 的 "Commit Strategy"（按文件数量分大/小变更走不同 review 路径）
-和 compass-workflow SKILL.md 的对应步骤统一简化为：commit → review（总是）→ fix → recommit。
-消除了条件分支，规则更简单明确。
-
-**What went wrong**: 无。一次 commit 完成，review 后直接补 reflection。
-
-**Lessons learned**:
-1. 规则越简单越不会被跳过。条件分支（大变更/小变更）增加了判断成本，统一路径更可靠
-2. commit → review 的强制顺序避免了 "先 review 再 commit" 导致的未提交代码丢失风险
-
-## 2026-07-28 — ref #63 feat: 新增 4 个 opencode skill agent (qa, rustdoc, docs, reflect)
-
-**What was done**: 创建 4 个 opencode skill agent（qa/test 测试、rustdoc API 文档、docs 项目书维护、reflect 反思趋势分析），更新 compass-workflow gate 步骤引用新 agent（step 3→/test，step 4→4a/rustdoc+4b/docs，review step 5→/reflect），更新 AGENTS.md 和 kb/dev/process.md 注册新技能。所有 agent 格式统一为 frontmatter + markdown，文件系统自动发现无需注册。
-
-**What went wrong**: 计划阶段 `AGENTS.md:available_skills section` 引用指向不存在的 XML 块——AGENTS.md 并没有 `<available_skills>` section，技能是内联描述的。Oracle review 指出这会导致执行者找不到参考格式。修复方案：改为添加 markdown 表格而非 XML 块。Oracle 另外发现 3 个 blocking issues（qa 缺少 context 传递机制、evidence file 未定义、reflect 与手动 mandate 冲突未决），全部在 plan 修订中解决。
-
-**Lessons learned**:
-1. plan 中的引用必须验证文件实际格式（AGENTS.md 用 markdown 表格列技能，非 XML block）
-2. skill 的目录名 ≠ slash 命令名——frontmatter `name:` 决定 slash command
-3. 文档/配置类变更也是 feature 工作——pre-implementation gate 全部适用，但 review 可跳过（"Skippable for: docs"）
+1. `FIRST()`/`LAST()` in DuckDB respect subquery ORDER BY — essential for correct
+   OHLC aggregation where open=earliest, close=latest
+2. Pre-existing tests that saved/fetched bars with `"1w"`/`"1M"` but expected daily
+   results revealed the artificial test assumptions made before aggregation was implemented
+3. Merge conflicts in worktree branches exposed `.gitignore`'d symlink data directories
+   tracked on master — needed manual resolution

@@ -213,19 +213,15 @@ mod tests {
 
     #[tokio::test]
     async fn run_export_duckdb_creates_database() {
-        // Create temp Parquet data
+        // Create temp single-file Parquet data with symbol column
         let parquet_tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(parquet_tmp.path().join("stock_daily")).expect("mkdir");
 
         let conn = duckdb::Connection::open_in_memory().expect("duckdb");
         conn.execute_batch(
-            "CREATE TABLE t(tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);
-             INSERT INTO t VALUES ('2024-01-02', 9, 11, 8, 10, 10, 1000, 0);",
+            "CREATE TABLE t(symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);
+             INSERT INTO t VALUES ('000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0);",
         ).expect("create");
-        let pq_path = parquet_tmp
-            .path()
-            .join("stock_daily")
-            .join("000001.parquet");
+        let pq_path = parquet_tmp.path().join("stock_daily.parquet");
         conn.execute_batch(&format!(
             "COPY t TO '{}' (FORMAT PARQUET)",
             pq_path.display()

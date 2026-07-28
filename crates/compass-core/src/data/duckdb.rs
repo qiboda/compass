@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS no_data_marks (
 /// Implements all three provider traits (`DataProvider`, `DataWriter`,
 /// `NegativeCache`) on a single in-memory DuckDB connection wrapped in
 /// `Arc<Mutex<>>`. When `parquet_dir` is set, `fetch_bars` reads from
-/// the corresponding `stock_daily/{symbol}.parquet` file on cache miss.
+/// a single `stock_daily.parquet` file on cache miss.
 ///
 /// Use `new(Some(parquet_dir))` for production or `new_in_memory()` for tests.
 pub struct DuckDbProvider {
@@ -153,7 +153,7 @@ impl DuckDbProvider {
     /// Open an in-memory DuckDB database with optional Parquet backing (ref #31).
     ///
     /// When `parquet_dir` is set, `fetch_bars` falls back to reading from
-    /// `{parquet_dir}/stock_daily/{EXCHANGE}{code}.parquet` on cache miss.
+    /// `{parquet_dir}/stock_daily.parquet` on cache miss.
     pub fn new(parquet_dir: Option<std::path::PathBuf>) -> Result<Self, DataError> {
         let conn = Connection::open_in_memory().map_err(DataError::Database)?;
         conn.execute_batch(SCHEMA_SQL)
@@ -618,7 +618,7 @@ impl DataProvider for DuckDbProvider {
     async fn fetch_bars(
         &self,
         symbol: &str,
-        _timeframe: &str,
+        timeframe: &str,
         range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
     ) -> Result<Vec<Bar>, DataError> {
@@ -627,6 +627,7 @@ impl DataProvider for DuckDbProvider {
         let end_str = range_end.format("%Y-%m-%d").to_string();
         let conn = Arc::clone(&self.conn);
         let parquet_dir = self.parquet_dir.clone();
+        let timeframe = timeframe.to_string();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn
@@ -664,50 +665,48 @@ impl DataProvider for DuckDbProvider {
             if rows.is_empty()
                 && let Some(ref parquet_dir) = parquet_dir
             {
-                crate::data::parquet::validate_symbol(&symbol)?;
-                let (exchange, bare_code) = crate::data::symbol::parse_explicit_prefix(&symbol);
-                let exchange = if exchange.is_empty() {
-                    let inferred = crate::data::symbol::to_exchange(&symbol);
-                    tracing::warn!(
-                        symbol = %symbol,
-                        inferred = %inferred,
-                        "no explicit exchange prefix — using inaccurate heuristic"
-                    );
-                    inferred
-                } else {
-                    exchange
-                };
-                let parquet_path = parquet_dir
-                    .join("stock_daily")
-                    .join(format!("{exchange}{bare_code}.parquet"));
+                let parquet_path = parquet_dir.join("stock_daily.parquet");
                 if parquet_path.exists() {
                     tracing::debug!(
                         symbol = %symbol,
-                        parquet = %format!("{exchange}{bare_code}.parquet"),
-                        "parquet fallback - reading from file"
+                        parquet = %"stock_daily.parquet",
+                        "parquet fallback - reading from single file"
                     );
                     let path_str = parquet_path.to_string_lossy();
                     let sql = format!(
-                        "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
+                        "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume, adjclose, amount
                          FROM read_parquet('{path_str}')
-                         WHERE tradedate >= ? AND tradedate <= ?
+                         WHERE symbol = ? AND tradedate >= ? AND tradedate <= ?
                          ORDER BY tradedate ASC"
                     );
                     let mut pstmt = conn.prepare(&sql).map_err(DataError::Database)?;
-                    rows = pstmt
-                        .query_map(params![start_str.as_str(), end_str.as_str()], |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, f64>(1)?,
-                                row.get::<_, f64>(2)?,
-                                row.get::<_, f64>(3)?,
-                                row.get::<_, f64>(4)?,
-                                row.get::<_, f64>(5)?,
-                            ))
-                        })
+                    let parquet_rows: Vec<(String, f64, f64, f64, f64, f64, f64, f64)> = pstmt
+                        .query_map(
+                            params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, f64>(1)?,
+                                    row.get::<_, f64>(2)?,
+                                    row.get::<_, f64>(3)?,
+                                    row.get::<_, f64>(4)?,
+                                    row.get::<_, f64>(5)?,
+                                    row.get::<_, f64>(6)?,
+                                    row.get::<_, f64>(7)?,
+                                ))
+                            },
+                        )
                         .map_err(DataError::Database)?
                         .collect::<Result<Vec<_>, duckdb::Error>>()
                         .map_err(DataError::Database)?;
+
+                    // Build 6-tuple rows for the normal flow (open, high, low, close, volume)
+                    rows = parquet_rows
+                        .iter()
+                        .map(|(d, o, h, l, c, v, _, _)| {
+                            (d.clone(), *o, *h, *l, *c, *v)
+                        })
+                        .collect();
 
                     tracing::debug!(
                         symbol = %symbol,
@@ -716,7 +715,7 @@ impl DataProvider for DuckDbProvider {
                     );
 
                     // Cache-warm: persist parquet data into in-memory table
-                    if !rows.is_empty() {
+                    if !parquet_rows.is_empty() {
                         let mut insert = conn
                             .prepare(
                                 "INSERT OR IGNORE INTO stock_daily
@@ -724,7 +723,7 @@ impl DataProvider for DuckDbProvider {
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             )
                             .map_err(DataError::Database)?;
-                        for (date_str, open, high, low, close, volume) in &rows {
+                        for (date_str, open, high, low, close, volume, adjclose, amount) in &parquet_rows {
                             insert
                                 .execute(params![
                                     symbol.as_str(),
@@ -733,14 +732,61 @@ impl DataProvider for DuckDbProvider {
                                     high,
                                     low,
                                     close,
-                                    close, // adjclose = close
+                                    adjclose,
                                     volume,
-                                    0.0f64, // amount not available from parquet
+                                    amount,
                                 ])
                                 .map_err(DataError::Database)?;
                         }
                     }
                 }
+            }
+
+            // Issue #46: timeframe aggregation — re-query with date_trunc
+            // GROUP BY for weekly/monthly OHLCV resample from daily data.
+            if timeframe != "1d" && !rows.is_empty() {
+                let unit = match timeframe.as_str() {
+                    "1w" => "week",
+                    "1M" => "month",
+                    _ => "day",
+                };
+                let sql = format!(
+                    "SELECT CAST(grp_date AS VARCHAR) as trade_date,
+                            open, high, low, close, volume
+                     FROM (
+                         SELECT
+                             DATE_TRUNC('{unit}', trade_date) as grp_date,
+                             FIRST(open) as open,
+                             MAX(high) as high,
+                             MIN(low) as low,
+                             LAST(close) as close,
+                             SUM(volume) as volume
+                         FROM (
+                             SELECT * FROM stock_daily
+                             WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+                             ORDER BY trade_date ASC
+                         )
+                         GROUP BY grp_date
+                     ) ORDER BY trade_date"
+                );
+                let mut agg_stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+                rows = agg_stmt
+                    .query_map(
+                        params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ))
+                        },
+                    )
+                    .map_err(DataError::Database)?
+                    .collect::<Result<Vec<_>, duckdb::Error>>()
+                    .map_err(DataError::Database)?;
             }
 
             let bars: Vec<Bar> = rows
@@ -923,14 +969,16 @@ mod tests {
 
     /// Verify that `save_bars` stores the correct symbol and timeframe,
     /// and that `fetch_bars` retrieves only those matching the same key.
+    /// For "1w" / "1M", two consecutive daily bars aggregate to one bar.
     #[rstest]
-    #[case("000001", "1d")]
-    #[case("600519", "1w")]
-    #[case("AAPL", "1M")]
+    #[case("000001", "1d", 2)] // daily: 2 bars → 2 bars
+    #[case("600519", "1w", 1)] // weekly: 2 daily bars same week → 1 bar
+    #[case("AAPL", "1M", 1)] // monthly: 2 daily bars same month → 1 bar
     #[tokio::test]
     async fn save_and_fetch_preserves_symbol_and_timeframe(
         #[case] symbol: &str,
         #[case] timeframe: &str,
+        #[case] expected_count: usize,
     ) {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 
@@ -949,11 +997,26 @@ mod tests {
             .await
             .expect("fetch_bars failed");
 
-        assert_eq!(fetched.len(), 2, "wrong count for {symbol}/{timeframe}");
-        assert_eq!(fetched[0].open, 10.0);
-        assert_eq!(fetched[0].close, 10.5);
-        assert_eq!(fetched[1].open, 10.5);
-        assert_eq!(fetched[1].close, 11.0);
+        assert_eq!(
+            fetched.len(),
+            expected_count,
+            "wrong count for {symbol}/{timeframe}"
+        );
+        if expected_count == 2 {
+            assert_eq!(fetched[0].open, 10.0);
+            assert_eq!(fetched[0].close, 10.5);
+            assert_eq!(fetched[1].open, 10.5);
+            assert_eq!(fetched[1].close, 11.0);
+        } else {
+            // Aggregated: 2 daily bars → 1 bar
+            // open = first day's open (10.0), close = last day's close (11.0),
+            // high = max(10+1, 10.5+1)=11.5, low = min(10.5-1, 11.0-1)=9.5
+            assert_eq!(fetched[0].open, 10.0);
+            assert_eq!(fetched[0].high, 11.5);
+            assert_eq!(fetched[0].low, 9.5);
+            assert_eq!(fetched[0].close, 11.0);
+            assert_eq!(fetched[0].volume, 3000.0);
+        }
 
         let other_sym = provider
             .fetch_bars("NOT_EXIST", timeframe, fetch_all_start(), fetch_all_end())
@@ -1386,33 +1449,35 @@ mod tests {
     // Parquet-backed fetch_bars tests (ref #31)
     // -----------------------------------------------------------------------
 
-    /// Create a minimal OHLCV parquet file in a temp directory for testing.
-    /// Returns the tempdir (must be kept alive) and the DuckDbProvider.
+    /// Create a `stock_daily.parquet` in a temp directory for testing.
+    /// The parquet has columns: symbol, tradedate, open, high, low, close,
+    /// adjclose, volume, amount. Returns the tempdir (must be kept alive)
+    /// and the DuckDbProvider.
     fn setup_parquet_provider(
         symbol: &str,
-        rows: &[(&str, f64, f64, f64, f64, f64)],
+        rows: &[(&str, f64, f64, f64, f64, f64, f64, f64)],
     ) -> (tempfile::TempDir, DuckDbProvider) {
         let tmp = tempfile::tempdir().expect("create temp dir");
-        let daily_dir = tmp.path().join("stock_daily");
-        std::fs::create_dir_all(&daily_dir).expect("create stock_daily dir");
 
-        // Write test data to a parquet file using DuckDB
+        // Write test data to a single stock_daily.parquet using DuckDB
         let tmp_conn = duckdb::Connection::open_in_memory().expect("open temp conn");
         tmp_conn
             .execute_batch(
-                "CREATE TABLE t (tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE)",
+                "CREATE TABLE t (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE)",
             )
             .expect("create temp table");
         let mut insert = tmp_conn
-            .prepare("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)")
+            .prepare("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .expect("prepare insert");
-        for (date_str, open, high, low, close, volume) in rows {
+        for (date_str, open, high, low, close, adjclose, volume, amount) in rows {
             insert
-                .execute(params![*date_str, *open, *high, *low, *close, *volume])
+                .execute(params![
+                    symbol, *date_str, *open, *high, *low, *close, *adjclose, *volume, *amount,
+                ])
                 .expect("insert row");
         }
         drop(insert);
-        let parquet_path = daily_dir.join(format!("{symbol}.parquet"));
+        let parquet_path = tmp.path().join("stock_daily.parquet");
         let parquet_path_str = parquet_path.to_string_lossy();
         tmp_conn
             .execute_batch(&format!("COPY t TO '{parquet_path_str}' (FORMAT PARQUET)"))
@@ -1425,22 +1490,22 @@ mod tests {
     }
 
     /// Issue #31: DuckDbProvider with parquet_dir should read data from
-    /// parquet files on the first fetch (before any save_bars).
+    /// stock_daily.parquet on the first fetch (before any save_bars).
     #[tokio::test]
     async fn fetch_bars_reads_from_parquet_on_first_query() {
         let (_tmp, provider) = setup_parquet_provider(
-            "SZ000001",
+            "000001",
             &[
-                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0),
-                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 2000.0),
-                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 1500.0),
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0),
+                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 11.5, 2000.0, 23000.0),
+                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 11.2, 1500.0, 16800.0),
             ],
         );
 
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
 
-        // Use bare 6-digit code — the provider should map it to SZ000001.parquet
+        // Symbol is matched by column value in stock_daily.parquet
         let bars = provider
             .fetch_bars("000001", "1d", start, end)
             .await
@@ -1455,11 +1520,11 @@ mod tests {
     #[tokio::test]
     async fn fetch_bars_respects_date_range_from_parquet() {
         let (_tmp, provider) = setup_parquet_provider(
-            "SZ000001",
+            "000001",
             &[
-                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0),
-                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 2000.0),
-                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 1500.0),
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0),
+                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 11.5, 2000.0, 23000.0),
+                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 11.2, 1500.0, 16800.0),
             ],
         );
 
@@ -1484,8 +1549,10 @@ mod tests {
     /// parquet data for the same dates.
     #[tokio::test]
     async fn save_bars_takes_priority_over_parquet() {
-        let (_tmp, provider) =
-            setup_parquet_provider("SZ000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0)]);
+        let (_tmp, provider) = setup_parquet_provider(
+            "000001",
+            &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0)],
+        );
 
         let updated_bar = make_bar(2, 99.0, 100.0, 5000.0);
         provider
@@ -1507,20 +1574,31 @@ mod tests {
         );
     }
 
-    /// SQL injection via symbol in parquet path must be rejected.
+    /// Verify that non-matching symbols in the parquet file return empty
+    /// results without error (parameterized queries prevent SQL injection).
     #[tokio::test]
-    async fn parquet_fallback_rejects_non_alphanumeric_symbols() {
-        let (_tmp, provider) =
-            setup_parquet_provider("SZ000001", &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0)]);
+    async fn parquet_fallback_handles_non_matching_symbols() {
+        let (_tmp, provider) = setup_parquet_provider(
+            "000001",
+            &[("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0)],
+        );
 
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
 
+        // Non-matching symbol should return empty, not error
         let result = provider
             .fetch_bars("'; DROP TABLE stock_daily; --", "1d", start, end)
             .await;
 
-        assert!(result.is_err(), "malicious symbol must be rejected");
+        assert!(
+            result.is_ok(),
+            "parameterized query should handle any symbol safely"
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "non-matching symbol should return empty"
+        );
     }
 
     /// After reading from parquet, data should be cached in-memory
@@ -1528,10 +1606,10 @@ mod tests {
     #[tokio::test]
     async fn fetch_bars_caches_parquet_data_in_memory() {
         let (_tmp, provider) = setup_parquet_provider(
-            "SZ000001",
+            "000001",
             &[
-                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 1000.0),
-                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 1500.0),
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 10.5, 1000.0, 10500.0),
+                ("2020-01-06", 11.0, 11.8, 10.8, 11.2, 11.2, 1500.0, 16800.0),
             ],
         );
 
@@ -1558,5 +1636,136 @@ mod tests {
         let (min, max) = range.unwrap();
         assert_eq!(min, chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap());
         assert_eq!(max, chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // Timeframe aggregation tests — daily → weekly / monthly OHLCV resample
+    // -----------------------------------------------------------------------
+
+    /// Build a `Bar` with an explicit date string (UTC midnight).
+    fn make_dated_bar(date: &str, open: f64, close: f64, volume: f64) -> Bar {
+        let naive = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .expect("valid date")
+            .and_hms_opt(0, 0, 0)
+            .expect("valid time");
+        Bar {
+            time: naive.and_utc(),
+            open,
+            high: open + 1.0,
+            low: close - 1.0,
+            close,
+            volume,
+        }
+    }
+
+    /// Weekly aggregation: open=Mon open, high=week max, low=week min,
+    /// close=Fri close, volume=week sum.
+    #[rstest]
+    #[case("1w", 2)] // 2 weeks → 2 weekly bars
+    #[case("1M", 1)] // all in July → 1 monthly bar
+    #[tokio::test]
+    async fn fetch_bars_aggregates_daily_to_non_daily_timeframe(
+        #[case] timeframe: &str,
+        #[case] expected_count: usize,
+    ) {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        // Week 1: 2026-07-06 (Mon) – 2026-07-10 (Fri)
+        // Week 2: 2026-07-13 (Mon) – 2026-07-17 (Fri)
+        let daily_bars = vec![
+            make_dated_bar("2026-07-06", 10.0, 11.0, 100.0), // Mon
+            make_dated_bar("2026-07-07", 11.0, 12.0, 200.0), // Tue
+            make_dated_bar("2026-07-08", 12.0, 10.0, 300.0), // Wed
+            make_dated_bar("2026-07-09", 10.0, 13.0, 400.0), // Thu
+            make_dated_bar("2026-07-10", 13.0, 14.0, 500.0), // Fri
+            make_dated_bar("2026-07-13", 15.0, 16.0, 100.0), // Mon
+            make_dated_bar("2026-07-14", 16.0, 15.0, 200.0), // Tue
+            make_dated_bar("2026-07-15", 15.0, 17.0, 300.0), // Wed
+            make_dated_bar("2026-07-16", 17.0, 18.0, 400.0), // Thu
+            make_dated_bar("2026-07-17", 18.0, 19.0, 500.0), // Fri
+        ];
+
+        provider
+            .save_bars("000001", "1d", &daily_bars, true)
+            .await
+            .expect("save_bars failed");
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+        let result = provider
+            .fetch_bars("000001", timeframe, start, end)
+            .await
+            .expect("fetch_bars failed");
+
+        assert_eq!(
+            result.len(),
+            expected_count,
+            "expected {expected_count} {timeframe} bar(s), got {}",
+            result.len()
+        );
+
+        // Weekly checks
+        if timeframe == "1w" {
+            // Week 1: open=10.0, high=max(11,12,13,11,14)=14, low=min(10,11,9,12,13)=9,
+            //          close=14.0, volume=1500
+            let w1 = &result[0];
+            assert_eq!(w1.open, 10.0, "week 1 open should be Mon's open");
+            assert_eq!(w1.high, 14.0, "week 1 high should be max daily high");
+            assert_eq!(w1.low, 9.0, "week 1 low should be min daily low");
+            assert_eq!(w1.close, 14.0, "week 1 close should be Fri's close");
+            assert_eq!(w1.volume, 1500.0, "week 1 volume should be sum");
+
+            // Week 2: open=15.0, high=max(16,17,16,18,19)=19, low=min(15,14,16,17,18)=14,
+            //          close=19.0, volume=1500
+            let w2 = &result[1];
+            assert_eq!(w2.open, 15.0, "week 2 open should be Mon's open");
+            assert_eq!(w2.high, 19.0, "week 2 high should be max daily high");
+            assert_eq!(w2.low, 14.0, "week 2 low should be min daily low");
+            assert_eq!(w2.close, 19.0, "week 2 close should be Fri's close");
+            assert_eq!(w2.volume, 1500.0, "week 2 volume should be sum");
+        }
+
+        // Monthly checks
+        if timeframe == "1M" {
+            let m1 = &result[0];
+            // All 10 days in July 2026 → 1 monthly bar
+            // open = first day's open (10.0)
+            // high = max(all highs) = max(11,12,13,11,14,16,17,16,18,19) = 19.0
+            // low = min(all lows) = min(10,11,9,12,13,15,14,16,17,18) = 9.0
+            // close = last day's close (19.0)
+            // volume = sum = 3000.0
+            assert_eq!(m1.open, 10.0, "monthly open should be first day's open");
+            assert_eq!(m1.high, 19.0, "monthly high should be max daily high");
+            assert_eq!(m1.low, 9.0, "monthly low should be min daily low");
+            assert_eq!(m1.close, 19.0, "monthly close should be last day's close");
+            assert_eq!(m1.volume, 3000.0, "monthly volume should be sum");
+        }
+    }
+
+    /// Daily timeframe returns raw bars unchanged.
+    #[tokio::test]
+    async fn fetch_bars_daily_returns_raw_daily_bars() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        let daily_bars = vec![
+            make_dated_bar("2026-07-06", 10.0, 11.0, 100.0),
+            make_dated_bar("2026-07-07", 11.0, 12.0, 200.0),
+        ];
+
+        provider
+            .save_bars("000001", "1d", &daily_bars, true)
+            .await
+            .expect("save_bars failed");
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+        let result = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars failed");
+
+        assert_eq!(result.len(), 2, "1d should return raw daily bars unchanged");
+        assert_eq!(result[0].open, 10.0);
+        assert_eq!(result[0].close, 11.0);
     }
 }

@@ -18,14 +18,14 @@ The top toolbar provides all controls in a single row:
 |---|---|
 | **Symbol** | Searchable dropdown — type a code prefix (e.g. `600`) or name substring (e.g. `平安`) to filter the list. Displays `EXCHANGE \| CODE \| NAME` format. Click to select. |
 | **Exchange** | Dropdown — filter by `全部`/`SH`/`SZ`/`BJ`. Narrows the symbol list to the selected exchange. |
-| **TF** | Static label `1d` — daily timeframe (only option currently). |
+| **TF** | ComboBox — select `1d` (daily), `1w` (weekly), or `1M` (monthly). Controls OHLCV bar aggregation. |
 | **Fetch** | Button — load chart data for the selected symbol with the selected exchange prefix. |
 
 ### Status indicators
 
 | Indicator | Meaning |
 |---|---|
-| **Loading...** | Data is being read from local Parquet files |
+| **Loading...** | Data is being fetched from local cache or EastMoney |
 | **Red text** | An error occurred (network, no data, etc.) |
 
 ### Chart area
@@ -46,13 +46,13 @@ A scrollable log panel shows fetch status, errors, and citizen lifecycle events.
 When you click "Fetch":
 
 1. The selected exchange prefixes the symbol (e.g., `sh.600519`)
-2. **Check cache** — if this stock was viewed before, bars load instantly from in-memory DuckDB
-3. **Read Parquet** — if not cached, reads from `parquet_data/stock_daily/{symbol}.parquet`
-4. **Cache-warm** — loaded data is persisted to in-memory DuckDB for next time
+2. **Check cache** — if this stock was viewed before, bars load instantly from local DuckDB
+3. **Fetch online** — if not cached, calls EastMoney API (requires internet)
+4. **Save to cache** — downloaded bars are saved for next time
 5. **Display chart** — bars appear as candlesticks
 
-First view of a stock requires a single Parquet file read (~1 second). Subsequent
-views are instant (in-memory).
+First view of a stock requires a network call (~1–3 seconds). Subsequent
+views are instant (no network).
 
 ## Stock codes
 
@@ -83,18 +83,21 @@ See [Config](config.md) for all options.
 
 ## Data prerequisites
 
-The chart app reads OHLCV data directly from `parquet_data/stock_daily/*.parquet`
+The chart app reads OHLCV data directly from `parquet_data/stock_daily.parquet`
 via DuckDB's `read_parquet()` (in-memory, no persistent DuckDB file needed).
 Before first use, ensure data is available:
 
 ```sh
-# Import from Dolt (complete history)
+# Option A: Import from Dolt (complete history)
 cargo run --bin compass-data -- import
-# Data is ready — parquet_data/stock_daily/ is the source of truth
+# Data is ready — parquet_data/stock_daily.parquet is the source of truth
+
+# Option B: Download from EastMoney (specific stocks)
+cargo run --bin compass-data -- download --symbols 000001,600519
 ```
 
-If no local data exists, the app shows "no data" for that symbol. Run
-`compass-data import` to populate the Parquet store before using the GUI.
+If no local data exists, the app falls back to fetching from EastMoney online
+on each "Fetch" click.
 
 For the symbol dropdown to be populated, `stock_basic.parquet` must exist in the
 parquet data directory (default: `parquet_data/`). This file is created by `import`

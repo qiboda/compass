@@ -49,10 +49,6 @@ enum Command {
         #[arg(long)]
         end_date: Option<String>,
 
-        /// Overwrite existing data instead of skipping duplicates
-        #[arg(long, default_value_t = false)]
-        overwrite: bool,
-
         /// Incremental: only import symbols with tradedate >= since (YYYYMMDD)
         #[arg(long)]
         since: Option<String>,
@@ -161,7 +157,6 @@ async fn main() {
             symbols,
             start_date,
             end_date,
-            overwrite,
             since,
         } => {
             let dolt_dir =
@@ -174,7 +169,6 @@ async fn main() {
                 symbols.as_deref(),
                 start_date.as_deref(),
                 end_date.as_deref(),
-                overwrite,
                 since.as_deref(),
             ) {
                 error!("Import failed: {e}");

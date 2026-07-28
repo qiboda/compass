@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use duckdb::Connection;
-use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, warn};
 
 /// Strip SH/SZ/BJ prefix from symbol, returning the 6-digit code.
@@ -59,10 +57,6 @@ pub fn run_dolt_sql_parquet(dolt_dir: &Path, query: &str) -> Result<Vec<u8>, Str
     Ok(output.stdout)
 }
 
-/// Parquet file size threshold: files smaller than this are considered empty
-/// (schema-only, 0 data rows). A single OHLCV row is ~200 bytes.
-const MIN_PARQUET_SIZE: u64 = 500;
-
 /// Filter symbols by 6-digit codes. `filter` is comma-separated (e.g. "000001,600519").
 /// Matches against full Dolt symbols (e.g. "SZ000001", "SH600519") by stripping prefix.
 fn filter_symbols(symbols: Vec<String>, filter: &str) -> Vec<String> {
@@ -81,26 +75,29 @@ pub fn run(
     symbols_filter: Option<&str>,
     start_date: Option<&str>,
     end_date: Option<&str>,
-    overwrite: bool,
     since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&output)?;
 
     // ------------------------------------------------------------------
-    // 1. Get distinct symbols
+    // 1. Migration detection: warn if legacy stock_daily/ directory exists
+    // ------------------------------------------------------------------
+    let legacy_dir = output.join("stock_daily");
+    if legacy_dir.exists() && legacy_dir.is_dir() {
+        warn!(
+            "Found legacy per-symbol files at {}/stock_daily/ — run `import` to regenerate single-file format, then remove stock_daily/",
+            output.display()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 2. Get distinct symbols (for summary / symbols.txt)
+    //    --since no longer affects symbol enumeration — it is only a
+    //    WHERE filter on the data query below.
     // ------------------------------------------------------------------
     info!("Fetching symbol list...");
-    let symbol_query = if let Some(since_date) = since {
-        if since_date.len() != 8 || !since_date.chars().all(|c| c.is_ascii_digit()) {
-            return Err("--since must be YYYYMMDD (8 digits)".into());
-        }
-        format!(
-            "SELECT DISTINCT symbol FROM final_a_stock_eod_price \
-             WHERE tradedate >= '{since_date}' ORDER BY symbol"
-        )
-    } else {
-        "SELECT DISTINCT symbol FROM final_a_stock_eod_price ORDER BY symbol".to_string()
-    };
+    let symbol_query =
+        "SELECT DISTINCT symbol FROM final_a_stock_eod_price ORDER BY symbol".to_string();
     let symbols_csv = run_dolt_sql_csv(&dolt_dir, &symbol_query)?;
 
     let symbols: Vec<String> = symbols_csv
@@ -110,41 +107,24 @@ pub fn run(
         .map(|l| l.to_string())
         .collect();
 
-    // Filter by requested symbols (6-digit codes)
     let symbols = if let Some(filter) = symbols_filter {
         filter_symbols(symbols, filter)
     } else {
         symbols
     };
 
-    let total = if limit > 0 {
-        symbols.len().min(limit)
-    } else {
+    info!(
+        "Found {} symbols, exporting all daily data...",
         symbols.len()
-    };
-    let date_filter = match (start_date, end_date) {
-        (Some(s), Some(e)) => format!("AND tradedate >= '{s}' AND tradedate <= '{e}'"),
-        (Some(s), None) => format!("AND tradedate >= '{s}'"),
-        (None, Some(e)) => format!("AND tradedate <= '{e}'"),
-        (None, None) => String::new(),
-    };
-
-    if start_date.is_some() || end_date.is_some() {
-        info!(
-            "Date filter: {}..={}",
-            start_date.unwrap_or("min"),
-            end_date.unwrap_or("max")
-        );
-    }
-    info!("Found {} symbols, exporting {}...", symbols.len(), total);
+    );
 
     // ------------------------------------------------------------------
-    // 2. Export stock_basic — direct Parquet from Dolt
+    // 3. Export stock_basic — direct Parquet from Dolt (unchanged)
     // ------------------------------------------------------------------
     info!("Exporting stock_basic...");
     let basic_bytes = run_dolt_sql_parquet(
         &dolt_dir,
-        "SELECT symbol, COALESCE(name, symbol) AS name, \
+        "SELECT symbol, symbol AS name, \
          CASE WHEN exchange = 'SZSE' THEN 'SZ' WHEN exchange = 'SHSE' THEN 'SH' ELSE exchange END AS exchange, \
          list_date, delist_date FROM ts_a_stock_list",
     )?;
@@ -154,124 +134,108 @@ pub fn run(
     info!("  → {}/stock_basic.parquet", output.display());
 
     // ------------------------------------------------------------------
-    // 3. Export stock_daily — one Parquet file per symbol
+    // 4. Export stock_daily — single Parquet file with symbol column
+    //    Builds one SQL query with all filters, writes a single file,
+    //    and generates a companion symbols.txt.
     // ------------------------------------------------------------------
-    info!("Exporting stock_daily ({} symbols)...", total);
-    let pb = ProgressBar::new(total as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner} [{elapsed_precise}] [{bar:40}] {pos}/{len} {msg}")
-            .unwrap(),
-    );
+    info!("Exporting stock_daily to single parquet file...");
 
-    let work_dir = std::env::temp_dir().join("compass_parquet_work");
-    std::fs::create_dir_all(&work_dir)?;
+    // Build WHERE clause from all filters
+    let mut where_parts: Vec<String> = Vec::new();
 
-    let stock_daily_dir = output.join("stock_daily");
-    std::fs::create_dir_all(&stock_daily_dir)?;
-
-    // DuckDB connection for merge operations (overwrite=false + existing file)
-    let duck = Connection::open_in_memory()?;
-
-    for (i, symbol) in symbols.iter().take(total).enumerate() {
-        let code = strip_prefix(symbol);
-        pb.set_message(code.to_string());
-
-        let query = format!(
-            "SELECT tradedate, open, high, low, close, adjclose, volume, amount \
-             FROM final_a_stock_eod_price \
-             WHERE symbol = '{symbol}' {date_filter} \
-             ORDER BY tradedate"
-        );
-        let parquet_data = match run_dolt_sql_parquet(&dolt_dir, &query) {
-            Ok(data) => data,
-            Err(e) => {
-                warn!("dolt query failed for {symbol}: {e}");
-                pb.inc(1);
-                continue;
-            }
-        };
-
-        // Empty Parquet (schema only, 0 rows) is ~219 bytes. Skip.
-        let len = parquet_data.len() as u64;
-        if len < MIN_PARQUET_SIZE {
-            warn!("symbol {symbol} returned empty data ({len} bytes), skipping");
-            pb.inc(1);
-            continue;
+    // --since: tradedate filter (does NOT affect symbol enumeration)
+    if let Some(since_date) = since {
+        if since_date.len() != 8 || !since_date.chars().all(|c| c.is_ascii_digit()) {
+            return Err("--since must be YYYYMMDD (8 digits)".into());
         }
-
-        let parquet_path = stock_daily_dir.join(format!("{symbol}.parquet"));
-
-        if !overwrite && parquet_path.exists() {
-            // Merge: keep existing data (priority 1), only add new dates from Dolt (priority 2)
-            let new_path = work_dir.join(format!("{code}.new.parquet"));
-            std::fs::write(&new_path, &parquet_data)?;
-
-            let tmp_path = work_dir.join(format!("{code}.tmp.parquet"));
-            let sql = format!(
-                "COPY (
-                    SELECT tradedate, open, high, low, close, adjclose, volume, amount
-                    FROM (
-                        SELECT *, ROW_NUMBER() OVER (PARTITION BY tradedate ORDER BY priority) AS rn
-                        FROM (
-                            SELECT tradedate, open, high, low, close, adjclose, volume, amount, 1 AS priority
-                            FROM read_parquet('{}')
-                            UNION ALL
-                            SELECT tradedate, open, high, low, close, adjclose, volume, amount, 2
-                            FROM read_parquet('{}')
-                        )
-                    ) WHERE rn = 1
-                    ORDER BY tradedate
-                ) TO '{}' (FORMAT PARQUET)",
-                parquet_path.display(),
-                new_path.display(),
-                tmp_path.display(),
-            );
-            if let Err(e) = duck.execute_batch(&sql) {
-                warn!("DuckDB merge failed for {code}: {e}");
-            } else {
-                if let Err(e) = std::fs::copy(&tmp_path, &parquet_path) {
-                    warn!("copy merged parquet for {code}: {e}");
-                }
-            }
-            let _ = std::fs::remove_file(&new_path);
-            let _ = std::fs::remove_file(&tmp_path);
-        } else {
-            // New file or overwrite: write Parquet bytes directly
-            if let Err(e) = std::fs::write(&parquet_path, &parquet_data) {
-                warn!("write parquet failed for {code}: {e}");
-            }
-        }
-
-        pb.inc(1);
-
-        if (i + 1) % 100 == 0 || i + 1 == total {
-            info!(
-                "Progress: {}/{} symbols ({:.1}%)",
-                i + 1,
-                total,
-                (i + 1) as f64 / total as f64 * 100.0
-            );
-        }
+        where_parts.push(format!("tradedate >= '{since_date}'"));
     }
 
-    // Remove temp work directory if empty
-    let _ = std::fs::remove_dir(&work_dir);
+    // --symbols: filter by 6-digit code (strip prefix for comparison)
+    if let Some(filter) = symbols_filter {
+        let codes: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
+        let quoted: Vec<String> = codes.iter().map(|c| format!("'{c}'")).collect();
+        where_parts.push(format!(
+            "CASE WHEN LEFT(symbol,2) IN ('SH','SZ','BJ') THEN SUBSTRING(symbol,3) ELSE symbol END IN ({})",
+            quoted.join(",")
+        ));
+    }
 
-    pb.finish_with_message("Done!");
+    // --start-date / --end-date
+    match (start_date, end_date) {
+        (Some(s), Some(e)) => {
+            where_parts.push(format!("tradedate >= '{s}' AND tradedate <= '{e}'"));
+            info!("Date filter: {s}..={e}");
+        }
+        (Some(s), None) => {
+            where_parts.push(format!("tradedate >= '{s}'"));
+            info!("Date filter: {s}..=max");
+        }
+        (None, Some(e)) => {
+            where_parts.push(format!("tradedate <= '{e}'"));
+            info!("Date filter: min..={e}");
+        }
+        (None, None) => {}
+    }
+
+    let where_clause = if where_parts.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_parts.join(" AND "))
+    };
+
+    let limit_clause = if limit > 0 {
+        format!("LIMIT {limit}")
+    } else {
+        String::new()
+    };
+
+    let query = format!(
+        "SELECT CASE WHEN LEFT(symbol,2) IN ('SH','SZ','BJ') THEN SUBSTRING(symbol,3) ELSE symbol END AS symbol, \
+         tradedate, open, high, low, close, adjclose, volume, amount \
+         FROM final_a_stock_eod_price \
+         {where_clause} \
+         ORDER BY symbol, tradedate \
+         {limit_clause}"
+    );
+
+    info!("Running dolt query...");
+    let daily_bytes = run_dolt_sql_parquet(&dolt_dir, &query)?;
+
+    // Write to temp file first, then atomic rename
+    let tmp_path = output.join("stock_daily.tmp.parquet");
+    let final_path = output.join("stock_daily.parquet");
+    std::fs::write(&tmp_path, &daily_bytes)?;
+    std::fs::rename(&tmp_path, &final_path)?;
 
     // ------------------------------------------------------------------
-    // 4. Summary
+    // 5. Generate symbols.txt (strip prefixes, sorted alphabetically)
     // ------------------------------------------------------------------
-    let file_count = std::fs::read_dir(&stock_daily_dir)
-        .map(|d| d.count())
+    let symbols_txt_path = output.join("stock_daily.symbols.txt");
+    let mut sorted_codes: Vec<&str> = symbols.iter().map(|s| strip_prefix(s)).collect();
+    sorted_codes.sort();
+    std::fs::write(&symbols_txt_path, sorted_codes.join("\n"))?;
+
+    // ------------------------------------------------------------------
+    // 6. Get row count for summary
+    // ------------------------------------------------------------------
+    let count_query = if where_clause.is_empty() {
+        "SELECT COUNT(*) AS cnt FROM final_a_stock_eod_price".to_string()
+    } else {
+        format!("SELECT COUNT(*) AS cnt FROM final_a_stock_eod_price {where_clause}")
+    };
+    let count_csv = run_dolt_sql_csv(&dolt_dir, &count_query)?;
+    let row_count = count_csv
+        .lines()
+        .nth(1)
+        .and_then(|l| l.parse::<usize>().ok())
         .unwrap_or(0);
 
     info!("==============================");
     info!(
-        "Exported {} Parquet files to {}/stock_daily/",
-        file_count,
-        output.display()
+        "Exported stock_daily.parquet ({} symbols, {} rows) with symbols index",
+        symbols.len(),
+        row_count,
     );
     info!("==============================");
 
@@ -281,6 +245,10 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parquet file size threshold: files smaller than this are considered empty
+    /// (schema-only, 0 data rows). A single OHLCV row is ~200 bytes.
+    const MIN_PARQUET_SIZE: u64 = 500;
 
     #[test]
     fn strip_prefix_removes_sh() {
@@ -433,5 +401,142 @@ mod tests {
         let input: Vec<String> = vec![];
         let result = filter_symbols(input, "000001");
         assert!(result.is_empty());
+    }
+
+    /// When `stock_daily/` directory already exists in the output path,
+    /// `run()` should still complete successfully (the directory is detected
+    /// and a warning is logged via tracing, but import proceeds normally).
+    #[test]
+    fn run_completes_when_legacy_stock_daily_dir_exists() {
+        let dolt_tmp = tempfile::tempdir().expect("create dolt temp dir");
+
+        // Set up Dolt config
+        for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
+            let out = std::process::Command::new("dolt")
+                .arg("config")
+                .arg("--global")
+                .arg("--add")
+                .arg(key)
+                .arg(val)
+                .output()
+                .expect("dolt config");
+            assert!(out.status.success(), "dolt config {key} failed");
+        }
+
+        // Init Dolt repo
+        let init = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("init")
+            .output()
+            .expect("dolt init");
+        assert!(
+            init.status.success(),
+            "dolt init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+
+        // Create final_a_stock_eod_price table with sample data
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE final_a_stock_eod_price (\
+                 symbol VARCHAR(20) NOT NULL, \
+                 tradedate DATE NOT NULL, \
+                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, \
+                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE, \
+                 PRIMARY KEY (symbol, tradedate))",
+            )
+            .output()
+            .expect("dolt create table");
+        assert!(
+            out.status.success(),
+            "create eod table failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO final_a_stock_eod_price VALUES ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)")
+            .output()
+            .expect("dolt insert");
+        assert!(
+            out.status.success(),
+            "insert failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        // Create ts_a_stock_list table for stock_basic export
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE ts_a_stock_list (\
+                 symbol VARCHAR(20) PRIMARY KEY, \
+                 name VARCHAR(100), \
+                 exchange VARCHAR(10), \
+                 list_date DATE, \
+                 delist_date DATE)",
+            )
+            .output()
+            .expect("dolt create stock list");
+        assert!(
+            out.status.success(),
+            "create stock list failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO ts_a_stock_list VALUES ('000001', '平安银行', 'SZSE', '1991-04-03', NULL)")
+            .output()
+            .expect("dolt insert stock");
+        assert!(
+            out.status.success(),
+            "insert stock failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        // Create output dir with legacy stock_daily/ subdirectory
+        let output_tmp = tempfile::tempdir().expect("create output dir");
+        let legacy_dir = output_tmp.path().join("stock_daily");
+        std::fs::create_dir(&legacy_dir).expect("create legacy dir");
+
+        // Run import — should succeed despite legacy directory
+        let result = run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "import should succeed with legacy dir: {:?}",
+            result.err()
+        );
+
+        // Verify both output files were created
+        assert!(
+            output_tmp.path().join("stock_daily.parquet").exists(),
+            "stock_daily.parquet should exist"
+        );
+        assert!(
+            output_tmp.path().join("stock_basic.parquet").exists(),
+            "stock_basic.parquet should exist"
+        );
     }
 }

@@ -10,6 +10,8 @@ use egui_mobius_reactive::Dynamic;
 pub struct SharedState {
     /// Currently displayed stock symbol (e.g. "000001", "600519").
     pub symbol: Dynamic<String>,
+    /// Current timeframe (e.g. "1d", "1w", "1M").
+    pub timeframe: Dynamic<String>,
     /// OHLCV bars for the current chart.
     pub bars: Dynamic<Vec<Bar>>,
     /// `true` while a data fetch is in flight.
@@ -25,9 +27,10 @@ impl SharedState {
     ///
     /// All fields are initialized to sensible defaults — empty bars, not
     /// loading, no error, and an empty log.
-    pub fn new(default_symbol: &str) -> Self {
+    pub fn new(default_symbol: &str, default_timeframe: &str) -> Self {
         Self {
             symbol: Dynamic::new(default_symbol.to_string()),
+            timeframe: Dynamic::new(default_timeframe.to_string()),
             bars: Dynamic::new(Vec::new()),
             loading: Dynamic::new(false),
             error: Dynamic::new(None),

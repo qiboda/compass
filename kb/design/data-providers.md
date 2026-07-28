@@ -1,19 +1,19 @@
 # Data Providers
 
-Compass abstracts all stock data access behind a **trait system**. The GUI uses
-`DuckDbProvider` as its sole provider — all data is read from local Parquet files
-via `read_parquet()`. No online API calls, no HTTP dependencies in the GUI.
+Compass abstracts all stock data access behind a **trait system**. This lets us
+swap backends without changing the code that consumes them — the GUI uses
+`DuckDbProvider` directly; it just calls `provider.fetch_bars()`.
 
 ## Why traits?
 
-Two problems demanded abstraction:
+Three problems demanded abstraction:
 
-1. **Multiple backends**: The data pipeline uses DuckDB (in-memory cache) and
-   Parquet (main database). Without a shared interface, every consumer would
-   need to know which backend it's talking to.
+1. **Multiple data sources**: Compass pulls from Dolt (CSV export), DuckDB
+   (in-memory cache), and Parquet (main database). Without a shared interface,
+   every consumer would need to know which backend it's talking to.
 
 2. **Testability**: Unit tests can provide mock implementations that return
-   predefined data, avoiding real databases.
+   predefined data, avoiding real HTTP calls and real databases.
 
 ## The three traits
 
@@ -42,48 +42,30 @@ pub trait NegativeCache: Send + Sync {
 ```
 
 ### DataProvider — read-only access
-
 The core fetch interface. Anything that can produce `Vec<Bar>` for a given
-symbol/timeframe/date-range implements this. Implementors: DuckDbProvider,
+symbol/timeframe/date-range implements this. So far: DuckDbProvider,
 ParquetReader, and mock implementations in tests.
 
-`search_symbols` powers the symbol search box in the GUI. Returns a list of
-`SymbolInfo { code, name }` matching the query.
+`search_symbols` is secondary — it powers the symbol search box in the GUI.
+Returns a list of `SymbolInfo { code, name }` matching the query.
 
 ### DataWriter — write-through persistence
-
-Called after a fetch to persist bars locally. The `overwrite` flag controls
-behavior: `false` = INSERT OR IGNORE (skip duplicates), `true` = INSERT OR
-REPLACE (update existing). DuckDbProvider is the only implementor.
+Called after a fetch to persist bars locally.
+The `overwrite` flag controls behavior: `false` = INSERT OR IGNORE (skip
+duplicates), `true` = INSERT OR REPLACE (update existing). DuckDbProvider
+is the only implementor.
 
 ### NegativeCache — avoid repeated failures
-
-NegativeCache provides a mechanism to mark symbols that have no data.
-The `no_data_marks` table in DuckDB tracks (symbol, timeframe) pairs
-with timestamps, allowing callers to skip repeated lookups within a TTL
-window. Currently implemented but not invoked in the `fetch_bars`
-read path — available for future use by the CLI pipeline or batch
-operations that need to track "no data" symbols across sessions.
+When EastMoney returns no data for a symbol (delisted, doesn't exist, API
+error), we don't want to keep hammering the API. NegativeCache marks the
+(symbol, timeframe) pair with a timestamp. Future fetches within the TTL
+window (7 days) skip the HTTP call entirely.
 
 ## The provider hierarchy
 
-```
-Compass GUI (backend.rs)
-    │
-    └── DuckDbProvider  ←  sole data provider, reads parquet_data/ directly
-            │
-            ├─ In-memory DuckDB (cache layer)
-            │     stock_daily, stock_basic, stock_adj_factor,
-            │     stock_limit, no_data_marks tables
-            │
-            └─ Parquet fallback
-                  On cache miss: read_parquet('parquet_data/stock_daily/{symbol}.parquet')
-                  Cache-warm: INSERT OR IGNORE into in-memory tables
-```
-
-The GUI uses `DuckDbProvider` directly — it reads from `parquet_data/` via
-`read_parquet()` with an in-memory DuckDB connection for caching recently
-fetched data. All data is local, no online fallback.
+The GUI uses `DuckDbProvider` directly — it reads from `parquet_data/stock_daily.parquet`
+via `read_parquet()` with an in-memory DuckDB connection for caching recently fetched data.
+All data is local, no online fallback.
 
 ```rust
 // backend.rs: DuckDbProvider is the sole data provider
@@ -91,53 +73,163 @@ let provider = DuckDbProvider::new(parquet_dir.exists().then_some(parquet_dir))?
 provider.fetch_bars(symbol, timeframe, start, end).await
 ```
 
-### Read path
+## CachedProvider: the read-through pattern
+
+`CachedProvider` is the heart of the GUI data pipeline. It sits between the
+worker thread and the actual data sources, implementing a three-tier access
+strategy:
 
 ```
 fetch_bars(symbol, timeframe, start, end)
     │
-    ├─ 1. IN-MEMORY CACHE READ
-    │     SELECT * FROM stock_daily WHERE symbol=? AND trade_date BETWEEN ? AND ?
-    │     → If non-empty: return bars ✓
-    │     → If empty: cache miss → read from Parquet
+    ├─ 1. NEGATIVE CACHE CHECK
+    │     cache.is_no_data(symbol, timeframe, now, TTL_7DAYS)?
+    │     → If true: return DataError::NoData (no HTTP call)
+    │     → If false: continue
     │
-    ├─ 2. PARQUET FALLBACK
-    │     Determine parquet path: parquet_data/stock_daily/{exchange}{code}.parquet
-    │     → File exists: read_parquet() → cache-warm → return bars
-    │     → File missing: return empty vec (caller converts to DataError::NoData)
+    ├─ 2. INFLIGHT DEDUP
+    │     inflight.contains(symbol, timeframe)?
+    │     → If true: return NoData (duplicate request, caller retries)
+    │     → If false: insert into inflight, continue
     │
-    └─ 3. RETURN
-          result to caller
+    ├─ 3. CACHE READ
+    │     cache.fetch_bars(symbol, timeframe, start, end)?
+    │     → If non-empty: clear inflight, return bars ✓
+    │     → If empty: cache miss → fetch from remote
+    │
+    ├─ 4. REMOTE FETCH
+    │     reader.fetch_bars(symbol, timeframe, start, end)?
+    │     → If Ok(bars) and non-empty: cache.save_bars(...) → write-through
+    │     → If Err(NoData): cache.mark_no_data(...) → negative cache for 7 days
+    │     → If other error: propagate to caller
+    │
+    └─ 5. CLEANUP
+          inflight.remove(symbol, timeframe)
+          return result
 ```
 
 Key behaviors:
 
-- **Cache hit requires non-empty bars.** An empty result from the in-memory
-  query means "not cached" — the provider falls through to the Parquet fallback.
-- **Parquet fallback on cache miss.** If the in-memory DuckDB has no data for
-  the symbol, the provider reads directly from `parquet_data/stock_daily/{symbol}.parquet`
-  via `read_parquet()`. If the file exists, the data is cache-warmed with
-  `INSERT OR IGNORE` (overwrite=false) and returned.
-- **Missing symbol returns empty vec.** If neither the in-memory cache nor the
-  Parquet file has data, the provider returns an empty `Vec<Bar>`. The caller
-  (`backend.rs`) converts this to a `FetchResponse` with an error message.
+- **Cache hit requires non-empty bars.** An empty result from DuckDB means
+  "not cached" — we never short-circuit with zero bars back to the caller.
+- **Empty results from remote are not cached or marked no-data.** An empty
+  OK response is ambiguous (could be a data gap, could be wrong dates). We
+  return the empty vec but don't persist it.
+- **save_bars uses overwrite=true** inside CachedProvider. Since the cache
+  just missed, we know there's nothing to merge — we can safely replace.
 
-## EastMoney data pipeline (Python collectors)
+## EastMoneyProvider — the online source
 
-EastMoney (东方财富) is used **only by the Python collectors**, not the Rust
-GUI. The collectors fetch data from EastMoney's public HTTP API and write it
-to CSV files, which are then imported into Dolt `compass_data`. The Rust side
-only reads local Parquet/DuckDB data — it has no HTTP client dependency.
+EastMoney (东方财富) is China's largest financial data platform. Their public
+HTTP APIs provide free access to A-share K-line data without API keys or
+authentication.
 
-For EastMoney API details (secid mapping, K-line endpoints, timeframes),
-see `kb/design/symbols.md`.
+### Endpoints
 
-See `collectors/` for the Python scripts and `kb/dev/process.md` for the
-import workflow.
+| Purpose | Base URL | Path |
+|---|---|---|
+| K-line (OHLCV) | `push2his.eastmoney.com` | `/api/qt/stock/kline/get` |
+| Symbol listing | `push2delay.eastmoney.com` | `/api/qt/clist/get` |
+| Real-time quotes | `push2delay.eastmoney.com` | `/api/qt/stock/get` |
+
+### Fetching K-line data
+
+A typical request for 贵州茅台 (600519) daily bars:
+
+```
+GET /api/qt/stock/kline/get
+  ?secid=1.600519
+  &klt=101
+  &fqt=1
+  &beg=20250101
+  &end=20250721
+  &lmt=2000
+  &fields1=f1,f2,f3,f4,f5,f6
+  &fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61
+```
+
+Parameters explained:
+
+| Param | Value | Meaning |
+|---|---|---|
+| `secid` | `1.600519` | Market code (1=SH) + stock code. See `to_secid()` in symbols.md. |
+| `klt` | `101` | K-line type. 101=daily, 102=weekly, 103=monthly. See timeframe mapping. |
+| `fqt` | `1` | Adjustment mode. Always 1 (前复权 / forward-adjusted). |
+| `beg` | `20250101` | Start date. |
+| `end` | `20250721` | End date. |
+| `lmt` | `2000` | Max bars per request. Hardcoded — the API caps at 2000. |
+
+The response is JSON with klines as comma-separated strings under `data.klines[]`:
+
+```json
+{
+  "data": {
+    "klines": [
+      "2025-07-21,12.04,12.01,12.11,11.95,1079027,13053456.00,1.25,1.22,1.25,0.00,..."
+    ]
+  }
+}
+```
+
+Field mapping within each kline string:
+
+| Index | Field | Description |
+|---|---|---|
+| 0 | date | Trade date (YYYY-MM-DD) |
+| 1 | open | Opening price |
+| 2 | close | Closing price |
+| 3 | high | Highest price |
+| 4 | low | Lowest price |
+| 5 | volume | Trading volume (手, lots) |
+| 6 | amount | Trading amount (元, yuan) |
+| ... | ... | Additional fields (change%, turnover rate, etc.) — ignored |
+
+Note: indices [1-5] map to `open, close, high, low, volume` — **close comes
+before high**, which is EastMoney's convention, not ours. The provider
+reorders them into the standard OHLCV shape.
+
+### Symbol search and enumeration
+
+`search_symbols` does a fuzzy keyword search. It's best-effort — parse errors
+or network failures return an empty list rather than crashing the GUI.
+
+`search_all_symbols` paginates through every A-share stock using a monolithic
+filter string:
+
+```
+fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048
+```
+
+This covers all major A-share market segments (SH main board, SZ main board,
+ChiNext, STAR, B-shares). The API returns 100 symbols per page, with
+`data.total` for pagination tracking.
+
+### Stock basic info
+
+`fetch_stock_basic` retrieves a single stock's metadata: name (中文名称),
+industry classification, market segment, and listing date. This data is used
+to populate the `stock_basic` table in DuckDB and the `stock_basic.parquet`
+file.
+
+### Real-time quotes
+
+`fetch_realtime_quote` returns live data: P/E ratio, P/B ratio, total shares,
+float shares, and daily price limits (涨停/跌停). This is supplementary — the
+GUI could show these as an info panel alongside the chart.
+
+### Rate limiting and resilience
+
+- The API has no documented rate limit but throttles aggressively.
+  **Concurrency=2, delay=1s between requests** has been stable.
+- Timeout: 10 seconds per request (configurable).
+- Retry: up to 3 attempts with exponential backoff for transient failures.
+- EastMoney sometimes returns `{"data": null}` for valid stocks — this is
+  indistinguishable from genuine no-data. The provider treats it as
+  `DataError::NoData`.
 
 ## DuckDbProvider — local cache and staging
 
-DuckDbProvider is the primary data provider for the GUI. It implements all
+DuckDbProvider is the Swiss Army knife of data providers. It implements all
 three traits and serves as both the GUI cache and the CLI staging database.
 
 ### Why DuckDB for caching?
@@ -182,7 +274,7 @@ Five tables, all created automatically on first use:
 | `stock_limit` | `(symbol, trade_date)` | Daily price ceiling/floor |
 | `no_data_marks` | `(symbol, timeframe)` | Negative cache entries with TTL timestamps |
 
-The full DDL is in `AGENTS.md`.
+The full DDL is in `architecture.md` and `AGENTS.md`.
 
 ### Gap detection
 
@@ -211,33 +303,72 @@ All write methods accept an `overwrite: bool`:
 This is the same semantic used by the CLI subcommands — `--overwrite` controls
 whether existing data is preserved or replaced.
 
+### Timeframe aggregation (ref #46)
+
+`DuckDbProvider::fetch_bars()` supports three timeframes:
+
+| Timeframe | Behavior |
+|---|---|
+| `"1d"` | Returns raw daily bars — no aggregation |
+| `"1w"` | Aggregates daily → weekly: `open` = Monday's open, `high` = week max, `low` = week min, `close` = Friday's close, `volume` = week sum |
+| `"1M"` | Aggregates daily → monthly: same OHLCV aggregation, `date_trunc('month', ...)` |
+
+Aggregation runs as a DuckDB SQL re-query after daily data is loaded into the
+in-memory `stock_daily` table (including parquet fallback cache-warm):
+
+```sql
+SELECT DATE_TRUNC('week', trade_date) as grp_date,
+       FIRST(open) as open,
+       MAX(high) as high,
+       MIN(low) as low,
+       LAST(close) as close,
+       SUM(volume) as volume
+FROM (
+    SELECT * FROM stock_daily
+    WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+    ORDER BY trade_date ASC
+)
+GROUP BY grp_date
+ORDER BY grp_date
+```
+
+The subquery's `ORDER BY trade_date ASC` guarantees `FIRST`/`LAST` return the
+chronologically earliest/latest values per time bucket. Only DuckDB's
+`stock_daily` path performs aggregation; the `ParquetReader` (direct parquet
+read) always returns daily data.
+
 ## ParquetReader — the main database
 
-ParquetReader reads from the Parquet files produced by `compass-data import`.
-It implements `DataProvider` but NOT `DataWriter` — the Parquet store is
-append-only (new symbols are added as new files, existing data is never
-modified in-place).
+ParquetReader reads from the Parquet files produced by `compass-data import`
+and `merge`. It implements `DataProvider` but NOT `DataWriter` — the Parquet
+store is append-only (data is merged into the single file, existing data is
+never modified in-place).
 
 ### How it works
 
 `ParquetReader` wraps a DuckDB in-memory connection and uses `read_parquet()`
-to query Parquet files directly:
+to query the single Parquet file with `WHERE symbol = ?` filtering:
 
 ```sql
 SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
-FROM read_parquet('parquet_data/stock_daily/SH600519.parquet')
-WHERE tradedate >= '2025-01-01' AND tradedate <= '2025-07-21'
+FROM read_parquet('parquet_data/stock_daily.parquet')
+WHERE symbol = ? AND tradedate >= ? AND tradedate <= ?
 ORDER BY tradedate ASC
 ```
 
+Symbols are bound as DuckDB parameters (`?`), not interpolated into the SQL string.
 No data is loaded into tables. DuckDB reads the Parquet file on each query,
 exploiting columnar projection and predicate pushdown for efficiency.
 
 ### Symbol discovery
 
-`list_symbols()` scans the filesystem: `std::fs::read_dir("parquet_data/stock_daily/")`.
-Each `.parquet` filename (minus extension) is a symbol. This is fast because
-there's no database to query — it's just a directory listing.
+`list_symbols()` first checks for `stock_daily.symbols.txt` (one symbol per
+line, sorted), which is generated alongside `stock_daily.parquet` by the import
+pipeline. This is the fast path — a simple file read.
+
+If `symbols.txt` doesn't exist, it falls back to `SELECT DISTINCT symbol FROM
+read_parquet('stock_daily.parquet') ORDER BY symbol`. If neither source exists,
+returns an empty vec.
 
 `search_symbols()` loads `stock_basic.parquet` into DuckDB and runs a LIKE
 query against the `name` column. First time is slow (full scan), but the
@@ -247,8 +378,10 @@ in-memory DuckDB keeps it warm for subsequent searches.
 
 | Scenario | Use |
 |---|---|
-| GUI (daily use) | DuckDbProvider (in-memory cache + Parquet fallback) |
-| CLI: bulk data querying | ParquetReader directly |
+| GUI (daily use, cached data available) | DuckDbProvider (cache) |
+| GUI (first view, no cache) | CachedProvider → EastMoney → DuckDbProvider |
+| CLI: bulk data querying | ParquetReader |
+| CLI: incremental download | DuckDbProvider (staging) |
 | Test environment | DuckDbProvider (in-memory) |
 
 ## Dolt import — the bulk data pipeline
@@ -268,8 +401,9 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     ├─ For each symbol:
     │     dolt sql -r parquet -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001'"
     │       → binary Parquet bytes (no CSV intermediation)
-    │       → written directly to parquet_data/stock_daily/SZ000001.parquet
-    │
+│       → written directly to parquet_data/stock_daily.parquet (single file with symbol column)
+│
+│       → symbols list written to parquet_data/stock_daily.symbols.txt
     └─ Stock basic info → parquet_data/stock_basic.parquet
 ```
 
@@ -293,67 +427,66 @@ Use this when Dolt is the canonical source and you want a clean slate.
 
 ```rust
 pub enum DataError {
-    Network(reqwest::Error),     // HTTP failures (legacy — not used by GUI)
+    Network(reqwest::Error),     // HTTP failures (timeout, DNS, connection refused)
     Database(duckdb::Error),     // DuckDB failures (corrupt file, disk full, lock)
     Parse(String),               // JSON deserialization, date parsing, mutex poison
-    RateLimited(u64),            // Rate limit (legacy — not used by GUI)
-    NoData { symbol: String },   // Symbol has no data (not imported, delisted, invalid)
+    RateLimited(u64),            // EastMoney rate limit with retry-after seconds
+    NoData { symbol: String },   // Symbol has no data (delisted, invalid, API returns null)
 }
 ```
-
-Note: `Network` and `RateLimited` are legacy variants from the removed
-EastMoneyProvider. They are retained for backward compatibility with the
-CLI pipeline but are never raised by the GUI's data path.
 
 ### Design philosophy
 
 - **Precise in the library**: `DataError` variants let callers distinguish
-  between "this symbol doesn't exist" and "the database is corrupt." The GUI
-  can show different messages; the CLI can decide whether to retry.
+  between "this symbol doesn't exist" and "the network is down." The GUI can
+  show different messages; the CLI can decide whether to retry.
 - **Ergonomic propagation**: `From<reqwest::Error>` and `From<duckdb::Error>`
   are implemented, so `?` works directly in provider methods.
 - **Parse errors carry context**: `DataError::Parse(String)` includes the raw
   string that failed to parse, not just a generic message. This makes debugging
-  straightforward.
+  API response changes straightforward.
 - **No unwrap in production**: library code uses `?` or `.expect(msg)` with
   descriptive messages. No bare `.unwrap()` — the error message must explain
   what went wrong and where.
 
 ## Provider priority chain
 
+When data is available from multiple sources, this is the priority order:
+
 ```
 1. Dolt investment_data (local, 18M+ rows, 1990–2026)
      └─ Imported via: compass-data import
-     └─ Stored as: parquet_data/stock_daily/*.parquet
+     └─ Stored as: parquet_data/stock_daily.parquet (single file)
+     └─ Queried via: ParquetReader
      │
-     ▼
-2. Parquet main database
-     └─ Queried via: ParquetReader or DuckDbProvider (with Parquet fallback)
-     │
-     ▼
-3. DuckDB in-memory cache
-     └─ Read-through cache: Parquet data loaded on first access
-     └─ Subsequent reads hit memory (cache-warm)
+     ▼ (fallback if not imported)
+2. EastMoney API (online, real-time)
+     └─ Downloaded via: compass-data download, or CachedProvider cache miss
+     └─ Cached in: DuckDB stock_daily table
+     └─ Queried via: DuckDbProvider
 ```
 
-All data access is local. The GUI has no online fallback — if data isn't in
-the Parquet store, the symbol returns `DataError::NoData`. Users run
-`compass-data import` offline to populate the Parquet store before using the GUI.
+In the GUI, CachedProvider automatically follows this chain:
+- DuckDB cache hit → return cached bars
+- DuckDB cache miss → fetch from EastMoney → write to DuckDB → return bars
+
+If you've run `compass-data import`, the Parquet data should already be in
+DuckDB (via `compass-data export`), so the first cache-hit path will find it.
 
 ## Configuring providers
 
 Provider configuration flows from `~/.config/compass/config.toml`:
 
 ```toml
-[parquet]
-dir = "/data/compass-data/parquet_data"  # Parquet data directory
+[api]
+base_url = "https://push2his.eastmoney.com"
+timeout_secs = 10           # HTTP request timeout
 
-[dolt]
-investment_data_dir = "/data/compass-data/investment_data"
-compass_data_dir = "/data/compass-data/compass_data"
+[database]
+parquet_dir = "parquet_data"         # parquet data directory
 ```
 
 For the CLI, most settings are command-line arguments (see `compass-data --help`):
-- `--dolt-dir`, `--output`: override data directories
-- `--limit`, `--symbols`: control import scope
-- `--overwrite`: replace existing data instead of merging
+- `--base-url`, `--realtime-url`: override EastMoney endpoints
+- `--concurrency`, `--delay-ms`: control download rate
+- `--db`: staging DuckDB path

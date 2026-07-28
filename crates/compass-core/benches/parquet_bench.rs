@@ -2,7 +2,7 @@
 //!
 //! Benchmarks cold-read (fresh ParquetReader per iteration), warm-read
 //! (reused ParquetReader across iterations), and real data (SZ000001
-//! from the production parquet_data/ directory if available).
+//! from the production parquet_data/stock_daily.parquet if available).
 
 use std::path::Path;
 
@@ -30,18 +30,18 @@ fn wide_date_range() -> (DateTime<Utc>, DateTime<Utc>) {
     (to_dt(2020, 1, 1), to_dt(2030, 12, 31))
 }
 
-/// Create a temp directory with synthetic OHLCV Parquet data for SZ000001.
+/// Create a temp directory with a single synthetic `stock_daily.parquet` for SZ000001.
 ///
 /// Generates `rows` sequential daily bars starting from 2024-01-01 with
 /// random price movement around 10.0 and random volume in [1k, 100k).
 fn create_synthetic_parquet_dir(rows: usize) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    let daily_dir = tmp.path().join("stock_daily");
-    std::fs::create_dir_all(&daily_dir).unwrap();
+    let daily_path = tmp.path().join("stock_daily.parquet");
 
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "CREATE TABLE t (\
+            symbol VARCHAR, \
             tradedate DATE, \
             open DOUBLE, \
             high DOUBLE, \
@@ -67,15 +67,19 @@ fn create_synthetic_parquet_dir(rows: usize) -> tempfile::TempDir {
         price = close;
 
         conn.execute(
-            "INSERT INTO t VALUES (?, ?, ?, ?, ?, ?)",
-            duckdb::params![date_str, open, high, low, close, volume],
+            "INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?)",
+            duckdb::params!["SZ000001", date_str, open, high, low, close, volume],
         )
         .unwrap();
     }
 
-    let path = daily_dir.join("SZ000001.parquet");
-    conn.execute_batch(&format!("COPY t TO '{}' (FORMAT PARQUET)", path.display()))
-        .unwrap();
+    conn.execute_batch(&format!(
+        "COPY t TO '{}' (FORMAT PARQUET)",
+        daily_path.display()
+    ))
+    .unwrap();
+
+    std::fs::write(tmp.path().join("stock_daily.symbols.txt"), "SZ000001\n").unwrap();
 
     tmp
 }
@@ -141,8 +145,8 @@ fn bench_warm_read(c: &mut Criterion) {
 /// Benchmark against the production SZ000001 dataset (warm read).
 /// Skipped gracefully when `parquet_data/` is not present.
 fn bench_real_data(c: &mut Criterion) {
-    let real_dir = Path::new("/data/compass-data/parquet_data");
-    let test_file = real_dir.join("stock_daily/SZ000001.parquet");
+    let real_dir = Path::new("../../parquet_data");
+    let test_file = real_dir.join("stock_daily.parquet");
 
     if !test_file.exists() {
         eprintln!("Skipping real data benchmark: {:?} not found", test_file);

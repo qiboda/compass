@@ -50,26 +50,25 @@ let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory 
 
 No cleanup needed — the database is dropped when `provider` goes out of scope.
 
-### Parquet tests
-
-Tests that need stock data can use in-memory DuckDB to create test data:
-
-```rust
-use compass_core::data::duckdb::DuckDbProvider;
-
-let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-// INSERT test bars directly, then fetch them back
-provider.save_bars("000001", "1d", &test_bars, true).await?;
-let bars = provider.fetch_bars("000001", "1d", start, end).await?;
-assert_eq!(bars.len(), test_bars.len());
-```
-
-For CLI pipeline tests, `httpmock` is available for mocking EastMoney API responses:
+### HTTP mocking (httpmock)
 
 ```rust
 use httpmock::MockServer;
+
 let server = MockServer::start_async().await;
-// Mock K-line API response for CLI import/download tests
+let mock = server.mock(|when, then| {
+    when.method(httpmock::Method::GET).path("/api/qt/stock/kline/get");
+    then.status(200)
+        .header("content-type", "application/json")
+        .json_body(serde_json::json!({"data": {"klines": ["2025-07-21,12.04,12.01,12.11,11.95,1079027,..."]}}));
+});
+
+let provider = EastMoneyProvider::new(
+    reqwest::Client::new(),
+    server.base_url(),
+    server.base_url(),
+);
+// Now HTTP calls hit the mock server instead of real EastMoney.
 ```
 
 ### Dolt (test database)
@@ -164,12 +163,15 @@ Results are written to `target/criterion/` as HTML reports.
 |---|---|---|
 | `compass-core` | `parquet_bench` | ParquetReader cold/warm read at 100/1000/5000 rows, real SZ000001 |
 | `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
-| `compass-data` | `dolt_bench` | Dolt sql -r parquet per-symbol, 300KB file write, symbol enumeration |
+| `compass-core` | `cached_bench` | CachedProvider cache hit, cache miss (read-through), negative cache |
+| `compass-core` | `eastmoney_bench` | Kline parse latency/throughput, httpmock round-trip, error paths |
+| `compass-data` | `dolt_bench` | Dolt sql -r parquet single-file export, symbol enumeration |
 
 ### Data requirements
 
 - **Parquet benchmarks**: need `parquet_data/` with real data OR generate synthetic data via in-memory DuckDB
 - **Dolt benchmarks**: need `investment_data/` directory and `dolt` CLI on PATH; skip gracefully if missing
+- **EastMoney benchmarks**: use `httpmock` — no real network calls
 - **All others**: use in-memory DuckDB or temp directories — no external dependencies
 
 ### CI policy

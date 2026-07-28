@@ -54,7 +54,10 @@ fn main() -> eframe::Result {
     let config = load_config();
 
     // Create reactive shared state
-    let shared_state = Arc::new(state::SharedState::new(&config.app.default_symbol));
+    let shared_state = Arc::new(state::SharedState::new(
+        &config.app.default_symbol,
+        &config.app.default_timeframe,
+    ));
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
@@ -281,6 +284,7 @@ impl CompassApp {
                     "fetch requested"
                 );
                 self.shared_state.symbol.set(symbol);
+                self.shared_state.timeframe.set(timeframe.clone());
                 dispatcher::handle(
                     messages::AppMessage::FetchBars,
                     &self.shared_state,
@@ -336,7 +340,7 @@ mod tests {
 
     #[test]
     fn shared_state_initializes_with_defaults() {
-        let state = SharedState::new("000001");
+        let state = SharedState::new("000001", "1d");
         assert_eq!(state.symbol.get(), "000001");
         assert_eq!(state.bars.get().len(), 0);
         assert!(!state.loading.get());

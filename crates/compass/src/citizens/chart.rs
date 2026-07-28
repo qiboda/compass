@@ -64,6 +64,7 @@ impl ChartCitizen {
             self.chart.update_data(BarData::from_bars(bars));
         }
 
+        self.chart.set_timeframe_label(&state.timeframe.get());
         self.chart.show(ui);
     }
 }
