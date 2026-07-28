@@ -167,7 +167,7 @@ Group all direct `db.conn.lock()` calls into ONE scope before any async
 
 - **Modify production code** — only write test files
 - **Skip the RED phase** — every test must fail first for the right reason
-- **Suppress type errors** — no `as any`, `#[allow()]`, or `@ts-ignore` in tests
+- **Suppress type errors** — no `unwrap()` without `.expect()`, no `#[allow()]` on lint warnings in tests
 - **Delete existing tests** — never remove tests to "pass"
 - **Write tests that always pass** — tests must verify new behavior
 - **Modify `Cargo.toml`** — do not add test dependencies without explicit approval

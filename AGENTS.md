@@ -49,8 +49,9 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 |---|---|---|
 | **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
 | **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
-| **3. Tests** | Write failing test(s) FIRST, confirm they fail | Test output showing failure |
-| **4. Docs** | Identify which `kb/` files need updating | List of files to user |
+| **3. Tests** | Invoke `/test` (qa skill) to write failing tests | Test output showing failure |
+| **4a. Rustdoc** | Invoke `/rustdoc` to verify `#[deny(missing_docs)]` compliance | `cargo doc --no-deps` is warning-free |
+| **4b. Docs** | Invoke `/docs` to identify which `kb/` files need updating | List of files to user |
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
 
