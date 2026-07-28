@@ -197,3 +197,15 @@ finishing work. Doc-only only skips the gate, not the review.
 1. 即使是文档级修改，AGENTS.md 中 "After EVERY feature/bugfix, append a brief reflection"
    依然适用——这是事后反思，不是 gate 的一部分
 2. commit 后、report completion 前，检查工作流 checklist 是否每一项都闭环
+
+## 2026-07-28 — ref #61 docs: simplify commit workflow — always review after commit
+
+**What was done**: 将 AGENTS.md 的 "Commit Strategy"（按文件数量分大/小变更走不同 review 路径）
+和 compass-workflow SKILL.md 的对应步骤统一简化为：commit → review（总是）→ fix → recommit。
+消除了条件分支，规则更简单明确。
+
+**What went wrong**: 无。一次 commit 完成，review 后直接补 reflection。
+
+**Lessons learned**:
+1. 规则越简单越不会被跳过。条件分支（大变更/小变更）增加了判断成本，统一路径更可靠
+2. commit → review 的强制顺序避免了 "先 review 再 commit" 导致的未提交代码丢失风险
