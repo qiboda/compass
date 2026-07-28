@@ -209,3 +209,14 @@ finishing work. Doc-only only skips the gate, not the review.
 **Lessons learned**:
 1. 规则越简单越不会被跳过。条件分支（大变更/小变更）增加了判断成本，统一路径更可靠
 2. commit → review 的强制顺序避免了 "先 review 再 commit" 导致的未提交代码丢失风险
+
+## 2026-07-28 — ref #63 feat: 新增 4 个 opencode skill agent (qa, rustdoc, docs, reflect)
+
+**What was done**: 创建 4 个 opencode skill agent（qa/test 测试、rustdoc API 文档、docs 项目书维护、reflect 反思趋势分析），更新 compass-workflow gate 步骤引用新 agent（step 3→/test，step 4→4a/rustdoc+4b/docs，review step 5→/reflect），更新 AGENTS.md 和 kb/dev/process.md 注册新技能。所有 agent 格式统一为 frontmatter + markdown，文件系统自动发现无需注册。
+
+**What went wrong**: 计划阶段 `AGENTS.md:available_skills section` 引用指向不存在的 XML 块——AGENTS.md 并没有 `<available_skills>` section，技能是内联描述的。Oracle review 指出这会导致执行者找不到参考格式。修复方案：改为添加 markdown 表格而非 XML 块。Oracle 另外发现 3 个 blocking issues（qa 缺少 context 传递机制、evidence file 未定义、reflect 与手动 mandate 冲突未决），全部在 plan 修订中解决。
+
+**Lessons learned**:
+1. plan 中的引用必须验证文件实际格式（AGENTS.md 用 markdown 表格列技能，非 XML block）
+2. skill 的目录名 ≠ slash 命令名——frontmatter `name:` 决定 slash command
+3. 文档/配置类变更也是 feature 工作——pre-implementation gate 全部适用，但 review 可跳过（"Skippable for: docs"）
