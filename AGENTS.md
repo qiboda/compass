@@ -109,17 +109,15 @@ feat: add thing
 ref #26
 ```
 
-### Commit Strategy
+### Commit → Review (MANDATORY)
 
-Commit frequently during implementation — small, atomic commits make it
-easy to revert individual changes when agents make mistakes.
+After every commit, always run review. No exceptions.
 
-- **Large changes** (>3 files or significant logic across modules):
-  commit the implementation first, then run automated review. Keeps the
-  implementation commit clean; review fixes go in follow-up commits.
-- **Small changes** (≤3 files, localized): run review first, fix in
-  working tree, then commit everything together. Avoids churn commits.
-- If review fixes create too many follow-ups, squash before push.
+1. **Commit**: stage changes, write a descriptive message with `ref #N`, commit.
+2. **Review**: run review on the committed changes.
+3. **Fix**: if review finds issues, fix them and recommit.
+4. **Repeat**: review again after the fix commit. Max 2 rounds; remaining
+   issues → create GitHub issues and note in commit message.
 
 ### Commit & Push
 

@@ -169,13 +169,16 @@ See `kb/github/labels.md` for the complete taxonomy.
 After completing implementation, run an automated review to catch issues
 before they reach the repo. The old manual checklist is replaced by this.
 
-### Step 1: Commit Strategy Decision
+### Step 1: Commit
 
-Follow the global commit strategy in AGENTS.md:
-- **Large changes** (>3 files or cross-module): commit the implementation
-  first with `ref #N`, then run review. Fixes go in follow-up commits.
-- **Small changes** (≤3 files, localized): run review first, fix in
-  working tree, then commit everything together.
+Commit the implementation first — always. Do not run review before committing.
+
+```
+git add <files>
+git commit -m "feat: description
+
+ref #N"
+```
 
 ### Step 2: Run Review
 
