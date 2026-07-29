@@ -201,27 +201,29 @@ RUST_LOG=debug cargo run        # verbose logging
 ### CLI (compass-data)
 
 ```sh
-# Download from EastMoney to staging DuckDB
-cargo run --bin compass-data -- download --symbols "000001,600519"
-cargo run --bin compass-data -- download --symbols all --concurrency 2 --delay-ms 2000
-cargo run --bin compass-data -- download --symbols all --overwrite  # force overwrite
-
-# Import from Dolt into Parquet main database
+# Import from Dolt investment_data into Parquet main database
 cargo run --bin compass-data -- import
 cargo run --bin compass-data -- import --limit 100
-cargo run --bin compass-data -- import --overwrite  # full replace (skip merge)
+cargo run --bin compass-data -- import --symbols 000001,600519
+cargo run --bin compass-data -- import --overwrite   # full replace
+cargo run --bin compass-data -- import --since 20260725  # incremental
 
-# Merge staging DuckDB into Parquet
-cargo run --bin compass-data -- merge
-cargo run --bin compass-data -- merge --overwrite   # staging wins on conflict
+# Import from Dolt compass_data into Parquet
+cargo run --bin compass-data -- import-compass --table stock_basic
+cargo run --bin compass-data -- import-compass --table fin_indicators
+cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 
 # Export Parquet to DuckDB
 cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite  # force overwrite
 
+# Backup to Baidu Cloud
+cargo run --bin compass-data -- backup
+cargo run --bin compass-data -- backup --keep-zip
+
 # Full help
 cargo run --bin compass-data -- --help
-cargo run --bin compass-data -- download --help
+cargo run --bin compass-data -- import --help
 ```
 
 ## Adding a feature (manual)
@@ -325,8 +327,16 @@ cargo clippy -- -D warnings # strict lint
 Create `~/.config/compass/config.toml` to override defaults:
 
 ```toml
+[parquet]
+dir = "/data/compass-data/parquet_data"
+
+[dolt]
+investment_data_dir = "/data/compass-data/investment_data"
+compass_data_dir = "/data/compass-data/compass_data"
+
 [app]
 default_symbol = "600519"
+default_timeframe = "1d"
 ```
 
 Missing keys fall back to defaults defined in `crates/compass-core/src/model.rs`.
@@ -462,7 +472,6 @@ Key tables:
 ### Reset everything
 
 ```sh
-rm data/compass.duckdb logs/compass.log         # GUI cache
-rm -rf data/                                 # staging cache
-rm -rf parquet_data/                        # main Parquet data
+rm -rf /data/compass-data/parquet_data/   # main Parquet data
+rm logs/compass.log                        # logs
 ```

@@ -18,10 +18,19 @@ mkdir -p ~/.config/compass
 ## Full schema
 
 ```toml
-[database]
-# Path to the parquet_data directory containing OHLCV data.
-# Default: "parquet_data"
-parquet_dir = "parquet_data"
+[parquet]
+# Directory containing stock_basic.parquet and stock_daily/ subdirectory.
+# Default: "/data/compass-data/parquet_data"
+dir = "/data/compass-data/parquet_data"
+
+[dolt]
+# Directory for the Dolt investment_data repository (primary OHLCV source).
+# Default: "/data/compass-data/investment_data"
+investment_data_dir = "/data/compass-data/investment_data"
+
+# Directory for the Dolt compass_data repository (fundamentals, custom data).
+# Default: "/data/compass-data/compass_data"
+compass_data_dir = "/data/compass-data/compass_data"
 
 [app]
 # Stock code displayed when the app starts.
@@ -31,12 +40,6 @@ default_symbol = "000001"
 # Timeframe displayed when the app starts.
 # Default: "1d"
 default_timeframe = "1d"
-
-[parquet]
-# Directory containing stock_basic.parquet and stock_daily.parquet.
-# Used by the GUI for the symbol search dropdown.
-# Default: "parquet_data"
-dir = "parquet_data"
 ```
 
 ## Defaults
@@ -45,10 +48,11 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 
 | Section | Key | Default |
 |---|---|---|
-| `database` | `parquet_dir` | `parquet_data` |
+| `parquet` | `dir` | `/data/compass-data/parquet_data` |
+| `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
+| `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
-| `parquet` | `dir` | `parquet_data` |
 
 ## Examples
 
@@ -67,18 +71,15 @@ default_symbol = "600519"
 # default_timeframe stays "1d" (default)
 ```
 
-### Increase API timeout for slow connections
+### Custom data directories
 
 ```toml
-[api]
-timeout_secs = 30
-```
+[parquet]
+dir = "/mnt/data/parquet_data"
 
-### Custom database location
-
-```toml
-[database]
-path = "/data/compass/cache.duckdb"
+[dolt]
+investment_data_dir = "/mnt/data/investment_data"
+compass_data_dir = "/mnt/data/compass_data"
 ```
 
 ## Validation

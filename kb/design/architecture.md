@@ -44,7 +44,7 @@ compass (GUI binary)
   │     └── data/synthetic.rs ─ Test data generator
   │
   └── compass-data (CLI binary)
-        └── import / merge / export subcommands
+        └── import / import-compass / export / backup subcommands
 ```
 
 `compass-core` contains zero UI code. It provides traits and implementations
