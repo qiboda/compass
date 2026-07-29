@@ -187,7 +187,7 @@ Trivial fixes (typo, config, one-line change) can go directly to master.
 ```
 master  ●──●──●──●────────●  (trunk)
               \          /
-feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
+pr/xxx        ●──●──●──┘   (feature branch, PR, merge)
 ```
 
 **Merge strategy**: Use regular merge (not squash). Preserves all commit
@@ -210,18 +210,13 @@ gh issue comment <N> --body "PR #M 已合并。与 PR 描述不一致之处：
 - ..."
 ```
 
-## Worktrees (functional zone isolation)
+## Worktrees (transient PR workspace)
 
-Worktrees live at `.worktrees/<name>/` (gitignored). Two usage modes:
+Worktrees live at `.worktrees/<name>/` (gitignored). Each worktree is a
+**transient PR workspace**, created for a single PR or epic and cleaned up
+after merge. Branch naming: `pr/<short-description>`.
 
-**Transient PR workspace** (primary): created for a single PR or epic,
-cleaned up after merge. Branch naming: `pr/<short-description>`.
-
-**Persistent functional zone** (optional): long-lived worktree for a
-functional area (`custom-dolt`, `egui-mobius`). Not deleted after a
-single feature ships.
-
-The `/worktree` skill provides conventions and commands for both modes.
+The `/worktree` skill provides conventions and commands.
 
 **Why not plugins**: The `opencode-worktree` plugin (kdco/worktree via OCX)
 was evaluated and found to have blocking issues (no idempotent re-open,
@@ -234,7 +229,7 @@ the `/worktree` skill give full control without those issues.
 3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
 4. Stay in master — don't switch session into the worktree directory
 
-**After PR merge** (transient mode):
+**After PR merge**:
 1. Remove worktree: `git worktree remove .worktrees/<name> --force`
 2. Delete PR branch: `git branch -D pr/<name>`
 4. Stay in master — don't switch session into the worktree directory
