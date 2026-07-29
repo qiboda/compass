@@ -72,7 +72,7 @@ After PR merges to `master`:
 
 1. Create issue using `.github/ISSUE_TEMPLATE/bug_report.md` template
 2. Read it back (`gh issue view <N>`) to confirm it exists
-3. Fix it — commit with `fixes #N`
+3. Fix it — commit with `ref #N`
 
 ### Commit → issue linking
 
@@ -90,8 +90,8 @@ For epic work, batch-close all sub-issues first, then the epic.
 A git hook (`.githooks/commit-msg`) enforces issue references:
 
 ```
-feat/fix commits → must include "ref #N"
-test, refactor, docs, chore → no issue reference required
+Every commit must include "ref #N" — no exceptions.
+feat, fix, test, refactor, docs, chore — all included.
 ```
 
 The hook is activated via `git config core.hooksPath .githooks` (already configured).
@@ -212,12 +212,16 @@ gh issue comment <N> --body "PR #M 已合并。与 PR 描述不一致之处：
 
 ## Worktrees (functional zone isolation)
 
-Worktrees divide the project into persistent functional zones. Each worktree
-hosts multiple features in its domain — it is NOT deleted after a single
-feature ships. The `/worktree` skill provides conventions and commands.
+Worktrees live at `.worktrees/<name>/` (gitignored). Two usage modes:
 
-**Convention**: worktrees live at `.worktrees/<name>/` (gitignored),
-one per functional area (e.g. `custom-dolt`, `egui-mobius`).
+**Transient PR workspace** (primary): created for a single PR or epic,
+cleaned up after merge. Branch naming: `pr/<short-description>`.
+
+**Persistent functional zone** (optional): long-lived worktree for a
+functional area (`custom-dolt`, `egui-mobius`). Not deleted after a
+single feature ships.
+
+The `/worktree` skill provides conventions and commands for both modes.
 
 **Why not plugins**: The `opencode-worktree` plugin (kdco/worktree via OCX)
 was evaluated and found to have blocking issues (no idempotent re-open,
@@ -228,6 +232,11 @@ the `/worktree` skill give full control without those issues.
 1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
 2. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
 3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
+4. Stay in master — don't switch session into the worktree directory
+
+**After PR merge** (transient mode):
+1. Remove worktree: `git worktree remove .worktrees/<name> --force`
+2. Delete PR branch: `git branch -D pr/<name>`
 4. Stay in master — don't switch session into the worktree directory
 
 ## Version control

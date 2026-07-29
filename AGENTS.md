@@ -149,7 +149,7 @@ Status: `pending` | `in_progress` | `done`. The plan file is the canonical track
 > **Parent**: #<epic-N>
 > **Plan**: .omo/plans/<epic-name>.md
 > **Batch**: <N>
-> **Depends on**: #<sub-X>
+> **Depends on**: #<sub-X> (or "—" if none)
 
 ## 描述
 ...
@@ -177,43 +177,28 @@ After every commit, always run review. No exceptions.
 
 1. **Commit**: stage changes, write a descriptive message with `ref #N`, commit.
 2. **Review**: run review on the committed changes.
-3. **Fix**: if review finds issues, fix them and recommit.
-4. **Repeat**: review again after the fix commit. Max 2 rounds; remaining
-   issues → create GitHub issues and note in commit message.
+3. **Fix**: if review finds issues, fix them and recommit (max 2 rounds).
+
+See `kb/dev/process.md` for full review workflow.
 
 ### Commit & Push
 
 Commit and push are **separate operations**. Do not chain them with `&&`.
 
-1. **Commit first**: stage changes, write a descriptive message, commit.
-2. **Verify locally**: ensure `cargo test`, `cargo clippy`, and `cargo fmt` pass.
-3. **Push separately**: only after local verification is clean.
-
 **HARD BLOCK: Never auto-push.** Wait for the user to explicitly say "push" / "推送".
-Even if verification passes, do not push without user command. If you pushed without
-the user's permission, you violated the workflow — revert and apologize.
+**Follow the user's exact words.** "commit" means only commit; "push" means only push.
 
-Never `git push` in the same command as `git commit`. The pre-push hook runs
-formatting, clippy, and doc checks — if they fail, the commit should remain
-local until fixed, not be amended mid-push.
-
-**Follow the user's exact words.** If the user says "commit" / "提交", only
-commit — do not push. If the user says "push" / "推送", only push — do not
-amend and re-commit. Never assume one implies the other.
+See `kb/dev/process.md` for the full push gate checklist.
 
 ### Issue Lifecycle
 
 **HARD BLOCK: Close issues only AFTER push.** An issue is not "done" until the fix is on
 `origin/master`. Do not close an issue after commit — wait for successful push.
 
-- commit → issue stays OPEN
-- push succeeds → close issue with `gh issue close`
-- When closing, record the PR that implemented it: `gh issue comment <N> --body "Fixed by #<PR>"`
-
 **Epic close**: after the PR is merged to master, close all sub-issues first, then
 close the epic. Record a summary comment on the epic listing all completed sub-issues.
 
-Every issue and PR must include labels at creation time. See `kb/github/labels.md`
+See `kb/dev/process.md` for the full issue lifecycle and `kb/github/labels.md`
 for the Bevy-style A-/C-/D-/P-/S- taxonomy. Minimum: one A- and one C- label.
 
 ### Scope Discipline
