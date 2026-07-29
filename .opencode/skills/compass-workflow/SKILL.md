@@ -30,8 +30,8 @@ I will now check each gate step before proceeding:
    → [must confirm]
 
 ☐ STEP 1 — ISSUE
-   Create gh issue from the requirement
-   → [must show issue URL to user]
+   → Invoke /issue-workflow to create/manage issues
+   → [must show issue URL to user, or epic + sub-issue list]
 
 ☐ STEP 2 — PLAN (skip only if single-file change)
    Plan agent run and approved
@@ -99,14 +99,15 @@ Any code change affecting behavior, public APIs, data structures, config, or wor
 ### 2. Requirement Flow (CRITICAL)
 
 Before writing any feature or bugfix code:
-a) verify an open GitHub issue exists (`gh issue view <N>`)
-b) if none exists, create one with `gh issue create`
-c) confirm with `gh issue view <N>`
+a) invoke `/issue-workflow` to handle issue creation and management
+b) the issue-workflow skill determines single issue vs epic/sub-issue mode
+c) confirm issue(s) are created and visible
 d) only then implement
 
 Skip this for: refactors, docs, lint fixes, typos.
 
 Commit references: `ref #N` (feat/fix), no `fixes #N` / `closes #N` (auto-close unwanted).
+For epic work, each commit references its sub-issue (`ref #<sub-N>`).
 
 **This applies to ALL commits — chores, docs, scripts included. No exceptions.**
 
@@ -174,6 +175,7 @@ The compass project provides these opencode skills for specific workflow steps:
 
 | Skill | Slash Command | Purpose | Gate Step |
 |---|---|---|---|
+| issue-workflow | `/issue-workflow` | Create and manage issues (single + epic/sub-issue) | Step 1 — ISSUE |
 | qa (test) | `/test` | Write failing tests (TDD/BDD), test coverage | Step 3 — TESTS |
 | rustdoc | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance | Step 4a — RUSTDOC |
 | docs | `/docs` | Identify and update kb/ files | Step 4b — DOCS |
@@ -205,6 +207,10 @@ ref #N"
 Trigger `/review-work` against the current changes. The review runs 5
 agents in parallel: goal verification, QA execution, code quality,
 security audit, and context mining.
+
+**Epic work**: run review at two layers —
+- **Per sub-issue**: after each sub-issue commit, review that sub-issue's changes
+- **Pre-PR**: after all sub-issues complete, review the full PR diff for integration issues
 
 ### Step 3: Handle Findings
 
@@ -247,6 +253,8 @@ See `.opencode/skills/reflect/SKILL.md` for the full reflection workflow.
 
 - `feat:` / `fix:` / `test:` / `refactor:` / `docs:` / `chore:`
 - Atomic: one logical unit per commit
+- Each commit references its issue: `ref #N` (sub-issue for epic work)
+- Multiple sub-issue commits may exist in one PR (each with its own `ref #<sub-N>`)
 - Push only on explicit user command (never auto-push)
 
 ## Code Style

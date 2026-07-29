@@ -23,3 +23,13 @@ assignees: qiboda
 ## Additional context
 
 <!-- Links, screenshots, references -->
+
+## Sub-Issue Metadata
+
+<!-- Only fill this section if this issue is a sub-issue of an epic. -->
+<!-- Leave empty for standalone issues. -->
+
+> **Parent**: #<epic-N>
+> **Plan**: .omo/plans/<epic-name>.md
+> **Batch**: <N>
+> **Depends on**: #<sub-X> (or "—" if none)

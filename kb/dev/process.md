@@ -10,12 +10,14 @@ User raises requirement
   →  Shared understanding reached → summarize locked-in decisions
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
-  →  /ulw-plan (if multi-step)  →  implement
+  →  /ulw-plan (if multi-step)  →  plan may identify sub-issues for epic decomposition
+  →  For epics: /issue-workflow creates epic + sub-issues upfront, batches by DAG
+  →  implement (each sub-issue walks GATE independently)
   →  cargo nextest (tests must pass)
-  →  commit with ref #N
-  →  ai-review (/review-work)
-  →  push master
-  →  CI passes  →  close issue with gh issue close N
+  →  commit with ref #<sub-N> (epic) or ref #N (single issue)
+  →  ai-review (/review-work) — per sub-issue + pre-PR
+  →  push master (one PR with all sub-issue commits)
+  →  CI passes  →  batch close sub-issues + epic with gh issue close
 ```
 
 Docs, lint fixes, and typos skip the grill-me + issue cycle — implement directly.
@@ -28,6 +30,44 @@ Docs, lint fixes, and typos skip the grill-me + issue cycle — implement direct
 | Docs update | ❌ Skip |
 | Lint / typo | ❌ Skip |
 
+### Epic & Sub-Issue Workflow
+
+Large requirements are decomposed into an **epic** (parent issue) with **sub-issues**
+(child issues) using GitHub native sub-issue support (`gh issue create --parent <epic-N>`).
+
+#### Epic creation flow
+
+1. `/ulw-plan` identifies sub-issues during planning — all created upfront
+2. `/issue-workflow` creates the epic + all sub-issues in one batch
+3. Each sub-issue body includes: Parent, Plan, Batch, Depends on metadata
+4. `.omo/plans/<epic>.md` tracks status via `pending | in_progress | done` table
+
+#### Batch execution
+
+- Sub-issues ordered by dependency DAG (topological sort)
+- Independent sub-issues in the same batch run in parallel (multiple subagents in the same worktree)
+- Dependent sub-issues serialize — blocked items wait for their dependencies to complete
+- Batch switching is **manual** — agent reports completion, user confirms before next batch
+- New sub-issues discovered during execution: allowed; update plan file and re-evaluate DAG
+
+#### One PR, multiple commits
+
+All sub-issues in one epic ship in a **single PR** to prevent half-finished features on master.
+Each sub-issue is one commit (`ref #<sub-N>`). Merge strategy: regular merge (not squash) —
+preserves commit history and issue traceability.
+
+#### Review
+
+- Per sub-issue: review after each sub-issue commit (`/review-work`)
+- Pre-PR: review full PR diff after all sub-issues complete
+
+#### Close
+
+After PR merges to `master`:
+1. Close all sub-issues: `gh issue close <sub-N1> <sub-N2> ...`
+2. Close the epic: `gh issue close <epic-N>`
+3. Record summary on epic listing all completed sub-issues and PR
+
 ### When OpenCode discovers a new bug
 
 1. Create issue using `.github/ISSUE_TEMPLATE/bug_report.md` template
@@ -38,10 +78,12 @@ Docs, lint fixes, and typos skip the grill-me + issue cycle — implement direct
 
 | Commit type | Issue reference |
 |---|---|
-| feat / fix | `ref #N` |
+| feat / fix (single issue) | `ref #N` |
+| feat / fix (epic sub-issue) | `ref #<sub-N>` |
 
 Issues are closed **manually** via `gh issue close N` after verification.
 Do NOT use `fixes #N` or `closes #N` — these auto-close the issue on push.
+For epic work, batch-close all sub-issues first, then the epic.
 
 ### Commit-msg hook
 
@@ -126,7 +168,9 @@ Skippable for: docs, lint fixes, typos, trivial chores.
 
 ### Push rhythm
 
-Push immediately after completing each issue. Do not batch.
+For single issues: push immediately after completing the issue. Do not batch.
+
+For epic work: push after all sub-issues in the PR are complete. One push per PR.
 
 ### Commit discipline
 

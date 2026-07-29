@@ -7,6 +7,8 @@ Python collectors use EastMoney API to fetch data into Dolt.
 
 **项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
 
+**默认对话语言：中文。** 所有回答、解释、讨论默认使用中文，代码注释和提交信息按惯例使用英文。
+
 ---
 
 ## 品质准则
@@ -48,7 +50,7 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 
 | Step | Action | Evidence Required |
 |---|---|---|
-| **1. Issue** | Verify `gh issue view <N>` exists, or create one | Issue URL shown to user |
+| **1. Issue** | Invoke `/issue-workflow` to create/manage issues | Issue URL(s) shown to user |
 | **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
 | **3. Tests** | Invoke `/test` (qa skill) to write failing tests | Test output showing failure |
 | **4a. Rustdoc** | Invoke `/rustdoc` to verify `#[deny(missing_docs)]` compliance | `cargo doc --no-deps` is warning-free |
@@ -98,6 +100,7 @@ checklist above. Do not skip any step.
 | Skill | Slash Command | Purpose |
 |---|---|---|
 | `compass-workflow` | `/compass-workflow` | Enforces issue-driven dev, doc-sync, test-first, per-step-verify, commit discipline |
+| `issue-workflow` | `/issue-workflow` | Creates and manages issues (single + epic/sub-issue decomposition and batch close) |
 | `worktree` | `/worktree` | Manage git worktrees for PR development |
 | `open-worktrees` | `//open-worktrees` | Launch all worktree zones in separate kitty windows |
 | `qa` (test) | `/test` | Write unit/integration tests (TDD/BDD), test coverage |
@@ -108,10 +111,59 @@ checklist above. Do not skip any step.
 All skills are located under `.opencode/skills/<name>/SKILL.md`. OpenCode
 auto-discovers skills from the filesystem — no registration needed.
 
+### Epic & Sub-Issue Workflow
+
+Large requirements that span multiple modules or independent deliverables are
+decomposed into an **epic** (parent issue) with **sub-issues** (child issues) using
+GitHub native sub-issue support. See `.opencode/skills/issue-workflow/SKILL.md`
+for the full sub-issue lifecycle.
+
+**Key rules for epic work:**
+
+| Rule | Description |
+|---|---|
+| **Decomposition** | `/ulw-plan` identifies sub-issues during planning; all created upfront via `gh issue create --parent <epic-N>` |
+| **Batch processing** | Sub-issues ordered by dependency DAG; independent ones run in parallel, dependent ones serialize |
+| **PR strategy** | All sub-issues in one epic → one PR (prevents half-finished features on master) |
+| **Commits** | Each sub-issue = one commit with `ref #<sub-N>`; multiple commits in one PR, regular merge |
+| **GATE** | Each sub-issue independently walks the full PRE-IMPLEMENTATION GATE |
+| **Worktree** | One epic = one worktree (`.worktrees/<name>/`) |
+| **Batch switch** | Manual confirmation — agent reports batch completion, user confirms before next batch |
+| **Close** | All sub-issues + epic closed via `gh issue close` after PR merges to master |
+
+**Plan file format** (`.omo/plans/<epic-name>.md`):
+
+```markdown
+### Batch 1
+| Status | Issue | Task | Depends On |
+|--------|-------|------|------------|
+| pending | #12 | Implement XYZ | — |
+| in_progress | #13 | Implement ABC | #12 |
+```
+
+Status: `pending` | `in_progress` | `done`. The plan file is the canonical tracking document.
+
+**Sub-issue body template:**
+
+```markdown
+> **Parent**: #<epic-N>
+> **Plan**: .omo/plans/<epic-name>.md
+> **Batch**: <N>
+> **Depends on**: #<sub-X>
+
+## 描述
+...
+
+## 验收标准
+...
+```
+
 ### Issue-Driven Commits
 
 **Every commit must reference a GitHub issue.** No exceptions — not even for
 chores, docs, or scripts. The pre-push hook rejects commits without `ref #N`.
+
+For epic work, each commit references its sub-issue (`ref #<sub-N>`).
 
 ```
 feat: add thing
@@ -157,6 +209,9 @@ amend and re-commit. Never assume one implies the other.
 - commit → issue stays OPEN
 - push succeeds → close issue with `gh issue close`
 - When closing, record the PR that implemented it: `gh issue comment <N> --body "Fixed by #<PR>"`
+
+**Epic close**: after the PR is merged to master, close all sub-issues first, then
+close the epic. Record a summary comment on the epic listing all completed sub-issues.
 
 Every issue and PR must include labels at creation time. See `kb/github/labels.md`
 for the Bevy-style A-/C-/D-/P-/S- taxonomy. Minimum: one A- and one C- label.
