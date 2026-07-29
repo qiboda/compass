@@ -48,7 +48,7 @@ Read the issue/PR context. Understand:
 
 ### Step 3a: Simple → Fix (via PR)
 
-1. Create a fix branch: `git checkout -b pr/fix-<issue_number>`
+1. Create a fix branch: `git checkout -b fix/fix-<issue_number>`
 2. Write a failing test that reproduces the bug
    - Confirm the test fails for the RIGHT reason (not syntax error)
 3. Implement the fix (minimal change)

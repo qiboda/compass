@@ -42,7 +42,7 @@ Follow the compass workflow exactly:
 
 ### 5. Create PR
 
-- Create a feature branch: `git checkout -b pr/impl-<issue_number>`
+- Create a feature branch: `git checkout -b feat/impl-<issue_number>`
 - Commit with format: `feat: <description>\n\nref #<issue_number>`
 - Atomic: one logical unit per commit
 - Include kb/ updates in the same commit

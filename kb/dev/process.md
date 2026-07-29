@@ -187,7 +187,7 @@ Trivial fixes (typo, config, one-line change) can go directly to master.
 ```
 master  ●──●──●──●────────●  (trunk)
               \          /
-pr/xxx        ●──●──●──┘   (feature branch, PR, merge)
+feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
 ```
 
 **Merge strategy**: Use regular merge (not squash). Preserves all commit
@@ -214,7 +214,7 @@ gh issue comment <N> --body "PR #M 已合并。与 PR 描述不一致之处：
 
 Worktrees live at `.worktrees/<name>/` (gitignored). Each worktree is a
 **transient PR workspace**, created for a single PR or epic and cleaned up
-after merge. Branch naming: `pr/<short-description>`.
+after merge. Branch naming: `feat/<short-description>` or `fix/<short-description>`.
 
 The `/worktree` skill provides conventions and commands.
 
@@ -231,7 +231,7 @@ the `/worktree` skill give full control without those issues.
 
 **After PR merge**:
 1. Remove worktree: `git worktree remove .worktrees/<name> --force`
-2. Delete PR branch: `git branch -D pr/<name>`
+2. Delete PR branch: `git branch -D feat/<name>`
 4. Stay in master — don't switch session into the worktree directory
 
 ## Version control

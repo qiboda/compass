@@ -215,7 +215,7 @@ deviation — even a pragmatic workaround — requires user approval first.
 
 For PR development, load the `worktree` skill. Worktrees live at
 `.worktrees/<name>/` — each is a **transient PR workspace**, created for
-a single PR and cleaned up after merge. Branch naming: `pr/<short-description>`.
+a single PR and cleaned up after merge. Branch naming: `feat/<short-description>` or `fix/<short-description>`.
 
 After creating a worktree, the skill enforces MANDATORY post-creation steps:
 1. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
@@ -224,7 +224,7 @@ After creating a worktree, the skill enforces MANDATORY post-creation steps:
 
 After PR merge, the skill enforces MANDATORY cleanup:
 1. Remove worktree: `git worktree remove .worktrees/<name> --force`
-2. Delete PR branch: `git branch -D pr/<name>`
+2. Delete PR branch: `git branch -D feat/<name>`
 
 ## Knowledge base
 
