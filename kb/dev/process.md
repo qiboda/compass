@@ -232,7 +232,6 @@ the `/worktree` skill give full control without those issues.
 **After PR merge**:
 1. Remove worktree: `git worktree remove .worktrees/<name> --force`
 2. Delete PR branch: `git branch -D feat/<name>`
-4. Stay in master — don't switch session into the worktree directory
 
 ## Version control
 

@@ -154,7 +154,7 @@ Trivial fixes (typo, config, one-line change) can go directly to master.
 ```
 master  ●──●──●──●────────●  (trunk)
               \          /
-pr/xxx        ●──●──●──┘   (PR branch, merge via PR)
+feat/xxx      ●──●──●──┘   (feature branch, merge via PR)
 ```
 
 ### 9. Label Enforcement
