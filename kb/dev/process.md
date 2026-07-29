@@ -107,8 +107,11 @@ The pre-push hook (`.githooks/pre-push`) enforces these checks in order:
 5. **Issue references**: `ref #N` must point to open issues
 
 Manual pre-push checklist:
-cargo doc --no-deps         # must be warning-free
-```
+
+1. `cargo fmt --check` — code must be formatted
+2. `cargo clippy -- -D warnings` — no warnings
+3. `cargo doc --no-deps` — must be warning-free
+4. Issue references: `ref #N` must point to open issues
 
 All four must pass before `git push`. Never push broken code.
 `cargo doc --no-deps` verifies that `#![warn(missing_docs)]` in
@@ -129,7 +132,7 @@ Push immediately after completing each issue. Do not batch.
 
 - Each commit = one logical unit. Never mix bugfix + feature + refactor.
 - Conventional commits: `feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`.
-- Bugfix commits use `fixes #N`, feature commits use `closes #N`.
+- Issue linking: `feat`/`fix` commits use `ref #N` (issues closed manually after push).
 - Template: `git config commit.template .gitmessage` is already set.
 
 ## Git branching

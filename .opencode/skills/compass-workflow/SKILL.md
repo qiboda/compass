@@ -247,7 +247,7 @@ See `.opencode/skills/reflect/SKILL.md` for the full reflection workflow.
 
 - `feat:` / `fix:` / `test:` / `refactor:` / `docs:` / `chore:`
 - Atomic: one logical unit per commit
-- Push immediately after commit
+- Push only on explicit user command (never auto-push)
 
 ## Code Style
 
