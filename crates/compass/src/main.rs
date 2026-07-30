@@ -245,12 +245,32 @@ impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.theme.apply_theme(ui.ctx());
 
-        ui.horizontal(|ui| {
-            ui.add_space(ui.spacing().item_spacing.x);
-            ui.vertical(|ui| {
-                self.render_toolbar(ui);
+        // Toolbar with slightly darker/lighter background for visual separation.
+        let toolbar_bg = {
+            let panel = ui.visuals().panel_fill;
+            let (r, g, b) = (panel.r(), panel.g(), panel.b());
+            if ui.visuals().dark_mode {
+                egui::Color32::from_rgb(
+                    r.saturating_sub(15),
+                    g.saturating_sub(15),
+                    b.saturating_sub(15),
+                )
+            } else {
+                egui::Color32::from_rgb(
+                    r.saturating_add(15),
+                    g.saturating_add(15),
+                    b.saturating_add(15),
+                )
+            }
+        };
+        egui::Frame::default()
+            .fill(toolbar_bg)
+            .inner_margin(egui::Vec2::new(4.0, 2.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    self.render_toolbar(ui);
+                });
             });
-        });
 
         ui.separator();
 
