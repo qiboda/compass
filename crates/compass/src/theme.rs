@@ -112,6 +112,7 @@ impl CompassTheme {
     ///
     /// Useful for populating theme-switcher dropdowns in settings UI.
     /// The default theme (`compass_dark`) is always first.
+    #[allow(dead_code)]
     pub fn all() -> Vec<Self> {
         vec![
             Self::compass_dark(),
@@ -134,17 +135,6 @@ impl CompassTheme {
     }
 }
 
-/// Returns the ordered list of available theme names.
-///
-/// The default theme ("compass_dark") is always first in the list.
-pub fn theme_names() -> Vec<String> {
-    vec![
-        "compass_dark".to_string(),
-        "compass_light".to_string(),
-        "compass_blue".to_string(),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,7 +147,7 @@ mod tests {
 
     #[test]
     fn theme_names_includes_compass_dark_first() {
-        let names = theme_names();
+        let names = CompassTheme::all_names();
         assert!(!names.is_empty(), "theme list must not be empty");
         assert_eq!(names[0], "compass_dark");
     }

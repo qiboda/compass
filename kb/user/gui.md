@@ -74,7 +74,7 @@ a brief message, and auto-dismisses after a preset duration.
 | Type | Icon | Dismiss | Example |
 |---|---|---|---|
 | Success | ✅ | 3 seconds | "Data loaded: sh.600519 (100 bars)" |
-| Warning | ⚠ | 5 seconds | "No data available for this date range" |
+| Warning | ⚠ | 3 seconds | "No data available for this date range" |
 | Error | ❌ | 8 seconds | "Network error: connection timeout" |
 | Info | ℹ | 3 seconds | "Import complete: 2,430 records" |
 
@@ -140,6 +140,7 @@ Create `~/.config/compass/config.toml` to set startup preferences:
 [app]
 default_symbol = "600519"
 default_timeframe = "1d"
+
 theme = "compass_light"
 ```
 

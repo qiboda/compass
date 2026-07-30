@@ -54,16 +54,19 @@ impl Modal {
     }
 
     /// Returns `true` if the modal is currently open (visible).
+    #[allow(dead_code)]
     pub fn is_open(&self) -> bool {
         self.is_open
     }
 
     /// Open the modal (make the overlay visible).
+    #[allow(dead_code)]
     pub fn open(&mut self) {
         self.is_open = true;
     }
 
     /// Close the modal (hide the overlay).
+    #[allow(dead_code)]
     pub fn close(&mut self) {
         self.is_open = false;
     }
@@ -71,6 +74,7 @@ impl Modal {
     /// Toggle the open/close state.
     ///
     /// If open, close; if closed, open.
+    #[allow(dead_code)]
     pub fn toggle(&mut self) {
         self.is_open = !self.is_open;
     }
@@ -174,10 +178,8 @@ impl Modal {
                 });
             });
 
-        if should_confirm {
-            if let Some(cb) = self.on_confirm.take() {
-                cb();
-            }
+        if should_confirm && let Some(cb) = self.on_confirm.take() {
+            cb();
         }
         if should_close {
             self.is_open = false;

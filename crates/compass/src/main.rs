@@ -126,6 +126,8 @@ fn main() -> eframe::Result {
                 toast: ToastManager::new(),
                 modal: Modal::new(),
                 file_dialog: FileDialog::new(),
+                last_error: None,
+                last_loading: false,
             }))
         }),
     )
@@ -235,6 +237,8 @@ struct CompassApp {
     toast: ToastManager,
     modal: Modal,
     file_dialog: FileDialog,
+    last_error: Option<String>,
+    last_loading: bool,
 }
 
 impl eframe::App for CompassApp {
@@ -329,9 +333,21 @@ impl CompassApp {
             if self.shared_state.loading.get() {
                 ui.spinner();
             }
-            if let Some(ref err) = self.shared_state.error.get() {
-                self.toast.push(ToastLevel::Error, err.clone());
+            // Push error toast only on None→Some transition (not every frame)
+            let current_err = self.shared_state.error.get();
+            if current_err != self.last_error {
+                if let Some(ref err) = current_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_error = current_err;
             }
+
+            // Push success toast when loading transitions true→false with no error
+            let current_loading = self.shared_state.loading.get();
+            if self.last_loading && !current_loading && self.shared_state.error.get().is_none() {
+                self.toast.push(ToastLevel::Success, "Data fetched successfully");
+            }
+            self.last_loading = current_loading;
 
             ui.separator();
 

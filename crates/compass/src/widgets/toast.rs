@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 /// Severity level of a toast notification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
 pub enum ToastLevel {
     /// Informational message — no user action required.
     Info,
@@ -77,11 +78,13 @@ impl ToastManager {
     }
 
     /// Number of pending toasts.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.toasts.len()
     }
 
     /// Returns true if no toasts are pending.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.toasts.is_empty()
     }
@@ -100,6 +103,7 @@ impl ToastManager {
     }
 
     /// Remove and return the oldest toast (FIFO). Returns `None` if empty.
+    #[allow(dead_code)]
     pub fn pop(&mut self) -> Option<Toast> {
         if self.toasts.is_empty() {
             None
@@ -108,13 +112,70 @@ impl ToastManager {
         }
     }
 
-    /// Remove expired toasts and render remaining ones.
+    /// Remove expired toasts and render remaining ones in a top-right stack.
     ///
-    /// Stub — rendering will be filled in Todo 9. Expiry cleanup is
-    /// functional: any toast whose duration has elapsed is removed.
-    #[allow(unused_variables)]
+    /// Each toast is rendered as a colored card with a Phosphor icon, the
+    /// message text, and a thin horizontal progress bar that shrinks as the
+    /// toast approaches expiry.
     pub fn render(&mut self, ctx: &egui::Context) {
         self.toasts.retain(|t| !t.is_expired());
+
+        if self.toasts.is_empty() {
+            return;
+        }
+
+        egui::Area::new(egui::Id::new("toast_area"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 16.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                for toast in &self.toasts {
+                    let (icon, color) = match toast.level {
+                        ToastLevel::Info => (
+                            egui_phosphor::regular::INFO,
+                            egui::Color32::from_rgb(59, 130, 246),
+                        ),
+                        ToastLevel::Success => (
+                            egui_phosphor::regular::CHECK_CIRCLE,
+                            egui::Color32::from_rgb(34, 197, 94),
+                        ),
+                        ToastLevel::Warning => (
+                            egui_phosphor::regular::WARNING,
+                            egui::Color32::from_rgb(234, 179, 8),
+                        ),
+                        ToastLevel::Error => (
+                            egui_phosphor::regular::X_CIRCLE,
+                            egui::Color32::from_rgb(239, 68, 68),
+                        ),
+                    };
+
+                    let elapsed = toast.created_at.elapsed();
+                    let remaining = toast.duration.saturating_sub(elapsed);
+                    let fraction = remaining.as_secs_f32()
+                        / toast.duration.as_secs_f32().max(0.001);
+
+                    egui::Frame::new()
+                        .fill(color.linear_multiply(0.15))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
+                            ui.set_min_width(240.0);
+                            ui.horizontal(|ui| {
+                                ui.colored_label(color, icon.to_string());
+                                ui.add_space(6.0);
+                                ui.label(&toast.message);
+                            });
+                            // Thin progress bar showing remaining lifetime
+                            let bar_width = ui.available_width()
+                                * fraction.clamp(0.0, 1.0);
+                            let bar_rect = egui::Rect::from_min_size(
+                                ui.next_widget_position(),
+                                egui::vec2(bar_width, 3.0),
+                            );
+                            ui.painter().rect_filled(bar_rect, 0.0, color);
+                            ui.add_space(4.0);
+                        });
+                }
+            });
     }
 }
 
