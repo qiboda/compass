@@ -256,15 +256,24 @@ impl eframe::App for CompassApp {
             }
         };
 
-        let toolbar_top = ui.next_widget_position();
-        ui.horizontal(|ui| {
-            self.render_toolbar(ui);
-        });
-        let toolbar_rect = egui::Rect::from_min_max(
-            toolbar_top,
-            egui::pos2(ui.max_rect().right(), ui.min_rect().bottom()),
-        );
-        ui.painter().rect_filled(toolbar_rect, 0.0, toolbar_bg);
+        // Toolbar with full-width background.
+        let toolbar_bg = {
+            let panel = ui.visuals().panel_fill;
+            let (r, g, b) = (panel.r(), panel.g(), panel.b());
+            if ui.visuals().dark_mode {
+                egui::Color32::from_rgb(r.saturating_sub(15), g.saturating_sub(15), b.saturating_sub(15))
+            } else {
+                egui::Color32::from_rgb(r.saturating_add(15), g.saturating_add(15), b.saturating_add(15))
+            }
+        };
+        egui::Frame::default()
+            .fill(toolbar_bg)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    self.render_toolbar(ui);
+                });
+            });
 
         // Dock area with explicit background matching the theme.
         let dock_bg = ui.visuals().panel_fill;
