@@ -272,28 +272,32 @@ impl eframe::App for CompassApp {
                 });
             });
 
-        ui.separator();
+        // Dock area with explicit background matching the theme.
+        let dock_bg = ui.visuals().panel_fill;
+        egui::Frame::default()
+            .fill(dock_bg)
+            .show(ui, |ui| {
+                DockArea::new(&mut self.dock_state)
+                    .style(self.dock_style.clone())
+                    .show_inside(
+                        ui,
+                        &mut TabViewer {
+                            dispatcher: &mut self.dispatcher,
+                            chart: &mut self.chart,
+                            logger: &mut self.logger,
+                            shared_state: &self.shared_state,
+                            theme: &self.theme,
+                        },
+                    );
 
-        DockArea::new(&mut self.dock_state)
-            .style(self.dock_style.clone())
-            .show_inside(
-            ui,
-            &mut TabViewer {
-                dispatcher: &mut self.dispatcher,
-                chart: &mut self.chart,
-                logger: &mut self.logger,
-                shared_state: &self.shared_state,
-                theme: &self.theme,
-            },
-            );
+                self.toast.render(ui.ctx());
+                self.modal.show(ui.ctx());
+                self.file_dialog.update(ui.ctx());
 
-            self.toast.render(ui.ctx());
-            self.modal.show(ui.ctx());
-            self.file_dialog.update(ui.ctx());
+                dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
-            dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
-
-        ui.ctx().request_repaint_after(Duration::from_millis(200));
+                ui.ctx().request_repaint_after(Duration::from_millis(200));
+            });
     }
 }
 
