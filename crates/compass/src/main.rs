@@ -24,7 +24,7 @@ use tabs::{CHART_ID, LOGGER_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
 use widgets::modal::Modal;
 use widgets::searchable_dropdown::StockPicker;
-use widgets::toast::{ToastManager, ToastLevel};
+use widgets::toast::{ToastLevel, ToastManager};
 
 fn setup_cjk_fonts(ctx: &egui::Context) {
     let font_path = "/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Regular.otf";
@@ -250,53 +250,60 @@ impl eframe::App for CompassApp {
             let panel = ui.visuals().panel_fill;
             let (r, g, b) = (panel.r(), panel.g(), panel.b());
             if ui.visuals().dark_mode {
-                egui::Color32::from_rgb(r.saturating_sub(15), g.saturating_sub(15), b.saturating_sub(15))
+                egui::Color32::from_rgb(
+                    r.saturating_sub(15),
+                    g.saturating_sub(15),
+                    b.saturating_sub(15),
+                )
             } else {
-                egui::Color32::from_rgb(r.saturating_add(15), g.saturating_add(15), b.saturating_add(15))
+                egui::Color32::from_rgb(
+                    r.saturating_add(15),
+                    g.saturating_add(15),
+                    b.saturating_add(15),
+                )
             }
         };
-        egui::Frame::default()
-            .fill(toolbar_bg)
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    self.render_toolbar(ui);
-                });
+        egui::Frame::default().fill(toolbar_bg).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                self.render_toolbar(ui);
             });
+        });
 
         // Dock area with explicit background matching the theme.
         let dock_bg = ui.visuals().panel_fill;
-        egui::Frame::default()
-            .fill(dock_bg)
-            .show(ui, |ui| {
-                DockArea::new(&mut self.dock_state)
-                    .style(self.dock_style.clone())
-                    .show_inside(
-                        ui,
-                        &mut TabViewer {
-                            dispatcher: &mut self.dispatcher,
-                            chart: &mut self.chart,
-                            logger: &mut self.logger,
-                            shared_state: &self.shared_state,
-                            theme: &self.theme,
-                        },
-                    );
+        egui::Frame::default().fill(dock_bg).show(ui, |ui| {
+            DockArea::new(&mut self.dock_state)
+                .style(self.dock_style.clone())
+                .show_inside(
+                    ui,
+                    &mut TabViewer {
+                        dispatcher: &mut self.dispatcher,
+                        chart: &mut self.chart,
+                        logger: &mut self.logger,
+                        shared_state: &self.shared_state,
+                        theme: &self.theme,
+                    },
+                );
 
-                self.toast.render(ui.ctx());
-                self.modal.show(ui.ctx());
-                self.file_dialog.update(ui.ctx());
+            self.toast.render(ui.ctx());
+            self.modal.show(ui.ctx());
+            self.file_dialog.update(ui.ctx());
 
-                dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
+            dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
-                ui.ctx().request_repaint_after(Duration::from_millis(200));
-            });
+            ui.ctx().request_repaint_after(Duration::from_millis(200));
+        });
     }
 }
 
 impl CompassApp {
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(format!("{} Symbol:", egui_phosphor::regular::MAGNIFYING_GLASS));
+            ui.label(format!(
+                "{} Symbol:",
+                egui_phosphor::regular::MAGNIFYING_GLASS
+            ));
             self.stock_picker.show(ui, &self.stock_list);
 
             ui.separator();
@@ -316,10 +323,7 @@ impl CompassApp {
             self.timeframe_index = tf;
 
             if ui
-                .button(format!(
-                    "{} Fetch",
-                    egui_phosphor::regular::DOWNLOAD_SIMPLE
-                ))
+                .button(format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE))
                 .clicked()
             {
                 let symbol = if self.stock_picker.selected_exchange.is_empty() {
@@ -362,7 +366,8 @@ impl CompassApp {
             // Push success toast when loading transitions true→false with no error
             let current_loading = self.shared_state.loading.get();
             if self.last_loading && !current_loading && self.shared_state.error.get().is_none() {
-                self.toast.push(ToastLevel::Success, "Data fetched successfully");
+                self.toast
+                    .push(ToastLevel::Success, "Data fetched successfully");
             }
             self.last_loading = current_loading;
 

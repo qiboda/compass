@@ -135,11 +135,8 @@ impl Modal {
                 // to the UI behind the modal.
                 ui.allocate_rect(screen_rect, Sense::click());
 
-                ui.painter().rect_filled(
-                    screen_rect,
-                    0.0,
-                    Color32::from_black_alpha(160),
-                );
+                ui.painter()
+                    .rect_filled(screen_rect, 0.0, Color32::from_black_alpha(160));
             });
 
         // --- Centered modal panel ---
@@ -163,18 +160,15 @@ impl Modal {
                     ui.add_space(16.0);
 
                     // Buttons
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui.button("Cancel").clicked() {
-                                should_close = true;
-                            }
-                            if ui.button("  OK  ").clicked() {
-                                should_confirm = true;
-                                should_close = true;
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Cancel").clicked() {
+                            should_close = true;
+                        }
+                        if ui.button("  OK  ").clicked() {
+                            should_confirm = true;
+                            should_close = true;
+                        }
+                    });
                 });
             });
 

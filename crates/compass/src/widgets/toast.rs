@@ -40,9 +40,7 @@ impl Toast {
     /// - Error: 8 seconds
     fn new(level: ToastLevel, message: String) -> Self {
         let duration = match level {
-            ToastLevel::Info | ToastLevel::Success | ToastLevel::Warning => {
-                Duration::from_secs(3)
-            }
+            ToastLevel::Info | ToastLevel::Success | ToastLevel::Warning => Duration::from_secs(3),
             ToastLevel::Error => Duration::from_secs(8),
         };
         Self {
@@ -72,9 +70,7 @@ pub struct ToastManager {
 impl ToastManager {
     /// Create an empty toast manager.
     pub fn new() -> Self {
-        Self {
-            toasts: Vec::new(),
-        }
+        Self { toasts: Vec::new() }
     }
 
     /// Number of pending toasts.
@@ -150,8 +146,8 @@ impl ToastManager {
 
                     let elapsed = toast.created_at.elapsed();
                     let remaining = toast.duration.saturating_sub(elapsed);
-                    let fraction = remaining.as_secs_f32()
-                        / toast.duration.as_secs_f32().max(0.001);
+                    let fraction =
+                        remaining.as_secs_f32() / toast.duration.as_secs_f32().max(0.001);
 
                     egui::Frame::new()
                         .fill(color.linear_multiply(0.15))
@@ -165,8 +161,7 @@ impl ToastManager {
                                 ui.label(&toast.message);
                             });
                             // Thin progress bar showing remaining lifetime
-                            let bar_width = ui.available_width()
-                                * fraction.clamp(0.0, 1.0);
+                            let bar_width = ui.available_width() * fraction.clamp(0.0, 1.0);
                             let bar_rect = egui::Rect::from_min_size(
                                 ui.next_widget_position(),
                                 egui::vec2(bar_width, 3.0),

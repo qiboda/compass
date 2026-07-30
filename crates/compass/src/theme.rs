@@ -62,17 +62,15 @@ impl CompassTheme {
 
     /// Apply this theme's colors to a chart widget.
     ///
-    /// Maps semantic chart tokens onto the chart's [`ChartConfig`] and sets
+    /// Maps semantic chart tokens onto the chart's config and sets
     /// crosshair line colors from the theme's token palette.
     pub fn apply_to_chart(&self, chart: &mut egui_charts::Chart) {
         let config = chart.config.clone();
         chart.config = self.inner.apply_to_config(config);
 
         // Crosshair colors live on ChartOptions, not ChartConfig.
-        chart.chart_options.crosshair.vert_line_color =
-            self.inner.semantic.chart.crosshair_line;
-        chart.chart_options.crosshair.horz_line_color =
-            self.inner.semantic.chart.crosshair_line;
+        chart.chart_options.crosshair.vert_line_color = self.inner.semantic.chart.crosshair_line;
+        chart.chart_options.crosshair.horz_line_color = self.inner.semantic.chart.crosshair_line;
     }
 
     /// Resolve a theme from its config name string.
@@ -80,7 +78,6 @@ impl CompassTheme {
     /// Maps known theme names to their constructors:
     /// - `"compass_dark"` → [`compass_dark`](Self::compass_dark)
     /// - `"compass_light"` → [`compass_light`](Self::compass_light)
-    /// - `"compass_blue"` → [`compass_blue`](Self::compass_blue)
     ///
     /// Unknown names fall back to `compass_dark`.
     pub fn from_config(name: &str) -> Self {

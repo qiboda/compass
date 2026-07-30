@@ -1,8 +1,8 @@
 use crate::state::SharedState;
 use crate::theme::CompassTheme;
+use egui_charts::ChartType;
 use egui_charts::model::BarData;
 use egui_charts::widget::Chart;
-use egui_charts::ChartType;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 
 /// Chart panel citizen — renders an interactive OHLCV candlestick chart.
@@ -56,12 +56,7 @@ impl ChartCitizen {
     /// Applies `app_theme` chart colors (candles, grid, crosshair) each
     /// frame, reads `bars` from shared state, and delegates rendering to
     /// the egui-charts widget.
-    pub fn show(
-        &mut self,
-        ui: &mut egui::Ui,
-        state: &SharedState,
-        app_theme: &CompassTheme,
-    ) {
+    pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, app_theme: &CompassTheme) {
         app_theme.apply_to_chart(&mut self.chart);
 
         let bars = state.bars.get();
