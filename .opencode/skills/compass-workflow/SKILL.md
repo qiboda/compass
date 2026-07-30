@@ -48,10 +48,14 @@ I will now check each gate step before proceeding:
 ☐ STEP 4b — DOCS (kb/)
    → Invoke /docs to identify and update kb/ files
    → [must list files]
+
+☐ STEP 4c — DECISION RECORDS
+   → Check relevant kb/design/ files contain ## 决策记录 sections
+   → If missing, add before proceeding
 ```
 
 **You are FORBIDDEN from using any edit/write/bash tools for implementation
-until ALL four steps (1-4) above are completed and shown to the user.**
+until ALL five steps (1-4c) above are completed and shown to the user.**
 
 If you find yourself writing code without completing the gate, STOP IMMEDIATELY
 and go back to step 0. This is a HARD BLOCK — no exceptions for feature/bugfix work.
@@ -167,6 +171,23 @@ See `kb/github/labels.md` for the complete taxonomy.
 
 `gh issue create --label "C-Bug,A-Data"` or `gh pr create --label "C-Feature,A-GUI"`.
 
+### 10. Sprint Rhythm
+
+Use GitHub Milestones for weekly sprint management. Monday (plan) → Sunday (review).
+
+- **Monday**: plan the sprint — review open issues, read `kb/design/roadmap.md`, invoke `/product brainstorm` for milestone candidates
+- **Sunday**: review completed work, close milestone if all issues resolved, invoke `/reflect`
+- Manual override: `/product brainstorm` anytime for fresh candidates
+
+### 11. Friction Record
+
+When the user corrects AI behavior (contradiction, scope expansion, missed constraint,
+approach redirect) — pause and suggest recording via `/friction`.
+
+- Covers ALL corrective interactions, not just grill-me disagreements
+- Record in `kb/dev/friction.md` via `/friction` skill
+- Prompt user after correction is resolved, not during active work
+
 ---
 
 ## 📋 Available Skills
@@ -180,6 +201,7 @@ The compass project provides these opencode skills for specific workflow steps:
 | rustdoc | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance | Step 4a — RUSTDOC |
 | docs | `/docs` | Identify and update kb/ files | Step 4b — DOCS |
 | reflect | `/reflect` | Write post-implementation reflection + trend analysis | Post-implementation |
+| friction | `/friction` | Record AI behavior corrections during work | Post-correction / on-demand |
 
 When the gate checklist says `→ Invoke /<command>`, load that skill and follow
 its workflow. Each skill has a `SKILL.md` file in `.opencode/skills/<name>/`.

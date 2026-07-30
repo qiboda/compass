@@ -217,6 +217,30 @@ file.
 float shares, and daily price limits (涨停/跌停). This is supplementary — the
 GUI could show these as an info panel alongside the chart.
 
+### Financial statement API (datacenter-web)
+
+EastMoney provides a separate datacenter API for financial statement data,
+used by the Python `collectors/` pipeline:
+
+| Purpose | Base URL | Notes |
+|---|---|---|
+| Financial data | `datacenter-web.eastmoney.com` | `/api/data/v1/get` |
+
+Available `reportName` values:
+
+| reportName | Table | Fields | Description |
+|---|---|---|---|
+| `RPT_LICO_FN_CPD` | `fin_indicators` | 37 | 主要财务指标 (key financial indicators) |
+| `RPT_DMSK_FN_BALANCE` | `fin_balance_sheet` | 57 | 资产负债表 (balance sheet) |
+| `RPT_DMSK_FN_INCOME` | `fin_income` | 46 | 利润表 (income statement) |
+| `RPT_DMSK_FN_CASHFLOW` | `fin_cash_flow` | 48 | 现金流量表 (cash flow statement) |
+
+**Important**: The three statement reports (`RPT_DMSK_FN_*`) use `REPORT_DATE`
+(underscore) as the filter column, while `RPT_LICO_FN_CPD` uses `REPORTDATE`
+(no underscore). Filter syntax: `(REPORT_DATE='2024-12-31')`.
+
+Data flows: EastMoney datacenter → CSV → Dolt `compass_data` → Parquet.
+
 ### Rate limiting and resilience
 
 - The API has no documented rate limit but throttles aggressively.
@@ -490,3 +514,11 @@ For the CLI, most settings are command-line arguments (see `compass-data --help`
 - `--base-url`, `--realtime-url`: override EastMoney endpoints
 - `--concurrency`, `--delay-ms`: control download rate
 - `--db`: staging DuckDB path
+
+## 决策记录
+
+| 决策 | 选项 | 选择 | 理由 | 排除原因 |
+|------|------|------|------|----------|
+| 数据访问抽象：Provider 层设计 | 各后端直接调用 / trait 统一接口 | 三 trait 体系：DataProvider + DataWriter + NegativeCache | 多数据源（Dolt/DuckDB/Parquet/EastMoney）需统一接口；trait 支持 mock 实现用于测试，消费者与后端解耦 | 直接调用导致每个消费者需知道后端类型，无法替换或测试 |
+| 缓存策略：GUI 数据读取链路 | 直接查询 / 简单缓存 / 多层读穿缓存 | CachedProvider 五步读穿：负缓存检查 → 去重 → 缓存读 → 远端获取 → 写回 | 负缓存避免对无效标的重复 API 调用（TTL 7天）；去重防止并发重复请求；读穿确保缓存命中即返回，未命中自动回源 | 简单缓存无负缓存机制，会对不存在的标的反复请求 API；无去重会在并发场景下产生重复调用 |
+| 错误处理：错误类型设计 | anyhow 通用错误 / 精确枚举 | DataError 枚举：Network / Database / Parse / RateLimited / NoData，含 From 实现 | 调用方可区分错误类型（如 NoData 表示标的不存在 vs Network 表示网络中断），GUI 可据此展示不同提示；From 实现支持 `?` 传播 | anyhow 丢失错误分类信息，调用方无法做差异化处理；Parse 携带原始字符串便于排查 API 响应变更 |

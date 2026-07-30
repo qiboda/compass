@@ -314,6 +314,9 @@ fetching data from EastMoney public APIs and importing into Dolt:
 | `main.py` | 统一 CLI: fetch/import/sync/sync-investment | — |
 | `fetch_stock_basic.py` | 公司基本信息 | 12,388 stocks, 13 fields |
 | `fetch_fin_indicators.py` | 财务指标 | 473K rows, 37 fields, 2000-2026 |
+| `fetch_balance_sheet.py` | 资产负债表 | 57 fields, quarterly, RPT_DMSK_FN_BALANCE |
+| `fetch_income.py` | 利润表 | 46 fields, quarterly, RPT_DMSK_FN_INCOME |
+| `fetch_cash_flow.py` | 现金流量表 | 48 fields, quarterly, RPT_DMSK_FN_CASHFLOW |
 
 Toolchain: `uv` (Python dependency manager) + `ruff` (lint/formatter) +
 `pytest` (16 tests) + `mypy` (type checking). CI via GitHub Actions,
@@ -513,3 +516,12 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
   timeframe mapping
 - **API reference**: `cargo doc --open` — full type-level documentation for
   all public APIs
+
+## 决策记录
+
+| 决策 | 选项 | 选择 | 理由 | 排除原因 |
+|------|------|------|------|----------|
+| 数据访问策略：GUI 读取数据的来源 | 在线 API 直接请求 / 本地文件缓存 / 纯本地无回退 | 纯本地 Parquet 文件，无在线回退 | 本地读取零延迟、无网络依赖、无 API 限流；数据管线（import/collector）离线运行，GUI 只查询已落盘数据 | 在线 API 增加延迟和失败点；缓存策略需处理过期和同步问题，增加复杂度 |
+| 异步架构：UI 线程与 I/O 分离方案 | 手动 std::thread + mpsc / 框架托管的 citizen 模式 | egui-mobius citizen 模式：Citizen trait + Dynamic\<T\> + Signal/Slot + AsyncDispatcher | 消除手动线程布线、Arc\<Mutex\> 竞争和版本计数器；Citizen 通过 outbox 解耦，AsyncDispatcher 自管 tokio runtime | 手动线程方案代码量大、易出错；Dynamic\<T\> 提供字段级独立读写，无跨字段锁竞争 |
+| 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），但通过 DuckDB staging + merge 管线解决；每标的单独文件增加文件管理开销 |
+| 符号约定：规范标识符格式 | ts_code 格式（`000001.SZ`）/ Dolt-native 前缀格式（`SZ000001`） | Dolt-native 前缀格式 | 前缀即交换所见即所得，无歧义（`SZ000852` 和 `SH000852` 可共存）；交换所可从代码推断，ts_code 的后缀冗余 | ts_code 将身份与元数据混合，`.SZ` 后缀冗余且格式不一致（需解析 `.` 分隔符） |

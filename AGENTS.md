@@ -107,6 +107,7 @@ checklist above. Do not skip any step.
 | `rustdoc` | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance |
 | `docs` | `/docs` | Identify and update `kb/` files based on code changes |
 | `reflect` | `/reflect` | Write post-implementation reflections with trend analysis |
+| `friction` | `/friction` | Record AI behavior corrections to `kb/dev/friction.md` |
 
 All skills are located under `.opencode/skills/<name>/SKILL.md`. OpenCode
 auto-discovers skills from the filesystem — no registration needed.
@@ -211,6 +212,37 @@ Flag the issue to the user and ask for a decision.
 The grill-me decisions and the approved plan define the contract. Any
 deviation — even a pragmatic workaround — requires user approval first.
 
+## Sprint 规划
+
+使用 GitHub Milestones 进行每周 sprint 管理（周一～周日，周末为核心开发窗口），
+以产品视角驱动敏捷开发。
+
+- **周一**：规划 milestone — product agent 自动扫描代码库和 open issues，提出 3-5 个候选需求
+- **周日**：回顾完成情况，close 已完成的 milestone
+- **手动触发**：`/product brainstorm` 随时获取候补需求
+
+Sprint 节奏由 `compass-workflow` skill 的 Sprint Rhythm 规则强制执行。
+
+## 摩擦记录
+
+任何「AI 行为偏差被用户纠正」的场合，都应记录到 `kb/dev/friction.md`。
+
+- **触发方式**: 自动检测（用户纠正 AI 时提示）或手动 `/friction` 命令
+- **范围**: 所有纠正型交互 — grill-me 分歧、执行方向偏离、意图误解、约束遗漏等
+- **格式**: `[日期] [关联会话] [我的偏差] [你的纠正] [教训]`
+- **与 reflections 区分**: friction 记录决策过程中的卡点和纠正；reflections 记录实施后的教训
+
+摩擦记录由 `compass-workflow` skill 的 Friction Record 规则触发，`/friction` skill 执行写入。
+
+## 决策记录
+
+所有 `kb/design/` 下的设计文档 MUST 包含 `## 决策记录` 章节，自包含地记录
+关键设计决策的 **what + why + why-not**。
+
+- **格式**: 表格 `| 决策 | 选项 | 选择 | 理由 | 排除原因 |`
+- **保障**: `compass-workflow` PRE-IMPLEMENTATION GATE Step 4c 检查是否存在
+- **自包含**: 决策记录不依赖外部引用（如 friction.md），所有理由直接写在设计文档内
+
 ## Worktrees
 
 For PR development, load the `worktree` skill. Worktrees live at
@@ -242,9 +274,11 @@ Detailed docs under `kb/` — organized into four sections:
 | `kb/design/architecture.md` | System overview, crate relationships, threading rationale, data pipeline flows, storage strategy, library decisions |
 | `kb/design/data-providers.md` | Trait system design, DuckDbProvider read-through pattern, Parquet/DuckDB/Dolt providers, error handling |
 | `kb/design/symbols.md` | A-share market segments, symbol convention rationale, exchange inference, secid mapping, timeframe handling |
+| `kb/design/roadmap.md` | Product roadmap — vision, completed, and planned milestones |
 | `kb/dev/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
 | `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
+| `kb/dev/friction.md` | Friction records — AI behavior corrections and lessons |
 | `kb/user/index.md` | User overview — what Compass is, quickstart, prereqs |
 | `kb/user/gui.md` | Chart app — interface, controls, data flow, stock codes |
 | `kb/user/cli.md` | Data pipeline — import, export, workflows, troubleshooting |
