@@ -136,78 +136,6 @@ impl StockPicker {
                                             self.filter_text.clear();
                                         }
                                     }
-
-                                    #[cfg(test)]
-                                    mod tests {
-                                        use super::*;
-                                        use compass_core::model::StockBasic;
-
-                                        fn make_stock(
-                                            symbol: &str,
-                                            name: &str,
-                                            exchange: &str,
-                                        ) -> StockBasic {
-                                            StockBasic {
-                                                symbol: symbol.into(),
-                                                name: name.into(),
-                                                area: None,
-                                                industry: None,
-                                                market: None,
-                                                exchange: Some(exchange.into()),
-                                                list_date: None,
-                                                delist_date: None,
-                                            }
-                                        }
-
-                                        #[test]
-                                        fn format_display_full() {
-                                            assert_eq!(
-                                                format_display("SZ", "000001", "平安银行"),
-                                                "SZ | 000001 | 平安银行"
-                                            );
-                                        }
-
-                                        #[test]
-                                        fn format_display_no_name() {
-                                            assert_eq!(
-                                                format_display("SZ", "000001", ""),
-                                                "SZ | 000001"
-                                            );
-                                        }
-
-                                        #[test]
-                                        fn format_display_no_exchange() {
-                                            assert_eq!(
-                                                format_display("", "000001", "平安银行"),
-                                                "000001 | 平安银行"
-                                            );
-                                        }
-
-                                        #[test]
-                                        fn format_display_symbol_only() {
-                                            assert_eq!(format_display("", "000001", ""), "000001");
-                                        }
-
-                                        #[test]
-                                        fn stock_picker_starts_with_empty_cache() {
-                                            let stocks = vec![
-                                                make_stock("000001", "平安银行", "SZ"),
-                                                make_stock("600519", "贵州茅台", "SH"),
-                                            ];
-                                            let picker = StockPicker::new("000001", &stocks);
-                                            assert!(picker.cached_indices.is_empty());
-                                        }
-
-                                        #[test]
-                                        fn stock_picker_detects_filter_change() {
-                                            let stocks =
-                                                vec![make_stock("000001", "平安银行", "SZ")];
-                                            let mut picker = StockPicker::new("000001", &stocks);
-                                            picker.filter_text = "平安".into();
-                                            picker.popup_open = true;
-                                            assert_ne!(picker.filter_text, picker.last_filter_text);
-                                        }
-                                    }
                                 }
                                 if filtered_count == 0 {
                                     ui.label("No results");
@@ -216,6 +144,70 @@ impl StockPicker {
                     });
                 });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compass_core::model::StockBasic;
+
+    fn make_stock(symbol: &str, name: &str, exchange: &str) -> StockBasic {
+        StockBasic {
+            symbol: symbol.into(),
+            name: name.into(),
+            area: None,
+            industry: None,
+            market: None,
+            exchange: Some(exchange.into()),
+            list_date: None,
+            delist_date: None,
+        }
+    }
+
+    #[test]
+    fn format_display_full() {
+        assert_eq!(
+            format_display("SZ", "000001", "平安银行"),
+            "SZ | 000001 | 平安银行"
+        );
+    }
+
+    #[test]
+    fn format_display_no_name() {
+        assert_eq!(format_display("SZ", "000001", ""), "SZ | 000001");
+    }
+
+    #[test]
+    fn format_display_no_exchange() {
+        assert_eq!(
+            format_display("", "000001", "平安银行"),
+            "000001 | 平安银行"
+        );
+    }
+
+    #[test]
+    fn format_display_symbol_only() {
+        assert_eq!(format_display("", "000001", ""), "000001");
+    }
+
+    #[test]
+    fn stock_picker_starts_with_empty_cache() {
+        let stocks = vec![
+            make_stock("000001", "平安银行", "SZ"),
+            make_stock("600519", "贵州茅台", "SH"),
+        ];
+        let picker = StockPicker::new("000001", &stocks);
+        assert!(picker.cached_indices.is_empty());
+    }
+
+    #[test]
+    fn stock_picker_detects_filter_change() {
+        let stocks = vec![make_stock("000001", "平安银行", "SZ")];
+        let mut picker = StockPicker::new("000001", &stocks);
+        picker.filter_text = "平安".into();
+        picker.popup_open = true;
+        assert_ne!(picker.filter_text, picker.last_filter_text);
     }
 }
 
