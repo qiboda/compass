@@ -245,17 +245,6 @@ impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.theme.apply_theme(ui.ctx());
 
-        // Toolbar background filling the full window width.
-        let toolbar_bg = {
-            let panel = ui.visuals().panel_fill;
-            let (r, g, b) = (panel.r(), panel.g(), panel.b());
-            if ui.visuals().dark_mode {
-                egui::Color32::from_rgb(r.saturating_sub(15), g.saturating_sub(15), b.saturating_sub(15))
-            } else {
-                egui::Color32::from_rgb(r.saturating_add(15), g.saturating_add(15), b.saturating_add(15))
-            }
-        };
-
         // Toolbar with full-width background.
         let toolbar_bg = {
             let panel = ui.visuals().panel_fill;
