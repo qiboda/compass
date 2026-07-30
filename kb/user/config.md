@@ -40,6 +40,10 @@ default_symbol = "000001"
 # Timeframe displayed when the app starts.
 # Default: "1d"
 default_timeframe = "1d"
+
+# Theme preset active at startup. Valid: "compass_dark" | "compass_light" | "compass_blue".
+# Default: "compass_dark"
+theme = "compass_dark"
 ```
 
 ## Defaults
@@ -53,6 +57,7 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
+| `app` | `theme` | `compass_dark` |
 
 ## Examples
 
@@ -71,6 +76,15 @@ default_symbol = "600519"
 # default_timeframe stays "1d" (default)
 ```
 
+### Theme preset
+
+```toml
+[app]
+theme = "compass_light"
+```
+
+Choose from three built-in visual themes: `compass_dark` (default), `compass_light`, or `compass_blue`.
+
 ### Custom data directories
 
 ```toml
@@ -85,7 +99,8 @@ compass_data_dir = "/mnt/data/compass_data"
 ## Validation
 
 The config is validated at startup. If parsing fails, a warning is logged and
-all defaults are used. Check the logs for details:
+all defaults are used. Invalid theme values (anything other than the three valid
+presets) fall back to `compass_dark`. Check the logs for details:
 
 ```sh
 RUST_LOG=info cargo run 2>&1 | grep config
