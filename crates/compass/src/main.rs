@@ -263,7 +263,8 @@ impl eframe::App for CompassApp {
                 chart: &mut self.chart,
                 logger: &mut self.logger,
                 shared_state: &self.shared_state,
-                },
+                theme: &self.theme,
+            },
             );
 
             self.toast.render(ui.ctx());

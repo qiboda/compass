@@ -20,7 +20,7 @@ The top toolbar provides all controls in a single row:
 | **Exchange** | 🏛 | Dropdown — filter by `全部`/`SH`/`SZ`/`BJ`. Narrows the symbol list to the selected exchange. |
 | **TF** | ⏱ | ComboBox — select `1d` (daily), `1w` (weekly), or `1M` (monthly). Controls OHLCV bar aggregation. |
 | **Fetch** | ⬇ | Button — load chart data for the selected symbol with the selected exchange prefix. |
-| **Theme** | 🎨 | Button — opens a dropdown to switch between `compass_dark`, `compass_light`, and `compass_blue` presets. Applies globally to all UI elements. |
+| **Theme** | 🎨 | Button — opens a dropdown to switch between `compass_dark` and `compass_light` presets. Applies globally to all UI elements. |
 
 ### Status indicators
 
@@ -50,13 +50,12 @@ A scrollable log panel shows fetch status, errors, and citizen lifecycle events.
 
 ### Theme switching
 
-Three built-in visual themes are available:
+Two built-in visual themes are available:
 
 | Preset | Description |
 |---|---|
-| `compass_dark` | Default dark theme with cool gray tones |
+| `compass_dark` | Default dark theme (TradingView-style) |
 | `compass_light` | Light theme for daytime use |
-| `compass_blue` | Dark blue-tinted theme |
 
 Click the **🎨 (PALETTE)** button in the toolbar to open a dropdown and select a
 theme. The change applies instantly to all UI elements — chart background,

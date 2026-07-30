@@ -1,7 +1,7 @@
 //! GUI color theme system.
 //!
 //! Themes define color palettes for the chart application UI. Built-in themes
-//! include `compass_dark` (default) and additional dark/light variants.
+//! include `compass_dark` (default, TradingView-style) and `compass_light`.
 //!
 //! Each `CompassTheme` wraps an [`egui_charts::theme::Theme`] internally and
 //! provides convenience methods for applying the theme to egui's visual system
@@ -52,23 +52,6 @@ impl CompassTheme {
     }
 
     /// Returns the blue-tinted theme ("compass_blue").
-    ///
-    /// Based on [`ThemePreset::Midnight`] with additional blue tint on the
-    /// chart background and axis area for a cooler look.
-    pub fn compass_blue() -> Self {
-        let mut theme = egui_charts::theme::Theme::from_preset(ThemePreset::Midnight);
-        // Blue-tint overrides on top of the Midnight preset.
-        theme.semantic.chart.bg = egui::Color32::from_rgb(15, 18, 30);
-        theme.semantic.chart.bg_axis = egui::Color32::from_rgb(18, 22, 35);
-        theme.semantic.chart.grid_line = egui::Color32::from_rgb(30, 40, 65);
-        theme.semantic.chart.crosshair_line = egui::Color32::from_rgb(80, 140, 210);
-
-        Self {
-            name: "compass_blue".to_string(),
-            inner: theme,
-        }
-    }
-
     /// Apply this theme to egui's visual system.
     ///
     /// Should be called at the start of each frame (in the app's `update()`
@@ -103,7 +86,6 @@ impl CompassTheme {
     pub fn from_config(name: &str) -> Self {
         match name {
             "compass_light" => Self::compass_light(),
-            "compass_blue" => Self::compass_blue(),
             _ => Self::compass_dark(),
         }
     }
@@ -114,11 +96,7 @@ impl CompassTheme {
     /// The default theme (`compass_dark`) is always first.
     #[allow(dead_code)]
     pub fn all() -> Vec<Self> {
-        vec![
-            Self::compass_dark(),
-            Self::compass_light(),
-            Self::compass_blue(),
-        ]
+        vec![Self::compass_dark(), Self::compass_light()]
     }
 
     /// Returns the ordered list of available theme names as a static slice.
@@ -126,7 +104,7 @@ impl CompassTheme {
     /// The default theme ("compass_dark") is always first. Used by the toolbar
     /// theme switcher to populate the dropdown without allocating a Vec.
     pub fn all_names() -> &'static [&'static str] {
-        &["compass_dark", "compass_light", "compass_blue"]
+        &["compass_dark", "compass_light"]
     }
 
     /// Returns the human-readable name of this theme instance.

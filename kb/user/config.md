@@ -41,7 +41,7 @@ default_symbol = "000001"
 # Default: "1d"
 default_timeframe = "1d"
 
-# Theme preset active at startup. Valid: "compass_dark" | "compass_light" | "compass_blue".
+# Theme preset active at startup. Valid: "compass_dark" | "compass_light".
 # Default: "compass_dark"
 theme = "compass_dark"
 ```
