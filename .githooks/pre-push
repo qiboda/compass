@@ -13,7 +13,10 @@ has_error=0
 
 # --- Quality gate: CI status ---
 echo "pre-push: checking latest CI on master..."
-CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 10 --json name,conclusion --jq '.[] | select(.name=="CI") | .conclusion' 2>/dev/null | head -1)
+if [ -z "$CI_STATUS" ]; then
+    CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+fi
 if [ "$CI_STATUS" = "failure" ]; then
     echo ""
     echo "ERROR: Latest CI run on master is FAILING."
