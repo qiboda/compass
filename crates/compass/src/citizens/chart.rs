@@ -1,7 +1,8 @@
 use crate::state::SharedState;
 use egui_charts::model::BarData;
 use egui_charts::widget::Chart;
-use egui_charts::{ChartType, theme::Theme};
+use egui_charts::ChartType;
+use crate::theme::CompassTheme;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 
 /// Chart panel citizen — renders an interactive OHLCV candlestick chart.
@@ -13,6 +14,7 @@ pub struct ChartCitizen {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
     chart: Chart,
+    theme: CompassTheme,
 }
 
 impl Citizen for ChartCitizen {
@@ -36,6 +38,15 @@ impl ChartCitizen {
     /// "COMPASS", and "1d" timeframe label — the real data is loaded
     /// reactively on each frame in `show`.
     pub fn new(citizen_id: CitizenId, citizen_state: CitizenState) -> Self {
+        Self::with_theme(citizen_id, citizen_state, CompassTheme::compass_dark())
+    }
+
+    /// Creates a new `ChartCitizen` with the given theme.
+    pub fn with_theme(
+        citizen_id: CitizenId,
+        citizen_state: CitizenState,
+        theme: CompassTheme,
+    ) -> Self {
         let bars: Vec<egui_charts::model::Bar> = Vec::new();
         let data = BarData::from_bars(bars);
         let mut chart = Chart::new(data);
@@ -47,6 +58,7 @@ impl ChartCitizen {
             citizen_id,
             citizen_state,
             chart,
+            theme,
         }
     }
 
@@ -56,8 +68,7 @@ impl ChartCitizen {
     /// updates the chart widget when bars are available. The chart
     /// widget is then rendered into the given `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState) {
-        let theme = Theme::dark();
-        egui_charts::theme::apply_to_egui(ui.ctx(), &theme);
+        self.theme.apply_to_chart(&mut self.chart);
 
         let bars = state.bars.get();
         if !bars.is_empty() {

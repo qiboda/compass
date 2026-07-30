@@ -177,6 +177,9 @@ pub struct AppConfig {
     #[serde(default)]
     /// Dolt data directories for investment_data and compass_data.
     pub dolt: DoltConfig,
+    #[serde(default = "default_theme")]
+    /// GUI color theme name (e.g. "compass_dark").
+    pub theme: String,
 }
 
 /// Parquet data directory configuration.
@@ -251,6 +254,9 @@ fn default_symbol() -> String {
 }
 fn default_timeframe() -> String {
     "1d".into()
+}
+fn default_theme() -> String {
+    "compass_dark".into()
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +353,18 @@ dir = "/custom/parquet"
         )
         .unwrap();
         assert_eq!(config.parquet.dir, "/custom/parquet");
+    }
+
+    #[test]
+    fn appconfig_theme_defaults_to_compass_dark() {
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(config.theme, "compass_dark");
+    }
+
+    #[test]
+    fn appconfig_theme_parses_from_toml() {
+        let config: AppConfig = toml::from_str("theme = \"custom_sky\"").unwrap();
+        assert_eq!(config.theme, "custom_sky");
     }
 
     #[test]
