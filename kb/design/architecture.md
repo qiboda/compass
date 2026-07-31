@@ -313,7 +313,7 @@ fetching data from EastMoney public APIs and importing into Dolt:
 |---|---|---|
 | `main.py` | 统一 CLI: fetch/import/sync/sync-investment | — |
 | `fetch_stock_basic.py` | 公司基本信息 | 12,388 stocks, 13 fields |
-| `fetch_fin_indicators.py` | 财务指标 | 473K rows, 37 fields, 2000-2026 |
+| `fetch_fin_indicators.py` | 财务指标 | 126K rows, 37 fields, 2020-2026 |
 | `fetch_balance_sheet.py` | 资产负债表 | 57 fields, quarterly, RPT_DMSK_FN_BALANCE |
 | `fetch_income.py` | 利润表 | 46 fields, quarterly, RPT_DMSK_FN_INCOME |
 | `fetch_cash_flow.py` | 现金流量表 | 48 fields, quarterly, RPT_DMSK_FN_CASHFLOW |

@@ -4,7 +4,7 @@
 Pulls ALL fields (37) for all stocks, paginated by report date periods.
 
 Usage:
-    # Full historical (2000-now)
+    # Full historical (2020-now)
     uv run python fetch_fin_indicators.py
 
     # Specific years
@@ -59,13 +59,6 @@ EM_HEADERS = {
     "Sec-Fetch-Site": "same-site",
     "Connection": "keep-alive",
 }
-
-# Periods to fetch: all Q1/Q2/Q3/年报 dates
-# We use REPORTDATE filters to batch by period
-FY_DATES = [f"{y}-12-31" for y in range(2000, 2027)]
-Q3_DATES = [f"{y}-09-30" for y in range(2000, 2027)]
-Q2_DATES = [f"{y}-06-30" for y in range(2000, 2027)]
-Q1_DATES = [f"{y}-03-31" for y in range(2000, 2027)]
 
 # Rate limiting
 EM_MIN_INTERVAL = 0.5
@@ -251,7 +244,7 @@ async def main():
         help="EastMoney reportName (default: RPT_LICO_FN_CPD)",
     )
     parser.add_argument(
-        "--years", default="", help="Comma-separated years to fetch (default: all 2000-2026)"
+        "--years", default="", help="Comma-separated years to fetch (default: all 2020-now)"
     )
     parser.add_argument("--output", default="", help="Output CSV path (default: {report_name}.csv)")
     parser.add_argument(

@@ -6,13 +6,32 @@ and state-file management — used by all collector modules.
 
 import asyncio
 import csv
+import os
 import random
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any, TypeAlias
 
 from curl_cffi.requests import AsyncSession
+
+# curl_cffi AsyncSession is generic over response type; pin to Any
+CFFI_SESSION: TypeAlias = AsyncSession[Any]
+
+__all__ = [
+    "AsyncSession",
+    "CFFI_SESSION",
+    "Throttle",
+    "build_dates",
+    "dolt_sql",
+    "dolt_sql_csv",
+    "dolt_table_import",
+    "fetch_paginated",
+    "flatten_record",
+    "last_report_date",
+    "write_csv",
+]
 
 # ── API constants ───────────────────────────────────────────────
 
@@ -43,7 +62,7 @@ EM_PAGE_SIZE = 100
 
 # Dolt directory — respects COMPASS_DATA_DIR env, defaults to /data/compass-data/compass_data
 _DEFAULT_DOLT = Path("/data/compass-data/compass_data")
-DOLT_DIR = Path(__import__("os").environ.get("COMPASS_DATA_DIR", str(_DEFAULT_DOLT)))
+DOLT_DIR = Path(os.environ.get("COMPASS_DATA_DIR", str(_DEFAULT_DOLT)))
 
 
 # ── Throttle ────────────────────────────────────────────────────
@@ -68,7 +87,7 @@ class Throttle:
 
 # ── Dolt helpers ────────────────────────────────────────────────
 
-def dolt_sql(sql: str, timeout: int = 300) -> subprocess.CompletedProcess:
+def dolt_sql(sql: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
     """Run a Dolt SQL query against compass_data."""
     args = ["dolt", "--data-dir", str(DOLT_DIR), "sql", "-q", sql]
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -115,9 +134,9 @@ def last_report_date(dolt_table: str) -> str:
 
 # ── Data fetching ───────────────────────────────────────────────
 
-def flatten_record(item: dict) -> dict:
+def flatten_record(item: dict[str, object]) -> dict[str, str | int | float]:
     """Flatten nested fields for CSV export."""
-    record: dict = {}
+    record: dict[str, str | int | float] = {}
     for k, v in item.items():
         if v is None:
             record[k] = ""
@@ -129,13 +148,13 @@ def flatten_record(item: dict) -> dict:
 
 
 async def fetch_paginated(
-    session: AsyncSession,
+    session: CFFI_SESSION,
     throttle: Throttle,
     report_name: str,
     filter_column: str,
     report_date: str,
     page_size: int = EM_PAGE_SIZE,
-) -> list[dict]:
+) -> list[dict[str, str | int | float]]:
     """Fetch all pages for a single report period.
 
     Args:
@@ -146,7 +165,7 @@ async def fetch_paginated(
         report_date: Date string to filter by (e.g. '2024-12-31').
         page_size: Records per page (max 100 for this API).
     """
-    all_records: list[dict] = []
+    all_records: list[dict[str, str | int | float]] = []
     page = 1
     total_pages = 1
 
@@ -216,7 +235,9 @@ async def fetch_paginated(
 
 # ── CSV output ──────────────────────────────────────────────────
 
-def write_csv(records: list[dict], filepath: Path, append: bool = False) -> None:
+def write_csv(
+    records: list[dict[str, str | int | float]], filepath: Path, append: bool = False
+) -> None:
     """Write records to CSV. Infers fieldnames from first record."""
     if not records:
         return

@@ -169,7 +169,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         return 0
 
     dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-    dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
+    dolt_sql(f"RENAME TABLE IF EXISTS {DOLT_TABLE} TO {tmp_table}_old")
     dolt_sql(DDL)
 
     sql = f"""
@@ -184,6 +184,11 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     result = dolt_sql(sql, timeout=600)
     if result.returncode != 0:
         print(f"  SQL error: {result.stderr}", file=sys.stderr)
+        dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
+        dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
+        print("  Rolled back to previous data", file=sys.stderr)
+        dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
+        return 0
 
     dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
     dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")

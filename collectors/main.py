@@ -3,10 +3,10 @@
 
 Usage:
     uv run python main.py fetch stock_basic [--resume]
-    uv run python main.py fetch fin_indicators [--years 2024,2025] [--incremental]
-    uv run python main.py fetch balance_sheet [--years 2024,2025] [--incremental]
-    uv run python main.py fetch income [--years 2024,2025] [--incremental]
-    uv run python main.py fetch cash_flow [--years 2024,2025] [--incremental]
+    uv run python main.py fetch fin_indicators [--years 2024,2025]
+    uv run python main.py fetch balance_sheet [--years 2024,2025]
+    uv run python main.py fetch income [--years 2024,2025]
+    uv run python main.py fetch cash_flow [--years 2024,2025]
     uv run python main.py import stock_basic
     uv run python main.py import fin_indicators
     uv run python main.py import balance_sheet
@@ -63,6 +63,12 @@ def _import_stock_basic() -> None:
     stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
     lines = stdout.strip().split("\n")
     total = lines[-1] if len(lines) > 1 else "?"
+    dolt_sql(
+        "INSERT INTO data_updates (table_name, last_updated, source, row_count) "
+        "VALUES ('stock_basic', CURDATE(), 'EastMoney push2delay /api/qt/clist/get', "
+        f"{total if total != '?' else 0}) "
+        "ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count=VALUES(row_count)"
+    )
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
@@ -114,9 +120,16 @@ def _import_fin_indicators() -> None:
     stdout = dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")
     lines = stdout.strip().split("\n")
     total = lines[-1] if len(lines) > 1 else "?"
+    last_rpt = dolt_sql_csv(
+        "SELECT MAX(report_date) FROM fin_indicators"
+    ).strip().split("\n")[-1].strip()
+    last_rpt_val = "NULL" if (not last_rpt or last_rpt == "NULL") else f"'{last_rpt}'"
     dolt_sql(
-        "UPDATE data_updates SET last_updated=CURDATE(), "
-        "row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'"
+        "INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
+        "VALUES ('fin_indicators', CURDATE(), 'EastMoney datacenter RPT_LICO_FN_CPD', "
+        f"{total if total != '?' else 0}, {last_rpt_val}) "
+        "ON DUPLICATE KEY UPDATE last_updated=CURDATE(), "
+        "row_count=VALUES(row_count), last_report_date=VALUES(last_report_date)"
     )
     print(f"  Done: {total} rows", file=sys.stderr)
 
@@ -129,7 +142,7 @@ def sync_investment_data(restart: bool = False) -> None:
         print("[sync-investment] ERROR: investment_data not found", file=sys.stderr)
         return
 
-    def dolt(*args: str) -> subprocess.CompletedProcess:
+    def dolt(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["dolt", "--data-dir", str(invest_dir)] + list(args),
             capture_output=True, text=True, timeout=300,
@@ -202,8 +215,6 @@ def main() -> None:
             sys.argv = ["fetch_fin_indicators"]
             if args.years:
                 sys.argv.extend(["--years", args.years])
-            if args.incremental:
-                sys.argv.append("--incremental")
             asyncio.run(fetch_fin_indicators.main())
 
         elif args.target == "balance_sheet":
@@ -275,8 +286,10 @@ def main() -> None:
             "fin_balance_sheet", "fin_income", "fin_cash_flow",
         ]:
             dolt_sql(
-                f"UPDATE data_updates SET last_updated=CURDATE(), "
-                f"row_count=(SELECT COUNT(*) FROM {tbl}) WHERE table_name='{tbl}'"
+                f"INSERT INTO data_updates (table_name, last_updated, row_count) "
+                f"VALUES ('{tbl}', CURDATE(), (SELECT COUNT(*) FROM {tbl})) "
+                f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), "
+                f"row_count=VALUES(row_count)"
             )
         print("[sync] Complete.", file=sys.stderr)
 

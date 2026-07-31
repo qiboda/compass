@@ -186,6 +186,8 @@ See `kb/dev/process.md` for full review workflow.
 
 Commit and push are **separate operations**. Do not chain them with `&&`.
 
+**Commit**: 直接执行，不需要向用户申请确认。提交是 agent 的职责，按流程 commit 后自动 review。
+
 **HARD BLOCK: Never auto-push.** Wait for the user to explicitly say "push" / "推送".
 **Follow the user's exact words.** "commit" means only commit; "push" means only push.
 
