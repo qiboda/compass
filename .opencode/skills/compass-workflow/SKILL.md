@@ -1,223 +1,221 @@
 ---
 name: compass-workflow
-description: Enforces the compass project workflow — issue-driven development, doc-sync, test-first, per-step-verify, and commit discipline. Use for any feature, bugfix, or code change in this repo.
+description: 强制执行 compass 项目工作流 — issue 驱动开发、文档同步、测试先行、逐步验证、提交纪律。用于本仓库的任何 feature、bugfix 或代码变更。
 ---
 
-# Compass Workflow
+# Compass 工作流
 
-This project follows a strict workflow. You MUST enforce these rules for every code change.
-
----
-
-## 🛑 TRIGGER: PRE-IMPLEMENTATION GATE (IMMEDIATE)
-
-**The moment this skill is loaded, you are in GATE MODE.**
-
-**Prerequisite**: grill-me (step 0) must have completed with "shared understanding
-reached" before entering this gate. If calling `/grill-me` was skipped, go back
-and do it first.
-
-Before you create any todos, before you read any source files, before you write
-a single line of code — you MUST verbalize the following checklist to the user.
-
-```
-🛑 PRE-IMPLEMENTATION GATE
-
-I will now check each gate step before proceeding:
-
-☐ STEP 0 — GRILL-ME (prerequisite)
-   Shared understanding reached
-   → [must confirm]
-
-☐ STEP 1 — ISSUE
-   → Invoke /issue-workflow to create/manage issues
-   → [must show issue URL to user, or epic + sub-issue list]
-
-☐ STEP 2 — PLAN (skip only if single-file change)
-   Plan agent run and approved
-   → [must show plan summary]
-
-☐ STEP 3 — TESTS (RED phase)
-   → Invoke /test (qa skill) to write failing tests
-   → [must show test failure output]
-
-☐ STEP 4a — RUSTDOC
-   → Invoke /rustdoc to verify #[warn(missing_docs)] compliance
-   → [must show cargo doc --no-deps is warning-free]
-
-☐ STEP 4b — DOCS (kb/)
-   → Invoke /docs to identify and update kb/ files
-   → [must list files]
-
-☐ STEP 4c — DECISION RECORDS
-   → Check relevant kb/design/ files contain ## 决策记录 sections
-   → If missing, add before proceeding
-```
-
-**You are FORBIDDEN from using any edit/write/bash tools for implementation
-until ALL five steps (1-4c) above are completed and shown to the user.**
-
-If you find yourself writing code without completing the gate, STOP IMMEDIATELY
-and go back to step 0. This is a HARD BLOCK — no exceptions for feature/bugfix work.
-
-### Exceptions (skip the gate)
-
-The gate does NOT apply to:
-- Documentation-only changes
-- Lint fixes
-- Typo fixes
-- Test additions for existing code
-
-> ⚠️ **Skipping the gate does NOT skip the post-implementation review.**
-> The `POST-IMPLEMENTATION REVIEW` section below applies to ALL changes,
-> including documentation-only. The gate and the review are separate
-> processes — gate is pre-implementation, review is post-implementation.
-
-### Gate completion signal
-
-When all five steps are complete, announce explicitly:
-
-```
-✅ GATE COMPLETE — proceeding to implementation
-```
-
-Only then may you create todos and begin editing files.
+本项目遵循严格的工作流。每次代码变更都必须执行以下规则。
 
 ---
 
-## Rules (ordered by priority)
+## 🛑 触发：预实现门禁（立即执行）
 
-### 1. Doc Sync (CRITICAL)
+**加载此 skill 的瞬间，你即进入门禁模式。**
 
-Any code change affecting behavior, public APIs, data structures, config, or workflows MUST update the relevant `kb/` files AND `AGENTS.md` in the SAME commit.
+**前置条件**：进入门禁之前，grill-me（第 0 步）必须已完成"shared understanding
+reached"。如果尚未调用 `/grill-me`，请返回并先完成。
+
+在创建任何 todos、读取任何源文件、编写任何代码之前——你必须向用户逐一确认以下检查清单。
+
+```
+🛑 预实现门禁
+
+在继续之前，我将逐项检查门禁的每个步骤：
+
+☐ 第 0 步 — GRILL-ME（前置条件）
+   已达成 shared understanding
+   → [必须确认]
+
+☐ 第 1 步 — ISSUE
+   → 调用 /issue-workflow 创建/管理 issues
+   → [必须向用户展示 issue URL，或 epic + 子 issue 列表]
+
+☐ 第 2 步 — PLAN（仅单文件变更可跳过）
+   计划 agent 已运行且已获批准
+   → [必须展示计划摘要]
+
+☐ 第 3 步 — TESTS（RED 阶段）
+   → 调用 /test（qa skill）编写失败测试
+   → [必须展示测试失败输出]
+
+☐ 第 4a 步 — RUSTDOC
+   → 调用 /rustdoc 验证 #[warn(missing_docs)] 合规
+   → [必须展示 cargo doc --no-deps 无警告]
+
+☐ 第 4b 步 — DOCS（kb/）
+   → 调用 /docs 识别并更新 kb/ 文件
+   → [必须列出文件清单]
+
+☐ 第 4c 步 — 决策记录
+   → 检查相关 kb/design/ 文件是否包含 ## 决策记录 章节
+   → 如缺失，先补充再继续
+```
+
+**在上述所有五个步骤（1-4c）完成并向用户展示之前，
+严禁使用任何 edit/write/bash 工具进行实现。**
+
+如果你发现自己在门禁未完成时就开始编写代码，立即停止，
+回到第 0 步。这是硬性阻断——feature/bugfix 工作无例外。
+
+### 例外（可跳过门禁的情况）
+
+门禁不适用于：
+- 纯文档变更
+- Lint 修复
+- Typo 修复
+- 为已有代码添加测试
+
+> ⚠️ **跳过门禁并不意味着跳过实现后审查。**
+> 下方"实现后审查"章节适用于所有变更，
+> 包括纯文档变更。门禁和审查是两个独立流程——
+> 门禁是预实现阶段，审查是实现后阶段。
+
+### 门禁完成信号
+
+当所有步骤完成后，明确宣布：
+
+```
+✅ 门禁完成 — 进入实现阶段
+```
+
+只有此时才能创建 todos 并开始编辑文件。
+
+---
+
+## 规则（按优先级排序）
+
+### 1. 文档同步（关键）
+
+任何影响行为、公开 API、数据结构、配置或工作流的代码变更，必须在同一次 commit 中更新相关 `kb/` 文件和 `AGENTS.md`。
 
 权威的「变更类型 → kb/ 文件」映射表见 `.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table。速查：
 
-| Change type | kb/ file to update |
+| 变更类型 | 需更新的 kb/ 文件 |
 |---|---|
-| New data source, API call, schema change | `kb/design/data-providers.md` |
-| Threading, pipeline, library changes | `kb/design/architecture.md` |
-| Symbol format, timeframe mapping | `kb/design/symbols.md` |
-| Test framework, patterns | `kb/dev/testing.md` |
-| Workflow, hooks, conventions | `kb/dev/process.md` |
-| Project-level conventions | `AGENTS.md` |
+| 新增数据源、API 调用、schema 变更 | `kb/design/data-providers.md` |
+| 线程、管线、库变更 | `kb/design/architecture.md` |
+| 符号格式、timeframe 映射 | `kb/design/symbols.md` |
+| 测试框架、模式 | `kb/dev/testing.md` |
+| 工作流、hooks、约定 | `kb/dev/process.md` |
+| 项目级约定 | `AGENTS.md` |
 
-### 2. Requirement Flow (CRITICAL)
+### 2. 需求流程（关键）
 
-Before writing any feature or bugfix code:
-a) invoke `/issue-workflow` to handle issue creation and management
-b) the issue-workflow skill determines single issue vs epic/sub-issue mode
-c) confirm issue(s) are created and visible
-d) only then implement
+编写任何 feature 或 bugfix 代码之前：
+a) 调用 `/issue-workflow` 处理 issue 创建和管理
+b) issue-workflow skill 决定单 issue 还是 epic/子 issue 模式
+c) 确认 issue(s) 已创建且可见
+d) 然后才实现
 
-Skip this for: refactors, docs, lint fixes, typos.
+以下情况跳过：重构、文档、lint 修复、typo。
 
-Commit references: `ref #N` (feat/fix), no `fixes #N` / `closes #N` (auto-close unwanted).
-For epic work, each commit references its sub-issue (`ref #<sub-N>`).
+提交引用：`ref #N`（feat/fix），不使用 `fixes #N` / `closes #N`（避免自动关闭）。
+Epic 工作中，每个 commit 引用其子 issue（`ref #<sub-N>`）。
 
-**This applies to ALL commits — chores, docs, scripts included. No exceptions.**
+**这适用于所有 commit——chore、docs、scripts 均无例外。**
 
-### 3. Plan First (`/ulw-plan`)
+### 3. 计划先行（`/ulw-plan`）
 
-**Non-negotiable for multi-step work.** Run `/ulw-plan` for: multi-step tasks (2+ modules), architecture changes, new data sources, ambiguous scope.
+**多步工作不可妥协。** 以下情况必须运行 `/ulw-plan`：多步任务（2+ 模块）、架构变更、新增数据源、需求范围模糊。
 
-The plan agent produces a `.omo/plans/*.md` file with task wave ordering and verification gates. Do NOT skip this and verbally describe the plan yourself — the agent's structured output is the approved execution contract.
+计划 agent 生成 `.omo/plans/*.md` 文件，包含任务批次排序和验证门禁。不要跳过这一步自己口头描述计划——agent 的结构化输出才是批准的执行契约。
 
-Skip planning only for: truly single-file fixes, test additions, doc updates.
+仅以下情况可跳过计划：真正的单文件修复、测试添加、文档更新。
 
-### 4. Test First
+### 4. 测试先行
 
-Feature and bugfix work follows RED → GREEN → REFACTOR:
-- Write failing test FIRST, watch it fail for the right reason
-- Then implement
-- Exploratory changes may write tests after
-- Pure refactors: pin current behavior with characterization tests first
+Feature 和 bugfix 工作遵循 RED → GREEN → REFACTOR：
+- 先写失败测试，确保因正确原因失败
+- 然后实现
+- 探索性变更可以先写代码后补测试
+- 纯重构：先用特征测试锁定当前行为
 
-### 5. Per-Step Verify
+### 5. 逐步验证
 
-After every code change:
-- `cargo test` → all must pass
-- `lsp_diagnostics` clean on changed files
+每次代码变更后：
+- `cargo test` → 必须全部通过
+- `lsp_diagnostics` 在变更文件上无错误
 
-### 6. Local Verify Before Commit
+### 6. 提交前本地验证
 
 ```sh
 cargo test && cargo clippy -- -D warnings && cargo fmt --check
 ```
 
-All three must pass before `git push`.
+三者全部通过后才可 `git push`。
 
-### 7. No Type Escape
+### 7. 禁止类型逃逸
 
-- Never `unwrap()` in production code — use `.expect(msg)` or proper error handling
-- Never suppress type errors with `as` casts or `@ts-ignore`
+- 生产代码中永不使用 `unwrap()` —— 使用 `.expect(msg)` 或正确的错误处理
+- 永不使用 `as` 类型转换或类似手段压制类型错误
 
-### 8. Branching
+### 8. 分支策略
 
-Feature-branch workflow: most work happens on branches, merged via PR.
-Trivial fixes (typo, config, one-line change) can go directly to master.
+Feature 分支工作流：大部分工作在分支上进行，通过 PR 合并。
+简单修复（typo、配置、单行变更）可直接提交到 master。
 
 ```
-master  ●──●──●──●────────●  (trunk)
-              \          /
-feat/xxx      ●──●──●──┘   (feature branch, merge via PR)
+master  ●──●──●──●────────●  (主干)
+               \          /
+feat/xxx      ●──●──●──┘   (feature 分支，通过 PR 合并)
 ```
 
-### 9. Label Enforcement
+### 9. 标签强制
 
-When creating a GitHub issue or PR:
-- Attach at least one **A-** (area) and one **C-** (category) label.
-- **D-** (difficulty), **P-** (priority), and **S-** (status) are optional but recommended.
+创建 GitHub issue 或 PR 时：
+- 必须附加至少一个 **A-**（area，领域）和一个 **C-**（category，分类）标签。
+- **D-**（difficulty，难度）、**P-**（priority，优先级）和 **S-**（status，状态）可选但建议添加。
 
-See `kb/github/labels.md` for the complete taxonomy.
+完整分类体系见 `kb/github/labels.md`。
 
-`gh issue create --label "C-Bug,A-Data"` or `gh pr create --label "C-Feature,A-GUI"`.
+`gh issue create --label "C-Bug,A-Data"` 或 `gh pr create --label "C-Feature,A-GUI"`。
 
-### 10. Sprint Rhythm
+### 10. Sprint 节奏
 
-Use GitHub Milestones for weekly sprint management. Monday (plan) → Sunday (review).
+使用 GitHub Milestones 进行每周 sprint 管理。周一（规划）→ 周日（回顾）。
 
-- **Monday**: plan the sprint — review open issues, read `backlog.md`, invoke `/product brainstorm` for milestone candidates
-- **Sunday**: review completed work, close milestone if all issues resolved, invoke `/reflect`
-- Manual override: `/product brainstorm` anytime for fresh candidates
+- **周一**：规划 sprint —— 查看 open issues，阅读 `backlog.md`，调用 `/product brainstorm` 获取 milestone 候选
+- **周日**：回顾已完成工作，所有 issues 完成后关闭 milestone，调用 `/reflect`
+- 手动触发：随时调用 `/product brainstorm` 获取新的候选
 
-### 11. Friction Record
+### 11. 摩擦记录
 
-When the user corrects AI behavior (contradiction, scope expansion, missed constraint,
-approach redirect) — pause and suggest recording via `/friction`.
+当用户纠正 AI 行为（矛盾、范围扩张、约束遗漏、方案偏离）时——
+暂停并建议通过 `/friction` 记录。
 
-- Covers ALL corrective interactions, not just grill-me disagreements
-- Record in `kb/dev/friction.md` via `/friction` skill
-- Prompt user after correction is resolved, not during active work
+- 涵盖所有纠正性交互，不限于 grill-me 分歧
+- 通过 `/friction` skill 记录到 `kb/dev/friction.md`
+- 在纠正解决后提示用户，而非活跃工作期间
 
 ---
 
-## 📋 Available Skills
+## 📋 可用 Skills
 
-The compass project provides these opencode skills for specific workflow steps:
+Compass 项目为特定工作流步骤提供以下 opencode skills：
 
-| Skill | Slash Command | Purpose | Gate Step |
+| Skill | 斜杠命令 | 用途 | 门禁步骤 |
 |---|---|---|---|
-| issue-workflow | `/issue-workflow` | Create and manage issues (single + epic/sub-issue) | Step 1 — ISSUE |
-| qa (test) | `/test` | Write failing tests (TDD/BDD), test coverage | Step 3 — TESTS |
-| rustdoc | `/rustdoc` | Verify `#![warn(missing_docs)]` compliance | Step 4a — RUSTDOC |
-| docs | `/docs` | Identify and update kb/ files | Step 4b — DOCS |
-| reflect | `/reflect` | Write post-implementation reflection + trend analysis | Post-implementation |
-| friction | `/friction` | Record AI behavior corrections during work | Post-correction / on-demand |
+| issue-workflow | `/issue-workflow` | 创建和管理 issues（单 issue + epic/子 issue） | 第 1 步 — ISSUE |
+| qa（test） | `/test` | 编写失败测试（TDD/BDD）、测试覆盖 | 第 3 步 — TESTS |
+| rustdoc | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 | 第 4a 步 — RUSTDOC |
+| docs | `/docs` | 识别并更新 kb/ 文件 | 第 4b 步 — DOCS |
+| reflect | `/reflect` | 编写实现后反思 + 趋势分析 | 实现后 |
+| friction | `/friction` | 记录工作期间的 AI 行为纠正 | 纠正后 / 按需 |
 
-When the gate checklist says `→ Invoke /<command>`, load that skill and follow
-its workflow. Each skill has a `SKILL.md` file in `.opencode/skills/<name>/`.
+当门禁清单显示 `→ 调用 /<command>` 时，加载对应的 skill 并按其工作流执行。
+每个 skill 的详细说明见 `.opencode/skills/<name>/SKILL.md`。
 
 ---
 
-## 🔍 POST-IMPLEMENTATION REVIEW (AUTOMATED)
+## 🔍 实现后审查（自动化）
 
-After completing implementation, run an automated review to catch issues
-before they reach the repo. The old manual checklist is replaced by this.
+实现完成后，运行自动化审查以在变更进入仓库前捕获问题。
+旧的检查清单已被以下流程替代。
 
-### Step 1: Commit
+### 第 1 步：提交
 
-Commit the implementation first — always. Do not run review before committing.
+先提交实现——始终如此。不要在提交前运行审查。
 
 ```
 git add <files>
@@ -226,62 +224,61 @@ git commit -m "feat: description
 ref #N"
 ```
 
-### Step 2: Run Review
+### 第 2 步：运行审查
 
-Trigger `/review-work` against the current changes. The review runs 5
-agents in parallel: goal verification, QA execution, code quality,
-security audit, and context mining.
+对当前变更触发 `/review-work`。审查会并行运行 5 个 agent：
+目标验证、QA 执行、代码质量、安全审计和上下文挖掘。
 
-**Epic work**: run review at two layers —
-- **Per sub-issue**: after each sub-issue commit, review that sub-issue's changes
-- **Pre-PR**: after all sub-issues complete, review the full PR diff for integration issues
+**Epic 工作**：两层审查——
+- **每个子 issue**：每个子 issue commit 后，审查该子 issue 的变更
+- **PR 前**：所有子 issue 完成后，审查完整 PR diff 以发现集成问题
 
-### Step 3: Handle Findings
+### 第 3 步：处理发现的问题
 
-For each finding reported by the review:
+针对审查报告的每个问题：
 
-| Finding Type | Action |
+| 问题类型 | 处理方式 |
 |---|---|
-| Related to current work, ≤3 files affected | Auto-fix directly |
-| Unrelated to current work | Create a GitHub issue (`gh issue create`) |
-| Related but >3 files affected | Create a GitHub issue |
+| 与当前工作相关，影响 ≤3 个文件 | 直接自动修复 |
+| 与当前工作无关 | 创建 GitHub issue（`gh issue create`） |
+| 相关但影响 >3 个文件 | 创建 GitHub issue |
 
-Use the review agent's `blocking_issues` as the primary input.
-In-scope = fixes within the files and modules touched by this PR/change.
+以审查 agent 的 `blocking_issues` 为主要输入。
+范围内 = 本 PR/变更所涉及的文件和模块内的修复。
 
-### Step 4: Re-review (max 2 rounds)
+### 第 4 步：重新审查（最多 2 轮）
 
-After fixing issues, re-run the review to verify fixes are correct.
-If the review still reports blocking issues after 2 rounds, create
-issues for the remaining problems and note them in the commit message.
+修复问题后，重新运行审查以验证修复正确。
+如果在 2 轮后审查仍然报告阻塞问题，为剩余问题
+创建 issues 并在 commit message 中注明。
 
-### Step 5: Finalize
+### 第 5 步：完成
 
-- All in-scope issues resolved → proceed to commit (or push)
-- → Invoke /reflect to write post-implementation reflection
-
----
-
-## 📝 REFLECTION RECORD
-
-After EVERY feature or bugfix implementation, invoke `/reflect` (reflect skill)
-to write a post-implementation reflection and append it to `kb/dev/reflections.md`.
-This replaces the old manual reflection mandate — the reflect skill handles
-writing, format, and trend analysis.
-
-See `.opencode/skills/reflect/SKILL.md` for the full reflection workflow.
+- 所有范围内问题已解决 → 继续提交（或推送）
+- → 调用 /reflect 编写实现后反思
 
 ---
 
-## Commit Style
+## 📝 反思记录
+
+每次 feature 或 bugfix 实现后，调用 `/reflect`（reflect skill）
+编写实现后反思并追加到 `kb/dev/reflections.md`。
+这替代了之前的手工反思要求——reflect skill 负责
+编写、格式和趋势分析。
+
+完整反思工作流见 `.opencode/skills/reflect/SKILL.md`。
+
+---
+
+## 提交风格
 
 - `feat:` / `fix:` / `test:` / `refactor:` / `docs:` / `chore:`
-- Atomic: one logical unit per commit
-- Each commit references its issue: `ref #N` (sub-issue for epic work)
-- Multiple sub-issue commits may exist in one PR (each with its own `ref #<sub-N>`)
-- Push only on explicit user command (never auto-push)
+- 原子提交：每次提交一个逻辑单元
+- 每个 commit 引用其 issue：`ref #N`（epic 工作引用子 issue）
+- 一个 PR 可以包含多个子 issue commit（每个带有各自的 `ref #<sub-N>`）
+- 仅在用户明确指令时推送（绝不自动推送）
 
-## Code Style
+## 代码风格
 
-- Rust edition 2024, thiserror, async-trait, tracing
-- Match existing conventions in the file you're editing
+- Rust edition 2024、thiserror、async-trait、tracing
+- 遵循所编辑文件中的现有约定

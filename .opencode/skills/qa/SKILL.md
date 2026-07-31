@@ -1,78 +1,73 @@
 ---
 name: test
-description: Writes unit/integration tests following TDD/BDD for the compass Rust codebase. Covers rstest, tokio::test, DuckDB in-memory, Dolt tempdir.
+description: 为 compass Rust 代码库编写遵循 TDD/BDD 的单元测试/集成测试。涵盖 rstest、tokio::test、内存 DuckDB、Dolt tempdir。
 ---
 
-# QA — Test-First Agent
+# QA — 测试优先 Agent
 
-## Role
+## 角色
 
-Write unit and integration tests for the compass Rust codebase following strict
-TDD (Test-Driven Development) and BDD (Behavior-Driven Development) workflows.
-Ensure test coverage and correctness before implementation code is written.
+为 compass Rust 代码库编写单元测试和集成测试，严格遵循 TDD（测试驱动开发）
+和 BDD（行为驱动开发）工作流。确保在实现代码编写之前具备测试覆盖和正确性。
 
-## Inputs / Context
+## 输入 / 上下文
 
-When invoked by compass-workflow at gate step 3 or via `/test` slash, the agent
-receives:
+当 compass-workflow 在门禁第 3 步或通过 `/test` 斜杠命令调用时，agent 接收：
 
-- **Git diff** of changed files (to identify what code needs testing)
-- **GitHub issue body** (the issue describing the feature or bug)
-- **List of changed file paths** (to locate modules needing tests)
-- **kb/dev/testing.md** conventions (always loaded)
+- **Git diff**：变更文件（识别哪些代码需要测试）
+- **GitHub issue 正文**（描述功能或 bug 的 issue）
+- **变更文件路径列表**（定位需要测试的模块）
+- **kb/dev/testing.md** 约定（始终加载）
 
-When invoked standalone via `/test` without compass-workflow context, the agent
-prompts for: what code changed, what issue this addresses, and what behavior
-needs testing.
+当通过 `/test` 单独调用（无 compass-workflow 上下文）时，agent 提示获取：变更了什么代码、此测试对应哪个 issue、以及需要测试什么行为。
 
-## Trigger
+## 触发条件
 
-- `/test` slash command (user-initiated)
-- compass-workflow pre-implementation gate step 3 (automated via `→ Invoke /test`)
+- `/test` 斜杠命令（用户发起）
+- compass-workflow 实现前门禁第 3 步（通过 `→ Invoke /test` 自动触发）
 
-## Workflow
+## 工作流
 
-### Phase 0: DESIGN TESTS (BDD)
+### 阶段 0：设计测试用例（BDD）
 
-Write a **test case document** listing every scenario that tests must cover:
+编写**测试用例文档**，列出测试必须覆盖的所有场景：
 
 ```
-// Test cases:
-// 1. Normal input — returns expected result
-// 2. Empty input — returns empty/default
-// 3. Boundary values — min/max handled correctly
-// 4. Error paths — invalid input produces proper error
-// 5. Edge cases — null/missing fields, very large values, etc.
+// 测试用例：
+// 1. 正常输入 — 返回预期结果
+// 2. 空输入 — 返回空/默认值
+// 3. 边界值 — 最小/最大值处理正确
+// 4. 错误路径 — 无效输入产生正确的错误
+// 5. 边缘情况 — null/缺失字段、极大值等
 ```
 
-Every scenario must have at least one corresponding `#[test]` or `#[case]`.
-This ensures comprehensive coverage before any test code is written.
+每个场景必须有至少一个对应的 `#[test]` 或 `#[case]`。
+这确保了在编写任何测试代码之前就具备全面覆盖。
 
-### Phase 1: RED
+### 阶段 1：RED
 
-Write a **failing test** that documents expected behavior:
+编写**失败测试**来记录预期行为：
 
-- Test must fail **before** any implementation exists
-- If it passes immediately, delete or rewrite — it's testing nothing
-- Verify each scenario from the test case document is covered
-- Show the test failure output as evidence
+- 测试必须在任何实现存在**之前**失败
+- 如果它立即通过，删除或重写——它没有测试任何东西
+- 验证测试用例文档中的每个场景是否被覆盖
+- 展示测试失败输出作为证据
 
-### Phase 2: GREEN
+### 阶段 2：GREEN
 
-After the test is written and confirmed failing, hand off to the main agent
-for implementation. The qa agent does NOT implement production code.
+测试编写完成并确认失败后，交给主 agent 进行实现。
+qa agent 不实现生产代码。
 
-### Phase 3: REFACTOR
+### 阶段 3：REFACTOR
 
-After implementation passes tests, the main agent may refactor while keeping
-tests green. The qa agent can be re-invoked to verify refactored code still
-passes all tests.
+实现通过测试后，主 agent 可以在保持测试绿色的前提下进行重构。
+qa agent 可被重新调用来验证重构后的代码仍然通过所有测试。
 
-## Testing Patterns
+## 测试模式
 
-All test patterns follow `kb/dev/testing.md`. Key conventions:
+所有测试模式遵循 `kb/dev/testing.md`。关键约定：
 
-### Unit tests
+### 单元测试
 
 ```rust
 #[cfg(test)]
@@ -89,80 +84,80 @@ mod tests {
 }
 ```
 
-Order: `#[rstest]` outermost, `#[tokio::test]` innermost.
+顺序：`#[rstest]` 在最外层，`#[tokio::test]` 在最内层。
 
-### Integration tests
+### 集成测试
 
-Place in `tests/` directory. Test only the public API of `compass-core`.
+放在 `tests/` 目录下。仅测试 `compass-core` 的公共 API。
 
-### In-memory DuckDB
+### 内存 DuckDB
 
 ```rust
 let provider = DuckDbProvider::new_in_memory()
     .expect("failed to open in-memory DuckDB");
-// Each call creates a separate in-memory DB — tests never interfere.
+// 每次调用创建独立的内存 DB——测试永远不会互相干扰。
 ```
 
-### Dolt (test database)
+### Dolt（测试数据库）
 
-Use `dolt init` + `dolt sql` with `tempfile::tempdir()` for self-contained
-test databases. Clean up automatically via `TempDir` drop.
+使用 `dolt init` + `dolt sql` 配合 `tempfile::tempdir()` 创建自包含的
+测试数据库。通过 `TempDir` drop 自动清理。
 
-### DuckDB deadlock avoidance
+### DuckDB 死锁规避
 
-Group all direct `db.conn.lock()` calls into ONE scope before any async
-`db` method calls. See `kb/dev/testing.md` § DuckDB 死锁规避.
+将所有直接的 `db.conn.lock()` 调用分组到一个作用域内，然后再进行任何异步
+`db` 方法调用。参见 `kb/dev/testing.md` § DuckDB 死锁规避。
 
-## Test Organization
+## 测试组织
 
-| Test type | Location | Scope |
+| 测试类型 | 位置 | 范围 |
 |---|---|---|
-| Unit tests | `#[cfg(test)] mod tests` at bottom of source file | Private + public functions |
-| Integration tests | `tests/` directory | Public API of `compass-core` only |
-| Benchmarks | `benches/` directory | Performance, run with `cargo bench` |
+| 单元测试 | 源文件底部的 `#[cfg(test)] mod tests` | 私有 + 公有函数 |
+| 集成测试 | `tests/` 目录 | 仅 `compass-core` 的公共 API |
+| 基准测试 | `benches/` 目录 | 性能，通过 `cargo bench` 运行 |
 
-## Output Format
+## 输出格式
 
 ```
-## Test Results: <issue-ref>
+## 测试结果：<issue-ref>
 
-### Test Case Document
-<list of scenarios>
+### 测试用例文档
+<场景列表>
 
-### RED Phase
-<failing test output>
-<test file path:line>
+### RED 阶段
+<失败测试输出>
+<测试文件路径:行号>
 
-### Coverage Check
-<number of scenarios covered vs total>
+### 覆盖检查
+<已覆盖场景数 / 总场景数>
 ```
 
-## Edge Cases
+## 边界情况
 
-| Scenario | Behavior |
+| 场景 | 行为 |
 |---|---|
-| Tests already pass (no RED available) | Flag the issue: tests exist but no implementation gap found |
-| Doc-only change (no code to test) | Skip — report "no code changes, testing not needed" |
-| No test framework in project | Report and stop — do not create ad-hoc test infrastructure |
-| Test compilation fails (not logic failure) | Report the compilation error separately from test logic |
-| Integration test needs external data | Use in-memory DuckDB for stock data, tempdir for Dolt |
-| Existing tests break after new test | Report which tests broke — may indicate test interaction bug |
+| 测试已经通过（无法 RED） | 标记问题：测试已存在但未发现实现缺口 |
+| 仅文档变更（无需测试代码） | 跳过——报告"无代码变更，无需测试" |
+| 项目中无测试框架 | 报告并停止——不创建临时测试基础设施 |
+| 测试编译失败（非逻辑失败） | 将编译错误与测试逻辑分开报告 |
+| 集成测试需要外部数据 | 使用内存 DuckDB 替代股票数据，tempdir 替代 Dolt |
+| 新测试导致已有测试失败 | 报告哪些测试失败——可能表明测试交互 bug |
 
-## Must NOT
+## 禁止事项
 
-- **Modify production code** — only write test files
-- **Skip the RED phase** — every test must fail first for the right reason
-- **Suppress type errors** — no `unwrap()` without `.expect()`, no `#[allow()]` on lint warnings in tests
-- **Delete existing tests** — never remove tests to "pass"
-- **Write tests that always pass** — tests must verify new behavior
-- **Modify `Cargo.toml`** — do not add test dependencies without explicit approval
+- **修改生产代码**——仅编写测试文件
+- **跳过 RED 阶段**——每个测试必须以正确的理由先失败
+- **抑制类型错误**——不允许无 `.expect()` 的 `unwrap()`、不允许测试中的 `#[allow()]` 来抑制 lint 告警
+- **删除已有测试**——绝不为了"通过"而删除测试
+- **编写永远通过的测试**——测试必须验证新行为
+- **修改 `Cargo.toml`**——未经明确批准不得添加测试依赖
 
-## Collaboration with compass-workflow
+## 与 compass-workflow 的协作
 
-1. compass-workflow gate step 3 says `→ Invoke /test (qa skill) to write failing tests`
-2. The qa agent produces the RED phase evidence required by the gate
-3. After the qa agent completes, the main agent implements the GREEN phase
-4. The qa agent may be re-invoked for REFACTOR verification
+1. compass-workflow 门禁第 3 步指示 `→ Invoke /test (qa skill) to write failing tests`
+2. qa agent 生成门禁所需的 RED 阶段证据
+3. qa agent 完成后，主 agent 实现 GREEN 阶段
+4. qa agent 可被重新调用以进行 REFACTOR 验证
 
-The qa agent is a **specialist** — it focuses on test quality and coverage.
-The main agent handles implementation, refactoring, and all other workflow steps.
+qa agent 是**专家**——它专注于测试质量和覆盖。
+主 agent 负责实现、重构以及所有其他工作流步骤。

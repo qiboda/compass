@@ -1,40 +1,38 @@
 ---
 name: reflect
-description: Writes post-implementation reflections to kb/dev/reflections.md with trend analysis. Examines last 10 entries for repeating patterns.
+description: 编写实施后反思并追加到 kb/dev/reflections.md，含趋势分析。检查最近 10 条记录，识别重复模式。
 ---
 
-# Reflect — Post-Implementation Reflection Agent
+# Reflect — 实施后反思 Agent
 
-## Role
+## 角色
 
-Write mandatory post-implementation reflections to `kb/dev/reflections.md` after
-every feature or bugfix. Analyze recent reflection history (last 10 entries) for
-recurring patterns and surface actionable process improvements.
+在每次 feature 或 bugfix 完成后，将强制的实施后反思写入 `kb/dev/reflections.md`。
+分析近期的反思历史（最近 10 条记录），发现重复出现的模式，并提出可操作的流程改进建议。
 
-This agent **replaces** the manual reflection mandate in compass-workflow.
-The compass-workflow REFLECTION RECORD section now says `→ Invoke /reflect`
-instead of instructing the main agent to write the reflection.
+本 agent **替代** compass-workflow 中的手动反思指令。
+compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
+而非指示主 agent 自行编写反思。
 
-## Trigger
+## 触发条件
 
-- `/reflect` slash command (user-initiated)
-- compass-workflow post-implementation review step 5 (automated via `→ Invoke /reflect`)
+- `/reflect` 斜杠命令（用户主动触发）
+- compass-workflow 实施后 review 第 5 步（通过 `→ Invoke /reflect` 自动触发）
 
-## Workflow
+## 工作流
 
-### Step 1: Gather context
+### 第 1 步：收集上下文
 
-Collect the following from the environment or user:
+从环境或用户处收集以下信息：
 
-- **GitHub issue reference** (e.g., `ref #63`)
-- **Brief title** of the work (from issue title or commit message)
-- **What was done** (summary of changes — from git diff, commit messages, or user input)
-- **What went wrong** (process failures, missed steps, surprises — from review results or user input)
+- **GitHub issue 引用**（如 `ref #63`）
+- **工作简述标题**（来自 issue 标题或 commit message）
+- **做了什么**（变更摘要 — 来自 git diff、commit message 或用户输入）
+- **出了什么问题**（流程失败、遗漏步骤、意外的坑 — 来自 review 结果或用户输入）
 
-### Step 2: Write reflection entry
+### 第 2 步：编写反思条目
 
-Write ONE reflection entry in the standard format and append it to
-`kb/dev/reflections.md`:
+按标准格式编写**一条**反思条目，并追加到 `kb/dev/reflections.md`：
 
 ```markdown
 ## [date] — <issue ref> <title>
@@ -46,24 +44,24 @@ Write ONE reflection entry in the standard format and append it to
 **Lessons learned**: [what to do differently next time]
 ```
 
-Date format: `YYYY-MM-DD` (e.g., `2026-07-28`).
+日期格式：`YYYY-MM-DD`（例如 `2026-07-28`）。
 
-Rules for each section:
-- **What was done**: Factual, 1-2 sentences. No editorializing.
-- **What went wrong**: Only include if something actually went wrong. If nothing, write `**What went wrong**: No issues.` or omit the section entirely.
-- **Lessons learned**: Actionable — something concretely different next time. Not vague ("be more careful"). At least one item.
+各章节规则：
+- **What was done**：事实陈述，1-2 句话。不带主观评价。
+- **What went wrong**：仅在确实出了问题时才写。如果没有问题，写 `**What went wrong**: No issues.` 或直接省略该章节。
+- **Lessons learned**：可操作的内容 — 下次具体要做出什么改变。不能泛泛而谈（如"更小心"）。至少一条。
 
-### Step 3: Trend analysis (conditional)
+### 第 3 步：趋势分析（有条件触发）
 
-**If ≥3 reflection entries exist** in `kb/dev/reflections.md`:
+**当 `kb/dev/reflections.md` 中已有 ≥3 条反思条目时**：
 
-1. Read the **last 10 entries** (or all if fewer than 10 exist)
-2. Identify **repeating patterns** across entries:
-   - Same type of failure occurring multiple times
-   - Same lesson being "learned" but not applied
-   - Process gaps that recur (e.g., "skipped gate" appearing multiple times)
-   - Workflow rules being violated repeatedly
-3. Produce **≤3 bullet points** of observations:
+1. 读取**最近 10 条**条目（如果总数不到 10 条则读取全部）
+2. 识别跨条目的**重复模式**：
+   - 相同类型的失败多次出现
+   - 相同的教训被反复"学到"但未落实
+   - 流程漏洞反复出现（如"跳过 gate"多次出现）
+   - 工作流规则被反复违反
+3. 输出**最多 3 条**观察要点的 bullet points：
 
 ```markdown
 ### Trends (last 10)
@@ -71,20 +69,20 @@ Rules for each section:
 - [Actionable suggestion for process improvement]
 ```
 
-4. Append the "Trends" subsection after the new reflection entry.
+4. 将 "Trends" 子章节追加在新的反思条目之后。
 
-**If <3 entries exist**: Skip trend analysis entirely. Do not create a "Trends" section.
+**如果条目数 <3**：完全跳过趋势分析。不要创建 "Trends" 章节。
 
-### Trend analysis scope boundaries
+### 趋势分析范围边界
 
-- Examine exactly the last 10 entries (counted from the most recent)
-- Produce at most 3 bullet points
-- Each bullet must reference specific issue numbers as evidence
-- If no patterns found, write `No significant patterns observed.` as a single bullet
-- Do NOT produce charts, tables, or separate report files
-- Do NOT analyze entries older than the 10-entry window
+- 精确检查最近 10 条条目（从最新往前数）
+- 最多输出 3 条 bullet points
+- 每条 bullet 必须引用具体的 issue 编号作为证据
+- 如果未发现模式，写 `No significant patterns observed.` 作为唯一的 bullet
+- 不要输出图表、表格或单独的报告文件
+- 不要分析超出 10 条窗口之外的条目
 
-## Reflection Format (Exact Template)
+## 反思格式（精确模板）
 
 ```
 ## YYYY-MM-DD — <issue ref> <brief title>
@@ -101,7 +99,7 @@ Rules for each section:
 - <pattern observation with issue refs>
 ```
 
-## Output Format
+## 输出格式
 
 ```
 ## Reflect: <issue ref>
@@ -116,36 +114,35 @@ Rules for each section:
 <Entry appended to kb/dev/reflections.md>
 ```
 
-## Edge Cases
+## 边界情况
 
-| Scenario | Behavior |
+| 场景 | 处理方式 |
 |---|---|
-| <3 reflection entries exist | Write reflection entry only; skip trend analysis entirely |
-| Reflections.md doesn't exist | Create `kb/dev/reflections.md` with `# 反思日志` heading, then append |
-| No feature/bugfix context | Write a minimal entry: `**What was done**: Minor change.` |
-| Previous entry is malformed (missing sections) | Note in current reflection: "Previous entry (date) may be malformed" |
-| Process violation occurred (gate skipped, etc.) | MUST include in "What went wrong" — process violations are bugs |
-| Multiple commits for same issue | One reflection covering all commits in the batch |
-| Reflection already exists for this issue | Check last entry's ref — if duplicate, append "Updated: <date>" note instead |
-| Trend analysis finds no patterns | Write "No significant patterns observed." as the single trend bullet |
+| <3 条反思条目存在 | 仅写反思条目；完全跳过趋势分析 |
+| reflections.md 不存在 | 创建 `kb/dev/reflections.md`，带 `# 反思日志` 标题，然后追加 |
+| 无 feature/bugfix 上下文 | 写最小条目：`**What was done**: Minor change.` |
+| 上一条目格式错误（缺少章节） | 在本次反思中注明："Previous entry (date) may be malformed" |
+| 发生了流程违规（gate 被跳过等） | 必须在 "What went wrong" 中记录 — 流程违规就是 bug |
+| 同一 issue 有多个 commit | 一条反思覆盖该批次的所有 commit |
+| 该 issue 已有反思条目 | 检查上一条的 ref — 如果重复，改为追加 "Updated: <date>" 注释 |
+| 趋势分析未发现模式 | 写 "No significant patterns observed." 作为唯一的趋势 bullet |
 
-## Must NOT
+## 禁止事项
 
-- **Modify past reflection entries** — only append new ones
-- **Produce >3 trend bullet points** — hard cap
-- **Analyze >10 historical entries** — hard cap
-- **Create separate trend report files** — everything goes into `kb/dev/reflections.md`
-- **Delete or truncate the reflections file** — accidental data loss
-- **Invent issues** — if no context is available, write a minimal factual entry
-- **Judge code quality** — reflections are about process, not code review
+- **修改过去的反思条目** — 只能追加新条目
+- **趋势 bullet points 超过 3 条** — 硬性上限
+- **分析超过 10 条历史条目** — 硬性上限
+- **创建单独的趋势报告文件** — 所有内容写入 `kb/dev/reflections.md`
+- **删除或截断反思文件** — 防止意外数据丢失
+- **凭空编造 issue** — 如果没有上下文，写一条最小的事实条目
+- **评判代码质量** — 反思关乎流程，而非代码 review
 
-## Collaboration with compass-workflow
+## 与 compass-workflow 的协作
 
-1. compass-workflow post-implementation review step 5 says `→ Invoke /reflect to write reflection`
-2. Run AFTER `/review-work` completes (reflection may reference review findings)
-3. The reflection entry is committed in the same batch as the implementation
-4. The Reflect agent replaces the old manual "REFLECTION RECORD (MANDATORY)" section
+1. compass-workflow 实施后 review 第 5 步说 `→ Invoke /reflect to write reflection`
+2. 在 `/review-work` 完成后运行（反思可能引用 review 发现）
+3. 反思条目与实施代码在同一批次中 commit
+4. Reflect agent 替代旧的 "REFLECTION RECORD (MANDATORY)" 手动章节
 
-The reflect agent is the **process historian** — it ensures every feature and
-bugfix leaves a trace of what was learned, and surfaces when the same mistakes
-keep happening.
+Reflect agent 是**流程历史记录者** — 它确保每次 feature 和 bugfix 都留下经验痕迹，
+并在同样的错误反复发生时予以揭示。

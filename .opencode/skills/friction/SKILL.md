@@ -1,51 +1,47 @@
 ---
 name: friction
-description: Records friction moments where user corrected AI behavior deviations. Auto-detects corrections and appends to kb/dev/friction.md.
+description: 记录用户纠正 AI 行为偏差的摩擦时刻。自动检测纠正并追加到 kb/dev/friction.md。
 ---
 
-# Friction — Correction Recording Agent
+# Friction — 纠正记录 Agent
 
-## Role
+## 角色
 
-Record moments when the user corrects AI behavior — behavior deviations,
-misunderstandings, missed constraints, or anchoring bias. Stores entries
-in `kb/dev/friction.md`. Append-only.
+记录用户纠正 AI 行为的时刻 — 行为偏差、误解、遗漏的约束或锚定偏见。
+将条目存储于 `kb/dev/friction.md`。仅追加。
 
-This agent is the **friction historian** — it captures what the AI got wrong
-so the same mistake isn't repeated. Peer to `/reflect` (post-implementation
-reflections), but runs **during** work rather than after.
+本 agent 是**摩擦历史记录者** — 它记录 AI 犯了什么错，以免同样的错误重演。
+与 `/reflect`（实施后反思）并列，但在工作**过程中**而非事后运行。
 
-## Trigger
+## 触发条件
 
-- **Auto-detect**: when user contradicts or overrides AI's previous output →
-  prompt the user: "记录这次摩擦到 kb/dev/friction.md？"
-- **Manual**: `/friction` slash command → directly append entry
+- **自动检测**：当用户反驳或推翻 AI 之前的输出 →
+  提示用户："记录这次摩擦到 kb/dev/friction.md？"
+- **手动触发**：`/friction` 斜杠命令 → 直接追加条目
 
-## Workflow
+## 工作流
 
-### Step 1: Detect correction
+### 第 1 步：检测纠正
 
-When the user says something that contradicts, overrides, corrects, or
-broadens the AI's previous output, recognize it as a correction event.
+当用户说出与 AI 之前输出矛盾、推翻、纠正或扩充的内容时，将其识别为纠正事件。
 
-Detection signals:
-- User says "不是..." / "不对..." / "应该是..." / "不仅..."
-- User provides a counter-example to AI's stated scope
-- User adds a constraint the AI missed
-- User redirects the AI's approach
+检测信号：
+- 用户说"不是..." / "不对..." / "应该是..." / "不仅..."
+- 用户对 AI 声明的范围给出反例
+- 用户补充了一个 AI 遗漏的约束
+- 用户改变了 AI 的方案方向
 
-### Step 2: Prompt user
+### 第 2 步：提示用户
 
-After the correction has been resolved (new understanding reached), ask:
+在纠正已解决（达成新共识）之后，询问：
 
 > 记录这次摩擦到 kb/dev/friction.md？
 
-Do NOT interrupt the ongoing task flow. Ask after the immediate correction
-is processed, not during it.
+不要打断正在进行的任务流。在即时纠正处理完毕后再提问，而不是在处理过程中。
 
-### Step 3: Append entry
+### 第 3 步：追加条目
 
-If user confirms, append to `kb/dev/friction.md` using the template:
+如果用户确认，按以下模板追加到 `kb/dev/friction.md`：
 
 ```markdown
 ## YYYY-MM-DD — <关联会话或issue>
@@ -57,15 +53,13 @@ If user confirms, append to `kb/dev/friction.md` using the template:
 **教训**: <actionable lesson learned>
 ```
 
-If `kb/dev/friction.md` doesn't exist, create it with a `# 摩擦记录` heading
-and a brief description, then append the entry.
+如果 `kb/dev/friction.md` 不存在，先创建文件，带 `# 摩擦记录` 标题和简要说明，然后追加条目。
 
-### Step 4: Decline
+### 第 4 步：拒绝
 
-If user declines, respect the choice. Note "skipped" silently — do not
-re-prompt for the same correction.
+如果用户拒绝，尊重其选择。静默记录 "skipped" — 不要为同一纠正再次提示。
 
-## Output Format
+## 输出格式
 
 ```
 ## Friction: <session/issue context>
@@ -77,36 +71,36 @@ re-prompt for the same correction.
 <Entry appended to kb/dev/friction.md> or <User declined — skipped>
 ```
 
-## Edge Cases
+## 边界情况
 
-| Scenario | Behavior |
+| 场景 | 处理方式 |
 |---|---|
-| friction.md doesn't exist | Create with heading, then append |
-| User declines recording | Respect silently; note "skipped" |
-| Same correction detected twice | Skip — don't create duplicate entries |
-| Multiple corrections in one turn | Record each separately; one entry per correction |
-| Correction happens during grill-me | Record normally — grill-me corrections are valid friction |
+| friction.md 不存在 | 创建文件带标题，然后追加 |
+| 用户拒绝记录 | 静默尊重；记录 "skipped" |
+| 同一纠正被检测到两次 | 跳过 — 不创建重复条目 |
+| 同一轮对话中有多次纠正 | 分别记录；每次纠正一个条目 |
+| 纠正发生在 grill-me 期间 | 正常记录 — grill-me 中的纠正也是有效摩擦 |
 
-## Must NOT
+## 禁止事项
 
-- **Modify past friction entries** — only append new ones
-- **Record design decisions** — those go in `kb/design/` 决策记录 sections
-- **Overlap with reflect skill** — reflections = post-implementation, friction = during-work
-- **Interrupt active work** — prompt after correction is resolved, not during
-- **Judge the user's correction** — record factually, don't editorialize
-- **Create issues or modify code** — read + write to friction.md only
+- **修改过去的摩擦条目** — 只能追加新条目
+- **记录设计决策** — 设计决策写入 `kb/design/` 的决策记录章节
+- **与 reflect skill 重叠** — reflections = 实施后，friction = 工作中
+- **打断正在进行的工作** — 在纠正解决后再提示，而非过程中
+- **评判用户的纠正** — 如实记录，不带主观评价
+- **创建 issue 或修改代码** — 仅读取并写入 friction.md
 
-## Collaboration with compass-workflow
+## 与 compass-workflow 的协作
 
-1. compass-workflow Rule 11 (Friction Record): "When user corrects AI behavior →
-   pause and suggest recording via `/friction`"
-2. The compass-workflow agent detects the correction and invokes this skill
-3. This skill handles the recording flow independently
-4. Friction entries are NOT committed separately — they ship with the next commit
+1. compass-workflow 规则 11（摩擦记录）："当用户纠正 AI 行为 →
+   暂停并建议通过 `/friction` 记录"
+2. compass-workflow agent 检测到纠正后调用本 skill
+3. 本 skill 独立处理记录流程
+4. 摩擦条目不单独 commit — 随下一次 commit 一起提交
 
-## Template Reference
+## 模板参考
 
-The canonical entry format in `kb/dev/friction.md`:
+`kb/dev/friction.md` 中的规范条目格式：
 
 ```markdown
 ## YYYY-MM-DD — <关联会话或issue>

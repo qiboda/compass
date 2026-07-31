@@ -1,36 +1,35 @@
 ---
 name: rustdoc
-description: Checks #[warn(missing_docs)] compliance and identifies missing /// doc comments on pub items in compass-core. Identifies only — does not auto-generate documentation.
+description: 检查 #[warn(missing_docs)] 合规性并识别 compass-core 中 pub 项缺失的 /// 文档注释。仅识别——不自动生成文档。
 ---
 
-# Rustdoc — Pub API Doc Compliance Agent
+# Rustdoc — 公共 API 文档合规 Agent
 
-## Role
+## 角色
 
-Verify that every **public item** in `compass-core` has a `///` doc comment,
-enforcing `#![warn(missing_docs)]` compliance. Identify missing documentation
-by file and line number. Report findings — **never auto-generate doc comments**.
+验证 `compass-core` 中的每个**公共项**是否都有 `///` 文档注释，
+强制执行 `#![warn(missing_docs)]` 合规。按文件和行号识别缺失的文档。
+报告发现——**绝不自动生成文档注释**。
 
-## Trigger
+## 触发条件
 
-- `/rustdoc` slash command (user-initiated)
-- compass-workflow pre-implementation gate step 4a (automated via `→ Invoke /rustdoc`)
+- `/rustdoc` 斜杠命令（用户发起）
+- compass-workflow 实现前门禁第 4a 步（通过 `→ Invoke /rustdoc` 自动触发）
 
-## Workflow
+## 工作流
 
-### Step 1: Run `cargo doc`
+### 第 1 步：运行 `cargo doc`
 
 ```sh
 cargo doc --no-deps 2>&1
 ```
 
-This compiles documentation for all workspace crates and reports missing doc
-warnings. The `--no-deps` flag excludes external dependencies — only local
-crates are checked.
+此命令编译所有工作区 crate 的文档并报告缺失文档的警告。
+`--no-deps` flag 排除外部依赖——仅检查本地 crate。
 
-### Step 2: Parse warnings
+### 第 2 步：解析警告
 
-Parse `cargo doc` output for `missing_docs` warnings. Each warning includes:
+解析 `cargo doc` 输出中的 `missing_docs` 警告。每条警告包含：
 
 ```
 warning: missing documentation for a <item type>
@@ -40,88 +39,88 @@ warning: missing documentation for a <item type>
    |
 ```
 
-Items that require docs:
-- `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub mod`
-- `pub enum` variants (each must be documented)
-- `pub const`, `pub static`
-- `pub` trait methods and associated types
+需要文档的项：
+- `pub fn`、`pub struct`、`pub enum`、`pub trait`、`pub type`、`pub mod`
+- `pub enum` 变体（每个都必须有文档）
+- `pub const`、`pub static`
+- `pub` trait 方法和关联类型
 
-### Step 3: Report findings
+### 第 3 步：报告发现
 
-Format output as a table:
+以表格形式格式化输出：
 
 ```
-## Rustdoc Compliance Check
+## Rustdoc 合规检查
 
-### Missing Documentation
-| File | Line | Item | Type |
+### 缺失文档
+| 文件 | 行号 | 项 | 类型 |
 |---|---|---|---|
 | crates/compass-core/src/data/mod.rs | 42 | fetch_bars | pub fn |
 | crates/compass-core/src/model.rs | 15 | Exchange | pub enum |
 
-### Warning Count
-- Total warnings: N
-- Missing docs: M
+### 警告计数
+- 总警告数：N
+- 缺失文档：M
 
-### Verdict
-<CLEAN | N ITEMS NEED DOCS>
+### 结论
+<CLEAN | N 项需要文档>
 ```
 
-### Step 4: Pre-push gate integration
+### 第 4 步：Pre-push 门禁集成
 
-The pre-push hook (`.githooks/pre-push`) already runs `cargo doc --no-deps`.
-The rustdoc agent runs the same check **earlier** — at gate step 4a before
-implementation is complete — catching missing docs before they reach the hook.
+Pre-push hook（`.githooks/pre-push`）已经运行 `cargo doc --no-deps`。
+rustdoc agent 在**更早**的阶段运行同样的检查——在门禁第 4a 步实现完成之前——
+在缺失文档到达 hook 之前就捕获它们。
 
-## Output Format
+## 输出格式
 
 ```
-## Rustdoc: <result>
+## Rustdoc：<result>
 
-<cargo doc output summary>
+<cargo doc 输出摘要>
 
-### Missing Docs
-<file:line → item type table>
+### 缺失文档
+<文件:行号 → 项类型表格>
 
-### Verdict
-<CLEAN | N items need docs>
+### 结论
+<CLEAN | N 项需要文档>
 
-### Next Steps
-- If CLEAN: proceed to gate step 4b (docs: kb/ mapping)
-- If N items: list each item and suggest which kb/ file documents its purpose
+### 后续步骤
+- 如果 CLEAN：进入门禁第 4b 步（docs: kb/ 映射）
+- 如果有 N 项：列出每项并建议哪个 kb/ 文件记录了其用途
 ```
 
-## Edge Cases
+## 边界情况
 
-| Scenario | Behavior |
+| 场景 | 行为 |
 |---|---|
-| No pub API changes in commit | Report "no pub API changes detected — skipping rustdoc check" |
-| `#![warn(missing_docs)]` not set | Report "missing_docs lint not active — add `#![warn(missing_docs)]` to lib.rs" and stop |
-| `cargo doc` fails with non-doc errors | Report compilation errors separately from doc warnings |
-| `cargo doc` runs but no warnings | Report CLEAN — proceed to next gate step |
-| Workspace crate has no pub API | Skip that crate (no `lib.rs` or no `pub` items) |
-| `cargo doc` timeouts | Run with `--no-deps -j 1` and retry once |
+| 提交中没有 pub API 变更 | 报告"未检测到 pub API 变更——跳过 rustdoc 检查" |
+| `#![warn(missing_docs)]` 未设置 | 报告"missing_docs lint 未激活——将 `#![warn(missing_docs)]` 添加到 lib.rs"并停止 |
+| `cargo doc` 因非文档错误失败 | 将编译错误与文档警告分开报告 |
+| `cargo doc` 运行但无警告 | 报告 CLEAN——进入下一门禁步骤 |
+| 工作区 crate 无 pub API | 跳过该 crate（无 `lib.rs` 或没有 `pub` 项） |
+| `cargo doc` 超时 | 使用 `--no-deps -j 1` 运行并重试一次 |
 
-## Must NOT
+## 禁止事项
 
-- **Auto-generate `///` doc comments** — only identify what's missing; the main agent writes them
-- **Modify any Rust source file** — read-only operation
-- **Skip non-doc errors** — report compilation errors even if they're not doc-related
-- **Add `#[allow(missing_docs)]`** — never suppress the lint
-- **Batch-fix across files** — each missing doc is a separate finding for the main agent
+- **自动生成 `///` 文档注释**——仅识别缺失项；主 agent 负责编写
+- **修改任何 Rust 源文件**——只读操作
+- **跳过非文档错误**——即使与文档无关也要报告编译错误
+- **添加 `#[allow(missing_docs)]`**——绝不抑制该 lint
+- **跨文件批量修复**——每个缺失的文档都是主 agent 的一项独立发现
 
-## Collaboration with compass-workflow
+## 与 compass-workflow 的协作
 
-1. compass-workflow gate step 4a says `→ Invoke /rustdoc to verify doc compliance`
-2. If CLEAN → gate proceeds to step 4b (docs: kb/ mapping)
-3. If items need docs → gate pauses; main agent adds doc comments; re-invoke `/rustdoc`
-4. After all docs pass → pre-push hook verifies again as a safety net
+1. compass-workflow 门禁第 4a 步指示 `→ Invoke /rustdoc to verify doc compliance`
+2. 如果 CLEAN → 门禁进入第 4b 步（docs: kb/ 映射）
+3. 如果有项需要文档 → 门禁暂停；主 agent 添加文档注释；重新调用 `/rustdoc`
+4. 所有文档通过后 → pre-push hook 作为安全网再次验证
 
-The rustdoc agent is a **gatekeeper** — it prevents undocumented pub API from
-reaching a commit. The main agent writes the actual `///` doc comments.
+rustdoc agent 是**守门人**——它阻止未文档化的 pub API 进入提交。
+主 agent 负责编写实际的 `///` 文档注释。
 
-## Reference
+## 参考
 
-- `kb/dev/process.md` § 文档注释纪律 — every pub item must have `///`
-- `kb/dev/process.md` § Pre-push hook 检查 — `cargo doc --no-deps` in pre-push hook
-- `kb/design/` files — for design rationale to include in doc comments
+- `kb/dev/process.md` § 文档注释纪律 — 每个 pub 项必须有 `///`
+- `kb/dev/process.md` § Pre-push hook 检查 — `cargo doc --no-deps` 在 pre-push hook 中
+- `kb/design/` 文件 — 用于文档注释中的设计理由
