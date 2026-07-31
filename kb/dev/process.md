@@ -224,8 +224,11 @@ unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
 
 **Post-creation**: after `git worktree add`, the worktree skill requires:
-1. Symlink gitignored data dirs (`investment_data/`, `parquet_data/`) from main repo
-2. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
+1. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
+2. Unbind the current opencode session (exit/quit the running master instance) —
+   required because opencode maps the worktree directory to the same project as
+   master; launching `opencode` in the worktree fails while the master session is
+   still bound
 3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
 4. Stay in master — don't switch session into the worktree directory
 

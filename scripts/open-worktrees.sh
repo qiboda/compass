@@ -11,6 +11,17 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SESSION="compass-worktrees"
 WT_DIR="$PROJECT_ROOT/.worktrees"
 
+# --- precheck: refuse to launch while master opencode binds the project session ---
+# opencode maps worktrees to the same project as master; a second instance in a
+# worktree fails until the master session is unbound.
+if pgrep -f "opencode" >/dev/null 2>&1; then
+    echo "WARNING: an opencode instance is still running (master session still bound)." >&2
+    echo "  Exit/quit the current opencode FIRST, then re-run this script from a new terminal." >&2
+    echo "  (opencode maps worktrees to the same project as master — launching a second" >&2
+    echo "   instance in a worktree fails while the master session is bound.)" >&2
+    exit 1
+fi
+
 # --- helpers ---
 has_worktree() { [ -d "$WT_DIR/$1" ] && git -C "$WT_DIR/$1" rev-parse --git-dir &>/dev/null; }
 
