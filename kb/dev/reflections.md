@@ -180,3 +180,19 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
   纯翻译/机械任务直接执行，避免 grill-me 误用
 - 多文件批量改动时引用一致性是最高风险点（#77 roadmap 引用 ×8、doc-sync 断链 ×2）：
   批量修改后用 grep 全仓校验引用完整性
+
+## 2026-08-01 — ref #78 stock_basic 数据源切换三大交易所官网
+
+**What was done**: stock_basic 从东财 push2（EM_FS t:81 段污染 6,841 只新三板/老三板）切换到三大交易所官网（上交所 JSON / 深交所 xlsx×2 / 北交所 form POST），Dolt 表加 delist_date/board/full_name/total_share、删 5 个东财残留列，新建 fetch_stock_basic_official.py 采集器，全链路（采集→Dolt→parquet→GUI）验证 5,888 行含 354 退市。
+
+**What went wrong**: ① 采集器 T3 交付后真实采集仅 2,787 条（深交所全部缺失）——单元测试用裸 `<row>` fixture 而真实 xlsx 带 `r="1" s="1"` 属性，正则 `_ROW_RE` 不匹配，单测全绿掩盖了真实数据 bug；② 同类问题：SZSE 总股本含千分位逗号 `19,405,918,198`，`float()` 直接抛 ValueError，同样只在真实数据出现；③ T7 按计划用 `NULLIF(col,'')` 转换空值，但 Dolt 类型化 CSV 导入已自动转 NULL，NULLIF 反报 "Incorrect datetime value" —— 计划假设与实际 Dolt 行为不符；④ review 发现 duckdb.rs/import_dolt.rs 遗留旧 schema（issue #80）。
+
+**Lessons learned**:
+1. 网络数据采集器的测试必须包含"真实响应样本 fixture"，不能只用构造的最小片段——真实 xlsx 的属性顺序/千分位/编码差异是单测盲区，T3 后必须真实跑一次比对行数（本次真实跑立即暴露 2,787 vs 5,888 差异）。
+2. 涉及 Dolt/数据库导入的转换逻辑（NULLIF 空值处理），先验证工具实际行为再写代码——Dolt table import 的类型推断会自动处理空串，plan 中的 SQL 假设需实测确认（T7 的 deviation 事后被证明正确）。
+3. 跨语言管线（Python 采集 → Dolt schema → Rust parquet）改动时，遗留旧路径（duckdb.rs/import_dolt.rs）即使不在本 PR 范围也要 grep 标注并记 issue，避免文档与代码分裂。
+
+### Trends (last 10)
+- 测试与真实数据脱节反复出现（#78 T3 xlsx 属性、#62 数据验证）：网络/数据源解析的测试 fixture 应取自真实响应，并在实现后立即做真实端到端验证（行数/字段比对），不能依赖构造数据单测全绿
+- 计划假设与工具实际行为不符（#78 NULLIF/Dolt 导入、#77 文档与代码脱节）：涉及外部工具（Dolt/API）的转换逻辑，实施前先实测工具行为或先写最小验证脚本，避免按文档假设写代码
+- 多模块跨语言改动后遗留路径检查（#78 duckdb.rs/import_dolt.rs、#77 引用断链）：主路径完成 ≠ 全仓一致，交付前 grep 旧 schema/旧引用并记 issue
