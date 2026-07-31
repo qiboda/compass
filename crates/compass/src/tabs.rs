@@ -97,6 +97,8 @@ impl Tab {
 // TabViewer — egui_dock bridge
 // ---------------------------------------------------------------------------
 
+use crate::theme::CompassTheme;
+
 /// egui_dock [`TabViewer`] that bridges tab clicks to citizen activation
 /// and delegates rendering to each citizen's `show` method.
 ///
@@ -107,6 +109,7 @@ pub struct TabViewer<'a> {
     pub chart: &'a mut ChartCitizen,
     pub logger: &'a mut LoggerPanel,
     pub shared_state: &'a SharedState,
+    pub theme: &'a CompassTheme,
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
@@ -118,7 +121,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.kind {
-            TabKind::Chart => self.chart.show(ui, self.shared_state),
+            TabKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
             TabKind::Logger => self.logger.show(ui, self.shared_state),
         }
     }

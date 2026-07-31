@@ -13,6 +13,8 @@ chrono = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui-charts = { workspace = true }
+egui-phosphor = "0.13"
+egui-file-dialog = "0.14"
 egui_dock = "0.20"
 egui_mobius = "0.5"
 egui_mobius_reactive = "0.5"

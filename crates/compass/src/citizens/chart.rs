@@ -1,14 +1,15 @@
 use crate::state::SharedState;
+use crate::theme::CompassTheme;
+use egui_charts::ChartType;
 use egui_charts::model::BarData;
 use egui_charts::widget::Chart;
-use egui_charts::{ChartType, theme::Theme};
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 
 /// Chart panel citizen — renders an interactive OHLCV candlestick chart.
 ///
 /// Reads `bars` from `SharedState` reactively and updates the chart
-/// widget whenever data is available. Applies the dark theme on each
-/// frame.
+/// widget whenever data is available. The active theme's chart colors
+/// (candles, grid, crosshair) are applied each frame via `app_theme`.
 pub struct ChartCitizen {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
@@ -33,8 +34,8 @@ impl ChartCitizen {
     /// Creates a new `ChartCitizen` with an empty candlestick chart.
     ///
     /// The chart is pre-configured with 100 visible bars, symbol label
-    /// "COMPASS", and "1d" timeframe label — the real data is loaded
-    /// reactively on each frame in `show`.
+    /// "COMPASS", and "1d" timeframe label — the real data and theme
+    /// colors are applied reactively on each frame in `show`.
     pub fn new(citizen_id: CitizenId, citizen_state: CitizenState) -> Self {
         let bars: Vec<egui_charts::model::Bar> = Vec::new();
         let data = BarData::from_bars(bars);
@@ -50,14 +51,13 @@ impl ChartCitizen {
         }
     }
 
-    /// Renders the chart panel.
+    /// Renders the chart panel with the given theme.
     ///
-    /// Applies the dark theme, reads `bars` from shared state, and
-    /// updates the chart widget when bars are available. The chart
-    /// widget is then rendered into the given `ui`.
-    pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState) {
-        let theme = Theme::dark();
-        egui_charts::theme::apply_to_egui(ui.ctx(), &theme);
+    /// Applies `app_theme` chart colors (candles, grid, crosshair) each
+    /// frame, reads `bars` from shared state, and delegates rendering to
+    /// the egui-charts widget.
+    pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, app_theme: &CompassTheme) {
+        app_theme.apply_to_chart(&mut self.chart);
 
         let bars = state.bars.get();
         if !bars.is_empty() {

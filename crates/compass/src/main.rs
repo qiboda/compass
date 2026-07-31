@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use egui_citizen::{CitizenId, Dispatcher};
-use egui_dock::{DockArea, DockState};
+use egui_dock::{DockArea, DockState, Style};
+use egui_file_dialog::FileDialog;
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
@@ -14,12 +15,16 @@ mod dispatcher;
 mod messages;
 mod state;
 mod tabs;
+mod theme;
 mod widgets;
 
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
 use tabs::{CHART_ID, LOGGER_ID, Tab, TabKind, TabViewer};
+use theme::CompassTheme;
+use widgets::modal::Modal;
 use widgets::searchable_dropdown::StockPicker;
+use widgets::toast::{ToastLevel, ToastManager};
 
 fn setup_cjk_fonts(ctx: &egui::Context) {
     let font_path = "/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Regular.otf";
@@ -42,6 +47,7 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
     if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
         family.push("SourceHanSansCN".into());
     }
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
 }
 
@@ -101,6 +107,9 @@ fn main() -> eframe::Result {
 
             let stock_picker = StockPicker::new(&config.app.default_symbol, &stock_list);
 
+            let theme = CompassTheme::from_config(&config.theme);
+            let dock_style = Style::from_egui(&cc.egui_ctx.style_of(cc.egui_ctx.theme()));
+
             Ok(Box::new(CompassApp {
                 dock_state,
                 dispatcher,
@@ -111,7 +120,14 @@ fn main() -> eframe::Result {
                 stock_list,
                 stock_picker,
                 timeframe_index: 0usize,
+                theme,
+                dock_style,
                 _backend_handle,
+                toast: ToastManager::new(),
+                modal: Modal::new(),
+                file_dialog: FileDialog::new(),
+                last_error: None,
+                last_loading: false,
             }))
         }),
     )
@@ -215,45 +231,84 @@ struct CompassApp {
     stock_list: Vec<compass_core::model::StockBasic>,
     stock_picker: StockPicker,
     timeframe_index: usize,
+    theme: CompassTheme,
+    dock_style: egui_dock::Style,
     _backend_handle: backend::BackendHandle,
+    toast: ToastManager,
+    modal: Modal,
+    file_dialog: FileDialog,
+    last_error: Option<String>,
+    last_loading: bool,
 }
 
 impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.horizontal(|ui| {
-            ui.add_space(ui.spacing().item_spacing.x);
-            ui.vertical(|ui| {
+        self.theme.apply_theme(ui.ctx());
+
+        // Toolbar with full-width background.
+        let toolbar_bg = {
+            let panel = ui.visuals().panel_fill;
+            let (r, g, b) = (panel.r(), panel.g(), panel.b());
+            if ui.visuals().dark_mode {
+                egui::Color32::from_rgb(
+                    r.saturating_sub(15),
+                    g.saturating_sub(15),
+                    b.saturating_sub(15),
+                )
+            } else {
+                egui::Color32::from_rgb(
+                    r.saturating_add(15),
+                    g.saturating_add(15),
+                    b.saturating_add(15),
+                )
+            }
+        };
+        egui::Frame::default().fill(toolbar_bg).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
                 self.render_toolbar(ui);
             });
         });
 
-        ui.separator();
+        // Dock area with explicit background matching the theme.
+        let dock_bg = ui.visuals().panel_fill;
+        egui::Frame::default().fill(dock_bg).show(ui, |ui| {
+            DockArea::new(&mut self.dock_state)
+                .style(self.dock_style.clone())
+                .show_inside(
+                    ui,
+                    &mut TabViewer {
+                        dispatcher: &mut self.dispatcher,
+                        chart: &mut self.chart,
+                        logger: &mut self.logger,
+                        shared_state: &self.shared_state,
+                        theme: &self.theme,
+                    },
+                );
 
-        DockArea::new(&mut self.dock_state).show_inside(
-            ui,
-            &mut TabViewer {
-                dispatcher: &mut self.dispatcher,
-                chart: &mut self.chart,
-                logger: &mut self.logger,
-                shared_state: &self.shared_state,
-            },
-        );
+            self.toast.render(ui.ctx());
+            self.modal.show(ui.ctx());
+            self.file_dialog.update(ui.ctx());
 
-        dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
+            dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
-        ui.ctx().request_repaint_after(Duration::from_millis(200));
+            ui.ctx().request_repaint_after(Duration::from_millis(200));
+        });
     }
 }
 
 impl CompassApp {
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Symbol:");
+            ui.label(format!(
+                "{} Symbol:",
+                egui_phosphor::regular::MAGNIFYING_GLASS
+            ));
             self.stock_picker.show(ui, &self.stock_list);
 
             ui.separator();
 
-            ui.label("TF:");
+            ui.label(format!("{} TF:", egui_phosphor::regular::CLOCK));
             let mut tf = self.timeframe_index;
             egui::ComboBox::from_id_salt("timeframe_combo")
                 .selected_text(timeframe_label(tf))
@@ -267,7 +322,10 @@ impl CompassApp {
                 });
             self.timeframe_index = tf;
 
-            if ui.button("Fetch").clicked() {
+            if ui
+                .button(format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE))
+                .clicked()
+            {
                 let symbol = if self.stock_picker.selected_exchange.is_empty() {
                     self.stock_picker.selected_symbol.clone()
                 } else {
@@ -296,9 +354,43 @@ impl CompassApp {
             if self.shared_state.loading.get() {
                 ui.spinner();
             }
-            if let Some(ref err) = self.shared_state.error.get() {
-                ui.colored_label(egui::Color32::RED, err);
+            // Push error toast only on None→Some transition (not every frame)
+            let current_err = self.shared_state.error.get();
+            if current_err != self.last_error {
+                if let Some(ref err) = current_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_error = current_err;
             }
+
+            // Push success toast when loading transitions true→false with no error
+            let current_loading = self.shared_state.loading.get();
+            if self.last_loading && !current_loading && self.shared_state.error.get().is_none() {
+                self.toast
+                    .push(ToastLevel::Success, "Data fetched successfully");
+            }
+            self.last_loading = current_loading;
+
+            ui.separator();
+
+            ui.label(egui_phosphor::regular::PALETTE.to_string());
+            let themes = CompassTheme::all_names();
+            let mut current = self.theme.name().to_string();
+            egui::ComboBox::from_id_salt("theme_combo")
+                .selected_text(&current)
+                .show_ui(ui, |ui| {
+                    for &name in themes {
+                        if ui
+                            .selectable_value(&mut current, name.to_string(), name)
+                            .clicked()
+                        {
+                            self.theme = CompassTheme::from_config(name);
+                            self.theme.apply_theme(ui.ctx());
+                            self.dock_style =
+                                egui_dock::Style::from_egui(&ui.ctx().style_of(ui.ctx().theme()));
+                        }
+                    }
+                });
         });
     }
 }
