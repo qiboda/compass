@@ -29,6 +29,7 @@ tracy = ["dep:tracing-tracy", "dep:tracy-client-sys", "tracy-client-sys/enable",
 
 [dev-dependencies]
 httpmock = { workspace = true }
+rstest = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true }
 

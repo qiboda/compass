@@ -30,3 +30,8 @@ tracy-client-sys = { workspace = true, optional = true }
 
 [features]
 tracy = ["dep:tracing-tracy", "dep:tracy-client-sys", "tracy-client-sys/enable", "compass-core/tracy"]
+
+[dev-dependencies]
+egui_kittest = { version = "0.35", features = ["eframe"] }
+rstest = { workspace = true }
+tempfile = { workspace = true }
