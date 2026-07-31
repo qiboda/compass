@@ -2,7 +2,7 @@
 """Compass data pipeline CLI — fetch + import into Dolt.
 
 Usage:
-    uv run python main.py fetch stock_basic [--resume]
+    uv run python main.py fetch stock_basic
     uv run python main.py fetch fin_indicators [--years 2024,2025]
     uv run python main.py fetch balance_sheet [--years 2024,2025]
     uv run python main.py fetch income [--years 2024,2025]
@@ -35,10 +35,10 @@ def _parse_years(s: str) -> list[int] | None:
 # ── Import helpers for existing (non-refactored) tables ─────────
 
 def _import_stock_basic() -> None:
-    """Import stock_basic.csv into Dolt (legacy logic, unchanged)."""
+    """Import stock_basic_official.csv (SSE/SZSE/BSE official) into Dolt."""
     from common import dolt_sql, dolt_sql_csv, dolt_table_import
 
-    csv_path = COLLECTORS_DIR / "stock_basic.csv"
+    csv_path = COLLECTORS_DIR / "stock_basic_official.csv"
     print("[import stock_basic]", file=sys.stderr)
 
     if not csv_path.exists():
@@ -49,12 +49,16 @@ def _import_stock_basic() -> None:
     dolt_table_import("_tmp_sb", csv_path, timeout=120)
 
     dolt_sql("DELETE FROM stock_basic")
+    # Column names match the Dolt schema directly; dolt table import already
+    # typed the date/float columns and converted empty strings to NULL.
     sql = """
-        INSERT INTO stock_basic (symbol, ts_code, code, market, name, list_date,
-            industry, lead_stock, region, data_ts, industry_alt, member_count, update_date)
-        SELECT symbol, ts_code, f12, f13, f14, f26,
-            f100, f101, f102, f124,
-            f127, CAST(f134 AS SIGNED), f221
+        INSERT INTO stock_basic (symbol, ts_code, code, name, list_date,
+            delist_date, board, full_name, total_share, industry, region, update_date)
+        SELECT symbol, ts_code, code, name, list_date,
+            delist_date,
+            board, full_name,
+            total_share,
+            industry, region, update_date
         FROM _tmp_sb
     """
     dolt_sql(sql)
@@ -65,9 +69,10 @@ def _import_stock_basic() -> None:
     total = lines[-1] if len(lines) > 1 else "?"
     dolt_sql(
         "INSERT INTO data_updates (table_name, last_updated, source, row_count) "
-        "VALUES ('stock_basic', CURDATE(), 'EastMoney push2delay /api/qt/clist/get', "
+        "VALUES ('stock_basic', CURDATE(), 'SSE/SZSE/BSE official', "
         f"{total if total != '?' else 0}) "
-        "ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count=VALUES(row_count)"
+        "ON DUPLICATE KEY UPDATE last_updated=CURDATE(), source=VALUES(source), "
+        "row_count=VALUES(row_count)"
     )
     print(f"  Done: {total} rows", file=sys.stderr)
 
@@ -185,8 +190,6 @@ def main() -> None:
         choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
-    fetch.add_argument("--resume", action="store_true", help="Resume (stock_basic only)")
-    fetch.add_argument("--max-pages", type=int, default=200, help="Max pages (stock_basic only)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
@@ -204,11 +207,9 @@ def main() -> None:
         years = _parse_years(args.years)
 
         if args.target == "stock_basic":
-            import fetch_stock_basic
-            sys.argv = ["fetch_stock_basic", "--max-pages", str(args.max_pages)]
-            if args.resume:
-                sys.argv.append("--resume")
-            asyncio.run(fetch_stock_basic.main())
+            import fetch_stock_basic_official
+            sys.argv = ["fetch_stock_basic_official"]
+            fetch_stock_basic_official.main()
 
         elif args.target == "fin_indicators":
             import fetch_fin_indicators
@@ -249,9 +250,9 @@ def main() -> None:
 
         # 1. stock_basic
         print("[sync] Fetching stock_basic...", file=sys.stderr)
-        import fetch_stock_basic
-        sys.argv = ["fetch_stock_basic", "--max-pages", "200"]
-        asyncio.run(fetch_stock_basic.main())
+        import fetch_stock_basic_official
+        sys.argv = ["fetch_stock_basic_official"]
+        fetch_stock_basic_official.main()
         _import_stock_basic()
 
         # 2. fin_indicators
