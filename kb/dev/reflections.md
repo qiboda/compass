@@ -4,9 +4,6 @@
 
 旧的条目若已驱动具体流程改进（gate 硬阻、pre-push hook、自举测试等），则退役 — 教训已融入流程。
 
----
-
----
 
 ## 2026-07-28 — ref #62 rewrite: ParquetReader 改为单文件 stock_daily.parquet
 
@@ -81,7 +78,6 @@ fixed by using `new()` instead.
 
 **Lessons learned**: `git log $sha` without range prefix scans all ancestors — use `merge-base..$sha`.
 
----
 
 ## 2026-07-25 — chore: add worktree management skill
 
@@ -89,7 +85,6 @@ fixed by using `new()` instead.
 
 **Lessons learned**: Process docs reference skills, don't duplicate them. Worktrees need cleanup discipline.
 
----
 
 ## 2026-07-26 — feat: 创建 compass_data Dolt 仓库 #25
 
@@ -102,7 +97,6 @@ investment_data 的 exchange 值并非文档中的 `SHSE/BSE` 而是 `SSE/BSE`�
 
 **Lessons learned**: Dolt 方言和 MySQL 一致，`||` 不等于拼接；跨库查询需从父目录运行 `dolt sql` 无 `--data-dir`。
 
----
 
 ## 2026-07-26 — 流程违规: import-compass/backup 等多项 feature 工作跳过 PRE-IMPLEMENTATION GATE
 
@@ -115,7 +109,6 @@ CI 修复等多项 feature 工作，全部跳过了 PRE-IMPLEMENTATION GATE（�
 2. "feature 工作" 的边界太模糊，容易自欺"这不是 feature" — 改为白名单例外（仅 docs/lint/typofix）
 3. 流程违规本身即是 bug — 记录到 reflections 并修复流程
 
----
 
 ## 2026-07-26 — ref #43 feat: GUI layout rework + SH/SZ/BJ exchange selection
 

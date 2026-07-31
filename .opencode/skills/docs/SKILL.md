@@ -18,23 +18,25 @@ and keep them in sync with the codebase.
 
 ## kb/ File Inventory
 
-The project book contains exactly 17 files across 4 directories:
+The project book contains exactly 19 files across 4 directories:
 
-### kb/design/ — Architecture & Design (3 files)
+### kb/design/ — Architecture & Design (4 files)
 
 | File | Purpose | Updated when |
 |---|---|---|
 | `kb/design/architecture.md` | System overview, crate relationships, threading model, data pipeline, storage strategy | Threading changes, pipeline changes, library additions/removals, storage format changes |
-| `kb/design/data-providers.md` | Provider trait system, DuckDbProvider read-through pattern, Parquet/DuckDB/Dolt providers, error handling | New data source, schema changes, provider additions |
-| `kb/design/symbols.md` | A-share market segments, symbol conventions, exchange inference, secid mapping, timeframe handling | Symbol format changes, timeframe mapping changes, exchange logic changes |
+| `kb/design/data-providers.md` | Provider trait system, DuckDbProvider/ParquetReader, error handling, DDL | New data source, schema changes, provider additions |
+| `kb/design/symbols.md` | A-share market segments, symbol conventions, exchange inference, timeframe mapping | Symbol format changes, timeframe mapping changes, exchange logic changes |
+| `kb/design/backlog.md` | 需求池 — prioritized candidate features, selected ones become issues | New candidate ideas, priority changes (maintained with `product` skill) |
 
-### kb/dev/ — Development (3 files)
+### kb/dev/ — Development (4 files)
 
 | File | Purpose | Updated when |
 |---|---|---|
-| `kb/dev/testing.md` | Test framework (rstest, tokio), in-memory DuckDB, httpmock setup, benchmark/profiling docs | Test framework changes, new test patterns, benchmark additions |
+| `kb/dev/testing.md` | Test framework (rstest, tokio), in-memory DuckDB, benchmark/profiling docs | Test framework changes, new test patterns, benchmark additions |
 | `kb/dev/process.md` | Dev workflow, commands, config, debugging, knowledge base sync, TDD workflow | Workflow changes, hook changes, convention changes, new commands |
 | `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned | After every feature/bugfix (handled by `/reflect` skill — docs agent does NOT write reflections) |
+| `kb/dev/friction.md` | Friction records — AI behavior corrections | After every correction (handled by `/friction` skill — docs agent does NOT write friction entries) |
 
 ### kb/user/ — User Reference (4 files)
 
@@ -74,6 +76,7 @@ The project book contains exactly 17 files across 4 directories:
 | GUI layout, control changes | `kb/user/gui.md` | `kb/design/architecture.md` (if threading changes) |
 | Config options added/changed | `kb/user/config.md` | — |
 | Major feature (user-facing) | `kb/user/index.md` | Relevant design + GUI/CLI files |
+| New candidate feature idea | `kb/design/backlog.md` | — |
 | Project-level conventions | `AGENTS.md` | `kb/dev/process.md` |
 | OpenCode skill or agent changes | `AGENTS.md` | `kb/dev/process.md` (OpenCode workflow section) |
 | Label conventions | `kb/github/labels.md` | — |
@@ -162,10 +165,11 @@ Apply updates following these conventions:
 
 ## Must NOT
 
-- **Create new kb/ files** — only maintain the existing 17-file structure
+- **Create new kb/ files** — only maintain the existing 19-file structure
 - **Modify kb/ content without code change context** — every update must trace to a code change
 - **Update `kb/github/ask.md`, `fix.md`, `impl.md`, `pr-review.md`, `ci-fix.md`** — GitHub bot roles are out of scope
 - **Modify `kb/dev/reflections.md`** — handled by the `/reflect` skill
+- **Modify `kb/dev/friction.md`** — handled by the `/friction` skill
 - **Duplicate content** — AGENTS.md is an index, kb/ files are the source of truth
 - **Hardcode version numbers** — reference `Cargo.toml` instead
 

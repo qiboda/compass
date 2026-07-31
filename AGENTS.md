@@ -223,7 +223,7 @@ PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），�
 | `kb/design/architecture.md` | 系统总览、crate 关系、线程模型、数据管线、存储策略、库选型 |
 | `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
-| `kb/design/roadmap.md` | 产品路线图 — 愿景、已完成、规划中 |
+| `kb/design/backlog.md` | 需求池 — 候选需求按优先级排序，选中后拆 issue |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、Dolt 操作、重置 |
 | `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 |

@@ -28,7 +28,7 @@ Gather current project state from:
 
 - **git log**: `git log --oneline --since="2 weeks ago"` — what was recently built?
 - **Open issues**: `gh issue list --state open` — what's pending?
-- **Roadmap**: read `kb/design/roadmap.md` — what's planned?
+- **Backlog**: read `kb/design/backlog.md` — the candidate pool, prioritized?
 - **Design docs**: read `kb/design/architecture.md`, `data-providers.md`, `symbols.md` — what's the architecture state?
 - **Plan files**: list `.omo/plans/*.md` — what's in active planning?
 
@@ -38,7 +38,7 @@ Evaluate the gathered information through these lenses:
 
 - **In progress**: What's being worked on that needs to continue?
 - **Blocked**: What's stuck and needs unblocking?
-- **Planned but not started**: What's in roadmap.md that's ready to begin?
+- **Planned but not started**: What's in backlog.md that's ready to begin?
 - **Quality gaps**: Any missing tests, docs, or refactoring debt visible from recent commits?
 - **User experience**: Any obvious gaps in the chart app or data pipeline?
 
@@ -57,7 +57,7 @@ Present candidates as a numbered list:
 ```markdown
 ## Sprint Candidates — YYYY-MM-DD
 
-Based on analysis of <N open issues, M recent commits, roadmap state>:
+Based on analysis of <N open issues, M recent commits, backlog state>:
 
 1. **[Candidate Title]** — rationale. Priority: High
 2. **[Candidate Title]** — rationale. Priority: Medium
@@ -72,7 +72,7 @@ Based on analysis of <N open issues, M recent commits, roadmap state>:
 ## Product: Sprint Candidates — YYYY-MM-DD
 
 ### Scan Summary
-<brief summary of what was found: N open issues, M recent commits, roadmap state>
+<brief summary of what was found: N open issues, M recent commits, backlog state>
 
 ### Candidates
 1. **<title>** — <rationale>. Priority: <High|Medium|Low>
@@ -86,11 +86,11 @@ Based on analysis of <N open issues, M recent commits, roadmap state>:
 
 | Scenario | Behavior |
 |---|---|
-| No open issues | Suggest starting from roadmap.md planned items |
+| No open issues | Suggest starting from backlog.md prioritized items |
 | All issues blocked | Suggest unblocking as top priority candidate |
 | Monday not detected | Manual `/product brainstorm` still works |
-| Roadmap.md doesn't exist | Note it as a candidate: "create roadmap.md" |
-| git log is empty (new project) | Focus on roadmap and design docs only |
+| Backlog.md doesn't exist | Note it as a candidate: "create backlog.md" |
+| git log is empty (new project) | Focus on backlog and design docs only |
 | Many recent commits, no issues | Suggest creating issues for recent work |
 
 ## Must NOT
@@ -110,6 +110,6 @@ Based on analysis of <N open issues, M recent commits, roadmap state>:
 
 ## Reference
 
-- `kb/design/roadmap.md` — product vision and sprint overview
+- `kb/design/backlog.md` — product vision and prioritized candidate pool
 - `AGENTS.md` — sprint planning section
 - `.omo/plans/` — active and completed plans
