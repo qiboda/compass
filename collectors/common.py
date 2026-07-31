@@ -62,7 +62,11 @@ EM_PAGE_SIZE = 100
 
 # Dolt directory — respects COMPASS_DATA_DIR env, defaults to /data/compass-data/compass_data
 _DEFAULT_DOLT = Path("/data/compass-data/compass_data")
-DOLT_DIR = Path(os.environ.get("COMPASS_DATA_DIR", str(_DEFAULT_DOLT)))
+
+
+def dolt_dir() -> Path:
+    """Resolve the Dolt data directory at call time (env override + testability)."""
+    return Path(os.environ.get("COMPASS_DATA_DIR", str(_DEFAULT_DOLT)))
 
 
 # ── Throttle ────────────────────────────────────────────────────
@@ -89,13 +93,13 @@ class Throttle:
 
 def dolt_sql(sql: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
     """Run a Dolt SQL query against compass_data."""
-    args = ["dolt", "--data-dir", str(DOLT_DIR), "sql", "-q", sql]
+    args = ["dolt", "--data-dir", str(dolt_dir()), "sql", "-q", sql]
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
 def dolt_sql_csv(sql: str, timeout: int = 300) -> str:
     """Run a Dolt SQL query and return stdout as text."""
-    args = ["dolt", "--data-dir", str(DOLT_DIR), "sql", "-r", "csv", "-q", sql]
+    args = ["dolt", "--data-dir", str(dolt_dir()), "sql", "-r", "csv", "-q", sql]
     result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     return result.stdout
 
@@ -105,7 +109,7 @@ def dolt_table_import(table_name: str, csv_path: Path, timeout: int = 300) -> bo
     csv_abs = csv_path.resolve()
     result = subprocess.run(
         [
-            "dolt", "--data-dir", str(DOLT_DIR),
+            "dolt", "--data-dir", str(dolt_dir()),
             "table", "import", "-c", table_name, "--continue", str(csv_abs),
         ],
         capture_output=True, text=True, timeout=timeout,
@@ -120,7 +124,7 @@ def last_report_date(dolt_table: str) -> str:
 
     Returns empty string if no record exists (triggers full fetch).
     """
-    if not (DOLT_DIR / ".dolt").exists():
+    if not (dolt_dir() / ".dolt").exists():
         return ""
     stdout = dolt_sql_csv(
         f"SELECT last_report_date FROM data_updates WHERE table_name='{dolt_table}'"
