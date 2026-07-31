@@ -347,6 +347,23 @@ EastMoney data is fetched by Python scripts in `collectors/` using `curl_cffi`
 to bypass TLS fingerprinting. Data flows: EastMoney API → CSV → Dolt `compass_data` →
 `compass-data import` → Parquet. For secid mapping details, see `kb/design/symbols.md`.
 
+### compass_data Dolt repo — commit & push after every data change
+
+`/data/compass-data/compass_data` is a Dolt repo (remote:
+`doltremoteapi.dolthub.com/skwy/compass_data`). **Every data modification**
+(import, re-import, schema change, data_updates update) must be committed and
+pushed to the remote:
+
+```sh
+cd /data/compass-data/compass_data
+dolt add <table>...        # or `dolt add .`
+dolt commit -m "feat: ..." # describe the data change
+dolt push origin main
+```
+
+This keeps the remote Dolt database in sync with local data. Check status with
+`dolt status`; the working tree should be clean after each push.
+
 ## Parquet schema (main database)
 
 ```
