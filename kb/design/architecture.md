@@ -31,7 +31,9 @@ compass (GUI binary)
   │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart
   │   └── logger.rs  ─ LoggerPanel: scrollable log viewer
   ├── widgets/
-  │   └── searchable_dropdown.rs ─ StockPicker widget, filter_stocks()
+  │   ├── searchable_dropdown.rs ─ StockPicker widget, filter_stocks()
+  │   ├── toast.rs     ─ ToastManager: 状态通知
+  │   └── modal.rs     ─ Modal: 预留的对话框组件（未启用）
   │
   ├── compass-core (library)
   │     ├── model.rs      ─ shared types: AppConfig, Exchange, StockBasic, Bar

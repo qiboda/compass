@@ -17,6 +17,10 @@ mkdir -p ~/.config/compass
 ## 完整配置项
 
 ```toml
+# 主题预设（顶层键，不属于任何节）。有效值："compass_dark" | "compass_light"。
+# 默认值："compass_dark"
+theme = "compass_dark"
+
 [parquet]
 # 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
 # 默认值："/data/compass-data/parquet_data"
@@ -39,10 +43,6 @@ default_symbol = "000001"
 # 应用启动时显示的时间周期。
 # 默认值："1d"
 default_timeframe = "1d"
-
-# 启动时使用的主题预设。有效值："compass_dark" | "compass_light" | "compass_blue"。
-# 默认值："compass_dark"
-theme = "compass_dark"
 ```
 
 ## 默认值
@@ -51,12 +51,12 @@ theme = "compass_dark"
 
 | 节 | 键 | 默认值 |
 |---|---|---|
+| （顶层） | `theme` | `compass_dark` |
 | `parquet` | `dir` | `/data/compass-data/parquet_data` |
 | `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
 | `app` | `default_symbol` | `000001` |
 | `app` | `default_timeframe` | `1d` |
-| `app` | `theme` | `compass_dark` |
 
 ## 配置示例
 
@@ -78,11 +78,10 @@ default_symbol = "600519"
 ### 主题预设
 
 ```toml
-[app]
 theme = "compass_light"
 ```
 
-从三种内置视觉主题中选择：`compass_dark`（默认）、`compass_light` 或 `compass_blue`。
+从两种内置视觉主题中选择：`compass_dark`（默认）或 `compass_light`。
 
 ### 自定义数据目录
 
@@ -97,7 +96,7 @@ compass_data_dir = "/mnt/data/compass_data"
 
 ## 验证
 
-配置文件在启动时被验证。如果解析失败，将记录一条警告，并使用全部默认值。无效的主题值（三种有效预设之外的任何值）回退到 `compass_dark`。查看日志获取详情：
+配置文件在启动时被验证。如果解析失败，将记录一条警告，并使用全部默认值。无效的主题值（两种有效预设之外的任何值）回退到 `compass_dark`。查看日志获取详情：
 
 ```sh
 RUST_LOG=info cargo run 2>&1 | grep config

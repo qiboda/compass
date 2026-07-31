@@ -51,7 +51,6 @@ impl CompassTheme {
         }
     }
 
-    /// Returns the blue-tinted theme ("compass_blue").
     /// Apply this theme to egui's visual system.
     ///
     /// Should be called at the start of each frame (in the app's `update()`

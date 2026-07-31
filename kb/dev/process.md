@@ -86,6 +86,7 @@ push 前按顺序执行：
 3. **cargo clippy -- -D warnings**
 4. **cargo doc --no-deps**（必须无警告）
 5. **Issue 引用**：`ref #N` 必须指向 open issues
+6. **Python 检查**（若存在 `collectors/pyproject.toml`）：`uv run ruff check *.py tests/` + `uv run pytest tests/ -q`
 
 手动 pre-push checklist（与 hook 相同）：`cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。

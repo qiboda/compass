@@ -103,9 +103,9 @@ cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 
 ---
 
-## `export` — Parquet → 其他格式
+## `export` — Parquet → DuckDB
 
-将 Parquet 主数据库导出为 DuckDB、CSV 或另一个 Parquet 目录。
+将 Parquet 主数据库导出为 DuckDB 文件（GUI 的读库路径）。
 
 ```sh
 cargo run --bin compass-data -- export [OPTIONS]
@@ -114,7 +114,7 @@ cargo run --bin compass-data -- export [OPTIONS]
 | 选项 | 默认值 | 说明 |
 |---|---|---|
 | `--input` | 来自配置 `[parquet].dir` | Parquet 数据目录 |
-| `--format` | `duckdb` | 输出格式：`duckdb`、`csv`、`parquet-dir` |
+| `--format` | `duckdb` | 输出格式（当前仅实现 `duckdb`；其他值会警告并跳过） |
 | `--output` | `/data/compass-data/compass.duckdb` | 输出路径 |
 | `--overwrite` | `false` | 替换已有数据而非跳过 |
 
@@ -123,9 +123,6 @@ cargo run --bin compass-data -- export [OPTIONS]
 ```sh
 # 导出到 DuckDB
 cargo run --bin compass-data -- export
-
-# 导出到 CSV
-cargo run --bin compass-data -- export --format csv --output data.csv
 
 # 强制覆盖
 cargo run --bin compass-data -- export --overwrite

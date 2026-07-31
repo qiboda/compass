@@ -39,14 +39,16 @@ pub trait NegativeCache: Send + Sync {
 ### DataProvider — 只读访问
 核心获取接口。任何能为给定的标的/时间周期/日期范围生成 `Vec<Bar>` 的类型都可以实现此 trait。目前已实现的有：DuckDbProvider、ParquetReader，以及测试中的 mock 实现。
 
-`search_symbols` 是辅助功能 — 为 GUI 中的标的搜索框提供数据。返回匹配查询的 `SymbolInfo { code, name }` 列表。
+`search_symbols` 是辅助接口 — 按查询词返回匹配的 `SymbolInfo { code, name }` 列表。
+注：GUI 的搜索框不依赖此接口（使用自定义 `StockPicker` 组件直接过滤股票列表）；
+DuckDbProvider 的实现返回空列表，只有 ParquetReader 提供实际实现。
 
 ### DataWriter — 直写持久化
 在获取数据后调用，将 bar 持久化到本地。
 `overwrite` 标志控制行为：`false` = INSERT OR IGNORE（跳过重复键），`true` = INSERT OR REPLACE（更新已有行）。只有 DuckDbProvider 实现了此 trait。
 
 ### NegativeCache — 避免重复失败
-此 trait 由 DuckDbProvider 实现，存储带 TTL 时间戳的 `no_data_marks` 条目。在当前纯本地架构中，GUI 不使用它 — 它的存在是为了完整性和 CLI 分阶段工作流。
+此 trait 由 DuckDbProvider 实现，存储带 TTL 时间戳的 `no_data_marks` 条目。当前纯本地架构中没有任何消费者调用它（GUI 与 CLI 均不使用）— 保留实现与测试，但为未启用能力。
 
 ## Provider 层级
 
@@ -207,7 +209,8 @@ ORDER BY tradedate ASC
 
 如果 `symbols.txt` 不存在，则回退到 `SELECT DISTINCT symbol FROM read_parquet('stock_daily.parquet') ORDER BY symbol`。如果两个来源都不存在，返回空 vec。
 
-`search_symbols()` 将 `stock_basic.parquet` 加载到 DuckDB 中，对 `name` 列执行 LIKE 查询。首次查询较慢（全表扫描），但内存中的 DuckDB 会在后续搜索中保持快速。
+`search_symbols()` 基于 `list_symbols()` 的结果做大小写不敏感的子串过滤（仅匹配 code，不匹配 name）。
+返回过滤后的 `SymbolInfo` 列表。
 
 ### 何时使用 ParquetReader vs DuckDbProvider
 

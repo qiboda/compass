@@ -140,10 +140,12 @@ cargo bench --no-run              # CI: compile only, don't execute
 |---|---|---|
 | `compass-core` | `parquet_bench` | ParquetReader 冷/热读取，100/1000/5000 行，真实 SZ000001 |
 | `compass-core` | `duckdb_bench` | DuckDbProvider 缓存命中/未命中，保存吞吐量（10–5000 行） |
+| `compass-data` | `dolt_bench` | Dolt sql -r parquet 单文件导出、符号枚举 |
 
 ### 数据需求
 
 - **Parquet 基准测试**：需要包含真实数据的 `parquet_data/`，或通过内存 DuckDB 生成合成数据
+- **Dolt 基准测试**：需要 `investment_data/` 目录和 PATH 上的 `dolt` CLI；缺失时优雅跳过
 - **其他所有基准测试**：使用内存 DuckDB 或临时目录 — 无外部依赖
 
 ### CI 策略
