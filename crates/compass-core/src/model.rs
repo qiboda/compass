@@ -114,6 +114,12 @@ pub struct StockBasic {
     pub industry: Option<String>,
     /// Market segment (e.g. "主板", "创业板").
     pub market: Option<String>,
+    /// Board segment (主板/创业板/科创板/北交所).
+    pub board: Option<String>,
+    /// Company full legal name.
+    pub full_name: Option<String>,
+    /// Total share capital (总股本).
+    pub total_share: Option<f64>,
     /// Exchange code ("SH", "SZ", "BJ").
     pub exchange: Option<String>,
     /// First trading date.
@@ -431,6 +437,9 @@ dir = "/custom/parquet"
             area: None,
             industry: None,
             market: None,
+            board: None,
+            full_name: None,
+            total_share: None,
             exchange: Some("SZ".into()),
             list_date: None,
             delist_date: None,
@@ -448,6 +457,9 @@ dir = "/custom/parquet"
             area: None,
             industry: None,
             market: None,
+            board: None,
+            full_name: None,
+            total_share: None,
             exchange: None,
             list_date: None,
             delist_date: None,

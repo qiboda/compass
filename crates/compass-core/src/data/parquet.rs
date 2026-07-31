@@ -269,7 +269,8 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
+            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+                    board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              WHERE symbol = ?"
         );
@@ -278,17 +279,20 @@ impl ParquetReader {
         let result = stmt
             .query_row(params![symbol], |row| {
                 Ok(StockBasic {
-                    symbol: row.get(0)?,
-                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    area: None,
-                    industry: None,
+                    symbol: row.get("symbol")?,
+                    name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                    area: row.get::<_, Option<String>>("region")?,
+                    industry: row.get::<_, Option<String>>("industry")?,
                     market: None,
-                    exchange: row.get::<_, Option<String>>(2)?,
+                    board: row.get::<_, Option<String>>("board")?,
+                    full_name: row.get::<_, Option<String>>("full_name")?,
+                    total_share: row.get::<_, Option<f64>>("total_share")?,
+                    exchange: row.get::<_, Option<String>>("exchange")?,
                     list_date: row
-                        .get::<_, Option<String>>(3)?
+                        .get::<_, Option<String>>("list_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                     delist_date: row
-                        .get::<_, Option<String>>(4)?
+                        .get::<_, Option<String>>("delist_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                 })
             })
@@ -320,7 +324,8 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR)
+            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+                    board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              ORDER BY symbol"
         );
@@ -329,17 +334,20 @@ impl ParquetReader {
         let rows: Vec<StockBasic> = stmt
             .query_map([], |row| {
                 Ok(StockBasic {
-                    symbol: row.get(0)?,
-                    name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    exchange: row.get::<_, Option<String>>(2)?,
-                    area: None,
-                    industry: None,
+                    symbol: row.get("symbol")?,
+                    name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                    exchange: row.get::<_, Option<String>>("exchange")?,
+                    area: row.get::<_, Option<String>>("region")?,
+                    industry: row.get::<_, Option<String>>("industry")?,
                     market: None,
+                    board: row.get::<_, Option<String>>("board")?,
+                    full_name: row.get::<_, Option<String>>("full_name")?,
+                    total_share: row.get::<_, Option<f64>>("total_share")?,
                     list_date: row
-                        .get::<_, Option<String>>(3)?
+                        .get::<_, Option<String>>("list_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                     delist_date: row
-                        .get::<_, Option<String>>(4)?
+                        .get::<_, Option<String>>("delist_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
                 })
             })
@@ -434,10 +442,10 @@ mod tests {
 
         let conn = duckdb::Connection::open_in_memory().expect("duckdb");
         conn.execute_batch(
-            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE);
-             INSERT INTO basic VALUES ('000001', '平安银行', 'SZ', '1991-04-03', NULL);
-             INSERT INTO basic VALUES ('600519', '贵州茅台', 'SH', '2001-08-27', NULL);
-             INSERT INTO basic VALUES ('hack', 'hacked', 'XX', NULL, NULL);",
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);
+             INSERT INTO basic VALUES ('000001', '平安银行', 'SZ', '1991-04-03', NULL, '主板', '平安银行股份有限公司', 19405918198, '银行', '广东省');
+             INSERT INTO basic VALUES ('600519', '贵州茅台', 'SH', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 1256197800, '白酒', '贵州省');
+             INSERT INTO basic VALUES ('hack', 'hacked', 'XX', NULL, NULL, NULL, NULL, NULL, NULL, NULL);",
         )
         .expect("create");
 
@@ -576,12 +584,36 @@ mod tests {
         assert_eq!(info.symbol, "000001");
         assert_eq!(info.name, "平安银行");
         assert_eq!(info.exchange.as_deref(), Some("SZ"));
+        assert_eq!(info.area.as_deref(), Some("广东省"));
+        assert_eq!(info.industry.as_deref(), Some("银行"));
+        assert_eq!(info.board.as_deref(), Some("主板"));
+        assert_eq!(info.full_name.as_deref(), Some("平安银行股份有限公司"));
+        assert_eq!(info.total_share, Some(19_405_918_198.0));
+        assert_eq!(
+            info.list_date.map(|d| d.to_string()),
+            Some("1991-04-03".to_string())
+        );
+        assert_eq!(info.delist_date, None);
 
         let info2 = reader
             .get_stock_basic_blocking("600519")
             .expect("should succeed")
             .expect("should find 600519");
         assert_eq!(info2.symbol, "600519");
+        assert_eq!(info2.area.as_deref(), Some("贵州省"));
+        assert_eq!(info2.board.as_deref(), Some("主板"));
+        assert_eq!(info2.total_share, Some(1_256_197_800.0));
+
+        let info3 = reader
+            .get_stock_basic_blocking("hack")
+            .expect("should succeed")
+            .expect("should find hack");
+        assert_eq!(info3.symbol, "hack");
+        assert_eq!(info3.area, None);
+        assert_eq!(info3.industry, None);
+        assert_eq!(info3.board, None);
+        assert_eq!(info3.full_name, None);
+        assert_eq!(info3.total_share, None);
     }
 
     // -----------------------------------------------------------------------
