@@ -282,7 +282,7 @@ async def main():
     if args.years:
         years = [int(y.strip()) for y in args.years.split(",") if y.strip()]
     else:
-        years = list(range(2000, current_year + 1))
+        years = list(range(2020, current_year + 1))
 
     periods = [p.strip() for p in args.periods.split(",")]
     period_dates = {

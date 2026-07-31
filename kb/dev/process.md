@@ -518,6 +518,38 @@ Key tables:
 |---|---|---|
 | `stock_basic` | Company profiles | `symbol` (`SZ000001`) + `ts_code` (`000001.SZ`) |
 | `fin_indicators` | Financial indicators per report period | `(symbol, report_date)` |
+| `fin_balance_sheet` | Balance sheet (资产负债表) | `(symbol, report_date)` |
+| `fin_income` | Income statement (利润表) | `(symbol, report_date)` |
+| `fin_cash_flow` | Cash flow statement (现金流量表) | `(symbol, report_date)` |
+
+```sh
+# Query financial statements
+dolt sql -q "
+SELECT * FROM compass_data.fin_balance_sheet
+WHERE symbol='SH600519' ORDER BY report_date DESC LIMIT 3"
+
+dolt sql -q "
+SELECT * FROM compass_data.fin_income
+WHERE symbol='SH600519' ORDER BY report_date DESC LIMIT 3"
+
+dolt sql -q "
+SELECT * FROM compass_data.fin_cash_flow
+WHERE symbol='SH600519' ORDER BY report_date DESC LIMIT 3"
+
+# Cross-table financial analysis
+dolt sql -q "
+SELECT sb.name, bs.report_date,
+  bs.TOTAL_ASSETS / 1e8 AS total_assets_yi,
+  inc.TOTAL_OPERATE_INCOME / 1e8 AS revenue_yi,
+  cf.NETCASH_OPERATE / 1e8 AS operating_cf_yi
+FROM compass_data.stock_basic sb
+JOIN compass_data.fin_balance_sheet bs ON sb.symbol = bs.symbol
+JOIN compass_data.fin_income inc ON bs.symbol = inc.symbol AND bs.report_date = inc.report_date
+JOIN compass_data.fin_cash_flow cf ON bs.symbol = cf.symbol AND bs.report_date = cf.report_date
+WHERE sb.symbol = 'SH600519'
+ORDER BY bs.report_date DESC
+LIMIT 3"
+```
 
 ### Reset everything
 

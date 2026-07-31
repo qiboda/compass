@@ -64,7 +64,7 @@ enum Command {
         #[arg(long)]
         output: Option<PathBuf>,
 
-        /// Table to import: stock_basic, fin_indicators
+        /// Table to import: stock_basic, fin_indicators, fin_balance_sheet, fin_income, fin_cash_flow
         #[arg(long)]
         table: String,
 

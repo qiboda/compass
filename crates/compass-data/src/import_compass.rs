@@ -14,6 +14,9 @@ use crate::import_dolt::run_dolt_sql_parquet;
 pub enum CompassTable {
     StockBasic,
     FinIndicators,
+    FinBalanceSheet,
+    FinIncome,
+    FinCashFlow,
 }
 
 impl std::str::FromStr for CompassTable {
@@ -22,6 +25,9 @@ impl std::str::FromStr for CompassTable {
         match s {
             "stock_basic" => Ok(CompassTable::StockBasic),
             "fin_indicators" => Ok(CompassTable::FinIndicators),
+            "fin_balance_sheet" => Ok(CompassTable::FinBalanceSheet),
+            "fin_income" => Ok(CompassTable::FinIncome),
+            "fin_cash_flow" => Ok(CompassTable::FinCashFlow),
             _ => Err(format!("unknown table: {s}")),
         }
     }
@@ -38,6 +44,15 @@ pub fn run(
     match table {
         CompassTable::StockBasic => import_stock_basic(&dolt_dir, &output),
         CompassTable::FinIndicators => import_fin_indicators(&dolt_dir, &output, overwrite, since),
+        CompassTable::FinBalanceSheet => {
+            import_financial_table("fin_balance_sheet", &dolt_dir, &output, overwrite, since)
+        }
+        CompassTable::FinIncome => {
+            import_financial_table("fin_income", &dolt_dir, &output, overwrite, since)
+        }
+        CompassTable::FinCashFlow => {
+            import_financial_table("fin_cash_flow", &dolt_dir, &output, overwrite, since)
+        }
     }
 }
 
@@ -129,6 +144,63 @@ fn import_fin_indicators(
     Ok(())
 }
 
+fn import_financial_table(
+    table_name: &str,
+    dolt_dir: &Path,
+    output: &Path,
+    overwrite: bool,
+    since: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let parquet_name = format!("{table_name}.parquet");
+    let path = output.join(&parquet_name);
+
+    let date_filter = match since {
+        Some(s) if !s.is_empty() => format!(" WHERE report_date >= '{s}'"),
+        _ => String::new(),
+    };
+    let query = format!("SELECT * FROM {table_name}{date_filter} ORDER BY symbol, report_date");
+
+    info!("Exporting {table_name}...");
+    let new_data = run_dolt_sql_parquet(dolt_dir, &query)?;
+    if new_data.len() < 500 {
+        warn!("{table_name} returned empty or tiny data, skipping");
+        return Ok(());
+    }
+
+    if since.is_some() && !overwrite && path.exists() {
+        info!("Merging incremental data with existing parquet...");
+        let work_dir = std::env::temp_dir().join("compass_parquet_work");
+        std::fs::create_dir_all(&work_dir)?;
+
+        let new_path = work_dir.join(format!("{table_name}.new.parquet"));
+        std::fs::write(&new_path, &new_data)?;
+
+        let tmp_path = work_dir.join(format!("{table_name}.merged.parquet"));
+        let duck = Connection::open_in_memory()?;
+        let sql = format!(
+            "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) AS rn \
+             FROM (SELECT *, 1 AS priority FROM read_parquet('{}') \
+             UNION ALL SELECT *, 2 FROM read_parquet('{}'))) WHERE rn = 1 ORDER BY symbol, report_date) \
+             TO '{}' (FORMAT PARQUET)",
+            path.display(),
+            new_path.display(),
+            tmp_path.display(),
+        );
+        if let Err(e) = duck.execute_batch(&sql) {
+            warn!("DuckDB merge failed: {e}, falling back to full export");
+            std::fs::write(&path, &new_data)?;
+        } else {
+            std::fs::copy(&tmp_path, &path)?;
+        }
+        let _ = std::fs::remove_file(&new_path);
+        let _ = std::fs::remove_file(&tmp_path);
+    } else {
+        std::fs::write(&path, &new_data)?;
+    }
+
+    info!("  → {}", path.display());
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

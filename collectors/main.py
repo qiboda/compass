@@ -4,8 +4,14 @@
 Usage:
     uv run python main.py fetch stock_basic [--resume]
     uv run python main.py fetch fin_indicators [--years 2024,2025] [--incremental]
+    uv run python main.py fetch balance_sheet [--years 2024,2025] [--incremental]
+    uv run python main.py fetch income [--years 2024,2025] [--incremental]
+    uv run python main.py fetch cash_flow [--years 2024,2025] [--incremental]
     uv run python main.py import stock_basic
     uv run python main.py import fin_indicators
+    uv run python main.py import balance_sheet
+    uv run python main.py import income
+    uv run python main.py import cash_flow
     uv run python main.py sync              # fetch all + import all
     uv run python main.py sync-investment   # sync investment_data from upstream
 """
@@ -18,52 +24,31 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COLLECTORS_DIR = Path(__file__).resolve().parent
-DOLT_DIR = PROJECT_ROOT / "compass_data"
-
-CSV_STOCK = COLLECTORS_DIR / "stock_basic.csv"
-CSV_FIN = COLLECTORS_DIR / "RPT_LICO_FN_CPD.csv"
 
 
-def run_dolt(sql: str, **kwargs) -> subprocess.CompletedProcess:
-    """Run a dolt SQL command against compass_data."""
-    args = ["dolt", "--data-dir", str(DOLT_DIR), "sql"]
-    if kwargs.get("csv"):
-        args.extend(["-r", "csv"])
-    args.extend(["-q", sql])
-    return subprocess.run(args, capture_output=True, text=True, timeout=kwargs.get("timeout", 300))
+def _parse_years(s: str) -> list[int] | None:
+    if not s:
+        return None
+    return [int(y.strip()) for y in s.split(",") if y.strip()]
 
 
-def import_stock_basic():
-    """Import stock_basic.csv into Dolt."""
+# ── Import helpers for existing (non-refactored) tables ─────────
+
+def _import_stock_basic() -> None:
+    """Import stock_basic.csv into Dolt (legacy logic, unchanged)."""
+    from common import dolt_sql, dolt_sql_csv, dolt_table_import
+
+    csv_path = COLLECTORS_DIR / "stock_basic.csv"
     print("[import stock_basic]", file=sys.stderr)
 
-    csv_path = CSV_STOCK
     if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found. Run 'fetch stock_basic' first.", file=sys.stderr)
+        print(f"  ERROR: {csv_path} not found.", file=sys.stderr)
         return
 
-    run_dolt("DROP TABLE IF EXISTS _tmp_sb")
-    result = subprocess.run(
-        [
-            "dolt",
-            "--data-dir",
-            str(DOLT_DIR),
-            "table",
-            "import",
-            "-c",
-            "_tmp_sb",
-            "--continue",
-            str(csv_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        print(f"  Import failed: {result.stderr}", file=sys.stderr)
-        return
+    dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
+    dolt_table_import("_tmp_sb", csv_path, timeout=120)
 
-    run_dolt("DELETE FROM stock_basic")
+    dolt_sql("DELETE FROM stock_basic")
     sql = """
         INSERT INTO stock_basic (symbol, ts_code, code, market, name, list_date,
             industry, lead_stock, region, data_ts, industry_alt, member_count, update_date)
@@ -72,48 +57,30 @@ def import_stock_basic():
             f127, CAST(f134 AS SIGNED), f221
         FROM _tmp_sb
     """
-    result = run_dolt(sql)
-    if result.returncode != 0:
-        print(f"  SQL error: {result.stderr}", file=sys.stderr)
-    run_dolt("DROP TABLE IF EXISTS _tmp_sb")
+    dolt_sql(sql)
+    dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
 
-    count = run_dolt("SELECT COUNT(*) FROM stock_basic", csv=True)
-    lines = count.stdout.strip().split("\n")
+    stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
+    lines = stdout.strip().split("\n")
     total = lines[-1] if len(lines) > 1 else "?"
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
-def import_fin_indicators():
-    """Import RPT_LICO_FN_CPD.csv into Dolt."""
+def _import_fin_indicators() -> None:
+    """Import RPT_LICO_FN_CPD.csv into Dolt (legacy logic, unchanged)."""
+    from common import dolt_sql, dolt_sql_csv, dolt_table_import
+
+    csv_path = COLLECTORS_DIR / "RPT_LICO_FN_CPD.csv"
     print("[import fin_indicators]", file=sys.stderr)
 
-    csv_path = CSV_FIN
     if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found. Run 'fetch fin_indicators' first.", file=sys.stderr)
+        print(f"  ERROR: {csv_path} not found.", file=sys.stderr)
         return
 
-    run_dolt("DROP TABLE IF EXISTS _tmp_fin")
-    result = subprocess.run(
-        [
-            "dolt",
-            "--data-dir",
-            str(DOLT_DIR),
-            "table",
-            "import",
-            "-c",
-            "_tmp_fin",
-            "--continue",
-            str(csv_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if result.returncode != 0:
-        print(f"  Import failed: {result.stderr}", file=sys.stderr)
-        return
+    dolt_sql("DROP TABLE IF EXISTS _tmp_fin")
+    dolt_table_import("_tmp_fin", csv_path)
 
-    run_dolt("DELETE FROM fin_indicators")
+    dolt_sql("DELETE FROM fin_indicators")
     sql = """
         INSERT INTO fin_indicators (
             symbol, report_date, update_date, notice_date,
@@ -138,61 +105,47 @@ def import_fin_indicators():
             YSTZ, SJLTZ, YSHZ, SJLHZ,
             ZXGXL, ASSIGNDSCRPT, PAYYEAR
         FROM _tmp_fin
+        WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
+              IN (SELECT symbol FROM stock_basic)
     """
-    result = run_dolt(sql, timeout=600)
-    if result.returncode != 0:
-        print(f"  SQL error: {result.stderr}", file=sys.stderr)
-    run_dolt("DROP TABLE IF EXISTS _tmp_fin")
+    dolt_sql(sql, timeout=600)
+    dolt_sql("DROP TABLE IF EXISTS _tmp_fin")
 
-    count = run_dolt("SELECT COUNT(*) FROM fin_indicators", csv=True)
-    lines = count.stdout.strip().split("\n")
+    stdout = dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")
+    lines = stdout.strip().split("\n")
     total = lines[-1] if len(lines) > 1 else "?"
-    run_dolt(
-        "UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'"
+    dolt_sql(
+        "UPDATE data_updates SET last_updated=CURDATE(), "
+        "row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'"
     )
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
-def sync_investment_data(restart: bool = False):
+def sync_investment_data(restart: bool = False) -> None:
     """Sync investment_data: fetch from chenditc, push to skwy fork."""
-
     invest_dir = PROJECT_ROOT / "investment_data"
-    upstream = "origin"
-    fork = "skwy"
 
     if not (invest_dir / ".dolt").exists():
         print("[sync-investment] ERROR: investment_data not found", file=sys.stderr)
         return
 
-    def dolt(*args):
+    def dolt(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["dolt", "--data-dir", str(invest_dir)] + list(args),
-            capture_output=True,
-            text=True,
-            timeout=300,
+            capture_output=True, text=True, timeout=300,
         )
 
     if restart:
         print("[sync-investment] Stopping Dolt SQL server...", file=sys.stderr)
-        result = subprocess.run(
-            ["pkill", "-f", "dolt sql-server.*investment_data"], capture_output=True
-        )
-        if result.returncode == 0:
-            print("  Server stopped", file=sys.stderr)
+        subprocess.run(["pkill", "-f", "dolt sql-server.*investment_data"], capture_output=True)
 
-    print(f"[sync-investment] Fetching from {upstream}...", file=sys.stderr)
-    dolt("fetch", upstream)
-
-    print(f"[sync-investment] Merging {upstream}/master...", file=sys.stderr)
+    print("[sync-investment] Fetching from origin...", file=sys.stderr)
+    dolt("fetch", "origin")
+    print("[sync-investment] Merging origin/master...", file=sys.stderr)
     dolt("checkout", "master")
-    dolt("pull", upstream, "master")
-
-    print(f"[sync-investment] Pushing to {fork}...", file=sys.stderr)
-    result = dolt("push", fork, "master")
-    if result.returncode == 0 or "up-to-date" in result.stderr + result.stdout:
-        print("[sync-investment] Done.", file=sys.stderr)
-    else:
-        print(f"  Push issue: {result.stderr}", file=sys.stderr)
+    dolt("pull", "origin", "master")
+    print("[sync-investment] Pushing to skwy...", file=sys.stderr)
+    dolt("push", "skwy", "master")
 
     if restart:
         server_script = PROJECT_ROOT / "scripts" / "start-dolt-server.sh"
@@ -200,87 +153,131 @@ def sync_investment_data(restart: bool = False):
             print("[sync-investment] Restarting server...", file=sys.stderr)
             subprocess.Popen(
                 ["nohup", "bash", str(server_script)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
 
+    print("[sync-investment] Done.", file=sys.stderr)
 
-def main():
+
+# ── Main CLI ────────────────────────────────────────────────────
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="Compass data pipeline")
     sub = parser.add_subparsers(dest="command")
 
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
-    fetch.add_argument("target", choices=["stock_basic", "fin_indicators"])
-    fetch.add_argument("--years", default="", help="Years to fetch (fin_indicators only)")
     fetch.add_argument(
-        "--incremental", action="store_true", help="Incremental mode (fin_indicators only)"
+        "target",
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
     )
-    fetch.add_argument(
-        "--resume", action="store_true", help="Resume interrupted fetch (stock_basic only)"
-    )
+    fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
+    fetch.add_argument("--resume", action="store_true", help="Resume (stock_basic only)")
     fetch.add_argument("--max-pages", type=int, default=200, help="Max pages (stock_basic only)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
-    imp.add_argument("target", choices=["stock_basic", "fin_indicators"])
+    imp.add_argument(
+        "target",
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
+    )
 
     sub.add_parser("sync", help="Fetch all + import all")
-
-    inv = sub.add_parser(
-        "sync-investment", help="Sync investment_data from upstream (chenditc) to fork (skwy)"
-    )
-    inv.add_argument(
-        "--restart", action="store_true", help="Stop server before sync, restart after"
-    )
+    inv = sub.add_parser("sync-investment", help="Sync investment_data from upstream")
+    inv.add_argument("--restart", action="store_true")
 
     args = parser.parse_args()
 
     if args.command == "fetch":
-        if args.target == "stock_basic":
-            from fetch_stock_basic import main as run
+        years = _parse_years(args.years)
 
+        if args.target == "stock_basic":
+            import fetch_stock_basic
             sys.argv = ["fetch_stock_basic", "--max-pages", str(args.max_pages)]
             if args.resume:
                 sys.argv.append("--resume")
-            asyncio.run(run())
-        elif args.target == "fin_indicators":
-            from fetch_fin_indicators import main as run
+            asyncio.run(fetch_stock_basic.main())
 
+        elif args.target == "fin_indicators":
+            import fetch_fin_indicators
             sys.argv = ["fetch_fin_indicators"]
             if args.years:
                 sys.argv.extend(["--years", args.years])
             if args.incremental:
                 sys.argv.append("--incremental")
-            asyncio.run(run())
+            asyncio.run(fetch_fin_indicators.main())
+
+        elif args.target == "balance_sheet":
+            import fetch_balance_sheet
+            asyncio.run(fetch_balance_sheet.run(years=years))
+
+        elif args.target == "income":
+            import fetch_income
+            asyncio.run(fetch_income.run(years=years))
+
+        elif args.target == "cash_flow":
+            import fetch_cash_flow
+            asyncio.run(fetch_cash_flow.run(years=years))
 
     elif args.command == "import":
         if args.target == "stock_basic":
-            import_stock_basic()
+            _import_stock_basic()
         elif args.target == "fin_indicators":
-            import_fin_indicators()
+            _import_fin_indicators()
+        elif args.target == "balance_sheet":
+            import fetch_balance_sheet
+            fetch_balance_sheet.import_to_dolt()
+        elif args.target == "income":
+            import fetch_income
+            fetch_income.import_to_dolt()
+        elif args.target == "cash_flow":
+            import fetch_cash_flow
+            fetch_cash_flow.import_to_dolt()
 
     elif args.command == "sync":
+        from common import dolt_sql
+
+        # 1. stock_basic
         print("[sync] Fetching stock_basic...", file=sys.stderr)
+        import fetch_stock_basic
         sys.argv = ["fetch_stock_basic", "--max-pages", "200"]
-        from fetch_stock_basic import main as run_sb
+        asyncio.run(fetch_stock_basic.main())
+        _import_stock_basic()
 
-        asyncio.run(run_sb())
-        import_stock_basic()
-
+        # 2. fin_indicators
         print("\n[sync] Fetching fin_indicators (incremental)...", file=sys.stderr)
+        import fetch_fin_indicators
         sys.argv = ["fetch_fin_indicators", "--incremental"]
-        from fetch_fin_indicators import main as run_fi
+        asyncio.run(fetch_fin_indicators.main())
+        _import_fin_indicators()
 
-        asyncio.run(run_fi())
-        import_fin_indicators()
+        # 3. balance_sheet
+        print("\n[sync] Fetching balance_sheet...", file=sys.stderr)
+        import fetch_balance_sheet
+        asyncio.run(fetch_balance_sheet.run())
+        fetch_balance_sheet.import_to_dolt()
 
+        # 4. income
+        print("\n[sync] Fetching income...", file=sys.stderr)
+        import fetch_income
+        asyncio.run(fetch_income.run())
+        fetch_income.import_to_dolt()
+
+        # 5. cash_flow
+        print("\n[sync] Fetching cash_flow...", file=sys.stderr)
+        import fetch_cash_flow
+        asyncio.run(fetch_cash_flow.run())
+        fetch_cash_flow.import_to_dolt()
+
+        # Update data_updates for all tables
         print("\n[sync] Updating data_updates...", file=sys.stderr)
-        run_dolt(
-            "UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM stock_basic) WHERE table_name='stock_basic'"
-        )
-        run_dolt(
-            "UPDATE data_updates SET last_updated=CURDATE(), row_count=(SELECT COUNT(*) FROM fin_indicators) WHERE table_name='fin_indicators'"
-        )
+        for tbl in [
+            "stock_basic", "fin_indicators",
+            "fin_balance_sheet", "fin_income", "fin_cash_flow",
+        ]:
+            dolt_sql(
+                f"UPDATE data_updates SET last_updated=CURDATE(), "
+                f"row_count=(SELECT COUNT(*) FROM {tbl}) WHERE table_name='{tbl}'"
+            )
         print("[sync] Complete.", file=sys.stderr)
 
     elif args.command == "sync-investment":
