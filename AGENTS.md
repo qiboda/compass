@@ -68,6 +68,12 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 These 4 questions are NOT optional. They are the minimum standard. If you skip any,
 you are violating the workflow.
 
+**Test-first is non-negotiable**: any bugfix or feature change MUST start with a
+failing test that reproduces the problem (RED), then the fix that makes it pass
+(GREEN). This applies to Python (`collectors/tests/`), Rust (`#[cfg(test)]`),
+and every language in this repo. Writing the fix before the failing test is an
+anti-pattern — see `kb/dev/friction.md`.
+
 ### HARD BLOCK
 
 This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
