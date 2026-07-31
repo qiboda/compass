@@ -28,7 +28,7 @@ Gather current project state from:
 
 - **git log**: `git log --oneline --since="2 weeks ago"` — what was recently built?
 - **Open issues**: `gh issue list --state open` — what's pending?
-- **Backlog**: read `kb/design/backlog.md` — the candidate pool, prioritized?
+- **Backlog**: read `backlog.md` — the candidate pool, prioritized?
 - **Design docs**: read `kb/design/architecture.md`, `data-providers.md`, `symbols.md` — what's the architecture state?
 - **Plan files**: list `.omo/plans/*.md` — what's in active planning?
 
@@ -110,6 +110,6 @@ Based on analysis of <N open issues, M recent commits, backlog state>:
 
 ## Reference
 
-- `kb/design/backlog.md` — product vision and prioritized candidate pool
+- `backlog.md` — product vision and prioritized candidate pool
 - `AGENTS.md` — sprint planning section
 - `.omo/plans/` — active and completed plans

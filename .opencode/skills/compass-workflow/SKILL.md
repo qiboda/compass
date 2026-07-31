@@ -177,7 +177,7 @@ See `kb/github/labels.md` for the complete taxonomy.
 
 Use GitHub Milestones for weekly sprint management. Monday (plan) → Sunday (review).
 
-- **Monday**: plan the sprint — review open issues, read `kb/design/backlog.md`, invoke `/product brainstorm` for milestone candidates
+- **Monday**: plan the sprint — review open issues, read `backlog.md`, invoke `/product brainstorm` for milestone candidates
 - **Sunday**: review completed work, close milestone if all issues resolved, invoke `/reflect`
 - Manual override: `/product brainstorm` anytime for fresh candidates
 

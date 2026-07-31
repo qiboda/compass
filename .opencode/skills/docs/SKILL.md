@@ -18,16 +18,15 @@ and keep them in sync with the codebase.
 
 ## kb/ File Inventory
 
-The project book contains exactly 19 files across 4 directories:
+The project book contains exactly 18 files across 4 directories:
 
-### kb/design/ — Architecture & Design (4 files)
+### kb/design/ — Architecture & Design (3 files)
 
 | File | Purpose | Updated when |
 |---|---|---|
 | `kb/design/architecture.md` | System overview, crate relationships, threading model, data pipeline, storage strategy | Threading changes, pipeline changes, library additions/removals, storage format changes |
 | `kb/design/data-providers.md` | Provider trait system, DuckDbProvider/ParquetReader, error handling, DDL | New data source, schema changes, provider additions |
 | `kb/design/symbols.md` | A-share market segments, symbol conventions, exchange inference, timeframe mapping | Symbol format changes, timeframe mapping changes, exchange logic changes |
-| `kb/design/backlog.md` | 需求池 — prioritized candidate features, selected ones become issues | New candidate ideas, priority changes (maintained with `product` skill) |
 
 ### kb/dev/ — Development (4 files)
 
@@ -76,7 +75,6 @@ The project book contains exactly 19 files across 4 directories:
 | GUI layout, control changes | `kb/user/gui.md` | `kb/design/architecture.md` (if threading changes) |
 | Config options added/changed | `kb/user/config.md` | — |
 | Major feature (user-facing) | `kb/user/index.md` | Relevant design + GUI/CLI files |
-| New candidate feature idea | `kb/design/backlog.md` | — |
 | Project-level conventions | `AGENTS.md` | `kb/dev/process.md` |
 | OpenCode skill or agent changes | `AGENTS.md` | `kb/dev/process.md` (OpenCode workflow section) |
 | Label conventions | `kb/github/labels.md` | — |
@@ -165,7 +163,7 @@ Apply updates following these conventions:
 
 ## Must NOT
 
-- **Create new kb/ files** — only maintain the existing 19-file structure
+- **Create new kb/ files** — only maintain the existing 18-file structure
 - **Modify kb/ content without code change context** — every update must trace to a code change
 - **Update `kb/github/ask.md`, `fix.md`, `impl.md`, `pr-review.md`, `ci-fix.md`** — GitHub bot roles are out of scope
 - **Modify `kb/dev/reflections.md`** — handled by the `/reflect` skill

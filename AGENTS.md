@@ -22,118 +22,110 @@ Python collectors 从 EastMoney API 抓取数据写入 Dolt。
 
 ## ⚡ GRILL-ME FIRST (ALWAYS)
 
-**On EVERY user message in this repo, you MUST load `/grill-me` before responding.**
-This is NON-NEGOTIABLE. No exceptions.
+**每次用户消息都必须先加载 `/grill-me` 再回应。** 无任何例外。
 
-The grill-me interview must complete with "shared understanding reached" before
-you proceed to any other action — including reading files, classifying the
-request, creating todos, or writing code.
+grill-me 访谈必须达到 "shared understanding reached" 才能进行任何其他操作——
+包括读文件、分类请求、创建 todos、写代码。
 
-**Grill-me completes → must enter PRE-IMPLEMENTATION GATE (below) for any
-feature or bugfix work. Grill-me is step 0; the gate is steps 1-4.
-Do NOT skip the gate just because grill-me reached shared understanding.**
+**Grill-me 完成后 → 任何 feature 或 bugfix 工作必须进入下面的 PRE-IMPLEMENTATION GATE。
+Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共识就跳过 gate。**
 
 ---
 
-## 🛑 PRE-IMPLEMENTATION GATE (READ BEFORE ANY CODE CHANGE)
+## 🛑 PRE-IMPLEMENTATION GATE (任何代码变更前必读)
 
-**This gate applies to ALL code changes.** The only exceptions are:
-- Documentation-only changes (typos, formatting, adding explanations)
-- Cargo fmt / clippy fixes (already handled by CI)
-- Trivial typo fixes in comments or strings
+**本 gate 适用于所有代码变更。** 唯一例外：
+- 纯文档变更（typo、格式、补充说明）
+- Cargo fmt / clippy 修复（CI 已覆盖）
+- 注释或字符串中的 trivial typo
 
-**Everything else — features, bugfixes, refactors, new commands, CI changes, hooks,
-scripts, dependency updates — MUST go through the gate.**
+**除此之外的一切 —— feature、bugfix、重构、新命令、CI 变更、hooks、脚本、
+依赖更新 —— 必须走 gate。**
 
-Before you touch a single file, verbalize EACH step to the user and confirm completion:
+动手改任何文件之前，向用户逐条 verbalize 以下步骤并确认完成：
 
-| Step | Action | Evidence Required |
+| Step | 动作 | 所需证据 |
 |---|---|---|
-| **1. Issue** | Invoke `/issue-workflow` to create/manage issues | Issue URL(s) shown to user |
-| **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
-| **3. Tests** | Invoke `/test` (qa skill) to write failing tests | Test output showing failure |
-| **4a. Rustdoc** | Invoke `/rustdoc` to verify `#![warn(missing_docs)]` compliance | `cargo doc --no-deps` is warning-free |
-| **4b. Docs** | Invoke `/docs` to identify which `kb/` files need updating | List of files to user |
+| **1. Issue** | 调用 `/issue-workflow` 创建/管理 issue | 向用户展示 issue URL |
+| **2. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.omo/plans/*.md` 文件创建 + 用户批准 |
+| **3. Tests** | 调用 `/test`（qa skill）写失败测试 | 测试失败输出 |
+| **4a. Rustdoc** | 调用 `/rustdoc` 验证 `#![warn(missing_docs)]` 合规 | `cargo doc --no-deps` 无警告 |
+| **4b. Docs** | 调用 `/docs` 确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
 
-**If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
+**任何一步未完成即 STOP。不实现。不创建 todos。不改文件。**
 
-### SELF-CHECK (MANDATORY — ask yourself these 4 questions before every code edit)
+### SELF-CHECK（强制 —— 每次代码编辑前问自己这 4 个问题）
 
-1. **"Is there a GitHub issue for this work?"** — If not, create one NOW.
-2. **"Does my commit message include `ref #N`?"** — If not, add it before committing.
-3. **"Have I written a failing test first?"** — If not, write one NOW before the implementation.
-4. **"Have I updated the relevant kb/ file?"** — If not, identify the file and update it.
+1. **"这项工作有 GitHub issue 吗？"** — 没有就 NOW 创建。
+2. **"我的 commit message 包含 `ref #N` 吗？"** — 没有就加。
+3. **"我先写了失败测试吗？"** — 没有就先写再实现。
+4. **"我更新了相关 kb/ 文件吗？"** — 没有就确定文件并更新。
 
-These 4 questions are NOT optional. They are the minimum standard. If you skip any,
-you are violating the workflow.
+这 4 个问题不是可选的。它们是最低标准。跳过任何一个就是违反工作流。
 
-**Test-first is non-negotiable**: any bugfix or feature change MUST start with a
-failing test that reproduces the problem (RED), then the fix that makes it pass
-(GREEN). This applies to Python (`collectors/tests/`), Rust (`#[cfg(test)]`),
-and every language in this repo. Writing the fix before the failing test is an
-anti-pattern — see `kb/dev/friction.md`.
+**Test-first 不可妥协**：任何 bugfix 或 feature 变更必须从能复现问题的失败测试开始
+（RED），再做让它通过的修复（GREEN）。适用于 Python（`collectors/tests/`）、
+Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败测试是反模式 ——
+见 `kb/dev/friction.md`。
 
 ### HARD BLOCK
 
-This gate is NON-NEGOTIABLE. The `compass-workflow` skill, when loaded, will
-remind you of this gate. If you find yourself writing code without completing
-these steps, you are violating the workflow — stop immediately, `git stash` or revert, and go back to step 0.
+本 gate 不可妥协。加载 `compass-workflow` skill 时会再次提醒此 gate。
+如果发现自己没完成这些步骤就在写代码，即违反工作流——立即停止，
+`git stash` 或 revert，回到第 0 步。
 
-**Workflow violations are themselves a bug.** If the gate was skipped, the work
-is incomplete regardless of code quality. Record the violation in reflections.
+**流程违规本身就是 bug。** 跳过 gate 的工作无论代码质量如何都是不完整的。
+在 reflections 中记录违规。
 
-### After implementation: Reflection Record
+### 实现后：Reflection Record
 
-After EVERY feature/bugfix, invoke `/reflect` (reflect skill) to write a
-post-implementation reflection and append it to `kb/dev/reflections.md`.
+每次 feature/bugfix 完成后，调用 `/reflect`（reflect skill）写事后反思，
+追加到 `kb/dev/reflections.md`。
 
-This is MANDATORY — commit it with the implementation or immediately after.
+这是强制要求 —— 与实现一起提交或紧随其后。
 
 ---
 
 ## Workflow (MANDATORY)
 
-For all **feature** and **bugfix** work, the `compass-workflow` skill MUST be loaded.
-This enforces: issue-driven development, doc-sync, test-first, per-step-verify,
-and commit discipline.
+所有 **feature** 和 **bugfix** 工作 MUST 加载 `compass-workflow` skill。
+它强制执行：issue 驱动开发、doc-sync、test-first、分步验证、commit 纪律。
 
-**After loading the skill**: immediately run through the PRE-IMPLEMENTATION GATE
-checklist above. Do not skip any step.
+**加载 skill 后**：立即按上面的 PRE-IMPLEMENTATION GATE 检查清单走一遍，一步不跳。
 
 ### Available Skills
 
-| Skill | Slash Command | Purpose |
+| Skill | Slash Command | 用途 |
 |---|---|---|
-| `compass-workflow` | `/compass-workflow` | Enforces issue-driven dev, doc-sync, test-first, per-step-verify, commit discipline |
-| `issue-workflow` | `/issue-workflow` | Creates and manages issues (single + epic/sub-issue decomposition and batch close) |
-| `worktree` | `/worktree` | Manage git worktrees for PR development |
-| `open-worktrees` | `//open-worktrees` | Launch all worktree zones in separate kitty windows |
-| `qa` (test) | `/test` | Write unit/integration tests (TDD/BDD), test coverage |
-| `rustdoc` | `/rustdoc` | Verify `#![warn(missing_docs)]` compliance |
-| `docs` | `/docs` | Identify and update `kb/` files based on code changes |
-| `reflect` | `/reflect` | Write post-implementation reflections with trend analysis |
-| `friction` | `/friction` | Record AI behavior corrections to `kb/dev/friction.md` |
-| `product` | `/product` | Sprint candidate analysis (read-only, milestone proposals) |
+| `compass-workflow` | `/compass-workflow` | 强制执行 issue 驱动开发、doc-sync、test-first、分步验证、commit 纪律 |
+| `issue-workflow` | `/issue-workflow` | 创建和管理 issues（单 issue + epic/sub-issue 分解与批量关闭） |
+| `worktree` | `/worktree` | 管理 PR 开发的 git worktrees |
+| `open-worktrees` | `//open-worktrees` | 在独立 kitty 窗口启动所有 worktree 区域 |
+| `qa` (test) | `/test` | 编写单元/集成测试（TDD/BDD）、测试覆盖 |
+| `rustdoc` | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 |
+| `docs` | `/docs` | 根据代码变更识别并更新 `kb/` 文件 |
+| `reflect` | `/reflect` | 写事后反思（含趋势分析） |
+| `friction` | `/friction` | 记录 AI 行为偏差纠正到 `kb/dev/friction.md` |
+| `product` | `/product` | Sprint 候选分析（只读，milestone 提议） |
 
-All skills are located under `.opencode/skills/<name>/SKILL.md`. OpenCode
-auto-discovers skills from the filesystem — no registration needed.
+所有 skill 位于 `.opencode/skills/<name>/SKILL.md`。OpenCode 从文件系统
+自动发现 skill —— 无需注册。
 
 ### Epic & Sub-Issue Workflow
 
-Large requirements spanning multiple modules are decomposed into an **epic**
-(parent issue) with **sub-issues** (child issues) via GitHub native sub-issues.
-Key rules: one epic = one PR (each sub-issue one commit with `ref #<sub-N>`),
-one worktree, batch processing by dependency DAG with manual batch switch,
-batch close after merge. Plan files (`.omo/plans/<epic>.md`) track status.
+跨多模块的大型需求分解为 **epic**（父 issue）+ **sub-issues**（子 issue）
+（GitHub 原生 sub-issue）。关键规则：一个 epic = 一个 PR（每个 sub-issue 一个
+commit，`ref #<sub-N>`）、一个 worktree、按依赖 DAG 分批处理（手动切换批次）、
+合并后批量关闭。计划文件（`.omo/plans/<epic>.md`）跟踪状态。
 
-See `.opencode/skills/issue-workflow/SKILL.md` for the full sub-issue lifecycle.
+完整子 issue 生命周期见 `.opencode/skills/issue-workflow/SKILL.md`。
 
 ### Issue-Driven Commits
 
-**Every commit must reference a GitHub issue.** No exceptions — not even for
-chores, docs, or scripts. The pre-push hook rejects commits without `ref #N`.
+**每个 commit 必须引用 GitHub issue。** 无例外 —— 包括 chores、docs、scripts。
+pre-push hook 拒绝没有 `ref #N` 的 commit。
 
-For epic work, each commit references its sub-issue (`ref #<sub-N>`).
+epic 工作的每个 commit 引用其子 issue（`ref #<sub-N>`）。
 
 ```
 feat: add thing
@@ -143,45 +135,44 @@ ref #26
 
 ### Commit → Review (MANDATORY)
 
-After every commit, always run review. No exceptions.
+每次 commit 后必须 review。无例外。
 
-1. **Commit**: stage changes, write a descriptive message with `ref #N`, commit.
-2. **Review**: run `/review-work` on the committed changes (5 parallel agents: goal, quality, security, QA, context).
-3. **Fix**: if review finds issues, fix them and recommit (max 2 rounds).
+1. **Commit**: stage 变更、写含 `ref #N` 的描述性消息、commit。
+2. **Review**: 对已提交变更运行 `/review-work`（5 个并行 agent：goal、quality、security、QA、context）。
+3. **Fix**: review 发现问题就修复并重新 commit（最多 2 轮）。
 
-Skippable for: docs, lint fixes, typos, trivial chores.
+Docs、lint 修复、typo、trivial chores 可跳过。
 
 ### Commit & Push
 
-Commit and push are **separate operations**. Do not chain them with `&&`.
+Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 
 **Commit**: 直接执行，不需要向用户申请确认。提交是 agent 的职责，按流程 commit 后自动 review。
 
-**HARD BLOCK: Never auto-push.** Wait for the user to explicitly say "push" / "推送".
-**Follow the user's exact words.** "commit" means only commit; "push" means only push.
+**HARD BLOCK: Never auto-push.** 等用户明确说 "push" / "推送" 才 push。
+**Follow the user's exact words.** "commit" 只表示 commit；"push" 只表示 push。
 
-See `kb/dev/process.md` for the full push gate checklist.
+完整 push gate 清单见 `kb/dev/process.md`。
 
 ### Issue Lifecycle
 
-**HARD BLOCK: Close issues only AFTER push.** An issue is not "done" until the fix is on
-`origin/master`. Do not close an issue after commit — wait for successful push.
+**HARD BLOCK: 只在 push 后关闭 issue。** issue 只有在修复到达
+`origin/master` 后才算 "done"。commit 后不要关闭 —— 等 push 成功。
 
-**Epic close**: after the PR is merged to master, close all sub-issues first, then
-close the epic. Record a summary comment on the epic listing all completed sub-issues.
+**Epic close**: PR 合并到 master 后，先关闭所有 sub-issues，再关闭 epic。
+在 epic 上记录总结 comment 列出所有完成的 sub-issues。
 
-See `kb/dev/process.md` for the full issue lifecycle and `kb/github/labels.md`
-for the Bevy-style A-/C-/D-/P-/S- taxonomy. Minimum: one A- and one C- label.
+完整 issue lifecycle 见 `kb/dev/process.md`，Bevy 风格 A-/C-/D-/P-/S- 标签
+分类见 `kb/github/labels.md`。最低要求：一个 A- 和一个 C- 标签。
 
 ### Scope Discipline
 
-**Never silently change a planned approach.** If an external constraint
-(library bug, API incompatibility, missing crate) blocks the agreed-upon
-implementation, do NOT work around it by altering the feature design.
-Flag the issue to the user and ask for a decision.
+**绝不静默改变已计划的方案。** 如果外部约束（库 bug、API 不兼容、缺 crate）
+阻塞了已确认的实现方案，不要通过改变 feature 设计来绕过。
+向用户提出该问题并请求决策。
 
-The grill-me decisions and the approved plan define the contract. Any
-deviation — even a pragmatic workaround — requires user approval first.
+grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是务实的 workaround ——
+都需要用户先批准。
 
 ---
 
@@ -223,7 +214,6 @@ PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），�
 | `kb/design/architecture.md` | 系统总览、crate 关系、线程模型、数据管线、存储策略、库选型 |
 | `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
-| `kb/design/backlog.md` | 需求池 — 候选需求按优先级排序，选中后拆 issue |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、Dolt 操作、重置 |
 | `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 |
@@ -242,21 +232,21 @@ PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），�
 
 ## Setup
 
-- **Rust edition 2024** — requires Rust ≥1.85. Current: 1.96.
-- **GUI app** — needs a display server (X11/Wayland). `cargo run` opens a window.
-- Logs written to `logs/compass.log` (daily rolling).
-- Config at `~/.config/compass/config.toml` (falls back to defaults). 见 `kb/user/config.md`.
+- **Rust edition 2024** — 需要 Rust ≥1.85。当前：1.96。
+- **GUI app** — 需要显示服务器（X11/Wayland）。`cargo run` 打开窗口。
+- 日志写入 `logs/compass.log`（每日轮转）。
+- 配置在 `~/.config/compass/config.toml`（缺省回退默认值）。见 `kb/user/config.md`。
 
 ## Commands
 
 ```sh
 cargo build
-cargo run                    # GUI chart window
-cargo run --bin compass-data -- <subcommand>  # data pipeline CLI
-cargo test                   # unit + integration tests
+cargo run                    # GUI 图表窗口
+cargo run --bin compass-data -- <subcommand>  # 数据管线 CLI
+cargo test                   # 单元 + 集成测试
 cargo fmt
 cargo clippy
-RUST_LOG=debug cargo run     # verbose logging
+RUST_LOG=debug cargo run     # 详细日志
 ```
 
 ### compass-data CLI 速查
