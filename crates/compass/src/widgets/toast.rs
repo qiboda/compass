@@ -177,6 +177,9 @@ impl ToastManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::kittest::Queryable;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn new_manager_is_empty() {
@@ -218,9 +221,121 @@ mod tests {
 
     #[test]
     fn toast_level_ordering_correct() {
-        // Error > Warning > Info (Success is between Warning and Info)
         assert!(ToastLevel::Error > ToastLevel::Warning);
         assert!(ToastLevel::Warning > ToastLevel::Success);
         assert!(ToastLevel::Success > ToastLevel::Info);
+    }
+
+    #[test]
+    fn test_push_cap_at_10_evicts_oldest() {
+        let mut manager = ToastManager::new();
+        for i in 0..12 {
+            manager.push(ToastLevel::Info, format!("toast-{i}"));
+        }
+        assert_eq!(manager.len(), 10);
+
+        // First 2 should be evicted (oldest); pop returns toast-2 first
+        let first = manager.pop().expect("should have toast-2");
+        assert_eq!(first.message, "toast-2");
+    }
+
+    #[test]
+    fn test_push_error_has_longer_duration() {
+        let mut manager = ToastManager::new();
+        manager.push(ToastLevel::Error, "err");
+        manager.push(ToastLevel::Info, "info");
+
+        let err_toast = manager.pop().expect("error toast");
+        let info_toast = manager.pop().expect("info toast");
+
+        assert_eq!(err_toast.duration, Duration::from_secs(8));
+        assert_eq!(info_toast.duration, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_is_expired_fresh_toast_not_expired() {
+        let toast = Toast::new(ToastLevel::Info, "fresh".into());
+        assert!(!toast.is_expired());
+    }
+
+    #[test]
+    fn test_is_expired_expired_toast() {
+        let expired = Toast {
+            level: ToastLevel::Info,
+            message: "expired".into(),
+            created_at: Instant::now() - Duration::from_secs(10),
+            duration: Duration::from_secs(3),
+        };
+        assert!(expired.is_expired());
+    }
+
+    #[test]
+    fn test_is_expired_exactly_at_boundary() {
+        let exact = Toast {
+            level: ToastLevel::Success,
+            message: "boundary".into(),
+            created_at: Instant::now() - Duration::from_secs(3),
+            duration: Duration::from_secs(3),
+        };
+        // >= duration, so this should be expired
+        assert!(exact.is_expired());
+    }
+
+    fn harness_for_toasts(
+        manager: &Rc<RefCell<ToastManager>>,
+    ) -> egui_kittest::Harness<'static> {
+        let m = manager.clone();
+        egui_kittest::Harness::new_ui(move |ui| {
+            m.borrow_mut().render(ui.ctx());
+        })
+    }
+
+    #[test]
+    fn test_render_empty_no_panic() {
+        let manager = Rc::new(RefCell::new(ToastManager::new()));
+        let mut harness = harness_for_toasts(&manager);
+        harness.run();
+    }
+
+    #[test]
+    fn test_render_with_toasts_no_panic() {
+        let manager = Rc::new(RefCell::new(ToastManager::new()));
+        manager.borrow_mut().push(ToastLevel::Info, "info toast");
+        manager.borrow_mut().push(ToastLevel::Success, "success toast");
+        manager.borrow_mut().push(ToastLevel::Warning, "warning toast");
+        manager.borrow_mut().push(ToastLevel::Error, "error toast");
+
+        let mut harness = harness_for_toasts(&manager);
+        harness.run();
+        // Verify all message labels render
+        let _info = harness.get_by_label("info toast");
+        let _success = harness.get_by_label("success toast");
+        let _warning = harness.get_by_label("warning toast");
+        let _error = harness.get_by_label("error toast");
+    }
+
+    #[test]
+    fn test_render_removes_expired_toasts() {
+        let manager = Rc::new(RefCell::new(ToastManager::new()));
+
+        // Directly inject an expired toast
+        {
+            let expired = Toast {
+                level: ToastLevel::Info,
+                message: "expired-toast".into(),
+                created_at: Instant::now() - Duration::from_secs(10),
+                duration: Duration::from_secs(3),
+            };
+            manager.borrow_mut().toasts.push(expired);
+        }
+        // Push a fresh toast
+        manager.borrow_mut().push(ToastLevel::Success, "fresh-toast");
+
+        let mut harness = harness_for_toasts(&manager);
+        harness.run();
+
+        // Expired toast should have been removed from the vec
+        let remaining = manager.borrow().len();
+        assert_eq!(remaining, 1, "expired toast should be removed by render");
     }
 }
