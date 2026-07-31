@@ -11,7 +11,7 @@ when development starts, removed after the PR is merged.
 
 ## Convention
 
-All worktrees live under `.worktrees/<name>/` (gitignored). Branch naming: `pr/<short-description>`.
+All worktrees live under `.worktrees/<name>/` (gitignored). Branch naming: `feat/<short-description>` or `fix/<short-description>`.
 
 ```
 .worktrees/
@@ -29,7 +29,7 @@ All worktrees live under `.worktrees/<name>/` (gitignored). Branch naming: `pr/<
 ### Create
 
 ```bash
-git worktree add -b pr/<name> .worktrees/<name> master
+git worktree add -b feat/<name> .worktrees/<name> master
 ```
 
 **Rules**:
@@ -77,7 +77,7 @@ After the PR is merged, clean up:
 ```bash
 # Remove worktree + its branch
 git worktree remove .worktrees/<name> --force
-git branch -D pr/<name>
+git branch -D feat/<name>
 ```
 
 ### Clean orphans
@@ -99,14 +99,14 @@ done
 When the `compass-workflow` skill is also loaded:
 - Each PR within a worktree goes through the gate (issue → plan → tests → docs)
 - Quality gates (`cargo test`, `cargo clippy`, `cargo fmt`) run inside the worktree
-- Push to the PR branch (`pr/<name>`), create PR, merge via GitHub
+- Push to the PR branch (`feat/<name>`), create PR, merge via GitHub
 
 ## Example: creating a PR worktree
 
 ```bash
 # User: "切一个fix candle的worktree"
 # → Fire this skill, then:
-git worktree add -b pr/fix-candle-rendering .worktrees/fix-candle-rendering master
+git worktree add -b feat/fix-candle-rendering .worktrees/fix-candle-rendering master
 ```
 
 **Then** (same turn, immediately after `git worktree add` succeeds):
