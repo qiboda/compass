@@ -8,7 +8,7 @@ pipeline for managing historical market data.
 | Tool | What it does |
 |---|---|
 | **Chart app** (`cargo run`) | View interactive candlestick charts for any A-share stock |
-| **Data pipeline** (`compass-data`) | Download, import, merge, and export market data |
+| **Data pipeline** (`compass-data`) | Import, export, and back up market data |
 
 ## How data works
 
@@ -17,18 +17,19 @@ charts render instantly — no internet, no API keys, no rate limits.
 
 ```
 Data sources → Import → Parquet files → Chart app
-           ↘ Download → DuckDB cache ↗
 ```
 
-There are two data sources:
+There are two ways data gets into the local Parquet database:
 
 | Source | What | When to use |
 |---|---|---|
 | **Dolt** (`investment_data`) | Complete A-share EOD history (1990–present, 18M+ rows) | Bulk import via `compass-data import` |
-| **EastMoney** (online) | Real-time and historical K-line data | Live download via `compass-data download` |
+| **EastMoney** (online) | Real-time and historical data via Python collectors | Fetch data not yet in Dolt, then import |
 
-Dolt is the **primary** data source — complete, offline, fast. EastMoney is
-a fallback for data not yet imported locally.
+Dolt is the **primary** data source — complete, offline, fast. EastMoney data
+is fetched by the Python collectors (`collectors/`) and flows into Dolt
+`compass_data`, then into Parquet via import. The GUI itself is **local-only** —
+it never calls EastMoney directly.
 
 ## Quickstart
 

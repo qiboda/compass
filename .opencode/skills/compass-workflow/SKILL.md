@@ -42,7 +42,7 @@ I will now check each gate step before proceeding:
    → [must show test failure output]
 
 ☐ STEP 4a — RUSTDOC
-   → Invoke /rustdoc to verify #[deny(missing_docs)] compliance
+   → Invoke /rustdoc to verify #[warn(missing_docs)] compliance
    → [must show cargo doc --no-deps is warning-free]
 
 ☐ STEP 4b — DOCS (kb/)
@@ -198,7 +198,7 @@ The compass project provides these opencode skills for specific workflow steps:
 |---|---|---|---|
 | issue-workflow | `/issue-workflow` | Create and manage issues (single + epic/sub-issue) | Step 1 — ISSUE |
 | qa (test) | `/test` | Write failing tests (TDD/BDD), test coverage | Step 3 — TESTS |
-| rustdoc | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance | Step 4a — RUSTDOC |
+| rustdoc | `/rustdoc` | Verify `#![warn(missing_docs)]` compliance | Step 4a — RUSTDOC |
 | docs | `/docs` | Identify and update kb/ files | Step 4b — DOCS |
 | reflect | `/reflect` | Write post-implementation reflection + trend analysis | Post-implementation |
 | friction | `/friction` | Record AI behavior corrections during work | Post-correction / on-demand |

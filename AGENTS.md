@@ -53,7 +53,7 @@ Before you touch a single file, verbalize EACH step to the user and confirm comp
 | **1. Issue** | Invoke `/issue-workflow` to create/manage issues | Issue URL(s) shown to user |
 | **2. Plan** | If 2+ modules involved: run `/ulw-plan` agent until approval | `.omo/plans/*.md` file created + user approved |
 | **3. Tests** | Invoke `/test` (qa skill) to write failing tests | Test output showing failure |
-| **4a. Rustdoc** | Invoke `/rustdoc` to verify `#[deny(missing_docs)]` compliance | `cargo doc --no-deps` is warning-free |
+| **4a. Rustdoc** | Invoke `/rustdoc` to verify `#![warn(missing_docs)]` compliance | `cargo doc --no-deps` is warning-free |
 | **4b. Docs** | Invoke `/docs` to identify which `kb/` files need updating | List of files to user |
 
 **If ANY step is incomplete, STOP. Do NOT implement. Do NOT create todos. Do NOT edit files.**
@@ -110,7 +110,7 @@ checklist above. Do not skip any step.
 | `worktree` | `/worktree` | Manage git worktrees for PR development |
 | `open-worktrees` | `//open-worktrees` | Launch all worktree zones in separate kitty windows |
 | `qa` (test) | `/test` | Write unit/integration tests (TDD/BDD), test coverage |
-| `rustdoc` | `/rustdoc` | Verify `#[deny(missing_docs)]` compliance |
+| `rustdoc` | `/rustdoc` | Verify `#![warn(missing_docs)]` compliance |
 | `docs` | `/docs` | Identify and update `kb/` files based on code changes |
 | `reflect` | `/reflect` | Write post-implementation reflections with trend analysis |
 | `friction` | `/friction` | Record AI behavior corrections to `kb/dev/friction.md` |
@@ -321,18 +321,23 @@ RUST_LOG=debug cargo run     # verbose logging
 
 ```sh
 # Import from Dolt investment_data (primary) into Parquet main database
-cargo run --bin compass-data -- import                    # all 6000+ stocks (merge mode)
+cargo run --bin compass-data -- import                    # all 6000+ stocks (full write)
 cargo run --bin compass-data -- import --symbols 000001,600519  # specific stocks
-cargo run --bin compass-data -- import --overwrite        # full overwrite (ignore merge)
+cargo run --bin compass-data -- import --since 20260725   # incremental
+
+# Import from Dolt compass_data (our own tables) into Parquet
+cargo run --bin compass-data -- import-compass --table stock_basic
+cargo run --bin compass-data -- import-compass --table fin_indicators
 
 # Export Parquet to DuckDB
 cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite        # force overwrite
 ```
 
-All commands default to **merge/skip** behavior (migration-style):
-existing unique keys are preserved, only new data is added. Pass `--overwrite`
-to replace existing data. Applies to `import` and `export`.
+`import-compass` and `export` default to **merge/skip** behavior
+(migration-style): existing unique keys are preserved, only new data is added.
+Pass `--overwrite` to replace existing data. `import` always writes the full
+dataset directly from Dolt (no `--overwrite` flag).
 
 ## Architecture
 
@@ -383,7 +388,7 @@ parquet_data/
 └── stock_daily.symbols.txt    # one symbol per line (fast listing)
 ```
 
-DuckDB schema (staging):
+DuckDB schema (created automatically on first use):
 ```sql
 CREATE TABLE stock_daily (
     symbol      VARCHAR NOT NULL,

@@ -1,6 +1,6 @@
 ---
 name: rustdoc
-description: Checks #[deny(missing_docs)] compliance and identifies missing /// doc comments on pub items in compass-core. Identifies only — does not auto-generate documentation.
+description: Checks #[warn(missing_docs)] compliance and identifies missing /// doc comments on pub items in compass-core. Identifies only — does not auto-generate documentation.
 ---
 
 # Rustdoc — Pub API Doc Compliance Agent

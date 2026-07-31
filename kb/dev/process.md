@@ -258,7 +258,6 @@ RUST_LOG=debug cargo run        # verbose logging
 cargo run --bin compass-data -- import
 cargo run --bin compass-data -- import --limit 100
 cargo run --bin compass-data -- import --symbols 000001,600519
-cargo run --bin compass-data -- import --overwrite   # full replace
 cargo run --bin compass-data -- import --since 20260725  # incremental
 
 # Import from Dolt compass_data into Parquet
@@ -409,15 +408,6 @@ curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=1
 
 # Symbol listing API
 curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281"
-```
-
-### Inspect the staging DuckDB
-
-```sh
-# DuckDB CLI not installed by default. Use the export command instead:
-cargo run --bin compass-data -- export
-
-# Or query via Python duckdb package if available
 ```
 
 ### Inspect Parquet files

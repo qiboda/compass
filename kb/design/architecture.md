@@ -4,15 +4,15 @@
 
 Compass is a **local-first A-share stock chart application**. Unlike web-based
 stock viewers that depend on a remote server for every interaction, Compass
-downloads and caches all OHLCV data locally. Once data is imported, chart
+imports and caches all OHLCV data locally. Once data is imported, chart
 rendering is instant — no network calls, no rate limiting, no API keys.
 
 It has two faces:
 
 | Face | Binary | Purpose |
 |---|---|---|
-| **Chart app** | `compass` | Interactive candlestick chart with symbol search, timeframe selection, crosshair, zoom, pan. Runs as a native desktop window via egui. |
-| **Data pipeline** | `compass-data` | Offline data management — download from EastMoney, import from Dolt, merge staging into production, export to other formats. |
+| **Chart app** | `compass` | Interactive candlestick chart with symbol search, timeframe selection, crosshair, zoom, pan. Runs as a native desktop window via egui. Reads exclusively from local Parquet. |
+| **Data pipeline** | `compass-data` | Offline data management — import from Dolt, export to other formats, backup. EastMoney data arrives via Python collectors. |
 
 Both share the same library crate (`compass-core`), which defines the data
 model, provider traits, and all I/O logic.
@@ -160,9 +160,9 @@ egui-mobius's Level 3 async dispatch:
 ```
 ┌─ UI THREAD (eframe) ─────────────────────┐
 │                                           │
-│  ControlCitizen::show()                   │
+│  Toolbar (CompassApp local state)         │
 │    user clicks Fetch                      │
-│    outbox.push(AppMessage::FetchBars)     │
+│    dispatcher::handle(FetchBars)          │
 │         │                                 │
 │         ▼                                 │
 │  dispatcher::handle()                     │
@@ -170,27 +170,27 @@ egui-mobius's Level 3 async dispatch:
 │    work_signal.send(FetchRequest) ───┐    │
 │                                     │    │
 └─────────────────────────────────────│────┘
-                                     │
-                              ┌──────▼─────────────────────┐
-                              │  AsyncDispatcher (tokio)   │
-                              │                             │
-                              │  attach_async(work_slot,   │
-                              │    result_signal,          │
-                              │    |req| async {           │
-                              │      reader.fetch(req)     │
-                              │      → FetchResponse       │
-                              │    })                      │
-                              │                             │
-                              └──────┬─────────────────────┘
-                                     │
-                              ┌──────▼─────────────────────┐
-                              │  result_slot.start()       │
-                              │    |resp| {                │
-                              │      state.bars.set(bars)  │
-                              │      state.loading.set(false)
-                              │      egui_ctx.request_repaint()
-                              │    }                       │
-                              └────────────────────────────┘
+                                      │
+                               ┌──────▼─────────────────────┐
+                               │  AsyncDispatcher (tokio)   │
+                               │                             │
+                               │  attach_async(work_slot,   │
+                               │    result_signal,          │
+                               │    |req| async {           │
+                               │      reader.fetch(req)     │
+                               │      → FetchResponse       │
+                               │    })                      │
+                               │                             │
+                               └──────┬─────────────────────┘
+                                      │
+                               ┌──────▼─────────────────────┐
+                               │  result_slot.start()       │
+                               │    |resp| {                │
+                               │      state.bars.set(bars)  │
+                               │      state.loading.set(false)
+                               │      egui_ctx.request_repaint()
+                               │    }                       │
+                               └────────────────────────────┘
 ```
 
 The wiring happens once at startup in `backend.rs`:
@@ -238,12 +238,9 @@ UI (CompassApp::ui)
   │  user clicks "Fetch" button
   │  state.symbol.set("600519")
   │  state.timeframe.set("1d")
-  │  outbox.push(AppMessage::FetchBars)
-  │
-  ▼ (same frame, outbox drain loop)
-  dispatcher::handle(AppMessage::FetchBars, state, work_signal)
-  │  state.loading.set(true)
-  │  work_signal.send(FetchRequest { symbol:"600519", timeframe:"1d", ... })
+  │  dispatcher::handle(AppMessage::FetchBars, state, work_signal)
+  │    state.loading.set(true)
+  │    work_signal.send(FetchRequest { symbol:"600519", timeframe:"1d", ... })
   │
   ▼
 AsyncDispatcher (tokio runtime)
@@ -285,13 +282,14 @@ already on disk.
 
 ## Data pipeline: CLI (compass-data)
 
-The CLI manages data offline, before the GUI ever runs. It has three subcommands
-that form a pipeline:
+The CLI manages data offline, before the GUI ever runs. Its subcommands form a
+pipeline:
 
 ```
-Dolt DB ───────import─────► parquet_data/
-staging.duckdb ──merge───► parquet_data/
-parquet_data/ ──export───► compass.duckdb
+Dolt investment_data ──import─────────► parquet_data/
+Dolt compass_data ────import-compass──► parquet_data/
+parquet_data/ ────────export──────────► duckdb / csv / parquet-dir
+parquet_data/ ────────backup──────────► Baidu Cloud (zip)
 ```
 
 The project also maintains its own Dolt repository `compass_data/` for
@@ -332,22 +330,24 @@ Key design decisions:
   already-fetched periods (e.g. 五粮液 2025Q1 revision). A periodic `--refresh N`
   flag is planned (see issue #27).
 
-### import: Dolt → Parquet
+### import: Dolt investment_data → Parquet
 - Queries Dolt `investment_data` database via `dolt sql -r parquet`
 - Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
 - Writes to a single `parquet_data/stock_daily.parquet` with a `symbol` column
-- Merge mode (default): uses DuckDB `read_parquet` to merge existing + new
-- Overwrite mode: bytes written directly to target file
+- Writes the full dataset directly (no merge mode, no `--overwrite` flag)
+- `--since` enables incremental imports of newer data
+- Also writes `stock_basic.parquet` and `stock_daily.symbols.txt`
 
-### merge: staging → Parquet
-- Lists symbols in staging DuckDB not yet in Parquet
-- For each new symbol: COPY staging → Parquet file
-- Incremental: only moves data for symbols that don't already exist
+### import-compass: Dolt compass_data → Parquet
+- Imports our own tables (`stock_basic`, `fin_indicators`, `fin_balance_sheet`,
+  `fin_income`, `fin_cash_flow`) into Parquet
+- `--overwrite` replaces existing data; default is merge/skip (new data only)
+- `--since` for incremental imports
 
 ### export: Parquet → other formats
 - Reads parquet_data/ directory
 - Exports to DuckDB, CSV, or parquet-dir format
-- Used to create the final database the GUI reads from
+- `--overwrite` replaces existing data
 
 ### backup: Parquet → Baidu Cloud
 - Zips `parquet_data/` using Python zipfile (no system `zip` dependency)
@@ -356,9 +356,9 @@ Key design decisions:
 - Target folder: `/compass/` on Baidu Cloud
 - `--keep-zip` flag preserves local zip after upload
 
-**Default behavior everywhere**: merge/skip. Existing data is preserved; only
-new data is added. Pass `--overwrite` to replace. This migration-style behavior
-prevents accidental data loss.
+**Overwrite semantics**: `import-compass` and `export` default to merge/skip —
+existing data is preserved, only new data is added. Pass `--overwrite` to
+replace. `import` always writes the full dataset directly from Dolt.
 
 ## Storage strategy: why both DuckDB and Parquet?
 
@@ -370,10 +370,10 @@ Compass uses two database formats for different purposes:
     ├─ Stock basic: stock_basic.parquet (one file for all symbols)
     ├─ Stock daily: stock_daily.parquet (single file with symbol column)
 
-  DuckDB (in-memory for GUI, file-backed for CLI staging)
+  DuckDB (in-memory for GUI, file-backed for export)
     ├─ GUI — in-memory with Parquet fallback (reads parquet_data/ on cache miss)
-    ├─ CLI staging — temporary buffer during download (data/staging.duckdb)
-    └─ Negative cache — tracks no-data symbols with TTL
+    ├─ CLI export — file-backed DuckDB output (compass.duckdb)
+    └─ no_data_marks — negative cache table (trait implemented, GUI does not use)
 ```
 
 ### Why Parquet as source of truth?
@@ -390,7 +390,7 @@ Compass uses two database formats for different purposes:
 - **Compact**: columnar compression reduces storage. 6000+ stocks × 30 years ≈
   manageable disk footprint.
 
-### Why DuckDB for caching and staging?
+### Why DuckDB for caching?
 
 - **Write-friendly**: INSERT OR REPLACE/IGNORE semantics; automatic primary key
   conflict handling. Parquet is append-only and harder to update.
@@ -402,9 +402,9 @@ Compass uses two database formats for different purposes:
 
 ### The read path
 
-The GUI reads from Parquet via `ParquetReader` when available (after import),
-and uses DuckDB as a read-through cache. The CLI writes to DuckDB staging first,
-then merges into Parquet. This two-tier design separates the concerns of "fast
+The GUI reads from Parquet via `DuckDbProvider` (in-memory DuckDB with
+`read_parquet()` fallback on cache miss). The CLI writes exported data into a
+file-backed DuckDB. This two-tier design separates the concerns of "fast
 writes and caching" (DuckDB) from "durable, queryable storage" (Parquet).
 
 ## Symbol convention: Dolt-native prefixed codes
@@ -451,8 +451,13 @@ fields are optional — missing keys fall back to sensible defaults defined in
 `AppConfig::default()`.
 
 ```toml
-[database]
-parquet_dir = "parquet_data"           # parquet data directory
+[parquet]
+dir = "/data/compass-data/parquet_data"   # parquet data directory
+
+[dolt]
+investment_data_dir = "/data/compass-data/investment_data"
+compass_data_dir = "/data/compass-data/compass_data"
+
 [app]
 default_symbol = "000001"     # what to show on startup
 default_timeframe = "1d"
@@ -460,7 +465,7 @@ default_timeframe = "1d"
 
 The config path is `$HOME/.config/compass/config.toml`. If the file doesn't
 exist or can't be parsed, the app starts with all defaults — no manual setup
-required.
+required. See `kb/user/config.md` for the full reference.
 
 ## Logging
 
@@ -485,10 +490,10 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 
 | # | Decision | Choice | Why |
 |---|---|---|---|
-| 1 | GUI framework | egui 0.33 + eframe | Pure-Rust immediate-mode GUI. No HTML/CSS/JS, no webview dependency. Compiles to a single native binary. |
-| 2 | Chart widget | egui-charts 0.2 | Candlestick chart with built-in pan, zoom, crosshair. Matches the egui ecosystem. |
+| 1 | GUI framework | egui 0.35 + eframe | Pure-Rust immediate-mode GUI. No HTML/CSS/JS, no webview dependency. Compiles to a single native binary. |
+| 2 | Chart widget | egui-charts (qiboda fork, `compass` branch) | Candlestick chart with built-in pan, zoom, crosshair. Matches the egui ecosystem. Forked from upstream for compass-specific fixes. |
 | 3 | Async runtime | tokio (rt-multi-thread) | DuckDbProvider uses tokio::spawn_blocking for synchronous DuckDB queries. CLI uses current_thread for simplicity. |
-| 4 | HTTP client | reqwest 0.12 (rustls-tls) | Used only by compass-data CLI (kept for potential future use). GUI has no HTTP dependency. |
+| 4 | HTTP client | reqwest 0.12 (rustls-tls) | Used by the library for `DataError::Network`. GUI has no direct HTTP dependency — all data is local. |
 | 5 | Database | duckdb 1.0 (bundled) | OLAP-optimized columnar engine. Reads/writes Parquet natively. The `bundled` feature ships the C library — no system duckdb required. |
 | 6 | DB threading | spawn_blocking + Mutex | DuckDB is synchronous C. `spawn_blocking` moves queries to a thread pool so they don't block the async runtime. Mutex on the DuckDB connection ensures exclusive access. |
 | 7 | Serialization | serde + serde_json | Config parsing and test data. serde derives on all data types. |
@@ -499,7 +504,7 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 | 12 | Config | toml → Deserialize | Simple, readable format. `#[serde(default)]` on every field means partial configs work. |
 | 13 | CLI args | clap 4 (derive) | Derive macro generates the CLI parser from a struct. Type-safe, self-documenting. |
 | 14 | Progress bars | indicatif 0.17 | Spinner + progress bar for long-running CLI operations (import). |
-| 15 | Concurrency | futures Semaphore + buffer_unordered | Bounded parallelism for CLI download. Semaphore caps concurrent requests; buffer_unordered preserves order while processing results as they arrive. |
+| 15 | Concurrency | futures Semaphore + buffer_unordered | Bounded parallelism for bulk imports. Semaphore caps concurrent operations; buffer_unordered preserves order while processing results as they arrive. |
 | 16 | Reactive state | egui_mobius_reactive `Dynamic<T>` | Per-field `Dynamic<T>` replaces monolithic `Arc<Mutex<CompassState>>`. No manual version counter, no cross-field lock contention. Each field is independently readable/writable. |
 | 17 | Citizen pattern | egui_citizen (Citizen trait) | Frameworks citizen lifecycle (register, activate, deactivate, drain) and eliminates manual thread wiring. Citizens use outbox pattern — no direct backend coupling. |
 | 18 | Dock layout | egui_dock 0.20 | Tabbed dockable panels with resize and rearrange. Bridges to citizen activation via TabViewer. Replaces manual panel layout. |
@@ -523,5 +528,5 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 |------|------|------|------|----------|
 | 数据访问策略：GUI 读取数据的来源 | 在线 API 直接请求 / 本地文件缓存 / 纯本地无回退 | 纯本地 Parquet 文件，无在线回退 | 本地读取零延迟、无网络依赖、无 API 限流；数据管线（import/collector）离线运行，GUI 只查询已落盘数据 | 在线 API 增加延迟和失败点；缓存策略需处理过期和同步问题，增加复杂度 |
 | 异步架构：UI 线程与 I/O 分离方案 | 手动 std::thread + mpsc / 框架托管的 citizen 模式 | egui-mobius citizen 模式：Citizen trait + Dynamic\<T\> + Signal/Slot + AsyncDispatcher | 消除手动线程布线、Arc\<Mutex\> 竞争和版本计数器；Citizen 通过 outbox 解耦，AsyncDispatcher 自管 tokio runtime | 手动线程方案代码量大、易出错；Dynamic\<T\> 提供字段级独立读写，无跨字段锁竞争 |
-| 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），但通过 DuckDB staging + merge 管线解决；每标的单独文件增加文件管理开销 |
+| 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），但通过 `import --since` 增量导入缓解；每标的单独文件增加文件管理开销 |
 | 符号约定：规范标识符格式 | ts_code 格式（`000001.SZ`）/ Dolt-native 前缀格式（`SZ000001`） | Dolt-native 前缀格式 | 前缀即交换所见即所得，无歧义（`SZ000852` 和 `SH000852` 可共存）；交换所可从代码推断，ts_code 的后缀冗余 | ts_code 将身份与元数据混合，`.SZ` 后缀冗余且格式不一致（需解析 `.` 分隔符） |

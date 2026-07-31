@@ -50,27 +50,6 @@ let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory 
 
 No cleanup needed — the database is dropped when `provider` goes out of scope.
 
-### HTTP mocking (httpmock)
-
-```rust
-use httpmock::MockServer;
-
-let server = MockServer::start_async().await;
-let mock = server.mock(|when, then| {
-    when.method(httpmock::Method::GET).path("/api/qt/stock/kline/get");
-    then.status(200)
-        .header("content-type", "application/json")
-        .json_body(serde_json::json!({"data": {"klines": ["2025-07-21,12.04,12.01,12.11,11.95,1079027,..."]}}));
-});
-
-let provider = EastMoneyProvider::new(
-    reqwest::Client::new(),
-    server.base_url(),
-    server.base_url(),
-);
-// Now HTTP calls hit the mock server instead of real EastMoney.
-```
-
 ### Dolt (test database)
 
 Tests that need a Dolt database use `dolt init` + `dolt sql` to create a temporary,
@@ -136,10 +115,9 @@ async `db` method, the spawned task blocks waiting for the lock you already hold
 2. **Assert isolation**: After saving, fetch with different symbol/timeframe to
    verify no cross-contamination.
 3. **Parameterize**: Use `#[case]` for same logic, different inputs.
-4. **Error paths**: Test empty data, bad JSON, network failure (via httpmock).
-5. **Integration tests**: Mock EastMoney endpoints with httpmock, use DuckDB
-   `:memory:`, and run the full pipeline (enumerate → stock_basic → fetch bars →
-   save stock_daily → verify counts).
+4. **Error paths**: Test empty data, bad JSON, missing files.
+5. **Integration tests**: Use in-memory DuckDB and run the full pipeline
+   (import → save stock_daily → fetch bars → verify counts).
 
 ## Benchmarks
 
@@ -163,15 +141,10 @@ Results are written to `target/criterion/` as HTML reports.
 |---|---|---|
 | `compass-core` | `parquet_bench` | ParquetReader cold/warm read at 100/1000/5000 rows, real SZ000001 |
 | `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
-| `compass-core` | `cached_bench` | CachedProvider cache hit, cache miss (read-through), negative cache |
-| `compass-core` | `eastmoney_bench` | Kline parse latency/throughput, httpmock round-trip, error paths |
-| `compass-data` | `dolt_bench` | Dolt sql -r parquet single-file export, symbol enumeration |
 
 ### Data requirements
 
 - **Parquet benchmarks**: need `parquet_data/` with real data OR generate synthetic data via in-memory DuckDB
-- **Dolt benchmarks**: need `investment_data/` directory and `dolt` CLI on PATH; skip gracefully if missing
-- **EastMoney benchmarks**: use `httpmock` — no real network calls
 - **All others**: use in-memory DuckDB or temp directories — no external dependencies
 
 ### CI policy
@@ -222,7 +195,7 @@ profiling with flamegraph visualization.
 3. Run Compass with the `tracy` feature:
    ```sh
    cargo run --features tracy
-   # or: cargo run --bin compass-data --features tracy -- download --symbols 000001
+   # or: cargo run --bin compass-data --features tracy -- import --symbols 000001
    ```
 
 ### How it works

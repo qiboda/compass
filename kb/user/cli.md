@@ -5,66 +5,30 @@
 `compass-data` manages A-share OHLCV data through four subcommands:
 
 ```
-EastMoney API ──download──► staging.duckdb ──merge──► parquet_data/ ──export──► data/compass.duckdb
-Dolt DB ───────import─────► parquet_data/
+Dolt investment_data ──import─────────► parquet_data/
+Dolt compass_data ────import-compass──► parquet_data/
+parquet_data/ ────────export──────────► duckdb / csv / parquet-dir
+parquet_data/ ────────backup──────────► Baidu Cloud (zip)
 ```
+
+EastMoney data is fetched by the Python collectors (`collectors/`) into Dolt
+`compass_data`, then imported via `import-compass`. The Rust CLI itself never
+talks to EastMoney.
 
 ## Common options
 
-Every subcommand follows the same data integrity rule:
-
-- **Default**: merge/skip — existing data is preserved, only new data is added
-- **`--overwrite`**: replace existing data with new values
-
-Pass `--overwrite` when you want a clean slate. Omit it for incremental updates.
-
----
-
-## `download` — EastMoney → Staging DuckDB
-
-Downloads OHLCV bars from EastMoney's public API into a staging DuckDB database.
-
-```sh
-cargo run --bin compass-data -- download [OPTIONS]
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `--symbols` | `all` | Comma-separated stock codes or `all` for every A-share |
-| `--db` | `data/staging.duckdb` | Staging database path |
-| `--concurrency` | `2` | Max simultaneous downloads |
-| `--delay-ms` | `1000` | Delay between requests (ms) |
-| `--start-date` | `19900101` | Earliest date (YYYYMMDD) |
-| `--end-date` | yesterday | Latest date (YYYYMMDD) |
-| `--base-url` | `https://push2his.eastmoney.com` | EastMoney K-line endpoint |
-| `--realtime-url` | `https://push2delay.eastmoney.com` | EastMoney realtime endpoint |
-| `--overwrite` | `false` | Replace existing data instead of skipping |
-
-### Examples
-
-```sh
-# Download all A-shares (slow — hours)
-cargo run --bin compass-data -- download --symbols all
-
-# Download specific stocks
-cargo run --bin compass-data -- download --symbols 000001,600519,300750
-
-# Download with rate limiting (more conservative)
-cargo run --bin compass-data -- download --symbols all --concurrency 1 --delay-ms 2000
-
-# Download recent data only (faster)
-cargo run --bin compass-data -- download --symbols all --start-date 20250101
-
-# Force overwrite
-cargo run --bin compass-data -- download --symbols all --overwrite
-```
+- **`--overwrite`** (on `import-compass` and `export`): replace existing data
+  with new values. Default behavior is merge/skip — existing data is preserved,
+  only new data is added.
+- `import` (Dolt investment_data) always writes the full dataset directly —
+  there is no `--overwrite` flag.
 
 ---
 
-## `import` — Dolt → Parquet (Primary)
+## `import` — Dolt investment_data → Parquet (Primary)
 
 Imports complete history from the local Dolt `investment_data` database into
-partitioned Parquet files.
+the Parquet main database.
 
 ```sh
 cargo run --bin compass-data -- import [OPTIONS]
@@ -72,13 +36,17 @@ cargo run --bin compass-data -- import [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--dolt-dir` | `investment_data` | Dolt database directory |
-| `--output` | `parquet_data` | Output directory for Parquet files |
+| `--dolt-dir` | from config `[dolt].investment_data_dir` | Dolt database directory |
+| `--output` | from config `[parquet].dir` | Output directory for Parquet files |
 | `--symbols` | (all) | Comma-separated 6-digit codes (e.g. `000001,600519`) |
 | `--limit` | `0` (all) | Max number of symbols to import |
 | `--start-date` | (earliest) | Filter by start date (YYYYMMDD) |
 | `--end-date` | (latest) | Filter by end date (YYYYMMDD) |
-| `--overwrite` | `false` | Replace existing data instead of merging |
+| `--since` | (none) | Incremental: only import data with tradedate >= since (YYYYMMDD) |
+
+The import reads each symbol's rows via `dolt sql -r parquet` (direct binary
+Parquet) and writes them into the single `stock_daily.parquet` file. Running it
+again re-imports the full dataset.
 
 ### Output structure
 
@@ -108,33 +76,40 @@ cargo run --bin compass-data -- import --start-date 20200101 --end-date 20250721
 # Import first 100 stocks (testing)
 cargo run --bin compass-data -- import --limit 100
 
-# Full overwrite (delete existing, start fresh)
-cargo run --bin compass-data -- import --overwrite
+# Incremental: only data since 2026-07-25
+cargo run --bin compass-data -- import --since 20260725
 ```
 
 ---
 
-## `merge` — Staging DuckDB → Parquet
+## `import-compass` — Dolt compass_data → Parquet
 
-Moves data from the staging DuckDB into the Parquet main database for symbols
-that don't already exist there.
+Imports tables from our own `compass_data` Dolt repository (company profiles,
+financial indicators, balance sheet, income, cash flow) into Parquet.
 
 ```sh
-cargo run --bin compass-data -- merge [OPTIONS]
+cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--db` | `data/staging.duckdb` | Staging database path |
-| `--output` | `parquet_data` | Parquet data directory |
+| `--table` | (required) | `stock_basic`, `fin_indicators`, `fin_balance_sheet`, `fin_income`, `fin_cash_flow` |
+| `--dolt-dir` | from config `[dolt].compass_data_dir` | Dolt database directory |
+| `--output` | from config `[parquet].dir` | Output directory for Parquet files |
 | `--overwrite` | `false` | Replace existing data instead of merging |
+| `--since` | (none) | Incremental: only import data with report_date >= since (YYYYMMDD) |
 
-### Example
+### Examples
 
 ```sh
-# After download, merge new symbols into Parquet
-cargo run --bin compass-data -- download --symbols all
-cargo run --bin compass-data -- merge
+# Import company profiles
+cargo run --bin compass-data -- import-compass --table stock_basic
+
+# Import financial indicators (incremental)
+cargo run --bin compass-data -- import-compass --table fin_indicators --since 20260101
+
+# Force overwrite
+cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 ```
 
 ---
@@ -149,15 +124,15 @@ cargo run --bin compass-data -- export [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--input` | `parquet_data` | Parquet data directory |
+| `--input` | from config `[parquet].dir` | Parquet data directory |
 | `--format` | `duckdb` | Output format: `duckdb`, `csv`, `parquet-dir` |
-| `--output` | `data/compass.duckdb` | Output path |
+| `--output` | `/data/compass-data/compass.duckdb` | Output path |
 | `--overwrite` | `false` | Replace existing data instead of skipping |
 
 ### Examples
 
 ```sh
-# Export to DuckDB (for the GUI to use)
+# Export to DuckDB
 cargo run --bin compass-data -- export
 
 # Export to CSV
@@ -169,53 +144,93 @@ cargo run --bin compass-data -- export --overwrite
 
 ---
 
+## `backup` — Parquet → Baidu Cloud
+
+Zips `parquet_data/` and uploads to Baidu Cloud via `baidupcs` (BaiduPCS-Go).
+
+```sh
+cargo run --bin compass-data -- backup [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--input` | from config `[parquet].dir` | Parquet data directory to backup |
+| `--keep-zip` | `false` | Keep local zip file after upload |
+
+- Timestamped filenames: `parquet_data-YYYYMMDD-HHMMSS.zip`
+- Target folder: `/compass/` on Baidu Cloud
+- Standalone: `scripts/upload-parquet.sh [--keep-zip]`
+
+---
+
+## Python collectors (EastMoney → Dolt)
+
+The `collectors/` directory contains Python scripts (uv + curl_cffi) that fetch
+data from EastMoney APIs into CSV, then import into Dolt `compass_data`:
+
+```sh
+cd collectors/
+uv sync                                # first time: install dependencies
+
+uv run python main.py fetch stock_basic
+uv run python main.py sync             # fetch + import all
+uv run python main.py sync-investment --restart
+```
+
+Key concepts:
+- **curl_cffi** for TLS impersonation (EastMoney anti-crawler)
+- **CSV as intermediary** between API and Dolt
+- **`.state.json`** files track last fetch for incremental updates
+- **`--resume`** flag to continue interrupted fetches
+
+See `kb/design/architecture.md` for the full collectors pipeline description.
+
+---
+
 ## Typical workflows
 
 ### First-time setup (from Dolt)
 
 ```sh
-# 1. Import all data from Dolt
+# 1. Import all data from Dolt investment_data
 cargo run --bin compass-data -- import
 
-# 2. Export to DuckDB for the GUI
-cargo run --bin compass-data -- export
+# 2. Import company profiles from Dolt compass_data
+cargo run --bin compass-data -- import-compass --table stock_basic
 
 # 3. Launch the chart app
 cargo run
 ```
 
-### Incremental update (downloading new data)
+### Fetch new data from EastMoney
 
 ```sh
-# 1. Download latest data from EastMoney
-cargo run --bin compass-data -- download --symbols all
+# 1. Fetch latest data into Dolt compass_data (Python collectors)
+cd collectors/
+uv run python main.py sync
 
-# 2. Merge new data into Parquet
-cargo run --bin compass-data -- merge
-
-# 3. Re-export to DuckDB (includes new data)
-cargo run --bin compass-data -- export --overwrite
+# 2. Import the new tables into Parquet
+cargo run --bin compass-data -- import-compass --table fin_indicators --since 20260101
 ```
 
-### Download a single stock for charting
+### Backup to Baidu Cloud
 
 ```sh
-cargo run --bin compass-data -- download --symbols 600519
-cargo run
-# Type "600519", click Fetch — data loads from compressed cache
+cargo run --bin compass-data -- backup            # upload zip
+cargo run --bin compass-data -- backup --keep-zip # keep local zip after upload
 ```
 
 ---
 
 ## Troubleshooting
 
-### Rate limiting
+### Rate limiting (collectors)
 
-EastMoney throttles aggressive requests. If you see `RateLimited` errors:
+EastMoney throttles aggressive requests. In `collectors/`, reduce concurrency
+and increase delay:
 
 ```sh
-# Reduce concurrency and increase delay
-cargo run --bin compass-data -- download --concurrency 1 --delay-ms 3000
+uv run python main.py sync --concurrency 1 --delay-ms 3000
 ```
 
 ### Dolt not found

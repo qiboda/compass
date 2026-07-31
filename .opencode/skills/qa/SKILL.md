@@ -1,6 +1,6 @@
 ---
 name: test
-description: Writes unit/integration tests following TDD/BDD for the compass Rust codebase. Covers rstest, tokio::test, httpmock, DuckDB in-memory.
+description: Writes unit/integration tests following TDD/BDD for the compass Rust codebase. Covers rstest, tokio::test, DuckDB in-memory, Dolt tempdir.
 ---
 
 # QA — Test-First Agent
@@ -101,21 +101,6 @@ Place in `tests/` directory. Test only the public API of `compass-core`.
 let provider = DuckDbProvider::new_in_memory()
     .expect("failed to open in-memory DuckDB");
 // Each call creates a separate in-memory DB — tests never interfere.
-```
-
-### HTTP mocking (httpmock)
-
-```rust
-use httpmock::MockServer;
-
-let server = MockServer::start_async().await;
-let mock = server.mock(|when, then| {
-    when.method(httpmock::Method::GET)
-        .path("/api/qt/stock/kline/get");
-    then.status(200)
-        .header("content-type", "application/json")
-        .json_body(serde_json::json!({"data": {"klines": [...]}}));
-});
 ```
 
 ### Dolt (test database)

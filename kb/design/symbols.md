@@ -104,15 +104,10 @@ Prefixes are **case-insensitive**: `SH.600519` and `sh.600519` are equivalent.
 ## EastMoney secid mapping
 
 EastMoney's API uses a different identifier format: `"{market}.{code}"`, where
-market is `0` for Shenzhen/Beijing and `1` for Shanghai.
-
-The `to_secid()` function converts Compass symbols to EastMoney secids:
-
-```rust
-pub fn to_secid(symbol: &str) -> String
-```
-
-### Conversion table
+market is `0` for Shenzhen/Beijing and `1` for Shanghai. Compass's own code
+never constructs secids — the GUI is local-only and the Python collectors do
+not use this format — but the mapping is documented here for reference when
+working with EastMoney's K-line API directly:
 
 | Our input | secid | How it works |
 |---|---|---|
@@ -128,24 +123,6 @@ pub fn to_secid(symbol: &str) -> String
 Important note: Beijing exchange uses market code `0` in EastMoney's system —
 same as Shenzhen. The distinction is handled by the code range, not the market
 code.
-
-### The conversion pipeline
-
-```
-User types: "600519"
-    │
-    ▼
-to_exchange("600519") → "SH"         (infer exchange)
-    │
-    ▼
-to_ts_code("600519") → "600519.SH"   (legacy, not primary key)
-    │
-    ▼
-to_secid("600519") → "1.600519"      (EastMoney API format)
-    │
-    ▼
-HTTP GET ...?secid=1.600519&klt=101...
-```
 
 ## Dolt symbol mapping
 
@@ -205,22 +182,23 @@ User opens Compass.
 Config says: default_symbol = "000001", default_timeframe = "1d"
 
     "000001" → to_exchange → "SZ"
-    "000001" → to_secid → "0.000001"
-    "1d"     → timeframe_to_klt → 101
+    "1d"     → timeframe_to_klt → 101 (conceptually; data is local)
 
-Worker sends: GET ...?secid=0.000001&klt=101&beg=...
-Response → parsed into Vec<Bar>
-Bars stored under key ("000001", "1d") in CompassState.bars
+Bars stored under key ("000001", "1d") in the DuckDB stock_daily table
 
 User types "600519", clicks Fetch.
 
-    "600519" → to_secid → "1.600519"
-    Fetches, caches, displays.
+    "600519" → to_exchange → "SH"
+    Fetches from local Parquet, caches, displays.
 
 User types "sh.000001", wants the index.
 
-    "sh.000001" → explicit prefix → to_secid → "1.000001"
-     Fetches Shanghai Composite Index instead of 平安银行.
+    "sh.000001" → explicit prefix → exchange "SH", code "000001"
+    Fetches Shanghai Composite Index instead of 平安银行.
+```
+
+The GUI resolves symbols to the canonical `EXCHANGE + code` form and queries
+the local database. There is no network round-trip in the fetch path.
 
 ## 决策记录
 
