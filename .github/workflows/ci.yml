@@ -107,7 +107,6 @@ jobs:
   coverage:
     name: Coverage (llvm-cov)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@v1
@@ -125,7 +124,14 @@ jobs:
           sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --html
+      - name: Workspace coverage gate
+        run: cargo llvm-cov --html --fail-under-lines 80
+      - name: compass-core coverage gate
+        run: cargo llvm-cov -p compass-core --fail-under-lines 80
+      - name: compass-data coverage gate
+        run: cargo llvm-cov -p compass-data --fail-under-lines 80
+      - name: compass coverage gate
+        run: cargo llvm-cov -p compass --fail-under-lines 80
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-report
@@ -151,4 +157,4 @@ jobs:
           tar -xzf /tmp/dolt.tar.gz -C /tmp
           sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
-      - run: cd collectors && uv sync && uv run pytest tests/ -v
+      - run: cd collectors && uv sync && uv run pytest tests/ --cov=. --cov-fail-under=80 --cov-report=term-missing
