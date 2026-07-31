@@ -44,14 +44,25 @@ git worktree add -b pr/<name> .worktrees/<name> master
    - This captures: what was decided, what's next, relevant design context
    - Use `write` tool to create the handoff file if `/handoff` command is unavailable
 
-2. **Tell the user** to open a new opencode session in the worktree:
+2. **⚠️ 先解绑当前 opencode session（MANDATORY）** — before opening a new opencode in the worktree:
+   - **Why**: opencode recognizes the worktree directory as the *same project* as master
+     (same `project_id` in `~/.local/share/opencode/opencode.db` via `git_worktree`
+     association). The current opencode instance (running in master) still *binds* that
+     project's session, so a new `opencode` launched in the worktree fails to start.
+   - **How**: release the current session binding first — e.g. exit the current opencode
+     instance (or stop/quit its session) so the project is unbound, *then* launch the new
+     opencode in the worktree.
+   - Do NOT skip this step. Opening the worktree opencode while the master session is still
+     bound will fail.
+
+3. **Tell the user** to open a new opencode session in the worktree (only after step 2):
    ```
    Worktree ready. Continue in a new terminal:
        cd .worktrees/<name> && opencode
    ```
    The new opencode session will automatically read `.omo/handoff.md` for context.
 
-3. **Current session stays in master** — do NOT `cd` into the worktree in the current session.
+4. **Current session stays in master** — do NOT `cd` into the worktree in the current session.
 
 ### List
 
@@ -101,6 +112,7 @@ git worktree add -b pr/fix-candle-rendering .worktrees/fix-candle-rendering mast
 **Then** (same turn, immediately after `git worktree add` succeeds):
 
 1. Run `/handoff` → writes `.worktrees/fix-candle-rendering/.omo/handoff.md` with current context
-2. Tell user: `cd .worktrees/fix-candle-rendering && opencode`
+2. **解绑当前 opencode session**（见上方 Post-Creation step 2，MANDATORY）
+3. Tell user: `cd .worktrees/fix-candle-rendering && opencode`
 
 The worktree is transient — cleaned up after PR merge.
