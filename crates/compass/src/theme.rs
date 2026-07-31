@@ -113,6 +113,8 @@ impl CompassTheme {
 mod tests {
     use super::*;
 
+    // -- existing tests --
+
     #[test]
     fn compass_dark_returns_valid_theme() {
         let theme = CompassTheme::compass_dark();
@@ -124,5 +126,89 @@ mod tests {
         let names = CompassTheme::all_names();
         assert!(!names.is_empty(), "theme list must not be empty");
         assert_eq!(names[0], "compass_dark");
+    }
+
+    // -- new tests (ref #79) --
+
+    #[test]
+    fn compass_light_returns_valid_theme() {
+        let theme = CompassTheme::compass_light();
+        assert_eq!(theme.name, "compass_light");
+        assert_eq!(theme.name(), "compass_light");
+    }
+
+    #[test]
+    fn from_config_known_names_return_correct_themes() {
+        assert_eq!(CompassTheme::from_config("compass_dark").name(), "compass_dark");
+        assert_eq!(
+            CompassTheme::from_config("compass_light").name(),
+            "compass_light"
+        );
+    }
+
+    #[test]
+    fn from_config_unknown_name_falls_back_to_dark() {
+        let theme = CompassTheme::from_config("nonexistent_xyz");
+        assert_eq!(theme.name(), "compass_dark");
+    }
+
+    #[test]
+    fn from_config_empty_string_falls_back_to_dark() {
+        let theme = CompassTheme::from_config("");
+        assert_eq!(theme.name(), "compass_dark");
+    }
+
+    #[test]
+    fn name_returns_stored_name() {
+        assert_eq!(CompassTheme::compass_dark().name(), "compass_dark");
+        assert_eq!(CompassTheme::compass_light().name(), "compass_light");
+    }
+
+    #[test]
+    fn all_names_returns_both_themes_dark_first() {
+        let names = CompassTheme::all_names();
+        assert_eq!(names, &["compass_dark", "compass_light"]);
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn apply_theme_works_with_headless_context() {
+        let ctx = egui::Context::default();
+        let theme = CompassTheme::compass_dark();
+        theme.apply_theme(&ctx);
+    }
+
+    #[test]
+    fn apply_theme_light_works_with_headless_context() {
+        let ctx = egui::Context::default();
+        let theme = CompassTheme::compass_light();
+        theme.apply_theme(&ctx);
+    }
+
+    #[test]
+    fn apply_to_chart_sets_crosshair_colors_from_dark_theme() {
+        let theme = CompassTheme::compass_dark();
+        let mut chart = egui_charts::Chart::new(egui_charts::model::BarData::new());
+
+        theme.apply_to_chart(&mut chart);
+
+        // compass_dark sets crosshair_line to Color32::from_rgb(100, 160, 160)
+        let expected = egui::Color32::from_rgb(100, 160, 160);
+        assert_eq!(chart.chart_options.crosshair.vert_line_color, expected);
+        assert_eq!(chart.chart_options.crosshair.horz_line_color, expected);
+    }
+
+    #[test]
+    fn apply_to_chart_sets_grid_color_from_dark_theme() {
+        let theme = CompassTheme::compass_dark();
+        let mut chart = egui_charts::Chart::new(egui_charts::model::BarData::new());
+
+        theme.apply_to_chart(&mut chart);
+
+        // compass_dark sets grid_line to Color32::from_rgb(45, 50, 60)
+        assert_eq!(
+            chart.config.grid_color,
+            egui::Color32::from_rgb(45, 50, 60)
+        );
     }
 }

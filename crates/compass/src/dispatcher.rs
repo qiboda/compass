@@ -79,3 +79,135 @@ pub fn handle(
         }
     }
 }
+
+// ===========================================================================
+// Tests — ref #79
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::messages::{AppMessage, FetchRequest};
+    use crate::state::SharedState;
+    use crate::tabs::{CHART_ID, LOGGER_ID};
+    use egui_citizen::{CitizenId, Dispatcher};
+    use egui_mobius::factory;
+
+    // ------------------------------------------------------------------
+    // register_citizens
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn register_citizens_registers_chart_and_logger_and_activates_chart() {
+        let mut dispatcher = Dispatcher::new();
+        let registered = register_citizens(&mut dispatcher);
+
+        let chart_state = dispatcher
+            .get(&CitizenId::new(CHART_ID))
+            .expect("chart citizen should be registered");
+        let logger_state = dispatcher
+            .get(&CitizenId::new(LOGGER_ID))
+            .expect("logger citizen should be registered");
+
+        // Chart is active (one-hot), logger is inactive.
+        assert!(chart_state.active.get(), "chart should be active");
+        assert!(
+            !logger_state.active.get(),
+            "logger should be inactive after register_citizens"
+        );
+
+        // The returned handles share the same reactive state.
+        assert_eq!(registered.chart.active.get(), chart_state.active.get());
+        assert_eq!(registered.logger.active.get(), logger_state.active.get());
+    }
+
+    // ------------------------------------------------------------------
+    // drain_citizen
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn drain_citizen_appends_lifecycle_messages_to_log() {
+        let mut dispatcher = Dispatcher::new();
+        let _registered = register_citizens(&mut dispatcher);
+        let state = SharedState::new("000001", "1d");
+
+        assert_eq!(state.log.get().log_count(), 0, "log should start empty");
+
+        // register_citizens activates "chart", which queues an Activated message.
+        drain_citizen(&mut dispatcher, &state);
+
+        let count = state.log.get().log_count();
+        assert!(
+            count > 0,
+            "drain_citizen should flush lifecycle messages into the log, got {count}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // handle — happy path
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn handle_fetch_bars_sends_request_and_sets_loading() {
+        let state = SharedState::new("000001", "1d");
+        let (signal, slot) = factory::create_signal_slot::<FetchRequest>();
+
+        assert!(!state.loading.get(), "loading should start false");
+
+        handle(
+            AppMessage::FetchBars,
+            &state,
+            &signal,
+            "1w".to_string(),
+        );
+
+        assert!(state.loading.get(), "loading should be true after fetch dispatch");
+        assert_eq!(state.error.get(), None, "error should be cleared on new fetch");
+
+        // The request is on the slot's receiver — read it back.
+        let request = slot
+            .receiver
+            .lock()
+            .unwrap()
+            .recv()
+            .expect("slot should receive the FetchRequest");
+
+        assert_eq!(request.symbol, "000001");
+        assert_eq!(request.timeframe, "1w");
+    }
+
+    // ------------------------------------------------------------------
+    // handle — failure path (slot dropped → send fails)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn handle_fetch_bars_resets_loading_on_send_failure() {
+        let state = SharedState::new("600519", "1d");
+        let (signal, slot) = factory::create_signal_slot::<FetchRequest>();
+
+        // Drop the slot so the receiver is gone — send will fail.
+        drop(slot);
+
+        state.loading.set(true);
+        assert_eq!(state.log.get().log_count(), 0, "log should start empty");
+
+        handle(
+            AppMessage::FetchBars,
+            &state,
+            &signal,
+            "1M".to_string(),
+        );
+
+        // On failure handle resets loading and logs the error.
+        assert!(
+            !state.loading.get(),
+            "loading should be reset to false when send fails"
+        );
+
+        let log_count = state.log.get().log_count();
+        assert!(
+            log_count > 0,
+            "log should contain the send-failure error message (got {log_count})"
+        );
+    }
+}

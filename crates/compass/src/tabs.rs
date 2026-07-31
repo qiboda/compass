@@ -132,3 +132,65 @@ impl egui_dock::TabViewer for TabViewer<'_> {
         }
     }
 }
+
+// ===========================================================================
+// Tests — ref #79 (pure-logic TabKind + Tab, no TabViewer rendering)
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ------------------------------------------------------------------
+    // TabKind::title
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn tab_kind_chart_title() {
+        assert_eq!(TabKind::Chart.title(), "Chart");
+    }
+
+    #[test]
+    fn tab_kind_logger_title() {
+        assert_eq!(TabKind::Logger.title(), "Logger");
+    }
+
+    // ------------------------------------------------------------------
+    // TabKind::citizen_id
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn tab_kind_chart_citizen_id() {
+        assert_eq!(TabKind::Chart.citizen_id(), CitizenId::new(CHART_ID));
+    }
+
+    #[test]
+    fn tab_kind_logger_citizen_id() {
+        assert_eq!(TabKind::Logger.citizen_id(), CitizenId::new(LOGGER_ID));
+    }
+
+    // ------------------------------------------------------------------
+    // Tab::new / Tab::title / Tab::citizen_id
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn tab_new_chart_delegates_to_tab_kind() {
+        let tab = Tab::new(TabKind::Chart);
+        assert_eq!(tab.title(), "Chart");
+        assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
+    }
+
+    #[test]
+    fn tab_new_logger_delegates_to_tab_kind() {
+        let tab = Tab::new(TabKind::Logger);
+        assert_eq!(tab.title(), "Logger");
+        assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
+    }
+
+    #[test]
+    fn tab_same_kind_are_equal() {
+        assert_eq!(Tab::new(TabKind::Chart), Tab::new(TabKind::Chart));
+        assert_eq!(Tab::new(TabKind::Logger), Tab::new(TabKind::Logger));
+        assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Logger));
+    }
+}
