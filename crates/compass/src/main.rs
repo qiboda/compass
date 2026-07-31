@@ -545,16 +545,16 @@ mod tests {
     // #79 coverage gate: kittest integration + non-UI function tests
     // ======================================================================
 
-    use std::sync::Arc;
-    use compass_core::model::AppConfig;
     use crate::CompassApp;
+    use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
+    use crate::widgets::modal::Modal;
     use crate::widgets::searchable_dropdown::StockPicker;
     use crate::widgets::toast::ToastManager;
-    use crate::widgets::modal::Modal;
-    use crate::tabs::{Tab, TabKind};
+    use compass_core::model::AppConfig;
     use egui_dock::DockState;
     use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
 
     fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
         let config = AppConfig::default();
@@ -575,8 +575,7 @@ mod tests {
         let dock_style = egui_dock::Style::default();
 
         let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
-        if let Some(surface) =
-            dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
+        if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
             && let Some(tree) = surface.node_tree_mut()
         {
             let _ = tree.split_below(
@@ -616,17 +615,26 @@ mod tests {
         std::fs::create_dir_all(&config_dir).unwrap();
 
         let saved_home = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let config = crate::load_config();
 
         if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", h); }
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
         } else {
-            unsafe { std::env::remove_var("HOME"); }
+            unsafe {
+                std::env::remove_var("HOME");
+            }
         }
 
-        assert_eq!(config.app.default_symbol, AppConfig::default().app.default_symbol);
+        assert_eq!(
+            config.app.default_symbol,
+            AppConfig::default().app.default_symbol
+        );
     }
 
     #[test]
@@ -644,17 +652,24 @@ dir = "/custom/parquet/dir"
 default_symbol = "600519"
 default_timeframe = "1w"
 "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let saved_home = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let config = crate::load_config();
 
         if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", h); }
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
         } else {
-            unsafe { std::env::remove_var("HOME"); }
+            unsafe {
+                std::env::remove_var("HOME");
+            }
         }
 
         assert_eq!(config.app.default_symbol, "600519");
@@ -670,17 +685,26 @@ default_timeframe = "1w"
         std::fs::write(config_dir.join("config.toml"), "{{{ not valid toml").unwrap();
 
         let saved_home = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let config = crate::load_config();
 
         if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", h); }
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
         } else {
-            unsafe { std::env::remove_var("HOME"); }
+            unsafe {
+                std::env::remove_var("HOME");
+            }
         }
 
-        assert_eq!(config.app.default_symbol, AppConfig::default().app.default_symbol);
+        assert_eq!(
+            config.app.default_symbol,
+            AppConfig::default().app.default_symbol
+        );
     }
 
     #[test]
@@ -709,7 +733,7 @@ default_timeframe = "1w"
     #[test]
     fn render_toolbar_renders_combo_and_button() {
         let mut app = build_compass_app(egui::Context::default());
-        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+        let harness = egui_kittest::Harness::new_ui(|ui| {
             app.render_toolbar(ui);
         });
 
@@ -765,7 +789,10 @@ default_timeframe = "1w"
             harness.step();
         }
 
-        assert!(app.shared_state.loading.get(), "loading must be true after fetch click");
+        assert!(
+            app.shared_state.loading.get(),
+            "loading must be true after fetch click"
+        );
     }
 
     #[test]
@@ -781,7 +808,10 @@ default_timeframe = "1w"
         }
 
         let count_first = app.toast.len();
-        assert!(count_first > 0, "error toast should be pushed on None→Some transition");
+        assert!(
+            count_first > 0,
+            "error toast should be pushed on None→Some transition"
+        );
 
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -790,7 +820,11 @@ default_timeframe = "1w"
             harness.step();
         }
 
-        assert_eq!(app.toast.len(), count_first, "no duplicate toasts on subsequent frames");
+        assert_eq!(
+            app.toast.len(),
+            count_first,
+            "no duplicate toasts on subsequent frames"
+        );
     }
 
     #[test]
@@ -807,22 +841,23 @@ default_timeframe = "1w"
             harness.step();
         }
 
-        assert!(app.toast.len() > 0, "success toast on loading true→false with no error");
+        assert!(
+            !app.toast.is_empty(),
+            "success toast on loading true→false with no error"
+        );
     }
 
     #[test]
     fn compass_app_ui_renders_no_panic() {
-        let mut harness = egui_kittest::Harness::new_eframe(|cc| {
-            build_compass_app(cc.egui_ctx.clone())
-        });
+        let mut harness =
+            egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
         harness.step();
     }
 
     #[test]
     fn compass_app_ui_multiple_frames_no_panic() {
-        let mut harness = egui_kittest::Harness::new_eframe(|cc| {
-            build_compass_app(cc.egui_ctx.clone())
-        });
+        let mut harness =
+            egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
 
         harness.step();
         harness.step();

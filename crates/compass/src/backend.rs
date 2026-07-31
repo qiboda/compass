@@ -133,8 +133,7 @@ mod tests {
             symbol: symbol.to_string(),
             timeframe: "1d".to_string(),
             range_start: DateTime::from_timestamp(0, 0).expect("valid epoch"),
-            range_end: DateTime::from_timestamp(4_000_000_000, 0)
-                .expect("valid end timestamp"),
+            range_end: DateTime::from_timestamp(4_000_000_000, 0).expect("valid end timestamp"),
         }
     }
 
@@ -248,8 +247,7 @@ mod tests {
             ],
         );
 
-        let config =
-            config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
@@ -262,7 +260,10 @@ mod tests {
         wait_for_response(&state);
 
         assert!(!state.loading.get());
-        assert!(state.error.get().is_none(), "error should be none for valid data");
+        assert!(
+            state.error.get().is_none(),
+            "error should be none for valid data"
+        );
         assert!(!state.bars.get().is_empty(), "bars should not be empty");
         assert_eq!(state.bars.get().len(), 3, "expected 3 bars for 000001");
     }
@@ -282,8 +283,7 @@ mod tests {
             &["('000001', '2025-01-02', 10.0, 10.5, 9.8, 10.2, 100000.0, 10.2, 1020000.0)"],
         );
 
-        let config =
-            config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
         let state = Arc::new(SharedState::new("999999", "1d"));
         let egui_ctx = egui::Context::default();
 

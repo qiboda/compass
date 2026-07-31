@@ -196,12 +196,10 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
         } => {
             let dolt_dir = dolt_dir.unwrap_or_else(|| PathBuf::from(&config.dolt.compass_data_dir));
             let output = output.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
-            let table: import_compass::CompassTable = table.parse().map_err(
-                |e: String| {
-                    error!("{e}");
-                    e
-                },
-            )?;
+            let table: import_compass::CompassTable = table.parse().map_err(|e: String| {
+                error!("{e}");
+                e
+            })?;
             if let Err(e) =
                 import_compass::run(dolt_dir, output, table, overwrite, since.as_deref())
             {
@@ -357,9 +355,15 @@ compass_data_dir = "/custom/compass"
 
     #[test]
     fn cli_import_with_limit_and_since() {
-        let cli =
-            Cli::try_parse_from(["compass-data", "import", "--limit", "100", "--since", "20260101"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "import",
+            "--limit",
+            "100",
+            "--since",
+            "20260101",
+        ])
+        .unwrap();
         match cli.command {
             Command::Import { limit, since, .. } => {
                 assert_eq!(limit, 100);

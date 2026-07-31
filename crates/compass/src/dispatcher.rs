@@ -154,15 +154,17 @@ mod tests {
 
         assert!(!state.loading.get(), "loading should start false");
 
-        handle(
-            AppMessage::FetchBars,
-            &state,
-            &signal,
-            "1w".to_string(),
-        );
+        handle(AppMessage::FetchBars, &state, &signal, "1w".to_string());
 
-        assert!(state.loading.get(), "loading should be true after fetch dispatch");
-        assert_eq!(state.error.get(), None, "error should be cleared on new fetch");
+        assert!(
+            state.loading.get(),
+            "loading should be true after fetch dispatch"
+        );
+        assert_eq!(
+            state.error.get(),
+            None,
+            "error should be cleared on new fetch"
+        );
 
         // The request is on the slot's receiver — read it back.
         let request = slot
@@ -191,12 +193,7 @@ mod tests {
         state.loading.set(true);
         assert_eq!(state.log.get().log_count(), 0, "log should start empty");
 
-        handle(
-            AppMessage::FetchBars,
-            &state,
-            &signal,
-            "1M".to_string(),
-        );
+        handle(AppMessage::FetchBars, &state, &signal, "1M".to_string());
 
         // On failure handle resets loading and logs the error.
         assert!(

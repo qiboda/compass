@@ -251,16 +251,14 @@ mod tests {
     /// (schema-only, 0 data rows). A single OHLCV row is ~200 bytes.
     const MIN_PARQUET_SIZE: u64 = 500;
 
-    const EOD_SCHEMA: &str =
-        "CREATE TABLE final_a_stock_eod_price (\
+    const EOD_SCHEMA: &str = "CREATE TABLE final_a_stock_eod_price (\
          symbol VARCHAR(20) NOT NULL, \
          tradedate DATE NOT NULL, \
          open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, \
          adjclose DOUBLE, volume DOUBLE, amount DOUBLE, \
          PRIMARY KEY (symbol, tradedate))";
 
-    const STOCK_LIST_SCHEMA: &str =
-        "CREATE TABLE ts_a_stock_list (\
+    const STOCK_LIST_SCHEMA: &str = "CREATE TABLE ts_a_stock_list (\
          symbol VARCHAR(20) PRIMARY KEY, \
          name VARCHAR(100), \
          exchange VARCHAR(10), \
@@ -480,13 +478,19 @@ mod tests {
     fn run_dolt_sql_csv_success_returns_data() {
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
-        dolt_sql(tmp.path(), "CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(50))");
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(50))",
+        );
         dolt_sql(tmp.path(), "INSERT INTO test VALUES (1, 'hello')");
 
         let result = run_dolt_sql_csv(tmp.path(), "SELECT * FROM test ORDER BY id");
         assert!(result.is_ok(), "csv query failed: {:?}", result.err());
         let csv = result.unwrap();
-        assert!(csv.contains("hello"), "csv should contain 'hello', got: {csv}");
+        assert!(
+            csv.contains("hello"),
+            "csv should contain 'hello', got: {csv}"
+        );
         assert!(csv.contains("1"), "csv should contain '1', got: {csv}");
     }
 
@@ -575,10 +579,7 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )
@@ -628,10 +629,7 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )
@@ -672,10 +670,7 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )
@@ -717,18 +712,12 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )
             .expect("count");
-        assert_eq!(
-            count, 1,
-            "date range should only include the Feb 15 row"
-        );
+        assert_eq!(count, 1, "date range should only include the Feb 15 row");
     }
 
     #[test]
@@ -762,10 +751,7 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )
@@ -807,10 +793,7 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )

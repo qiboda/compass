@@ -414,10 +414,13 @@ mod tests {
         // When dolt's parquet output for empty result is <500 bytes, the
         // "empty or tiny data, skipping" path is triggered (lines 106-109).
         Command::new("dolt")
-            .arg("--data-dir").arg(tmp.path())
-            .arg("sql").arg("-q")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
             .arg(FIN_SCHEMA)
-            .output().expect("create table");
+            .output()
+            .expect("create table");
 
         // No INSERT — table is empty
         // The import_fin_indicators call should not panic regardless of whether
@@ -432,10 +435,13 @@ mod tests {
         setup_dolt(tmp.path());
 
         Command::new("dolt")
-            .arg("--data-dir").arg(tmp.path())
-            .arg("sql").arg("-q")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
             .arg(FIN_SCHEMA)
-            .output().expect("create table");
+            .output()
+            .expect("create table");
 
         // Insert data with report_date 2024-12-31
         Command::new("dolt")
@@ -466,10 +472,7 @@ mod tests {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         let count: usize = duck
             .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}')",
-                    parquet.display()
-                ),
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
                 [],
                 |row| row.get(0),
             )
@@ -490,19 +493,22 @@ mod tests {
              PRIMARY KEY (symbol, report_date))"
         );
         Command::new("dolt")
-            .arg("--data-dir").arg(dolt_dir)
-            .arg("sql").arg("-q")
+            .arg("--data-dir")
+            .arg(dolt_dir)
+            .arg("sql")
+            .arg("-q")
             .arg(&schema)
-            .output().expect(&format!("create {table_name}"));
+            .output()
+            .unwrap_or_else(|_| panic!("create {table_name}"));
 
         Command::new("dolt")
             .arg("--data-dir").arg(dolt_dir)
             .arg("sql").arg("-q")
-            .arg(&format!(
+            .arg(format!(
                 "INSERT INTO {table_name} (symbol, report_date, total_assets, total_liabilities, shareholder_equity, revenue, net_profit) VALUES \
                  ('SH600519', '2024-12-31', 2.6e11, 4.8e10, 2.1e11, 1.5e11, 7e10)"
             ))
-            .output().expect(&format!("insert {table_name}"));
+            .output().unwrap_or_else(|_| panic!("insert {table_name}"));
     }
 
     #[test]
@@ -522,7 +528,10 @@ mod tests {
 
         let parquet = tmp.path().join("fin_balance_sheet.parquet");
         assert!(parquet.exists(), "parquet should exist");
-        assert!(parquet.metadata().unwrap().len() > 500, "parquet should have data");
+        assert!(
+            parquet.metadata().unwrap().len() > 500,
+            "parquet should have data"
+        );
     }
 
     #[test]
@@ -572,28 +581,33 @@ mod tests {
 
         // Create fin_balance_sheet with minimal schema, 0 rows
         Command::new("dolt")
-            .arg("--data-dir").arg(tmp.path())
-            .arg("sql").arg("-q")
-            .arg("CREATE TABLE fin_balance_sheet (\
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE fin_balance_sheet (\
                 symbol VARCHAR(20) NOT NULL, \
                 report_date DATE NOT NULL, \
-                PRIMARY KEY (symbol, report_date))")
-            .output().expect("create table");
+                PRIMARY KEY (symbol, report_date))",
+            )
+            .output()
+            .expect("create table");
 
         import_financial_table("fin_balance_sheet", tmp.path(), tmp.path(), false, None)
             .expect("import_financial_table");
 
         let parquet = tmp.path().join("fin_balance_sheet.parquet");
-        assert!(!parquet.exists(), "empty table should be skipped due to tiny data");
+        assert!(
+            !parquet.exists(),
+            "empty table should be skipped due to tiny data"
+        );
     }
 
     fn read_parquet_row_count(path: &std::path::Path) -> usize {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
         duck.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM read_parquet('{}')",
-                path.display()
-            ),
+            &format!("SELECT COUNT(*) FROM read_parquet('{}')", path.display()),
             [],
             |row| row.get(0),
         )
@@ -606,15 +620,20 @@ mod tests {
         setup_dolt(tmp.path());
 
         Command::new("dolt")
-            .arg("--data-dir").arg(tmp.path())
-            .arg("sql").arg("-q")
-            .arg("CREATE TABLE fin_balance_sheet (\
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE fin_balance_sheet (\
                 symbol VARCHAR(20) NOT NULL, \
                 report_date DATE NOT NULL, \
                 total_assets DOUBLE, \
                 net_profit DOUBLE, \
-                PRIMARY KEY (symbol, report_date))")
-            .output().expect("create table");
+                PRIMARY KEY (symbol, report_date))",
+            )
+            .output()
+            .expect("create table");
 
         // Insert 2024 data
         Command::new("dolt")
@@ -651,7 +670,11 @@ mod tests {
         .expect("incremental import");
 
         // Should have both rows after merge
-        assert_eq!(read_parquet_row_count(&parquet), 2, "merge should preserve both rows");
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            2,
+            "merge should preserve both rows"
+        );
     }
 
     #[test]

@@ -811,14 +811,26 @@ mod tests {
         assert_eq!(basics.len(), 3, "should return all 3 rows");
 
         // Ordered by symbol: 000001, 600519, hack
-        let pab = basics.iter().find(|b| b.symbol == "000001").expect("find 000001");
+        let pab = basics
+            .iter()
+            .find(|b| b.symbol == "000001")
+            .expect("find 000001");
         assert_eq!(pab.name, "平安银行");
         assert_eq!(pab.exchange.as_deref(), Some("SZ"));
-        assert!(pab.list_date.is_some(), "list_date should be Some for 000001");
+        assert!(
+            pab.list_date.is_some(),
+            "list_date should be Some for 000001"
+        );
 
-        let hack = basics.iter().find(|b| b.symbol == "hack").expect("find hack");
+        let hack = basics
+            .iter()
+            .find(|b| b.symbol == "hack")
+            .expect("find hack");
         assert!(hack.list_date.is_none(), "NULL list_date should be None");
-        assert!(hack.delist_date.is_none(), "NULL delist_date should be None");
+        assert!(
+            hack.delist_date.is_none(),
+            "NULL delist_date should be None"
+        );
     }
 
     #[test]
@@ -826,7 +838,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let basics = reader.load_all_stock_basics().expect("load");
-        assert!(basics.is_empty(), "should return empty vec when stock_basic.parquet missing");
+        assert!(
+            basics.is_empty(),
+            "should return empty vec when stock_basic.parquet missing"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -847,8 +862,13 @@ mod tests {
     fn get_stock_basic_blocking_returns_none_when_basic_path_missing() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        let result = reader.get_stock_basic_blocking("000001").expect("should be Ok");
-        assert!(result.is_none(), "missing basic_path should return Ok(None)");
+        let result = reader
+            .get_stock_basic_blocking("000001")
+            .expect("should be Ok");
+        assert!(
+            result.is_none(),
+            "missing basic_path should return Ok(None)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -858,10 +878,7 @@ mod tests {
     #[test]
     fn fetch_bars_blocking_returns_nodata_for_zero_results() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        create_test_stock_daily_parquet(
-            &tmp,
-            &[("SZ000001", &[("2024-01-02", 10.0)])],
-        );
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
 
         // Date range outside any data
@@ -889,10 +906,7 @@ mod tests {
     #[test]
     fn fetch_bars_blocking_rejects_invalid_symbol_even_when_data_exists() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        create_test_stock_daily_parquet(
-            &tmp,
-            &[("SZ000001", &[("2024-01-02", 10.0)])],
-        );
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
@@ -964,10 +978,7 @@ mod tests {
     #[tokio::test]
     async fn search_symbols_case_insensitive_filter() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        create_test_stock_daily_parquet(
-            &tmp,
-            &[("SZ000001", &[("2024-01-02", 10.0)])],
-        );
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let symbols = reader.search_symbols("sz").await.expect("search");
         assert_eq!(symbols.len(), 1);
@@ -981,10 +992,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_bars_async_delegates_to_blocking() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        create_test_stock_daily_parquet(
-            &tmp,
-            &[("SZ000001", &[("2024-01-02", 10.0)])],
-        );
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();

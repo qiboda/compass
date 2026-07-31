@@ -139,7 +139,10 @@ mod tests {
 
     #[test]
     fn from_config_known_names_return_correct_themes() {
-        assert_eq!(CompassTheme::from_config("compass_dark").name(), "compass_dark");
+        assert_eq!(
+            CompassTheme::from_config("compass_dark").name(),
+            "compass_dark"
+        );
         assert_eq!(
             CompassTheme::from_config("compass_light").name(),
             "compass_light"
@@ -206,9 +209,6 @@ mod tests {
         theme.apply_to_chart(&mut chart);
 
         // compass_dark sets grid_line to Color32::from_rgb(45, 50, 60)
-        assert_eq!(
-            chart.config.grid_color,
-            egui::Color32::from_rgb(45, 50, 60)
-        );
+        assert_eq!(chart.config.grid_color, egui::Color32::from_rgb(45, 50, 60));
     }
 }

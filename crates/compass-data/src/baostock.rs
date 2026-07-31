@@ -10,7 +10,8 @@ pub async fn fetch_adj_factors(
     start_date: &str,
     end_date: &str,
 ) -> Result<Vec<AdjFactor>, String> {
-    fetch_adj_factors_with_script("scripts/fetch_adj_factor.py", ts_code, start_date, end_date).await
+    fetch_adj_factors_with_script("scripts/fetch_adj_factor.py", ts_code, start_date, end_date)
+        .await
 }
 
 /// Fetch adjustment factors from a Baostock-compatible Python script at
@@ -156,8 +157,8 @@ sys.exit({exit_code})
     async fn with_script_non_zero_exit_with_json_error() {
         let error_json = json!({"error": "stock not found", "code": 404}).to_string();
         let (_dir, script) = write_mock_script(&json!([]).to_string(), 1, Some(&error_json));
-        let result = fetch_adj_factors_with_script(&script, "000001.SZ", "20250721", "20250722")
-            .await;
+        let result =
+            fetch_adj_factors_with_script(&script, "000001.SZ", "20250721", "20250722").await;
 
         assert!(result.is_err(), "expected error for non-zero exit");
         assert_eq!(result.unwrap_err(), "stock not found");
@@ -167,8 +168,8 @@ sys.exit({exit_code})
     #[tokio::test]
     async fn with_script_non_zero_exit_plain_stderr() {
         let (_dir, script) = write_mock_script(&json!([]).to_string(), 1, Some("script crashed"));
-        let result = fetch_adj_factors_with_script(&script, "000001.SZ", "20250721", "20250722")
-            .await;
+        let result =
+            fetch_adj_factors_with_script(&script, "000001.SZ", "20250721", "20250722").await;
 
         assert!(result.is_err(), "expected error for non-zero exit");
         assert_eq!(result.unwrap_err(), "script crashed");
@@ -178,8 +179,8 @@ sys.exit({exit_code})
     #[tokio::test]
     async fn with_script_invalid_json() {
         let (_dir, script) = write_mock_script("not valid json", 0, None);
-        let result = fetch_adj_factors_with_script(&script, "000001.SZ", "20250721", "20250722")
-            .await;
+        let result =
+            fetch_adj_factors_with_script(&script, "000001.SZ", "20250721", "20250722").await;
 
         assert!(result.is_err(), "expected JSON parse error");
         assert!(result.unwrap_err().contains("JSON parse error"));
@@ -188,11 +189,18 @@ sys.exit({exit_code})
     /// Non-existent script path → Err (script missing, python3 exits non-zero).
     #[tokio::test]
     async fn with_script_missing_script_file() {
-        let result =
-            fetch_adj_factors_with_script("/nonexistent/path/mock.py", "000001.SZ", "20250721", "20250722")
-                .await;
+        let result = fetch_adj_factors_with_script(
+            "/nonexistent/path/mock.py",
+            "000001.SZ",
+            "20250721",
+            "20250722",
+        )
+        .await;
 
-        assert!(result.is_err(), "expected error for missing script, got: {result:?}");
+        assert!(
+            result.is_err(),
+            "expected error for missing script, got: {result:?}"
+        );
         // The error is python3's stderr (e.g. "can't open file").
         assert!(!result.unwrap_err().is_empty());
     }

@@ -147,6 +147,20 @@ impl StockPicker {
     }
 }
 
+fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
+    if name.is_empty() {
+        if exchange.is_empty() {
+            symbol.to_string()
+        } else {
+            format!("{exchange} | {symbol}")
+        }
+    } else if exchange.is_empty() {
+        format!("{symbol} | {name}")
+    } else {
+        format!("{exchange} | {symbol} | {name}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,7 +315,10 @@ mod tests {
         assert_eq!(picker.borrow().selected_symbol, "600519");
         assert_eq!(picker.borrow().selected_name, "贵州茅台");
         assert_eq!(picker.borrow().selected_exchange, "SH");
-        assert!(!picker.borrow().popup_open, "popup should close after selection");
+        assert!(
+            !picker.borrow().popup_open,
+            "popup should close after selection"
+        );
     }
 
     #[test]
@@ -339,19 +356,5 @@ mod tests {
             !picker.borrow().last_filter_text.is_empty(),
             "last_filter_text should be updated after popup open triggers refilter"
         );
-    }
-}
-
-fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
-    if name.is_empty() {
-        if exchange.is_empty() {
-            symbol.to_string()
-        } else {
-            format!("{exchange} | {symbol}")
-        }
-    } else if exchange.is_empty() {
-        format!("{symbol} | {name}")
-    } else {
-        format!("{exchange} | {symbol} | {name}")
     }
 }

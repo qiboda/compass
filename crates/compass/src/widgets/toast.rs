@@ -281,9 +281,7 @@ mod tests {
         assert!(exact.is_expired());
     }
 
-    fn harness_for_toasts(
-        manager: &Rc<RefCell<ToastManager>>,
-    ) -> egui_kittest::Harness<'static> {
+    fn harness_for_toasts(manager: &Rc<RefCell<ToastManager>>) -> egui_kittest::Harness<'static> {
         let m = manager.clone();
         egui_kittest::Harness::new_ui(move |ui| {
             m.borrow_mut().render(ui.ctx());
@@ -301,8 +299,12 @@ mod tests {
     fn test_render_with_toasts_no_panic() {
         let manager = Rc::new(RefCell::new(ToastManager::new()));
         manager.borrow_mut().push(ToastLevel::Info, "info toast");
-        manager.borrow_mut().push(ToastLevel::Success, "success toast");
-        manager.borrow_mut().push(ToastLevel::Warning, "warning toast");
+        manager
+            .borrow_mut()
+            .push(ToastLevel::Success, "success toast");
+        manager
+            .borrow_mut()
+            .push(ToastLevel::Warning, "warning toast");
         manager.borrow_mut().push(ToastLevel::Error, "error toast");
 
         let mut harness = harness_for_toasts(&manager);
@@ -329,7 +331,9 @@ mod tests {
             manager.borrow_mut().toasts.push(expired);
         }
         // Push a fresh toast
-        manager.borrow_mut().push(ToastLevel::Success, "fresh-toast");
+        manager
+            .borrow_mut()
+            .push(ToastLevel::Success, "fresh-toast");
 
         let mut harness = harness_for_toasts(&manager);
         harness.run();

@@ -1081,13 +1081,14 @@ mod tests {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 
         let stale_ts = Utc::now().timestamp() - 8 * 24 * 3600;
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute(
-            "INSERT INTO no_data_marks (symbol, timeframe, last_checked) VALUES (?, ?, ?)",
-            params!["000003", "1d", stale_ts],
-        )
-        .expect("insert stale mark");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute(
+                "INSERT INTO no_data_marks (symbol, timeframe, last_checked) VALUES (?, ?, ?)",
+                params!["000003", "1d", stale_ts],
+            )
+            .expect("insert stale mark");
+        }
 
         let now = Utc::now().timestamp();
         let ttl = 7 * 24 * 3600;
@@ -1122,18 +1123,18 @@ mod tests {
         let d3 = NaiveDate::from_ymd_opt(2025, 1, 11).expect("valid date");
 
         // Insert out of order to verify MIN/MAX, not insertion order
-        let conn = provider.conn.lock().expect("mutex lock");
-        let mut stmt = conn
-            .prepare("INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, volume) VALUES (?, ?, 1, 2, 1, 2, 100)")
-            .expect("prepare");
-        stmt.execute(params!["000001", d2.format("%Y-%m-%d").to_string()])
-            .expect("insert d2");
-        stmt.execute(params!["000001", d1.format("%Y-%m-%d").to_string()])
-            .expect("insert d1");
-        stmt.execute(params!["000001", d3.format("%Y-%m-%d").to_string()])
-            .expect("insert d3");
-        drop(stmt);
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            let mut stmt = conn
+                .prepare("INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, volume) VALUES (?, ?, 1, 2, 1, 2, 100)")
+                .expect("prepare");
+            stmt.execute(params!["000001", d2.format("%Y-%m-%d").to_string()])
+                .expect("insert d2");
+            stmt.execute(params!["000001", d1.format("%Y-%m-%d").to_string()])
+                .expect("insert d1");
+            stmt.execute(params!["000001", d3.format("%Y-%m-%d").to_string()])
+                .expect("insert d3");
+        }
 
         let range = provider
             .get_stored_range("000001")
@@ -1457,9 +1458,11 @@ mod tests {
     /// The parquet has columns: symbol, tradedate, open, high, low, close,
     /// adjclose, volume, amount. Returns the tempdir (must be kept alive)
     /// and the DuckDbProvider.
+    type TestRow<'a> = (&'a str, f64, f64, f64, f64, f64, f64, f64);
+
     fn setup_parquet_provider(
         symbol: &str,
-        rows: &[(&str, f64, f64, f64, f64, f64, f64, f64)],
+        rows: &[TestRow<'_>],
     ) -> (tempfile::TempDir, DuckDbProvider) {
         let tmp = tempfile::tempdir().expect("create temp dir");
 
@@ -1818,14 +1821,15 @@ mod tests {
     #[tokio::test]
     async fn table_has_rows_true_when_table_not_empty() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute(
-            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, volume) \
-             VALUES ('000001', '2025-01-01', 10, 11, 9, 10.5, 100)",
-            [],
-        )
-        .expect("insert");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute(
+                "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, volume) \
+                 VALUES ('000001', '2025-01-01', 10, 11, 9, 10.5, 100)",
+                [],
+            )
+            .expect("insert");
+        }
 
         assert!(
             provider
@@ -1928,8 +1932,14 @@ mod tests {
             .expect("query d2");
         drop(conn);
 
-        assert!((factor1 - 1.0).abs() < 0.001, "d1 adj_factor should be 1.0 (skipped)");
-        assert!((factor2 - 3.0).abs() < 0.001, "d2 adj_factor should be 3.0 (new)");
+        assert!(
+            (factor1 - 1.0).abs() < 0.001,
+            "d1 adj_factor should be 1.0 (skipped)"
+        );
+        assert!(
+            (factor2 - 3.0).abs() < 0.001,
+            "d2 adj_factor should be 3.0 (new)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2059,8 +2069,14 @@ mod tests {
             .expect("query d2");
         drop(conn);
 
-        assert!((up1 - 10.0).abs() < 0.001, "d1 up_limit should be 10.0 (skipped)");
-        assert!((up2 - 20.0).abs() < 0.001, "d2 up_limit should be 20.0 (new)");
+        assert!(
+            (up1 - 10.0).abs() < 0.001,
+            "d1 up_limit should be 10.0 (skipped)"
+        );
+        assert!(
+            (up2 - 20.0).abs() < 0.001,
+            "d2 up_limit should be 20.0 (new)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2120,23 +2136,24 @@ mod tests {
     #[tokio::test]
     async fn get_stored_range_parse_error_on_invalid_min_date() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute_batch(
-            "DROP TABLE stock_daily; \
-             CREATE TABLE stock_daily (\
-                 symbol VARCHAR, trade_date VARCHAR,\
-                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
-                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
-             );",
-        )
-        .expect("recreate table");
-        conn.execute(
-            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
-             VALUES ('000001', 'not-a-date', 1, 2, 1, 2, 2, 100, 1000)",
-            [],
-        )
-        .expect("insert bad date");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "DROP TABLE stock_daily; \
+                 CREATE TABLE stock_daily (\
+                     symbol VARCHAR, trade_date VARCHAR,\
+                     open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
+                     adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
+                 );",
+            )
+            .expect("recreate table");
+            conn.execute(
+                "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+                 VALUES ('000001', 'not-a-date', 1, 2, 1, 2, 2, 100, 1000)",
+                [],
+            )
+            .expect("insert bad date");
+        }
 
         match provider.get_stored_range("000001").await {
             Err(DataError::Parse(msg)) => {
@@ -2149,30 +2166,31 @@ mod tests {
     #[tokio::test]
     async fn get_stored_range_parse_error_on_invalid_max_date() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute_batch(
-            "DROP TABLE stock_daily; \
-             CREATE TABLE stock_daily (\
-                 symbol VARCHAR, trade_date VARCHAR,\
-                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
-                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
-             );",
-        )
-        .expect("recreate table");
-        // "2025-01-01" < "z-invalid" lexicographically → MIN is valid, MAX is invalid
-        conn.execute(
-            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
-             VALUES ('000001', '2025-01-01', 1, 2, 1, 2, 2, 100, 1000)",
-            [],
-        )
-        .expect("insert valid date");
-        conn.execute(
-            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
-             VALUES ('000001', 'z-invalid', 3, 4, 3, 4, 4, 200, 2000)",
-            [],
-        )
-        .expect("insert invalid date");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "DROP TABLE stock_daily; \
+                 CREATE TABLE stock_daily (\
+                     symbol VARCHAR, trade_date VARCHAR,\
+                     open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
+                     adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
+                 );",
+            )
+            .expect("recreate table");
+            // "2025-01-01" < "z-invalid" lexicographically → MIN is valid, MAX is invalid
+            conn.execute(
+                "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+                 VALUES ('000001', '2025-01-01', 1, 2, 1, 2, 2, 100, 1000)",
+                [],
+            )
+            .expect("insert valid date");
+            conn.execute(
+                "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+                 VALUES ('000001', 'z-invalid', 3, 4, 3, 4, 4, 200, 2000)",
+                [],
+            )
+            .expect("insert invalid date");
+        }
 
         match provider.get_stored_range("000001").await {
             Err(DataError::Parse(msg)) => {
@@ -2185,22 +2203,23 @@ mod tests {
     #[tokio::test]
     async fn get_adj_factor_range_parse_error_on_invalid_min_date() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute_batch(
-            "DROP TABLE stock_adj_factor; \
-             CREATE TABLE stock_adj_factor (\
-                 symbol VARCHAR, trade_date VARCHAR,\
-                 adj_factor DOUBLE\
-             );",
-        )
-        .expect("recreate table");
-        conn.execute(
-            "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
-             VALUES ('000001', 'bad-date-format', 1.0)",
-            [],
-        )
-        .expect("insert bad date");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "DROP TABLE stock_adj_factor; \
+                 CREATE TABLE stock_adj_factor (\
+                     symbol VARCHAR, trade_date VARCHAR,\
+                     adj_factor DOUBLE\
+                 );",
+            )
+            .expect("recreate table");
+            conn.execute(
+                "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
+                 VALUES ('000001', 'bad-date-format', 1.0)",
+                [],
+            )
+            .expect("insert bad date");
+        }
 
         match provider.get_adj_factor_range("000001").await {
             Err(DataError::Parse(msg)) => {
@@ -2213,28 +2232,29 @@ mod tests {
     #[tokio::test]
     async fn get_adj_factor_range_parse_error_on_invalid_max_date() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute_batch(
-            "DROP TABLE stock_adj_factor; \
-             CREATE TABLE stock_adj_factor (\
-                 symbol VARCHAR, trade_date VARCHAR,\
-                 adj_factor DOUBLE\
-             );",
-        )
-        .expect("recreate table");
-        conn.execute(
-            "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
-             VALUES ('000001', '2025-01-01', 1.0)",
-            [],
-        )
-        .expect("insert valid date");
-        conn.execute(
-            "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
-             VALUES ('000001', 'z-invalid', 2.0)",
-            [],
-        )
-        .expect("insert invalid date");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "DROP TABLE stock_adj_factor; \
+                 CREATE TABLE stock_adj_factor (\
+                     symbol VARCHAR, trade_date VARCHAR,\
+                     adj_factor DOUBLE\
+                 );",
+            )
+            .expect("recreate table");
+            conn.execute(
+                "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
+                 VALUES ('000001', '2025-01-01', 1.0)",
+                [],
+            )
+            .expect("insert valid date");
+            conn.execute(
+                "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
+                 VALUES ('000001', 'z-invalid', 2.0)",
+                [],
+            )
+            .expect("insert invalid date");
+        }
 
         match provider.get_adj_factor_range("000001").await {
             Err(DataError::Parse(msg)) => {
@@ -2251,29 +2271,30 @@ mod tests {
     #[tokio::test]
     async fn fetch_bars_parses_timestamp_dates() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let conn = provider.conn.lock().expect("mutex lock");
-        conn.execute_batch(
-            "DROP TABLE stock_daily; \
-             CREATE TABLE stock_daily (\
-                 symbol VARCHAR, trade_date TIMESTAMP, \
-                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
-                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
-             );",
-        )
-        .expect("recreate table");
-        conn.execute(
-            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
-             VALUES ('000001', TIMESTAMP '2026-03-15 10:30:00', 10, 11, 9, 10.5, 10.5, 1000, 10500)",
-            [],
-        )
-        .expect("insert timestamp");
-        conn.execute(
-            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
-             VALUES ('000001', TIMESTAMP '2026-03-16 14:45:30.500', 11, 12, 10, 11.5, 11.5, 2000, 23000)",
-            [],
-        )
-        .expect("insert timestamp with fractional seconds");
-        drop(conn);
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "DROP TABLE stock_daily; \
+                 CREATE TABLE stock_daily (\
+                     symbol VARCHAR, trade_date TIMESTAMP, \
+                     open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
+                     adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
+                 );",
+            )
+            .expect("recreate table");
+            conn.execute(
+                "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+                 VALUES ('000001', TIMESTAMP '2026-03-15 10:30:00', 10, 11, 9, 10.5, 10.5, 1000, 10500)",
+                [],
+            )
+            .expect("insert timestamp");
+            conn.execute(
+                "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+                 VALUES ('000001', TIMESTAMP '2026-03-16 14:45:30.500', 11, 12, 10, 11.5, 11.5, 2000, 23000)",
+                [],
+            )
+            .expect("insert timestamp with fractional seconds");
+        }
 
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");

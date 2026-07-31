@@ -76,7 +76,14 @@ mod tests {
     use egui_charts::model::Bar;
     use egui_citizen::CitizenState;
 
-    fn make_bar(time: chrono::DateTime<Utc>, open: f64, high: f64, low: f64, close: f64, volume: f64) -> Bar {
+    fn make_bar(
+        time: chrono::DateTime<Utc>,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: f64,
+    ) -> Bar {
         Bar::new(time, open, high, low, close, volume)
     }
 
@@ -116,7 +123,11 @@ mod tests {
             make_bar(Utc::now(), 100.0, 105.0, 98.0, 103.0, 1000.0),
             make_bar(
                 Utc::now() + chrono::Duration::days(1),
-                103.0, 108.0, 101.0, 106.0, 1200.0,
+                103.0,
+                108.0,
+                101.0,
+                106.0,
+                1200.0,
             ),
         ]);
 
