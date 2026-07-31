@@ -20,7 +20,7 @@ cargo run
 | **Exchange** | 🏛 | 下拉框 — 按 `全部`/`SH`/`SZ`/`BJ` 过滤。将股票列表缩小到所选交易所。 |
 | **TF** | ⏱ | 组合框 — 选择 `1d`（日线）、`1w`（周线）或 `1M`（月线）。控制 OHLCV 柱的聚合。 |
 | **Fetch** | ⬇ | 按钮 — 从本地数据库加载所选股票的图表数据。 |
-| **Theme** | 🎨 | 按钮 — 打开下拉菜单，在 `compass_dark` 和 `compass_light` 预设之间切换。全局应用于所有 UI 元素。 |
+| **Theme** | 🎨 | 按钮 — 打开下拉菜单，在 `compass_dark`、`compass_light` 和 `compass_blue` 预设之间切换。全局应用于所有 UI 元素。 |
 
 ### 状态提示
 

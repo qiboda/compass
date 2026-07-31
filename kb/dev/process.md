@@ -90,7 +90,9 @@ push 前按顺序执行：
 手动 pre-push checklist（与 hook 相同）：`cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
 
-**文档注释纪律**：`compass-core` 中新增或修改的每个 `pub` 项 MUST 包含 `///` 文档注释。
+### 文档注释纪律
+
+`compass-core` 中新增或修改的每个 `pub` 项 MUST 包含 `///` 文档注释。
 这由 `#![warn(missing_docs)]` 强制执行 — `cargo doc --no-deps` 必须无警告。
 
 ## Git 分支
@@ -377,7 +379,9 @@ LIMIT 3"
 
 ### 重置一切
 
+> **警告：以下命令会删除所有已导入的行情数据。** 执行前请确认已完成备份（`compass-data backup`）。
+
 ```sh
-rm -rf /data/compass-data/parquet_data/   # main Parquet data
-rm logs/compass.log                        # logs
+rm -rf /data/compass-data/parquet_data/   # 主 Parquet 数据
+rm logs/compass.log                        # 日志
 ```

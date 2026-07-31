@@ -51,6 +51,7 @@ Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共
 | **3. Tests** | 调用 `/test`（qa skill）写失败测试 | 测试失败输出 |
 | **4a. Rustdoc** | 调用 `/rustdoc` 验证 `#![warn(missing_docs)]` 合规 | `cargo doc --no-deps` 无警告 |
 | **4b. Docs** | 调用 `/docs` 确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
+| **4c. 决策记录** | 检查相关 `kb/design/` 文件是否含 `## 决策记录` 章节 | 缺失则补齐后再继续 |
 
 **任何一步未完成即 STOP。不实现。不创建 todos。不改文件。**
 

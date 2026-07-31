@@ -128,7 +128,7 @@ parquet_data/
 └── stock_daily.symbols.txt    # 每行一个标的（快速列表）
 ```
 
-完整 DDL 见 `AGENTS.md` 和 `kb/design/architecture.md`。
+完整 DDL 见上文（DuckDB DDL 代码块）。Parquet 主数据库布局见本文件的 Schema 章节。
 
 ### 缺口检测
 

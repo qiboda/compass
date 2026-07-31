@@ -87,7 +87,7 @@ Based on analysis of <N open issues, M recent commits, backlog state>:
 | 没有 open issues | 建议从 backlog.md 的优先排序项开始 |
 | 所有 issue 均被阻塞 | 建议以解除阻塞为最高优先级候选 |
 | 未检测到周一 | 手动 `/product brainstorm` 仍然可用 |
-| Backlog.md 不存在 | 将其作为候选标注："create backlog.md" |
+| `backlog.md` 不存在 | 将其作为候选标注："create backlog.md" |
 | git log 为空（新项目） | 仅关注 backlog 和设计文档 |
 | 最近有很多 commit 但没有 issue | 建议为近期工作创建 issue |
 

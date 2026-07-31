@@ -18,7 +18,7 @@ mkdir -p ~/.config/compass
 
 ```toml
 [parquet]
-# 包含 stock_basic.parquet 和 stock_daily/ 子目录的文件夹。
+# 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
 # 默认值："/data/compass-data/parquet_data"
 dir = "/data/compass-data/parquet_data"
 
@@ -40,7 +40,7 @@ default_symbol = "000001"
 # 默认值："1d"
 default_timeframe = "1d"
 
-# 启动时使用的主题预设。有效值："compass_dark" | "compass_light"。
+# 启动时使用的主题预设。有效值："compass_dark" | "compass_light" | "compass_blue"。
 # 默认值："compass_dark"
 theme = "compass_dark"
 ```
