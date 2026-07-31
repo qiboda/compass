@@ -63,8 +63,13 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
         "SELECT RIGHT(symbol, 6) AS symbol, \
          name, \
          CASE LEFT(symbol, 2) WHEN 'SH' THEN 'SH' WHEN 'SZ' THEN 'SZ' WHEN 'BJ' THEN 'BJ' ELSE '' END AS exchange, \
-         CAST(NULLIF(list_date, '-') AS DATE) AS list_date, \
-         CAST(NULL AS DATE) AS delist_date \
+         CAST(list_date AS DATE) AS list_date, \
+         CAST(delist_date AS DATE) AS delist_date, \
+         board, \
+         full_name, \
+         CAST(total_share AS DOUBLE) AS total_share, \
+         industry, \
+         region \
          FROM stock_basic \
          WHERE symbol LIKE 'SH%' OR symbol LIKE 'SZ%' OR symbol LIKE 'BJ%' \
          ORDER BY symbol",
@@ -258,7 +263,9 @@ mod tests {
         Command::new("dolt")
             .arg("--data-dir").arg(tmp.path())
             .arg("sql").arg("-q")
-            .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), industry VARCHAR(50), list_date VARCHAR(20), member_count INT)")
+            .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), \
+                  industry VARCHAR(50), list_date VARCHAR(20), delist_date DATE, board VARCHAR(50), \
+                  full_name VARCHAR(200), total_share DOUBLE, region VARCHAR(50))")
             .output().expect("create table");
 
         Command::new("dolt")
@@ -266,7 +273,8 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg("INSERT INTO stock_basic VALUES ('SH600519', '贵州茅台', '白酒Ⅱ', '2001-08-27', NULL)")
+            .arg("INSERT INTO stock_basic (symbol, name, industry, list_date, delist_date, board, full_name, total_share, region) \
+                  VALUES ('SH600519', '贵州茅台', '白酒Ⅱ', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 12.56e8, '贵州')")
             .output()
             .expect("insert");
 
@@ -275,6 +283,61 @@ mod tests {
         let parquet = tmp.path().join("stock_basic.parquet");
         assert!(parquet.exists());
         assert!(parquet.metadata().unwrap().len() > 500);
+
+        // New columns present with expected values
+        let duck = duckdb::Connection::open_in_memory().unwrap();
+        let (symbol, exchange, list_date, board, full_name, total_share, industry, region): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            f64,
+            String,
+            String,
+        ) = duck
+            .query_row(
+                &format!(
+                    "SELECT symbol, exchange, strftime(list_date, '%Y-%m-%d'), board, full_name, total_share, industry, region \
+                     FROM read_parquet('{}') WHERE symbol = '600519'",
+                    parquet.display()
+                ),
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(symbol, "600519");
+        assert_eq!(exchange, "SH");
+        assert_eq!(list_date, "2001-08-27");
+        assert_eq!(board, "主板");
+        assert_eq!(full_name, "贵州茅台酒股份有限公司");
+        assert!((total_share - 12.56e8).abs() < 1.0);
+        assert_eq!(industry, "白酒Ⅱ");
+        assert_eq!(region, "贵州");
+
+        // delist_date column exists and is NULL for this row
+        let delist_date: Option<String> = duck
+            .query_row(
+                &format!(
+                    "SELECT CAST(delist_date AS VARCHAR) FROM read_parquet('{}') WHERE symbol = '600519'",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(delist_date, None);
     }
 
     #[test]

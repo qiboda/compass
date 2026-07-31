@@ -2,7 +2,7 @@
 
 A-share 股票图表桌面应用（egui）。数据管线以本地 Dolt `investment_data` 为**主数据源**
 （18M+ 行，6000+ 标的）。GUI 只读本地 Parquet 文件（DuckDB 查询），**无在线回退**。
-Python collectors 从 EastMoney API 抓取数据写入 Dolt。
+Python collectors 抓取数据写入 Dolt（财务数据来自 EastMoney；stock_basic 来自三大交易所官网）。
 
 **项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
 

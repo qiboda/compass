@@ -22,6 +22,11 @@
 `600xxx` 永远是上海，`300xxx` 永远是深圳，`8xxxxx` 永远是北京。
 这意味着我们可以**从代码推断交换所**——无需在每行数据中额外存储这一信息。
 
+> **注（stock_basic 数据源）**：`stock_basic` 元数据现来自三大交易所官网
+> （SSE/SZSE/BSE），不再使用东财 push2 的 EM_FS 段位。东财 t:81 段混入的
+> 4xx/9xx 新三板/老三板（NEEQ/OTC）代码不再出现于其中；北交所股票代码区间为
+> 8xxxxx 与 92xxxx。
+
 ## 为什么选择 Dolt-native 符号？
 
 Compass 将 Dolt-native 前缀格式（`"SZ000001"`、`"SH600519"`、

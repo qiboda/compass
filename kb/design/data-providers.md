@@ -93,7 +93,7 @@ tokio::task::spawn_blocking(move || {
 | 表 | 键 | 用途 |
 |---|---|---|
 | `stock_daily` | `(symbol, trade_date)` | 核心 OHLCV bar — 主缓存表 |
-| `stock_basic` | `symbol` | 股票名称、行业、交易所、上市日期 |
+| `stock_basic` | `symbol` | 股票名称、行业、交易所、上市/退市日期、板块、全称、总股本 |
 | `stock_adj_factor` | `(symbol, trade_date)` | 价格复权因子 |
 | `stock_limit` | `(symbol, trade_date)` | 每日涨跌停价格 |
 | `no_data_marks` | `(symbol, timeframe)` | 带 TTL 时间戳的负缓存条目 |
@@ -110,8 +110,9 @@ CREATE TABLE stock_daily (
 );
 CREATE TABLE stock_basic (
     symbol      VARCHAR PRIMARY KEY,
-    name, industry, market, exchange VARCHAR,
-    list_date, delist_date DATE
+    name, industry, exchange, board, full_name, region VARCHAR,
+    list_date, delist_date DATE,
+    total_share DOUBLE
 );
 CREATE TABLE stock_adj_factor (
     symbol, trade_date, adj_factor, PRIMARY KEY (symbol, trade_date)
@@ -125,7 +126,7 @@ Parquet 主数据库布局（由 `compass-data import` 生成）：
 
 ```
 parquet_data/
-├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date
+├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date, board, full_name, total_share, industry, region
 ├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
 └── stock_daily.symbols.txt    # 每行一个标的（快速列表）
 ```
@@ -239,6 +240,8 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     │
     │       → 标的列表写入 parquet_data/stock_daily.symbols.txt
     └─ 股票基本信息 → parquet_data/stock_basic.parquet
+    （GUI 主用 `import-compass --table stock_basic` 导出的版本 — 数据来自
+      三大交易所官网：SSE/SZSE/BSE 采集器 → Dolt compass_data → import-compass）
 ```
 
 导入直接写入完整数据集 — 没有合并模式，也没有 `--overwrite` 标志。重新运行会用 Dolt 的新导出替换文件。使用 `--since` 进行增量导入更新数据。
@@ -291,4 +294,5 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 数据访问抽象：Provider 层设计 | 各后端直接调用 / trait 统一接口 | 三 trait 体系：DataProvider + DataWriter + NegativeCache | 多数据源（Dolt/DuckDB/Parquet）需统一接口；trait 支持 mock 实现用于测试，消费者与后端解耦 | 直接调用导致每个消费者需知道后端类型，无法替换或测试 |
 | GUI 数据来源 | 在线 API 直连 / 多层读穿缓存 / 纯本地直读 Parquet | DuckDbProvider 直读 `stock_daily.parquet`（`read_parquet()` 回退） | 本地读取零延迟、无网络依赖、无 API 限流；重构后消除 cache miss 与负缓存复杂度 | 在线直连增加延迟和失败点；读穿缓存需维护 CachedProvider、负缓存、inflight 去重等多层状态 |
 | 错误处理：错误类型设计 | anyhow 通用错误 / 精确枚举 | DataError 枚举：Network / Database / Parse / RateLimited / NoData，含 From 实现 | 调用方可区分错误类型（如 NoData 表示标的不存在 vs Network 表示网络中断），GUI 可据此展示不同提示；From 实现支持 `?` 传播 | anyhow 丢失错误分类信息，调用方无法做差异化处理；Parse 携带原始字符串便于排查 API 响应变更 |
+| stock_basic 数据源 | 东财 push2 (EM_FS) / investment_data ts_a_stock_list / 三大交易所官网 | 官网 | 数据权威含退市日期、无新三板污染（东财 t:81 段混入 6841 只新三板/老三板）、ts_a_stock_list 过时 4 年 | 东财段位不可靠且无退市日期；ts_a_stock_list max list_date 2022-07-18 无法覆盖新股 |
 
