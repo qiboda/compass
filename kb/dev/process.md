@@ -35,38 +35,14 @@ Docs, lint fixes, and typos skip the grill-me + issue cycle — implement direct
 Large requirements are decomposed into an **epic** (parent issue) with **sub-issues**
 (child issues) using GitHub native sub-issue support (`gh issue create --parent <epic-N>`).
 
-#### Epic creation flow
+Key rules: epic 创建/批次执行/关闭的完整流程见
+`.opencode/skills/issue-workflow/SKILL.md`。要点：
 
-1. `/ulw-plan` identifies sub-issues during planning — all created upfront
-2. `/issue-workflow` creates the epic + all sub-issues in one batch
-3. Each sub-issue body includes: Parent, Plan, Batch, Depends on metadata
-4. `.omo/plans/<epic>.md` tracks status via `pending | in_progress | done` table
-
-#### Batch execution
-
-- Sub-issues ordered by dependency DAG (topological sort)
-- Independent sub-issues in the same batch run in parallel (multiple subagents in the same worktree)
-- Dependent sub-issues serialize — blocked items wait for their dependencies to complete
-- Batch switching is **manual** — agent reports completion, user confirms before next batch
-- New sub-issues discovered during execution: allowed; update plan file and re-evaluate DAG
-
-#### One PR, multiple commits
-
-All sub-issues in one epic ship in a **single PR** to prevent half-finished features on master.
-Each sub-issue is one commit (`ref #<sub-N>`). Merge strategy: regular merge (not squash) —
-preserves commit history and issue traceability.
-
-#### Review
-
-- Per sub-issue: review after each sub-issue commit (`/review-work`)
-- Pre-PR: review full PR diff after all sub-issues complete
-
-#### Close
-
-After PR merges to `master`:
-1. Close all sub-issues: `gh issue close <sub-N1> <sub-N2> ...`
-2. Close the epic: `gh issue close <epic-N>`
-3. Record summary on epic listing all completed sub-issues and PR
+- Epic + sub-issues 在规划时一次性创建（`/ulw-plan` 识别、`/issue-workflow` 批量创建）
+- `.omo/plans/<epic>.md` 以 `pending | in_progress | done` 表跟踪状态
+- 子任务按依赖 DAG 分批次，批次切换需**人工确认**
+- 一个 epic 一个 PR，每个 sub-issue 一个 commit（`ref #<sub-N>`），regular merge
+- 每个 sub-issue 独立走 GATE；合并后先关 sub-issues 再关 epic
 
 ### When OpenCode discovers a new bug
 
@@ -98,47 +74,12 @@ The hook is activated via `git config core.hooksPath .githooks` (already configu
 
 ## OpenCode workflow
 
-### When to plan first
+完整流程由 **`compass-workflow` skill** 强制执行（plan → gate → test-first →
+per-step verify → commit → review → push）。以下是 skill 未覆盖的本地细节：
 
-Use `/ulw-plan` (plan → approve → execute) for:
-- Changes touching 2+ modules
-- Architecture changes (threading, data pipeline, new provider traits)
-- New data sources or external API integration
-- Symbol format or config schema changes
+### Pre-push hook 检查（`.githooks/pre-push`）
 
-Skip planning for:
-- Single-file bugfixes
-- Adding tests
-- Documentation updates
-- Typo / lint fixes
-
-### Before implementing
-
-Read the GitHub issue with `gh issue view <N>` to catch corner cases,
-reproduction steps, and expected behavior not captured in the plan.
-
-### Per-step verification
-
-After every code change:
-```sh
-cargo nextest run           # all tests must pass
-```
-Ensure `lsp_diagnostics` is clean on changed files.
-
-**Doc comment discipline**: every `pub` item added or modified in
-`compass-core` MUST have a `///` doc comment. This is enforced by
-`#![warn(missing_docs)]` — `cargo doc --no-deps` must be warning-free.
-Doc comments are part of the code, not an afterthought. Write them
-as you write the implementation, not after.
-
-### Before pushing
-
-**Push gate**: `git push` requires explicit user instruction. The agent may
-commit freely but must NOT push unless the user explicitly says "push",
-"提交push", or equivalent. No implicit pushing — even after passing all
-quality gates.
-
-The pre-push hook (`.githooks/pre-push`) enforces these checks in order:
+push 前按顺序执行：
 
 1. **CI health**: latest CI run on `master` must be passing. If it's failing,
    create an issue for the failure, fix it, then push. Never push on top of
@@ -148,36 +89,12 @@ The pre-push hook (`.githooks/pre-push`) enforces these checks in order:
 4. **cargo doc --no-deps** (must be warning-free)
 5. **Issue references**: `ref #N` must point to open issues
 
-Manual pre-push checklist:
+Manual pre-push checklist（与 hook 相同）：`cargo fmt --check` + `cargo clippy -- -D warnings`
++ `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
 
-1. `cargo fmt --check` — code must be formatted
-2. `cargo clippy -- -D warnings` — no warnings
-3. `cargo doc --no-deps` — must be warning-free
-4. Issue references: `ref #N` must point to open issues
-
-All four must pass before `git push`. Never push broken code.
-`cargo doc --no-deps` verifies that `#![warn(missing_docs)]` in
-`compass-core` is clean — every public item must have a `///` doc comment.
-
-### Quality review
-
-After committing and before pushing, run `/review-work` — launches 5 parallel
-agents (goal verification, code quality, security, QA execution, context mining).
-
-Skippable for: docs, lint fixes, typos, trivial chores.
-
-### Push rhythm
-
-For single issues: push immediately after completing the issue. Do not batch.
-
-For epic work: push after all sub-issues in the PR are complete. One push per PR.
-
-### Commit discipline
-
-- Each commit = one logical unit. Never mix bugfix + feature + refactor.
-- Conventional commits: `feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`.
-- Issue linking: `feat`/`fix` commits use `ref #N` (issues closed manually after push).
-- Template: `git config commit.template .gitmessage` is already set.
+**Doc comment discipline**: every `pub` item added or modified in
+`compass-core` MUST have a `///` doc comment. This is enforced by
+`#![warn(missing_docs)]` — `cargo doc --no-deps` must be warning-free.
 
 ## Git branching
 

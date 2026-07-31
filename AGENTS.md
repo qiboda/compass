@@ -146,10 +146,10 @@ ref #26
 After every commit, always run review. No exceptions.
 
 1. **Commit**: stage changes, write a descriptive message with `ref #N`, commit.
-2. **Review**: run review on the committed changes.
+2. **Review**: run `/review-work` on the committed changes (5 parallel agents: goal, quality, security, QA, context).
 3. **Fix**: if review finds issues, fix them and recommit (max 2 rounds).
 
-See `kb/dev/process.md` for full review workflow.
+Skippable for: docs, lint fixes, typos, trivial chores.
 
 ### Commit & Push
 

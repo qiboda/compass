@@ -38,7 +38,8 @@ Follow the compass workflow exactly:
 
 ### 4. Documentation
 - If behavior, API, or config changed: update relevant `kb/` files
-- Identify the kb file from the doc-sync table in AGENTS.md
+- Identify the kb file from the mapping table in
+  `.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table
 
 ### 5. Create PR
 

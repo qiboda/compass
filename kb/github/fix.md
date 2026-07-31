@@ -59,7 +59,8 @@ Read the issue/PR context. Understand:
    - `cargo fmt --check` — clean
    - `lsp_diagnostics` clean on changed files
 5. If behavior, API, or config changed: update relevant `kb/` files
-   (identify the kb file from the doc-sync table in AGENTS.md)
+   (identify the kb file from the mapping table in
+   `.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table)
 6. Commit with format: `fix: <description>\n\nref #<issue_number>`
    - Include kb/ updates in the same commit
 7. Create a PR: `gh pr create --title "fix: <description>" --body "Addresses #<issue_number>" --label "C-Bug,<A-label>"`
