@@ -149,24 +149,29 @@ cargo run --bin compass-data -- backup [OPTIONS]
 
 ---
 
-## Python 采集器（东方财富 → Dolt）
+## Python 采集器（数据源 → Dolt）
 
-`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从东方财富 API 获取数据并存入 CSV，再导入 Dolt `compass_data`：
+`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并存入 CSV，再导入 Dolt `compass_data`。财务表仍来自东方财富；`stock_basic` 已切换到三大交易所官网：
 
 ```sh
 cd collectors/
 uv sync                                # 首次：安装依赖
 
-uv run python main.py fetch stock_basic
+uv run python main.py fetch stock_basic   # 上交所/深交所/北交所官网
+uv run python main.py fetch fin_indicators
 uv run python main.py sync             # 获取 + 导入全部
 uv run python main.py sync-investment --restart
 ```
 
 关键概念：
-- **curl_cffi** 用于 TLS 伪装（东方财富反爬虫）
+- **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt
 - **`.state.json`** 文件跟踪上次获取时间，用于增量更新
-- **`--resume`** 标志用于继续中断的获取
+
+`fetch stock_basic` 现在运行 `fetch_stock_basic_official.py`，从三大交易所官网
+（SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`。旧的东财采集器
+`fetch_stock_basic.py` 仍保留但不再用于 stock_basic——其 EM_FS m:0+t:81 段混入
+6841 只新三板/老三板股票。原先为东财分页设计的 `--resume` / `--max-pages` 标志已移除。
 
 采集器管线的完整描述见 `kb/design/architecture.md`。
 
