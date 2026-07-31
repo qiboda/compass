@@ -241,4 +241,53 @@ mod tests {
 
         assert!(duckdb_path.exists(), "DuckDB file should be created");
     }
+
+    #[tokio::test]
+    async fn run_export_unknown_format_warns() {
+        // Unknown format should hit the `other =>` warn branch without panicking
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = tmp.path().join("export.duckdb");
+
+        run_export(
+            tmp.path().to_path_buf(),
+            "csv".to_string(),
+            duckdb_path,
+            true,
+        )
+        .await;
+
+        // No assertion needed — just verifying the call doesn't panic
+    }
+
+    #[tokio::test]
+    async fn run_export_fetch_bars_error_continues_when_file_missing() {
+        // When stock_daily.symbols.txt lists symbols but stock_daily.parquet is
+        // missing, fetch_bars_blocking returns NoData → continue to next symbol.
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+
+        // Create stock_daily.symbols.txt so list_symbols returns symbols
+        std::fs::write(
+            parquet_tmp.path().join("stock_daily.symbols.txt"),
+            "000001\n",
+        )
+        .expect("write symbols.txt");
+
+        // Do NOT create stock_daily.parquet — fetch_bars will return NoData
+
+        // stock_basic.parquet is not strictly needed since ParquetReader::new
+        // doesn't check, but fetch_bars doesn't use it either.
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path.clone(),
+            true,
+        )
+        .await;
+
+        // Should not panic; DuckDB file created even though no data was exported
+        assert!(duckdb_path.exists(), "DuckDB file should be created");
+    }
 }

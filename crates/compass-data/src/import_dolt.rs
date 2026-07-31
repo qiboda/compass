@@ -245,10 +245,83 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     /// Parquet file size threshold: files smaller than this are considered empty
     /// (schema-only, 0 data rows). A single OHLCV row is ~200 bytes.
     const MIN_PARQUET_SIZE: u64 = 500;
+
+    const EOD_SCHEMA: &str =
+        "CREATE TABLE final_a_stock_eod_price (\
+         symbol VARCHAR(20) NOT NULL, \
+         tradedate DATE NOT NULL, \
+         open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, \
+         adjclose DOUBLE, volume DOUBLE, amount DOUBLE, \
+         PRIMARY KEY (symbol, tradedate))";
+
+    const STOCK_LIST_SCHEMA: &str =
+        "CREATE TABLE ts_a_stock_list (\
+         symbol VARCHAR(20) PRIMARY KEY, \
+         name VARCHAR(100), \
+         exchange VARCHAR(10), \
+         list_date DATE, \
+         delist_date DATE)";
+
+    fn setup_dolt(dir: &std::path::Path) {
+        for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
+            let out = Command::new("dolt")
+                .arg("config")
+                .arg("--global")
+                .arg("--add")
+                .arg(key)
+                .arg(val)
+                .output()
+                .expect("dolt config");
+            assert!(
+                out.status.success(),
+                "dolt config {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let init = Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dir)
+            .arg("init")
+            .output()
+            .expect("dolt init");
+        assert!(
+            init.status.success(),
+            "dolt init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+    }
+
+    fn dolt_sql(dolt_dir: &std::path::Path, sql: &str) {
+        let out = Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_dir)
+            .arg("sql")
+            .arg("-q")
+            .arg(sql)
+            .output()
+            .expect("dolt sql");
+        assert!(
+            out.status.success(),
+            "dolt sql failed: {}\nsql: {sql}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn dolt_setup_tables(dolt_dir: &std::path::Path) {
+        dolt_sql(dolt_dir, EOD_SCHEMA);
+        dolt_sql(dolt_dir, STOCK_LIST_SCHEMA);
+        dolt_sql(
+            dolt_dir,
+            "INSERT INTO ts_a_stock_list VALUES \
+             ('000001', '平安银行', 'SZSE', '1991-04-03', NULL), \
+             ('600519', '贵州茅台', 'SHSE', '2001-08-27', NULL)",
+        );
+    }
 
     #[test]
     fn strip_prefix_removes_sh() {
@@ -401,6 +474,351 @@ mod tests {
         let input: Vec<String> = vec![];
         let result = filter_symbols(input, "000001");
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn run_dolt_sql_csv_success_returns_data() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+        dolt_sql(tmp.path(), "CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(50))");
+        dolt_sql(tmp.path(), "INSERT INTO test VALUES (1, 'hello')");
+
+        let result = run_dolt_sql_csv(tmp.path(), "SELECT * FROM test ORDER BY id");
+        assert!(result.is_ok(), "csv query failed: {:?}", result.err());
+        let csv = result.unwrap();
+        assert!(csv.contains("hello"), "csv should contain 'hello', got: {csv}");
+        assert!(csv.contains("1"), "csv should contain '1', got: {csv}");
+    }
+
+    #[test]
+    fn run_rejects_invalid_since_not_8_digits() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        let result = run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            Some("2025"),
+        );
+        assert!(result.is_err(), "--since with 4 digits should be rejected");
+    }
+
+    #[test]
+    fn run_rejects_invalid_since_non_digit() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        let result = run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            Some("2025010X"),
+        );
+        assert!(
+            result.is_err(),
+            "--since with non-digit chars should be rejected"
+        );
+    }
+
+    #[test]
+    fn run_filters_by_symbols() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0), \
+             ('SH600519', '2024-01-02', 99, 101, 98, 100, 100, 2000, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            Some("000001"),
+            None,
+            None,
+            None,
+        )
+        .expect("run with --symbols");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        assert!(parquet.exists());
+        assert!(
+            parquet.metadata().unwrap().len() > MIN_PARQUET_SIZE,
+            "parquet should have data"
+        );
+
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}')",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 1, "should only contain 000001");
+
+        let symbols: Vec<String> = duck
+            .prepare(&format!(
+                "SELECT DISTINCT symbol FROM read_parquet('{}') ORDER BY symbol",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(symbols, vec!["000001"]);
+    }
+
+    #[test]
+    fn run_filters_by_start_date() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0), \
+             ('SZ000001', '2024-03-01', 12, 13, 11, 12.5, 12.5, 1500, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            Some("2024-03-01"),
+            None,
+            None,
+        )
+        .expect("run with --start-date");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        assert!(parquet.exists());
+
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}')",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            count, 1,
+            "start-date filter should only include 1 row (2024-03-01)"
+        );
+    }
+
+    #[test]
+    fn run_filters_by_end_date() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0), \
+             ('SZ000001', '2024-03-01', 12, 13, 11, 12.5, 12.5, 1500, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            Some("2024-01-15"),
+            None,
+        )
+        .expect("run with --end-date");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        assert!(parquet.exists());
+
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}')",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            count, 1,
+            "end-date filter should only include 1 row (2024-01-02)"
+        );
+    }
+
+    #[test]
+    fn run_filters_by_date_range() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0), \
+             ('SZ000001', '2024-02-15', 10, 12, 9, 11, 11, 1200, 0), \
+             ('SZ000001', '2024-03-01', 12, 13, 11, 12.5, 12.5, 1500, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            Some("2024-02-01"),
+            Some("2024-02-28"),
+            None,
+        )
+        .expect("run with date range");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        assert!(parquet.exists());
+
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}')",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            count, 1,
+            "date range should only include the Feb 15 row"
+        );
+    }
+
+    #[test]
+    fn run_respects_limit() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0), \
+             ('SZ000001', '2024-01-03', 10, 12, 9, 11, 11, 1200, 0), \
+             ('SZ000001', '2024-01-04', 11, 13, 10, 12, 12, 1400, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            2,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("run with --limit");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        assert!(parquet.exists());
+
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}')",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 2, "limit=2 should return exactly 2 rows");
+    }
+
+    #[test]
+    fn run_valid_since_with_8_digits_exports_data() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0), \
+             ('SZ000001', '2024-03-01', 12, 13, 11, 12.5, 12.5, 1500, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            Some("20240201"),
+        )
+        .expect("run with valid --since");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        assert!(parquet.exists());
+        assert!(
+            parquet.metadata().unwrap().len() > MIN_PARQUET_SIZE,
+            "parquet should have data after valid since filter"
+        );
+
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}')",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            count, 1,
+            "--since 20240201 should only include 2024-03-01 row"
+        );
     }
 
     /// When `stock_daily/` directory already exists in the output path,
