@@ -1,14 +1,14 @@
-# Testing
+# 测试
 
-## Framework
+## 框架
 
-| Crate | Purpose |
+| Crate | 用途 |
 |---|---|
-| `rstest` | parameterized tests + fixtures |
-| `httpmock` | HTTP mock server |
-| `tempfile` | temporary file/dir creation |
+| `rstest` | 参数化测试 + fixtures |
+| `httpmock` | HTTP mock 服务器 |
+| `tempfile` | 临时文件/目录创建 |
 
-## Test runner
+## 测试运行器
 
 ```sh
 cargo test                              # standard runner
@@ -16,16 +16,15 @@ cargo nextest run                       # recommended: faster, better output
 cargo test --test integration_test      # integration tests only
 ```
 
-## Test organization
+## 测试组织
 
-- **Unit tests**: `#[cfg(test)] mod tests` at the bottom of each source file.
-  Tests can access private functions and structs.
-- **Integration tests**: `tests/` directory. Tests only the public API of
-  `compass-core` (library crate).
+- **单元测试**：`#[cfg(test)] mod tests` 位于每个源文件底部。
+  测试可以访问私有函数和结构体。
+- **集成测试**：`tests/` 目录。仅测试 `compass-core`（library crate）的公开 API。
 
-## Writing tests
+## 编写测试
 
-### Async tests with rstest
+### 使用 rstest 编写异步测试
 
 ```rust
 #[rstest]
@@ -37,23 +36,23 @@ async fn test_name(#[case] symbol: &str, #[case] timeframe: &str) {
 }
 ```
 
-Order matters: `#[rstest]` outermost, `#[tokio::test]` innermost.
+顺序很重要：`#[rstest]` 在最外层，`#[tokio::test]` 在最内层。
 
-### In-memory DuckDB
+### 内存 DuckDB
 
-Use `DuckDbProvider::new_in_memory()` for fully isolated test databases:
+使用 `DuckDbProvider::new_in_memory()` 创建完全隔离的测试数据库：
 
 ```rust
 let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
 // Each call creates a separate in-memory DB — tests never interfere.
 ```
 
-No cleanup needed — the database is dropped when `provider` goes out of scope.
+无需清理 — 数据库在 `provider` 离开作用域时自动释放。
 
-### Dolt (test database)
+### Dolt（测试数据库）
 
-Tests that need a Dolt database use `dolt init` + `dolt sql` to create a temporary,
-self-contained database at runtime. No external data dependency.
+需要 Dolt 数据库的测试使用 `dolt init` + `dolt sql` 在运行时创建临时、
+自包含的数据库。不依赖外部数据。
 
 ```rust
 let tmp = tempfile::tempdir().expect("create temp dir");
@@ -83,14 +82,14 @@ std::process::Command::new("dolt")
 let data = run_dolt_sql_parquet(tmp.path(), "SELECT * FROM t").unwrap();
 ```
 
-CI installs `dolt` from GitHub releases. Tests clean up automatically via
-`TempDir` drop. The `investment_data` repo (18M+ rows) is never cloned.
+CI 从 GitHub releases 安装 `dolt`。测试通过 `TempDir` 的 drop 自动清理。
+`investment_data` 仓库（1800 万+ 行）不会被克隆。
 
-### DuckDB deadlock avoidance
+### DuckDB 死锁规避
 
-When writing tests that mix direct `db.conn.lock()` calls with async `DuckDbProvider`
-methods (which internally lock via `spawn_blocking`), group all direct lock access
-into ONE scope before any async `db` method calls:
+当编写混合了直接 `db.conn.lock()` 调用和异步 `DuckDbProvider`
+方法（内部通过 `spawn_blocking` 加锁）的测试时，将所有直接加锁访问
+归入 ONE 作用域内，放在任何异步 `db` 方法调用之前：
 
 ```rust
 // SAFE: all direct conn access before any async db calls
@@ -105,26 +104,26 @@ let (count_a, count_b) = {
 let info = db.get_stock_basic("SZ000001").await?;
 ```
 
-The `DuckDbProvider` async methods use `spawn_blocking` which tries to lock `conn`
-on a thread pool. If you hold `conn.lock()` in the outer scope and then call an
-async `db` method, the spawned task blocks waiting for the lock you already hold — deadlock.
+`DuckDbProvider` 的异步方法使用 `spawn_blocking`，它在线程池上尝试锁定 `conn`。
+如果你在外层作用域持有 `conn.lock()`，然后调用异步 `db` 方法，spawn 的任务
+会被阻塞，等待你已持有的锁 — 死锁。
 
-## Test patterns
+## 测试模式
 
-1. **Provider isolation**: Create a fresh provider per test case. Don't share.
-2. **Assert isolation**: After saving, fetch with different symbol/timeframe to
-   verify no cross-contamination.
-3. **Parameterize**: Use `#[case]` for same logic, different inputs.
-4. **Error paths**: Test empty data, bad JSON, missing files.
-5. **Integration tests**: Use in-memory DuckDB and run the full pipeline
-   (import → save stock_daily → fetch bars → verify counts).
+1. **Provider 隔离**：每个测试用例创建新的 provider。不要共享。
+2. **断言隔离**：保存后，用不同的 symbol/timeframe 提取数据来
+   验证不存在交叉污染。
+3. **参数化**：使用 `#[case]` 实现相同逻辑、不同输入。
+4. **错误路径**：测试空数据、错误 JSON、文件缺失。
+5. **集成测试**：使用内存 DuckDB 运行完整管线
+   （import → save stock_daily → fetch bars → verify counts）。
 
-## Benchmarks
+## 基准测试
 
-Performance benchmarks use [criterion.rs](https://github.com/bheisler/criterion.rs)
-and live under `benches/` in each crate.
+性能基准测试使用 [criterion.rs](https://github.com/bheisler/criterion.rs)，
+位于每个 crate 的 `benches/` 目录下。
 
-### Running
+### 运行
 
 ```sh
 cargo bench                       # all benchmarks (slow — ~hours for full suite)
@@ -133,29 +132,29 @@ cargo bench -- --quick            # quick run (fewer samples, for development)
 cargo bench --no-run              # CI: compile only, don't execute
 ```
 
-Results are written to `target/criterion/` as HTML reports.
+结果写入 `target/criterion/`，以 HTML 报告形式呈现。
 
-### Available benchmarks
+### 可用基准测试
 
-| Crate | Bench file | What it measures |
+| Crate | Bench 文件 | 测量内容 |
 |---|---|---|
-| `compass-core` | `parquet_bench` | ParquetReader cold/warm read at 100/1000/5000 rows, real SZ000001 |
-| `compass-core` | `duckdb_bench` | DuckDbProvider cache hit/miss, save throughput (10–5000 rows) |
+| `compass-core` | `parquet_bench` | ParquetReader 冷/热读取，100/1000/5000 行，真实 SZ000001 |
+| `compass-core` | `duckdb_bench` | DuckDbProvider 缓存命中/未命中，保存吞吐量（10–5000 行） |
 
-### Data requirements
+### 数据需求
 
-- **Parquet benchmarks**: need `parquet_data/` with real data OR generate synthetic data via in-memory DuckDB
-- **All others**: use in-memory DuckDB or temp directories — no external dependencies
+- **Parquet 基准测试**：需要包含真实数据的 `parquet_data/`，或通过内存 DuckDB 生成合成数据
+- **其他所有基准测试**：使用内存 DuckDB 或临时目录 — 无外部依赖
 
-### CI policy
+### CI 策略
 
-CI runs `cargo bench --no-run` to verify compilation. Benchmarks are NOT executed
-in CI — CI environments are too variable for meaningful performance data.
-Run benchmarks locally before and after performance-sensitive changes.
+CI 运行 `cargo bench --no-run` 以验证编译。基准测试**不会**在 CI 中执行 —
+CI 环境变量过多，无法产生有意义的性能数据。
+在性能敏感变更前后，在本地运行基准测试。
 
-### Saving and comparing baselines
+### 保存与对比基线
 
-Benchmark results are saved to `bench_results/<version>/` for versioned tracking:
+基准测试结果保存到 `bench_results/<version>/` 以实现版本化追踪：
 
 ```sh
 # Save a full baseline (auto-generates timestamp-based version)
@@ -171,46 +170,45 @@ scripts/bench-save.sh v2.0 quick
 cargo bench -- --baseline v1.0
 ```
 
-The script runs `cargo bench -- --save-baseline <version>` then copies
-results out of `target/criterion/` into `bench_results/<version>/`,
-keeping them outside the build cache.
+脚本运行 `cargo bench -- --save-baseline <version>`，然后将结果
+从 `target/criterion/` 复制到 `bench_results/<version>/`，
+使其脱离构建缓存。
 
-## Profiling (Tracy)
+## 性能分析（Tracy）
 
-Compass supports the [Tracy profiler](https://github.com/wolfpld/tracy) via the
-`tracing-tracy` crate. Tracy provides real-time, nanosecond-resolution CPU
-profiling with flamegraph visualization.
+Compass 通过 `tracing-tracy` crate 支持 [Tracy profiler](https://github.com/wolfpld/tracy)。
+Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可视化。
 
-### Setup
+### 设置
 
-1. Install the Tracy profiler server from [GitHub Releases](https://github.com/wolfpld/tracy/releases)
-   or build from source. You need the `tracy-capture` (or `tracy-profiler`) binary.
+1. 从 [GitHub Releases](https://github.com/wolfpld/tracy/releases) 安装 Tracy profiler server，
+   或从源码构建。你需要 `tracy-capture`（或 `tracy-profiler`）二进制文件。
 
-2. Run the Tracy capture server:
+2. 运行 Tracy 捕获服务器：
    ```sh
    tracy-capture -o compass.tracy
    ```
-   This opens the Tracy GUI. It listens on `localhost:8086` by default.
+   这会打开 Tracy GUI。默认监听 `localhost:8086`。
 
-3. Run Compass with the `tracy` feature:
+3. 启用 `tracy` feature 运行 Compass：
    ```sh
    cargo run --features tracy
    # or: cargo run --bin compass-data --features tracy -- import --symbols 000001
    ```
 
-### How it works
+### 工作原理
 
-- All `tracing` spans (from `#[instrument]` and `#[tracing::instrument]` macros)
-  are automatically converted to Tracy zones — no additional instrumentation needed.
-- When Tracy is not running, the layer silently no-ops.
-- When the `tracy` feature is not enabled at compile time, the entire dependency
-  tree is pruned — zero runtime or compile-time overhead.
-- Build without `--features tracy` for normal use. Only enable it when profiling.
+- 所有 `tracing` spans（来自 `#[instrument]` 和 `#[tracing::instrument]` 宏）
+  会自动转换为 Tracy zones — 无需额外的插桩。
+- 当 Tracy 未运行时，该 layer 静默地变为空操作。
+- 当 `tracy` feature 在编译时未启用时，整个依赖树被剪枝 —
+  零运行时和编译时开销。
+- 正常使用时不加 `--features tracy` 构建。仅在性能分析时启用。
 
-### Troubleshooting
+### 故障排除
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `cargo build --features tracy` fails | Missing C++ toolchain or cmake | `sudo apt install cmake build-essential` |
-| No data appears in Tracy GUI | Firewall blocking port 8086 | Check `tracy-capture` is running on same machine |
-| Link error: symbol not found | `tracy-client-sys` version mismatch with installed Tracy | Use `tracy-capture` version matching `tracy-client-sys 0.24` |
+| 症状 | 原因 | 修复方法 |
+|------|------|----------|
+| `cargo build --features tracy` 失败 | 缺少 C++ 工具链或 cmake | `sudo apt install cmake build-essential` |
+| Tracy GUI 中没有数据出现 | 防火墙阻止了 8086 端口 | 检查 `tracy-capture` 是否在同一台机器上运行 |
+| 链接错误：符号未找到 | `tracy-client-sys` 版本与已安装的 Tracy 不匹配 | 使用与 `tracy-client-sys 0.24` 匹配的 `tracy-capture` 版本 |
