@@ -1772,4 +1772,553 @@ mod tests {
         assert_eq!(result[0].open, 10.0);
         assert_eq!(result[0].close, 11.0);
     }
+
+    // -----------------------------------------------------------------------
+    // new_file / execute_batch / table_has_rows / search_symbols tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_file_creates_file_backed_duckdb_with_schema() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let db_path = tmp.path().join("compass_test.db");
+        let path_str = db_path.to_str().expect("valid UTF-8 path");
+        let provider = DuckDbProvider::new_file(path_str).expect("new_file failed");
+
+        let conn = provider.conn.lock().expect("mutex lock");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_daily", [], |row| row.get(0))
+            .expect("query stock_daily");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_batch_runs_multi_statement_sql() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        provider
+            .execute_batch(
+                "CREATE TABLE batch_test (id INTEGER); \
+                 INSERT INTO batch_test VALUES (1), (2), (3); \
+                 CREATE TABLE batch_test_2 (name VARCHAR); \
+                 INSERT INTO batch_test_2 VALUES ('hello');",
+            )
+            .await
+            .expect("execute_batch failed");
+
+        let conn = provider.conn.lock().expect("mutex lock");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM batch_test", [], |row| row.get(0))
+            .expect("query batch_test");
+        assert_eq!(count, 3);
+        let name: String = conn
+            .query_row("SELECT name FROM batch_test_2", [], |row| row.get(0))
+            .expect("query batch_test_2");
+        assert_eq!(name, "hello");
+    }
+
+    #[tokio::test]
+    async fn table_has_rows_true_when_table_not_empty() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let conn = provider.conn.lock().expect("mutex lock");
+        conn.execute(
+            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, volume) \
+             VALUES ('000001', '2025-01-01', 10, 11, 9, 10.5, 100)",
+            [],
+        )
+        .expect("insert");
+        drop(conn);
+
+        assert!(
+            provider
+                .table_has_rows("SELECT COUNT(*) FROM stock_daily")
+                .await
+                .expect("table_has_rows failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn table_has_rows_false_when_table_empty() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        assert!(
+            !provider
+                .table_has_rows("SELECT COUNT(*) FROM stock_daily WHERE symbol = 'NONEXIST'")
+                .await
+                .expect("table_has_rows failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn search_symbols_returns_empty_vec() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let result = provider
+            .search_symbols("anything")
+            .await
+            .expect("search_symbols failed");
+        assert!(result.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // save_adj_factors: empty + overwrite=false
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn save_adj_factors_empty_records_does_nothing() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        provider
+            .save_adj_factors("000001", &[], true)
+            .await
+            .expect("save_adj_factors with empty records should not error");
+
+        let range = provider
+            .get_adj_factor_range("000001")
+            .await
+            .expect("get_adj_factor_range failed");
+        assert!(range.is_none());
+    }
+
+    #[tokio::test]
+    async fn save_adj_factors_skips_existing_when_overwrite_false() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let d1 = NaiveDate::from_ymd_opt(2025, 1, 10).expect("valid date");
+        let d2 = NaiveDate::from_ymd_opt(2025, 1, 11).expect("valid date");
+
+        provider
+            .save_adj_factors(
+                "000001",
+                &[AdjFactorRecord {
+                    trade_date: d1,
+                    adj_factor: 1.0,
+                }],
+                true,
+            )
+            .await
+            .expect("first insert");
+
+        provider
+            .save_adj_factors(
+                "000001",
+                &[
+                    AdjFactorRecord {
+                        trade_date: d1,
+                        adj_factor: 2.0,
+                    },
+                    AdjFactorRecord {
+                        trade_date: d2,
+                        adj_factor: 3.0,
+                    },
+                ],
+                false,
+            )
+            .await
+            .expect("second insert with skip");
+
+        let conn = provider.conn.lock().expect("mutex lock");
+        let (factor1,): (f64,) = conn
+            .query_row(
+                "SELECT adj_factor FROM stock_adj_factor WHERE symbol='000001' AND trade_date='2025-01-10'",
+                [],
+                |row| Ok((row.get(0)?,)),
+            )
+            .expect("query d1");
+        let (factor2,): (f64,) = conn
+            .query_row(
+                "SELECT adj_factor FROM stock_adj_factor WHERE symbol='000001' AND trade_date='2025-01-11'",
+                [],
+                |row| Ok((row.get(0)?,)),
+            )
+            .expect("query d2");
+        drop(conn);
+
+        assert!((factor1 - 1.0).abs() < 0.001, "d1 adj_factor should be 1.0 (skipped)");
+        assert!((factor2 - 3.0).abs() < 0.001, "d2 adj_factor should be 3.0 (new)");
+    }
+
+    // -----------------------------------------------------------------------
+    // upsert_stock_basic: overwrite=false
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn upsert_stock_basic_skips_existing_when_overwrite_false() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        let original = StockBasic {
+            symbol: "000001".into(),
+            name: "OldName".into(),
+            area: Some("Area1".into()),
+            industry: Some("Industry1".into()),
+            market: Some("Market1".into()),
+            exchange: Some("EX1".into()),
+            list_date: NaiveDate::from_ymd_opt(2020, 1, 1),
+            delist_date: None,
+        };
+        let updated = StockBasic {
+            symbol: "000001".into(),
+            name: "NewName".into(),
+            area: Some("Area2".into()),
+            industry: Some("Industry2".into()),
+            market: Some("Market2".into()),
+            exchange: Some("EX2".into()),
+            list_date: NaiveDate::from_ymd_opt(2021, 1, 1),
+            delist_date: None,
+        };
+
+        provider
+            .upsert_stock_basic(&original, true)
+            .await
+            .expect("first upsert");
+        provider
+            .upsert_stock_basic(&updated, false)
+            .await
+            .expect("second upsert with skip");
+
+        let fetched = provider
+            .get_stock_basic("000001")
+            .await
+            .expect("get_stock_basic failed")
+            .expect("should exist");
+        assert_eq!(fetched.name, "OldName");
+        assert_eq!(fetched.area.as_deref(), Some("Area1"));
+    }
+
+    // -----------------------------------------------------------------------
+    // save_limits: empty + overwrite=false
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn save_limits_empty_records_does_nothing() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        provider
+            .save_limits("000001", &[], true)
+            .await
+            .expect("save_limits with empty records should not error");
+
+        let conn = provider.conn.lock().expect("mutex lock");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM stock_limit WHERE symbol='000001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query");
+        drop(conn);
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn save_limits_skips_existing_when_overwrite_false() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let d1 = NaiveDate::from_ymd_opt(2025, 3, 1).expect("valid date");
+        let d2 = NaiveDate::from_ymd_opt(2025, 3, 2).expect("valid date");
+
+        provider
+            .save_limits(
+                "000001",
+                &[LimitRecord {
+                    trade_date: d1,
+                    up_limit: 10.0,
+                    down_limit: 9.0,
+                }],
+                true,
+            )
+            .await
+            .expect("first insert");
+
+        provider
+            .save_limits(
+                "000001",
+                &[
+                    LimitRecord {
+                        trade_date: d1,
+                        up_limit: 99.0,
+                        down_limit: 88.0,
+                    },
+                    LimitRecord {
+                        trade_date: d2,
+                        up_limit: 20.0,
+                        down_limit: 18.0,
+                    },
+                ],
+                false,
+            )
+            .await
+            .expect("second insert with skip");
+
+        let conn = provider.conn.lock().expect("mutex lock");
+        let (up1,): (f64,) = conn
+            .query_row(
+                "SELECT up_limit FROM stock_limit WHERE symbol='000001' AND trade_date='2025-03-01'",
+                [],
+                |row| Ok((row.get(0)?,)),
+            )
+            .expect("query d1");
+        let (up2,): (f64,) = conn
+            .query_row(
+                "SELECT up_limit FROM stock_limit WHERE symbol='000001' AND trade_date='2025-03-02'",
+                [],
+                |row| Ok((row.get(0)?,)),
+            )
+            .expect("query d2");
+        drop(conn);
+
+        assert!((up1 - 10.0).abs() < 0.001, "d1 up_limit should be 10.0 (skipped)");
+        assert!((up2 - 20.0).abs() < 0.001, "d2 up_limit should be 20.0 (new)");
+    }
+
+    // -----------------------------------------------------------------------
+    // save_bars (DataWriter): empty + overwrite=false
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn save_bars_empty_does_nothing() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        provider
+            .save_bars("000001", "1d", &[], true)
+            .await
+            .expect("save_bars with empty bars should not error");
+
+        let range = provider
+            .get_stored_range("000001")
+            .await
+            .expect("get_stored_range failed");
+        assert!(range.is_none());
+    }
+
+    #[tokio::test]
+    async fn save_bars_skips_existing_when_overwrite_false() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let bar1 = make_bar(1, 10.0, 10.5, 1000.0);
+        let bar2 = make_bar(2, 20.0, 20.5, 2000.0);
+        let bar1_updated = make_bar(1, 99.0, 99.5, 9999.0);
+
+        provider
+            .save_bars("000001", "1d", &[bar1], true)
+            .await
+            .expect("first save_bars");
+        provider
+            .save_bars("000001", "1d", &[bar1_updated, bar2], false)
+            .await
+            .expect("second save_bars with skip");
+
+        let fetched = provider
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end())
+            .await
+            .expect("fetch_bars");
+        assert_eq!(fetched.len(), 2);
+        assert!(
+            fetched.iter().any(|b| (b.close - 10.5).abs() < 0.01),
+            "bar1 close should still be 10.5 (skipped)"
+        );
+        assert!(
+            fetched.iter().any(|b| (b.close - 20.5).abs() < 0.01),
+            "bar2 close should be 20.5 (new)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // get_stored_range / get_adj_factor_range: date-parse error path
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_stored_range_parse_error_on_invalid_min_date() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let conn = provider.conn.lock().expect("mutex lock");
+        conn.execute_batch(
+            "DROP TABLE stock_daily; \
+             CREATE TABLE stock_daily (\
+                 symbol VARCHAR, trade_date VARCHAR,\
+                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
+                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
+             );",
+        )
+        .expect("recreate table");
+        conn.execute(
+            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+             VALUES ('000001', 'not-a-date', 1, 2, 1, 2, 2, 100, 1000)",
+            [],
+        )
+        .expect("insert bad date");
+        drop(conn);
+
+        match provider.get_stored_range("000001").await {
+            Err(DataError::Parse(msg)) => {
+                assert!(msg.contains("invalid min date"), "unexpected error: {msg}");
+            }
+            other => panic!("expected DataError::Parse, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_stored_range_parse_error_on_invalid_max_date() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let conn = provider.conn.lock().expect("mutex lock");
+        conn.execute_batch(
+            "DROP TABLE stock_daily; \
+             CREATE TABLE stock_daily (\
+                 symbol VARCHAR, trade_date VARCHAR,\
+                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
+                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
+             );",
+        )
+        .expect("recreate table");
+        // "2025-01-01" < "z-invalid" lexicographically → MIN is valid, MAX is invalid
+        conn.execute(
+            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+             VALUES ('000001', '2025-01-01', 1, 2, 1, 2, 2, 100, 1000)",
+            [],
+        )
+        .expect("insert valid date");
+        conn.execute(
+            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+             VALUES ('000001', 'z-invalid', 3, 4, 3, 4, 4, 200, 2000)",
+            [],
+        )
+        .expect("insert invalid date");
+        drop(conn);
+
+        match provider.get_stored_range("000001").await {
+            Err(DataError::Parse(msg)) => {
+                assert!(msg.contains("invalid max date"), "unexpected error: {msg}");
+            }
+            other => panic!("expected DataError::Parse, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_adj_factor_range_parse_error_on_invalid_min_date() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let conn = provider.conn.lock().expect("mutex lock");
+        conn.execute_batch(
+            "DROP TABLE stock_adj_factor; \
+             CREATE TABLE stock_adj_factor (\
+                 symbol VARCHAR, trade_date VARCHAR,\
+                 adj_factor DOUBLE\
+             );",
+        )
+        .expect("recreate table");
+        conn.execute(
+            "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
+             VALUES ('000001', 'bad-date-format', 1.0)",
+            [],
+        )
+        .expect("insert bad date");
+        drop(conn);
+
+        match provider.get_adj_factor_range("000001").await {
+            Err(DataError::Parse(msg)) => {
+                assert!(msg.contains("invalid min date"), "unexpected error: {msg}");
+            }
+            other => panic!("expected DataError::Parse, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_adj_factor_range_parse_error_on_invalid_max_date() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let conn = provider.conn.lock().expect("mutex lock");
+        conn.execute_batch(
+            "DROP TABLE stock_adj_factor; \
+             CREATE TABLE stock_adj_factor (\
+                 symbol VARCHAR, trade_date VARCHAR,\
+                 adj_factor DOUBLE\
+             );",
+        )
+        .expect("recreate table");
+        conn.execute(
+            "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
+             VALUES ('000001', '2025-01-01', 1.0)",
+            [],
+        )
+        .expect("insert valid date");
+        conn.execute(
+            "INSERT INTO stock_adj_factor (symbol, trade_date, adj_factor) \
+             VALUES ('000001', 'z-invalid', 2.0)",
+            [],
+        )
+        .expect("insert invalid date");
+        drop(conn);
+
+        match provider.get_adj_factor_range("000001").await {
+            Err(DataError::Parse(msg)) => {
+                assert!(msg.contains("invalid max date"), "unexpected error: {msg}");
+            }
+            other => panic!("expected DataError::Parse, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_bars: TIMESTAMP trade_date exercises date_str_to_utc format parsers
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fetch_bars_parses_timestamp_dates() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let conn = provider.conn.lock().expect("mutex lock");
+        conn.execute_batch(
+            "DROP TABLE stock_daily; \
+             CREATE TABLE stock_daily (\
+                 symbol VARCHAR, trade_date TIMESTAMP, \
+                 open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE,\
+                 adjclose DOUBLE, volume DOUBLE, amount DOUBLE\
+             );",
+        )
+        .expect("recreate table");
+        conn.execute(
+            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+             VALUES ('000001', TIMESTAMP '2026-03-15 10:30:00', 10, 11, 9, 10.5, 10.5, 1000, 10500)",
+            [],
+        )
+        .expect("insert timestamp");
+        conn.execute(
+            "INSERT INTO stock_daily (symbol, trade_date, open, high, low, close, adjclose, volume, amount) \
+             VALUES ('000001', TIMESTAMP '2026-03-16 14:45:30.500', 11, 12, 10, 11.5, 11.5, 2000, 23000)",
+            [],
+        )
+        .expect("insert timestamp with fractional seconds");
+        drop(conn);
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars from timestamp table");
+        assert_eq!(bars.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_bars: unknown timeframe + parquet_dir set but file missing
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fetch_bars_unknown_timeframe_falls_back_to_day() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let bars = vec![
+            make_dated_bar("2026-07-06", 10.0, 11.0, 100.0),
+            make_dated_bar("2026-07-07", 11.0, 12.0, 200.0),
+        ];
+        provider
+            .save_bars("000001", "1d", &bars, true)
+            .await
+            .expect("save_bars failed");
+
+        let result = provider
+            .fetch_bars("000001", "4h", fetch_all_start(), fetch_all_end())
+            .await
+            .expect("fetch_bars with unknown timeframe should not error");
+        assert!(!result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_bars_returns_empty_when_parquet_dir_set_but_file_missing() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let provider =
+            DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("create provider");
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars should not error");
+        assert!(bars.is_empty());
+    }
 }
