@@ -172,7 +172,12 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         return 0
 
     dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-    dolt_sql(f"RENAME TABLE IF EXISTS {DOLT_TABLE} TO {tmp_table}_old")
+    exists = dolt_sql_csv(
+        f"SELECT COUNT(*) FROM information_schema.tables "
+        f"WHERE table_name='{DOLT_TABLE}'"
+    ).strip().split("\n")[-1].strip()
+    if exists == "1":
+        dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
     dolt_sql(DDL)
 
     sql = f"""
@@ -188,8 +193,13 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     if result.returncode != 0:
         print(f"  SQL error: {result.stderr}", file=sys.stderr)
         dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
-        dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
-        print("  Rolled back to previous data", file=sys.stderr)
+        old_exists = dolt_sql_csv(
+            f"SELECT COUNT(*) FROM information_schema.tables "
+            f"WHERE table_name='{tmp_table}_old'"
+        ).strip().split("\n")[-1].strip()
+        if old_exists == "1":
+            dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
+            print("  Rolled back to previous data", file=sys.stderr)
         dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
         return 0
 
