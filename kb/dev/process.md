@@ -216,25 +216,13 @@ Worktrees live at `.worktrees/<name>/` (gitignored). Each worktree is a
 **transient PR workspace**, created for a single PR or epic and cleaned up
 after merge. Branch naming: `feat/<short-description>` or `fix/<short-description>`.
 
-The `/worktree` skill provides conventions and commands.
+**加载 `/worktree` skill 获取完整流程**（创建、post-creation MANDATORY 步骤、
+`/handoff`、解绑 opencode session、合并后清理）。
 
 **Why not plugins**: The `opencode-worktree` plugin (kdco/worktree via OCX)
 was evaluated and found to have blocking issues (no idempotent re-open,
 unreliable terminal spawn, no session reopen). Manual worktrees +
 the `/worktree` skill give full control without those issues.
-
-**Post-creation**: after `git worktree add`, the worktree skill requires:
-1. `/handoff` → writes `.worktrees/<name>/.omo/handoff.md` with current context
-2. Unbind the current opencode session (exit/quit the running master instance) —
-   required because opencode maps the worktree directory to the same project as
-   master; launching `opencode` in the worktree fails while the master session is
-   still bound
-3. Tell user: `cd .worktrees/<name> && opencode` (new session reads handoff)
-4. Stay in master — don't switch session into the worktree directory
-
-**After PR merge**:
-1. Remove worktree: `git worktree remove .worktrees/<name> --force`
-2. Delete PR branch: `git branch -D feat/<name>`
 
 ## Version control
 
@@ -253,29 +241,14 @@ RUST_LOG=debug cargo run        # verbose logging
 
 ### CLI (compass-data)
 
+完整子命令参考见 `kb/user/cli.md`。速查：
+
 ```sh
-# Import from Dolt investment_data into Parquet main database
-cargo run --bin compass-data -- import
-cargo run --bin compass-data -- import --limit 100
-cargo run --bin compass-data -- import --symbols 000001,600519
-cargo run --bin compass-data -- import --since 20260725  # incremental
-
-# Import from Dolt compass_data into Parquet
-cargo run --bin compass-data -- import-compass --table stock_basic
-cargo run --bin compass-data -- import-compass --table fin_indicators
-cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
-
-# Export Parquet to DuckDB
-cargo run --bin compass-data -- export
-cargo run --bin compass-data -- export --overwrite  # force overwrite
-
-# Backup to Baidu Cloud
-cargo run --bin compass-data -- backup
-cargo run --bin compass-data -- backup --keep-zip
-
-# Full help
-cargo run --bin compass-data -- --help
-cargo run --bin compass-data -- import --help
+cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量）
+cargo run --bin compass-data -- import --since 20260725   # 增量
+cargo run --bin compass-data -- import-compass --table stock_basic  # Dolt compass_data → Parquet
+cargo run --bin compass-data -- export                    # Parquet → DuckDB
+cargo run --bin compass-data -- backup                    # Parquet → 百度云
 ```
 
 ## Adding a feature (manual)
@@ -294,14 +267,8 @@ Every code change that affects behavior, APIs, data structures, config,
 workflows, or conventions must update the relevant `kb/` file in the
 same commit. AGENTS.md must be updated if the architecture overview changes.
 
-| Change type | kb/ file to update |
-|---|---|
-| New data source, API call, schema change | `kb/design/data-providers.md` |
-| Threading, pipeline, library changes | `kb/design/architecture.md` |
-| Symbol format, timeframe mapping | `kb/design/symbols.md` |
-| Test framework, patterns | `kb/dev/testing.md` |
-| Workflow, hooks, conventions | `kb/dev/process.md` |
-| Project-level conventions | `AGENTS.md` |
+权威的「变更类型 → kb/ 文件」映射表见
+`.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table。
 
 ### Documentation conventions
 
@@ -358,40 +325,20 @@ DESIGN TESTS → RED → GREEN → REFACTOR
 Exploratory changes (new API integration, architecture experiments) may
 write tests after implementation to lock in behavior.
 
-## Running tests
+## Running tests & code quality
+
+测试运行、benchmark、Tracy profiling 见 `kb/dev/testing.md`。速查：
 
 ```sh
-cargo nextest run                       # recommended
-cargo test                              # standard runner
-cargo test duckdb                       # filter by name
-cargo test --test integration_test      # integration tests only
-```
-
-## Checking code quality
-
-```sh
-cargo fmt --check           # verify formatting
-cargo clippy -- -D warnings # strict lint
+cargo nextest run                       # 推荐
+cargo fmt --check                       # verify formatting
+cargo clippy -- -D warnings             # strict lint
 ```
 
 ## Config
 
-Create `~/.config/compass/config.toml` to override defaults:
-
-```toml
-[parquet]
-dir = "/data/compass-data/parquet_data"
-
-[dolt]
-investment_data_dir = "/data/compass-data/investment_data"
-compass_data_dir = "/data/compass-data/compass_data"
-
-[app]
-default_symbol = "600519"
-default_timeframe = "1d"
-```
-
-Missing keys fall back to defaults defined in `crates/compass-core/src/model.rs`.
+Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回退到
+`crates/compass-core/src/model.rs` 中的默认值。完整选项见 `kb/user/config.md`。
 
 ## Logs
 
@@ -428,16 +375,7 @@ conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily.parquet
 ### collectors (Python data pipeline)
 
 Fetch data from EastMoney APIs into CSV, then import into `compass_data` Dolt.
-
-```sh
-cd collectors/
-uv sync                           # first time: install dependencies
-
-# Unified CLI
-uv run python main.py fetch stock_basic
-uv run python main.py sync       # fetch + import all
-uv run python main.py sync-investment --restart
-```
+命令与工作流见 `kb/user/cli.md` § Python collectors 与 `kb/design/architecture.md` § collectors。
 
 Key concepts:
 - **curl_cffi** for TLS impersonation (EastMoney anti-crawler)
@@ -445,24 +383,10 @@ Key concepts:
 - **`.state.json`** files track last fetch for incremental updates
 - **`--resume`** flag to continue interrupted fetches
 
-### compass-data CLI (Rust)
-
-```sh
-# Dolt → Parquet
-compass-data import-compass --table stock_basic
-compass-data import-compass --table fin_indicators
-
-# investment_data incremental import
-compass-data import --since 20260725
-
-# Backup to Baidu Cloud
-compass-data backup
-compass-data backup --keep-zip
-```
-
 ### Baidu Cloud backup
 
-Sync `parquet_data/` snapshot to Baidu Cloud via `baidupcs` (BaiduPCS-Go):
+`compass-data backup` zips `parquet_data/` and uploads to Baidu Cloud via
+`baidupcs` (BaiduPCS-Go):
 
 - Target: `/compass/` folder
 - Format: timestamped zip (`parquet_data-YYYYMMDD-HHMMSS.zip`)

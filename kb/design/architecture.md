@@ -415,34 +415,12 @@ prefix: `"SZ000001"`, `"SH600519"`, `"BJ836149"`. The 2-letter prefix
 filename, in the database column, and in the API. Bare 6-digit input is
 accepted as a convenience and resolved via exchange inference.
 
-### Why not ts_code format?
+The older `ts_code` format (`"000001.SZ"`) was retired because it mixes
+identity with metadata: the exchange is already determinable from the code
+range, making the suffix redundant.
 
-The older format `"000001.SZ"` mixes identity (the code) with metadata (the
-exchange). This causes problems:
-
-- A single stock can have different formats depending on context
-- Parsing requires splitting on `.` and handling edge cases
-- Exchange can be **inferred from the code itself** — the suffix is redundant
-
-We retired `ts_code` from the schema. The `to_ts_code()` function still exists
-for backward compatibility but is no longer used as a primary key.
-
-### Exchange inference
-
-Since codes are unique across exchanges in practice, we use heuristic rules:
-
-| Code starts with | Exchange |
-|---|---|
-| `6` | Shanghai (SH) |
-| `8` | Beijing (BJ) |
-| Anything else | Shenzhen (SZ) |
-
-For the rare ambiguous cases (e.g., `000001` could be 平安银行 SZ or 上证指数 SH),
-use explicit prefixes: `sh.000001` for the index, plain `000001` for the stock
-(which defaults to SZ — stocks are the common case).
-
-See `kb/design/symbols.md` for the complete market segment breakdown and
-EastMoney secid mapping.
+See `kb/design/symbols.md` for the complete market segment breakdown, exchange
+inference rules, explicit prefixes, and timeframe mapping.
 
 ## Config system
 
@@ -529,4 +507,5 @@ Every library choice in Compass was deliberate. Here's why each one was chosen:
 | 数据访问策略：GUI 读取数据的来源 | 在线 API 直接请求 / 本地文件缓存 / 纯本地无回退 | 纯本地 Parquet 文件，无在线回退 | 本地读取零延迟、无网络依赖、无 API 限流；数据管线（import/collector）离线运行，GUI 只查询已落盘数据 | 在线 API 增加延迟和失败点；缓存策略需处理过期和同步问题，增加复杂度 |
 | 异步架构：UI 线程与 I/O 分离方案 | 手动 std::thread + mpsc / 框架托管的 citizen 模式 | egui-mobius citizen 模式：Citizen trait + Dynamic\<T\> + Signal/Slot + AsyncDispatcher | 消除手动线程布线、Arc\<Mutex\> 竞争和版本计数器；Citizen 通过 outbox 解耦，AsyncDispatcher 自管 tokio runtime | 手动线程方案代码量大、易出错；Dynamic\<T\> 提供字段级独立读写，无跨字段锁竞争 |
 | 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），但通过 `import --since` 增量导入缓解；每标的单独文件增加文件管理开销 |
-| 符号约定：规范标识符格式 | ts_code 格式（`000001.SZ`）/ Dolt-native 前缀格式（`SZ000001`） | Dolt-native 前缀格式 | 前缀即交换所见即所得，无歧义（`SZ000852` 和 `SH000852` 可共存）；交换所可从代码推断，ts_code 的后缀冗余 | ts_code 将身份与元数据混合，`.SZ` 后缀冗余且格式不一致（需解析 `.` 分隔符） |
+
+符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。

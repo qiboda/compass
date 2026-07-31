@@ -119,6 +119,38 @@ Five tables, all created automatically on first use:
 | `stock_limit` | `(symbol, trade_date)` | Daily price ceiling/floor |
 | `no_data_marks` | `(symbol, timeframe)` | Negative cache entries with TTL timestamps |
 
+DuckDB DDL (auto-created on first use):
+
+```sql
+CREATE TABLE stock_daily (
+    symbol      VARCHAR NOT NULL,
+    trade_date  DATE NOT NULL,
+    open, high, low, close, adjclose DOUBLE,
+    volume, amount DOUBLE,
+    PRIMARY KEY (symbol, trade_date)
+);
+CREATE TABLE stock_basic (
+    symbol      VARCHAR PRIMARY KEY,
+    name, industry, market, exchange VARCHAR,
+    list_date, delist_date DATE
+);
+CREATE TABLE stock_adj_factor (
+    symbol, trade_date, adj_factor, PRIMARY KEY (symbol, trade_date)
+);
+CREATE TABLE stock_limit (
+    symbol, trade_date, up_limit, down_limit, PRIMARY KEY (symbol, trade_date)
+);
+```
+
+The Parquet main database layout (produced by `compass-data import`):
+
+```
+parquet_data/
+├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date
+├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
+└── stock_daily.symbols.txt    # one symbol per line (fast listing)
+```
+
 The full DDL is in `AGENTS.md` and `kb/design/architecture.md`.
 
 ### Gap detection

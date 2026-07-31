@@ -1,9 +1,8 @@
 # AGENTS.md — compass
 
-A-share stock chart desktop application built with egui. Data pipeline uses
-local Dolt `investment_data` as the **primary data source** (18M+ rows, 6000+ stocks).
-The GUI reads exclusively from local Parquet files via DuckDB — no online fallback.
-Python collectors use EastMoney API to fetch data into Dolt.
+A-share 股票图表桌面应用（egui）。数据管线以本地 Dolt `investment_data` 为**主数据源**
+（18M+ 行，6000+ 标的）。GUI 只读本地 Parquet 文件（DuckDB 查询），**无在线回退**。
+Python collectors 从 EastMoney API 抓取数据写入 Dolt。
 
 **项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `kb/` 目录下所有文件。
 
@@ -114,56 +113,20 @@ checklist above. Do not skip any step.
 | `docs` | `/docs` | Identify and update `kb/` files based on code changes |
 | `reflect` | `/reflect` | Write post-implementation reflections with trend analysis |
 | `friction` | `/friction` | Record AI behavior corrections to `kb/dev/friction.md` |
+| `product` | `/product` | Sprint candidate analysis (read-only, milestone proposals) |
 
 All skills are located under `.opencode/skills/<name>/SKILL.md`. OpenCode
 auto-discovers skills from the filesystem — no registration needed.
 
 ### Epic & Sub-Issue Workflow
 
-Large requirements that span multiple modules or independent deliverables are
-decomposed into an **epic** (parent issue) with **sub-issues** (child issues) using
-GitHub native sub-issue support. See `.opencode/skills/issue-workflow/SKILL.md`
-for the full sub-issue lifecycle.
+Large requirements spanning multiple modules are decomposed into an **epic**
+(parent issue) with **sub-issues** (child issues) via GitHub native sub-issues.
+Key rules: one epic = one PR (each sub-issue one commit with `ref #<sub-N>`),
+one worktree, batch processing by dependency DAG with manual batch switch,
+batch close after merge. Plan files (`.omo/plans/<epic>.md`) track status.
 
-**Key rules for epic work:**
-
-| Rule | Description |
-|---|---|
-| **Decomposition** | `/ulw-plan` identifies sub-issues during planning; all created upfront via `gh issue create --parent <epic-N>` |
-| **Batch processing** | Sub-issues ordered by dependency DAG; independent ones run in parallel, dependent ones serialize |
-| **PR strategy** | All sub-issues in one epic → one PR (prevents half-finished features on master) |
-| **Commits** | Each sub-issue = one commit with `ref #<sub-N>`; multiple commits in one PR, regular merge |
-| **GATE** | Each sub-issue independently walks the full PRE-IMPLEMENTATION GATE |
-| **Worktree** | One epic = one worktree (`.worktrees/<name>/`) |
-| **Batch switch** | Manual confirmation — agent reports batch completion, user confirms before next batch |
-| **Close** | All sub-issues + epic closed via `gh issue close` after PR merges to master |
-
-**Plan file format** (`.omo/plans/<epic-name>.md`):
-
-```markdown
-### Batch 1
-| Status | Issue | Task | Depends On |
-|--------|-------|------|------------|
-| pending | #12 | Implement XYZ | — |
-| in_progress | #13 | Implement ABC | #12 |
-```
-
-Status: `pending` | `in_progress` | `done`. The plan file is the canonical tracking document.
-
-**Sub-issue body template:**
-
-```markdown
-> **Parent**: #<epic-N>
-> **Plan**: .omo/plans/<epic-name>.md
-> **Batch**: <N>
-> **Depends on**: #<sub-X> (or "—" if none)
-
-## 描述
-...
-
-## 验收标准
-...
-```
+See `.opencode/skills/issue-workflow/SKILL.md` for the full sub-issue lifecycle.
 
 ### Issue-Driven Commits
 
@@ -220,27 +183,19 @@ Flag the issue to the user and ask for a decision.
 The grill-me decisions and the approved plan define the contract. Any
 deviation — even a pragmatic workaround — requires user approval first.
 
+---
+
 ## Sprint 规划
 
-使用 GitHub Milestones 进行每周 sprint 管理（周一～周日，周末为核心开发窗口），
-以产品视角驱动敏捷开发。
-
-- **周一**：规划 milestone — product agent 自动扫描代码库和 open issues，提出 3-5 个候选需求
-- **周日**：回顾完成情况，close 已完成的 milestone
-- **手动触发**：`/product brainstorm` 随时获取候补需求
-
-Sprint 节奏由 `compass-workflow` skill 的 Sprint Rhythm 规则强制执行。
+使用 GitHub Milestones 进行每周 sprint 管理（周一规划 / 周日回顾，周末为核心开发窗口）。
+`product` skill 每周一扫描代码库和 open issues，提出 3-5 个候选需求；`/product brainstorm`
+可随时手动触发。Sprint 节奏由 `compass-workflow` skill 的 Sprint Rhythm 规则强制执行。
 
 ## 摩擦记录
 
-任何「AI 行为偏差被用户纠正」的场合，都应记录到 `kb/dev/friction.md`。
-
-- **触发方式**: 自动检测（用户纠正 AI 时提示）或手动 `/friction` 命令
-- **范围**: 所有纠正型交互 — grill-me 分歧、执行方向偏离、意图误解、约束遗漏等
-- **格式**: `[日期] [关联会话] [我的偏差] [你的纠正] [教训]`
-- **与 reflections 区分**: friction 记录决策过程中的卡点和纠正；reflections 记录实施后的教训
-
-摩擦记录由 `compass-workflow` skill 的 Friction Record 规则触发，`/friction` skill 执行写入。
+任何「AI 行为偏差被用户纠正」的场合（grill-me 分歧、执行方向偏离、意图误解、约束遗漏等），
+都应记录到 `kb/dev/friction.md`：自动检测（用户纠正时提示）或手动 `/friction` 命令。
+与 reflections 区分：friction 记录决策过程中的卡点和纠正；reflections 记录实施后的教训。
 
 ## 决策记录
 
@@ -251,59 +206,46 @@ Sprint 节奏由 `compass-workflow` skill 的 Sprint Rhythm 规则强制执行�
 - **保障**: `compass-workflow` PRE-IMPLEMENTATION GATE Step 4c 检查是否存在
 - **自包含**: 决策记录不依赖外部引用（如 friction.md），所有理由直接写在设计文档内
 
+---
+
 ## Worktrees
 
-For PR development, load the `worktree` skill. Worktrees live at
-`.worktrees/<name>/` — each is a **transient PR workspace**, created for
-a single PR and cleaned up after merge. Branch naming: `feat/<short-description>` or `fix/<short-description>`.
-
-After creating a worktree, the skill enforces MANDATORY post-creation steps:
-1. `/handoff` → saves context to `.worktrees/<name>/.omo/handoff.md`
-2. **Unbind the current opencode session** (exit/quit the running instance) — required
-   because opencode maps the worktree to the same project as master; a new `opencode`
-   in the worktree fails while the master session is still bound. See the `worktree`
-   skill for details.
-3. Tell user to open a new opencode session: `cd .worktrees/<name> && opencode`
-4. Current session stays in master — do NOT cd into the worktree.
-
-After PR merge, the skill enforces MANDATORY cleanup:
-1. Remove worktree: `git worktree remove .worktrees/<name> --force`
-2. Delete PR branch: `git branch -D feat/<name>`
+PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），每个 worktree 对应
+一个 PR/epic，合并后清理。创建后必须执行 `/handoff` + 解绑当前 opencode session。
+**加载 `worktree` skill 获取完整流程**（含 post-creation MANDATORY 步骤与清理）。
 
 ## Knowledge base
 
-Detailed docs under `kb/` — organized into four sections:
+详细文档在 `kb/` 下，按四部分组织。**AGENTS.md 是索引，不是重复** — 细节只在 kb/ 中，绝不在此复制。
 
-| Section | Purpose |
-|---|---|---|
-| `kb/design/` | Project design — architecture, data providers, symbols |
-| `kb/dev/` | Development aids — workflow, process, testing, reflections |
-| `kb/user/` | User reference — installation, GUI, CLI, config |
-| `kb/github/` | GitHub Action bot role instructions (/ask, /fix, /review, /impl, ci-fix), label conventions, and comment rules |
-
-| File | Content |
+| 文件 | 内容 |
 |---|---|
-| `kb/design/architecture.md` | System overview, crate relationships, threading rationale, data pipeline flows, storage strategy, library decisions |
-| `kb/design/data-providers.md` | Trait system design, DuckDbProvider read-through pattern, Parquet/DuckDB/Dolt providers, error handling |
-| `kb/design/symbols.md` | A-share market segments, symbol convention rationale, exchange inference, secid mapping, timeframe handling |
-| `kb/design/roadmap.md` | Product roadmap — vision, completed, and planned milestones |
-| `kb/dev/testing.md` | rstest + tokio::test patterns, in-memory DuckDB, httpmock setup |
-| `kb/dev/process.md` | Dev workflow, commands, config, debugging, reset |
-| `kb/dev/reflections.md` | Post-implementation reflections — what went wrong, lessons learned |
-| `kb/dev/friction.md` | Friction records — AI behavior corrections and lessons |
-| `kb/user/index.md` | User overview — what Compass is, quickstart, prereqs |
-| `kb/user/gui.md` | Chart app — interface, controls, data flow, stock codes |
-| `kb/user/cli.md` | Data pipeline — import, export, workflows, troubleshooting |
-| `kb/user/config.md` | Config reference — all options, defaults, examples |
-| `kb/github/labels.md` | Issue/PR label taxonomy — Bevy-style C/A/D/P/S prefixes |
-| `kb/github/comments.md` | Comment convention — always append, never edit existing |
+| `kb/design/architecture.md` | 系统总览、crate 关系、线程模型、数据管线、存储策略、库选型 |
+| `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL |
+| `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
+| `kb/design/roadmap.md` | 产品路线图 — 愿景、已完成、规划中 |
+| `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
+| `kb/dev/process.md` | 开发流程、命令、配置、调试、Dolt 操作、重置 |
+| `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 |
+| `kb/dev/friction.md` | 摩擦记录 — AI 行为偏差与纠正 |
+| `kb/user/index.md` | 用户总览 — Compass 是什么、快速开始、前置条件 |
+| `kb/user/gui.md` | 图表应用 — 界面、控件、数据流、股票代码 |
+| `kb/user/cli.md` | 数据管线 — import/import-compass/export/backup、工作流、排障 |
+| `kb/user/config.md` | 配置参考 — 全部选项、默认值、示例 |
+| `kb/github/labels.md` | Issue/PR 标签分类 — Bevy 风格 C/A/D/P/S 前缀 |
+| `kb/github/comments.md` | 评论规范 — 永远追加，绝不修改 |
+| `kb/github/ask.md` | GitHub bot 角色 — /ask 只读问答（工作流按路径加载，勿改） |
+| `kb/github/fix.md` | GitHub bot 角色 — /fix 修 bug（工作流按路径加载，勿改） |
+| `kb/github/impl.md` | GitHub bot 角色 — /impl 实现功能（工作流按路径加载，勿改） |
+| `kb/github/pr-review.md` | GitHub bot 角色 — /review 代码审查（工作流按路径加载，勿改） |
+| `kb/github/ci-fix.md` | GitHub bot 角色 — CI 失败诊断（工作流按路径加载，勿改） |
 
 ## Setup
 
 - **Rust edition 2024** — requires Rust ≥1.85. Current: 1.96.
 - **GUI app** — needs a display server (X11/Wayland). `cargo run` opens a window.
 - Logs written to `logs/compass.log` (daily rolling).
-- Config at `~/.config/compass/config.toml` (falls back to defaults).
+- Config at `~/.config/compass/config.toml` (falls back to defaults). 见 `kb/user/config.md`.
 
 ## Commands
 
@@ -317,57 +259,32 @@ cargo clippy
 RUST_LOG=debug cargo run     # verbose logging
 ```
 
-### compass-data CLI
+### compass-data CLI 速查
 
 ```sh
-# Import from Dolt investment_data (primary) into Parquet main database
-cargo run --bin compass-data -- import                    # all 6000+ stocks (full write)
-cargo run --bin compass-data -- import --symbols 000001,600519  # specific stocks
-cargo run --bin compass-data -- import --since 20260725   # incremental
-
-# Import from Dolt compass_data (our own tables) into Parquet
-cargo run --bin compass-data -- import-compass --table stock_basic
-cargo run --bin compass-data -- import-compass --table fin_indicators
-
-# Export Parquet to DuckDB
-cargo run --bin compass-data -- export
-cargo run --bin compass-data -- export --overwrite        # force overwrite
+cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量）
+cargo run --bin compass-data -- import --since 20260725   # 增量
+cargo run --bin compass-data -- import-compass --table stock_basic  # Dolt compass_data → Parquet
+cargo run --bin compass-data -- export                    # Parquet → DuckDB
+cargo run --bin compass-data -- backup                    # Parquet → 百度云
 ```
 
-`import-compass` and `export` default to **merge/skip** behavior
-(migration-style): existing unique keys are preserved, only new data is added.
-Pass `--overwrite` to replace existing data. `import` always writes the full
-dataset directly from Dolt (no `--overwrite` flag).
+`import-compass`/`export` 默认 merge/skip，`--overwrite` 覆盖；`import` 总是全量直写。
+完整选项见 `kb/user/cli.md`。
 
-## Architecture
+## Architecture & Data providers
 
-See `kb/design/architecture.md` — threading model, data pipeline, schema, source layout, libraries.
+- **架构**: `kb/design/architecture.md` — 线程模型、数据管线、schema、源码布局、库选型
+- **数据提供者**: `kb/design/data-providers.md` — DuckDB、Dolt、ParquetReader、DataError
+- **符号约定**: `kb/design/symbols.md` — 市场分段、交换所推断、timeframe 映射
 
-## Data providers
+**Priority**: Dolt `investment_data` (local) 是主数据源。GUI 数据访问全部本地 — 无在线回退。
 
-See `kb/design/data-providers.md` — DuckDB, Dolt, ParquetReader, DataError.
+### compass_data Dolt 仓库 — 每次数据变更后 commit & push
 
-**Priority**: Dolt `investment_data` (local) is the **primary** data source.
-All GUI data access is local-only — no online fallback.
-
-### Dolt import (`crates/compass-data/src/import_dolt.rs`)
-
-Reads from Dolt `investment_data` (`final_a_stock_eod_price` and `ts_a_stock_list`
-tables) via `dolt sql -r parquet` (direct binary Parquet) and `dolt sql -r csv`
-(for symbol enumeration), partitioned by Dolt symbol.
-
-### Python collectors
-
-EastMoney data is fetched by Python scripts in `collectors/` using `curl_cffi`
-to bypass TLS fingerprinting. Data flows: EastMoney API → CSV → Dolt `compass_data` →
-`compass-data import` → Parquet. For secid mapping details, see `kb/design/symbols.md`.
-
-### compass_data Dolt repo — commit & push after every data change
-
-`/data/compass-data/compass_data` is a Dolt repo (remote:
-`doltremoteapi.dolthub.com/skwy/compass_data`). **Every data modification**
-(import, re-import, schema change, data_updates update) must be committed and
-pushed to the remote:
+`/data/compass-data/compass_data` 是 Dolt 仓库（remote:
+`doltremoteapi.dolthub.com/skwy/compass_data`）。**每次数据修改**（import、re-import、
+schema 变更、data_updates 更新）都必须提交并推送到 remote：
 
 ```sh
 cd /data/compass-data/compass_data
@@ -376,67 +293,18 @@ dolt commit -m "feat: ..." # describe the data change
 dolt push origin main
 ```
 
-This keeps the remote Dolt database in sync with local data. Check status with
-`dolt status`; the working tree should be clean after each push.
+完整 Dolt 操作指南（含跨库查询示例）见 `kb/dev/process.md#dolt-database-queries`。
 
-## Parquet schema (main database)
+## Parquet schema & Config
 
-```
-parquet_data/
-├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date
-├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
-└── stock_daily.symbols.txt    # one symbol per line (fast listing)
-```
-
-DuckDB schema (created automatically on first use):
-```sql
-CREATE TABLE stock_daily (
-    symbol      VARCHAR NOT NULL,
-    trade_date  DATE NOT NULL,
-    open, high, low, close, adjclose DOUBLE,
-    volume, amount DOUBLE,
-    PRIMARY KEY (symbol, trade_date)
-);
-CREATE TABLE stock_basic (
-    symbol      VARCHAR PRIMARY KEY,
-    name, industry, market, exchange VARCHAR,
-    list_date, delist_date DATE
-);
-CREATE TABLE stock_adj_factor (
-    symbol, trade_date, adj_factor, PRIMARY KEY (symbol, trade_date)
-);
-CREATE TABLE stock_limit (
-    symbol, trade_date, up_limit, down_limit, PRIMARY KEY (symbol, trade_date)
-);
-```
-
-## Config
-
-`~/.config/compass/config.toml` (all fields optional):
-
-```toml
-[parquet]
-dir = "/data/compass-data/parquet_data"
-
-[dolt]
-investment_data_dir = "/data/compass-data/investment_data"
-compass_data_dir = "/data/compass-data/compass_data"
-
-[app]
-default_symbol = "000001"
-default_timeframe = "1d"
-```
+- **Parquet 主数据库结构** 与 **DuckDB DDL**: `kb/design/data-providers.md`（Schema 章节）
+- **配置参考**: `kb/user/config.md`（全部选项 + 默认值 + 示例）
 
 ## Testing
 
-See `kb/dev/testing.md` — rstest + tokio::test patterns, in-memory DuckDB, httpmock setup.
+见 `kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
-## egui-charts API
+## API reference
 
-- `Bar::new(time, open, high, low, close, volume)` — OHLCV bar
-- `BarData::from_bars(bars)` — dataset wrapper
-- `Chart::new(data)` — interactive chart widget (pan, zoom, crosshair)
-- `chart.set_chart_type(ChartType::Candles)` — candlestick display
-- `chart.show(ui)` — render inside any `egui::Ui`
-
-
+类型级 API 参考见 `cargo doc --open`（`#![warn(missing_docs)]` 强制所有 pub 项带 `///` 注释）。
+egui-charts 用法示例见 `kb/user/gui.md` 与 `cargo doc`。
