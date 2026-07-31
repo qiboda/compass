@@ -1,204 +1,195 @@
-# Symbols & Stock Codes
+# 符号与股票代码
 
-Stock codes in China's A-share market aren't globally unique — the same numeric
-code can mean different things on different exchanges. Compass has to handle
-this ambiguity while keeping the data model simple enough for a single developer
-to maintain.
+中国 A 股市场的股票代码并非全球唯一——同一数字代码在不同交换所可能
+代表不同的东西。Compass 必须在保证数据模型足够简单、一个开发者即可
+维护的前提下，处理这种歧义。
 
-## The A-share market landscape
+## A 股市场全景
 
-China has three stock exchanges with distinct code ranges:
+中国有三家股票交换所，各自有不同的代码区间：
 
-| Exchange | Chinese Name | Market Code | Code Ranges | Notable Segment |
+| 交换所 | 中文名称 | 市场代码 | 代码区间 | 重要板块 |
 |---|---|---|---|---|
-| Shanghai (SH) | 上海证券交易所 | `1` (EastMoney) | 600xxx–605xxx | Main board |
-| Shanghai (SH) | 上海证券交易所 | `1` | 688xxx | STAR Market (科创板) |
-| Shanghai (SH) | 上海证券交易所 | `1` | 900xxx | B-shares (外币) |
-| Shenzhen (SZ) | 深圳证券交易所 | `0` (EastMoney) | 000xxx–004xxx | Main board |
-| Shenzhen (SZ) | 深圳证券交易所 | `0` | 002xxx–003xxx | SME board (中小板) |
-| Shenzhen (SZ) | 深圳证券交易所 | `0` | 300xxx–301xxx | ChiNext (创业板) |
+| Shanghai (SH) | 上海证券交易所 | `1` (EastMoney) | 600xxx–605xxx | 主板 |
+| Shanghai (SH) | 上海证券交易所 | `1` | 688xxx | 科创板 |
+| Shanghai (SH) | 上海证券交易所 | `1` | 900xxx | B 股（外币） |
+| Shenzhen (SZ) | 深圳证券交易所 | `0` (EastMoney) | 000xxx–004xxx | 主板 |
+| Shenzhen (SZ) | 深圳证券交易所 | `0` | 002xxx–003xxx | 中小板 |
+| Shenzhen (SZ) | 深圳证券交易所 | `0` | 300xxx–301xxx | 创业板 |
 | Beijing (BJ) | 北京证券交易所 | `0` (EastMoney) | 8xxxxx | 北交所 |
 
-The key insight: **for stocks, code ranges don't overlap across exchanges**.
-`600xxx` is always Shanghai, `300xxx` always Shenzhen, `8xxxxx` always Beijing.
-This means we can **infer the exchange from the code** — no need to store it
-alongside every data row.
+关键洞察：**对于股票而言，代码区间不会跨交换所重叠**。
+`600xxx` 永远是上海，`300xxx` 永远是深圳，`8xxxxx` 永远是北京。
+这意味着我们可以**从代码推断交换所**——无需在每行数据中额外存储这一信息。
 
-## Why Dolt-native symbols?
+## 为什么选择 Dolt-native 符号？
 
-Compass uses the Dolt-native prefixed format (`"SZ000001"`, `"SH600519"`,
-`"BJ830799"`) as the canonical identifier everywhere: in the `symbol` column
-of `stock_daily.parquet`, in the DuckDB `symbol` column, and as the primary
-key. Bare 6-digit codes are accepted as user input for convenience and
-resolved to the canonical format via exchange inference.
+Compass 将 Dolt-native 前缀格式（`"SZ000001"`、`"SH600519"`、
+`"BJ830799"`）作为全局规范标识符：用于 `stock_daily.parquet` 的 `symbol` 列、
+DuckDB 的 `symbol` 列，以及主键。裸六位代码可作为便捷的用户输入被接受，
+并通过交换所推断解析为规范格式。
 
-The older format `"000001.SZ"` (ts_code convention) has been retired. Here's why:
+旧格式 `"000001.SZ"`（ts_code 约定）已废弃。原因如下：
 
-**The problem with ts_code**: mixing identity with metadata creates ambiguity.
-`"000001.SZ"` encodes two facts — the stock is `000001`, and it trades on
-Shenzhen. But the exchange is **already determinable from the code** (see
-inference rules below). Storing it in the identifier is redundant, and
-redundancy breeds inconsistency — what if someone writes `"000001.SH"` by
-mistake?
+**ts_code 的问题**：将身份与元数据混在一起会制造歧义。
+`"000001.SZ"` 编码了两个事实——股票是 `000001`，且在上海/深圳交易。
+但交换所**本身就可以从代码确定**（见下文推断规则）。
+将其存入标识符是多余的，而冗余滋生不一致——万一有人误写成 `"000001.SH"` 呢？
 
-**What we gain from Dolt-native symbols**:
-- No cross-exchange collisions: `SZ000852` (stock) and `SH000852` (index) are distinct rows in `stock_daily.parquet`
-- Clear exchange at a glance: the 2-letter prefix is immediately visible
-- Simpler format: all symbols live in one `stock_daily.parquet` file, identified by the `symbol` column
+**Dolt-native 符号带来的好处**：
+- 无跨所碰撞：`SZ000852`（股票）和 `SH000852`（指数）在 `stock_daily.parquet` 中是不同行
+- 交换所一目了然：两位字母前缀立即可见
+- 格式更简洁：所有标的均位于同一 `stock_daily.parquet` 文件中，由 `symbol` 列标识
 
-The `to_ts_code()` helper still exists in the codebase for backward
-compatibility, but it's no longer used as a primary key.
+`to_ts_code()` 辅助函数仍保留在代码库中以保证向后兼容，
+但不再用作主键。
 
-## Exchange inference: the heuristic
+## 交换所推断：启发式规则
 
-Given a bare 6-digit code, what exchange does it belong to?
+给定一个裸六位代码，它属于哪个交换所？
 
 ```rust
 pub fn to_exchange(code: &str) -> &str
 ```
 
-The rules, in order:
+规则，按优先级排列：
 
-| Code starts with | Exchange | Rationale |
+| 代码以……开头 | 交换所 | 理由 |
 |---|---|---|
-| `6` | `"SH"` | All 6xxxxx codes are Shanghai stocks |
-| `8` | `"BJ"` | All 8xxxxx codes are Beijing stocks |
-| Anything else | `"SZ"` | 000xxx–004xxx, 002xxx, 300xxx are all Shenzhen |
+| `6` | `"SH"` | 所有 6xxxxx 代码均为上海股票 |
+| `8` | `"BJ"` | 所有 8xxxxx 代码均为北京股票 |
+| 其他 | `"SZ"` | 000xxx–004xxx、002xxx、300xxx 均为深圳 |
 
-This heuristic is correct for **stocks**. Indices are a different story.
+该启发式规则对**股票**是正确的。指数则是另一回事。
 
-## The ambiguity: 000001
+## 歧义：000001
 
-The `000xxx` range is the only one where codes overlap between exchanges:
+`000xxx` 区间是唯一一个代码跨交换所重叠的区间：
 
-| Code | Exchange | What it is |
+| 代码 | 交换所 | 是什么 |
 |---|---|---|
-| `000001` | Shenzhen | 平安银行 (Ping An Bank) — a stock |
-| `000001` | Shanghai | 上证指数 (Shanghai Composite Index) — an index |
-| `000002` | Shenzhen | 万科A (Vanke A) — a stock |
-| `399001` | Shenzhen | 深证成指 (SZSE Component Index) — an index |
+| `000001` | 深圳 | 平安银行 — 股票 |
+| `000001` | 上海 | 上证指数 — 指数 |
+| `000002` | 深圳 | 万科A — 股票 |
+| `399001` | 深圳 | 深证成指 — 指数 |
 
-For stocks (the 99% use case), the heuristic defaults to **Shenzhen** for
-`000xxx` codes, since that's where almost all stocks in this range trade.
+对于股票（99% 的使用场景），启发式规则将 `000xxx` 代码默认为**深圳**，
+因为该区间几乎所有股票都在深圳交易。
 
-For indices, use an **explicit prefix**:
+对于指数，使用**显式前缀**：
 
-| Input | Meaning |
+| 输入 | 含义 |
 |---|---|
-| `000001` | 平安银行 (SZ stock — default) |
-| `sh.000001` | 上证指数 (SH index — explicit) |
-| `sz.000001` | 平安银行 (SZ stock — explicit, same as default) |
+| `000001` | 平安银行（深市股票 — 默认） |
+| `sh.000001` | 上证指数（沪市指数 — 显式） |
+| `sz.000001` | 平安银行（深市股票 — 显式，与默认相同） |
 
-## Explicit prefixes
+## 显式前缀
 
-When the heuristic isn't what you want, force the exchange with a prefix:
+当启发式规则不符合你的需求时，通过前缀强制指定交换所：
 
-| Prefix | Exchange | Example | Result |
+| 前缀 | 交换所 | 示例 | 结果 |
 |---|---|---|---|
-| `sh.` | Shanghai | `sh.000001` | `"SH"`, `000001` |
-| `sz.` | Shenzhen | `sz.600519` | `"SZ"`, `600519` (unusual but valid) |
-| `bj.` | Beijing | `bj.830799` | `"BJ"`, `830799` |
+| `sh.` | 上海 | `sh.000001` | `"SH"`，`000001` |
+| `sz.` | 深圳 | `sz.600519` | `"SZ"`，`600519`（不寻常但有效） |
+| `bj.` | 北京 | `bj.830799` | `"BJ"`，`830799` |
 
-Prefixes are **case-insensitive**: `SH.600519` and `sh.600519` are equivalent.
+前缀**不区分大小写**：`SH.600519` 和 `sh.600519` 等效。
 
-## EastMoney secid mapping
+## EastMoney secid 映射
 
-EastMoney's API uses a different identifier format: `"{market}.{code}"`, where
-market is `0` for Shenzhen/Beijing and `1` for Shanghai. Compass's own code
-never constructs secids — the GUI is local-only and the Python collectors do
-not use this format — but the mapping is documented here for reference when
-working with EastMoney's K-line API directly:
+EastMoney 的 API 使用不同的标识符格式：`"{market}.{code}"`，其中
+market 为 `0` 表示深圳/北京，`1` 表示上海。Compass 自身代码
+从不构造 secid——GUI 仅本地访问，Python 采集器也不使用此格式——
+但此映射记录于此，供直接使用 EastMoney K 线 API 时参考：
 
-| Our input | secid | How it works |
+| 我们的输入 | secid | 工作机制 |
 |---|---|---|
-| `000001` | `0.000001` | Heuristic: code starts with `0` → SZ → market code `0` |
-| `600519` | `1.600519` | Heuristic: code starts with `6` → SH → market code `1` |
-| `688001` | `1.688001` | Same heuristic: `6` → SH → `1` |
-| `300750` | `0.300750` | Starts with `3` (not 6 or 8) → SZ → `0` |
-| `830799` | `0.830799` | Heuristic: code starts with `8` → BJ → but EastMoney uses `0` for BJ |
-| `sh.000001` | `1.000001` | Explicit SH prefix → market `1` |
-| `sz.000001` | `0.000001` | Explicit SZ prefix → market `0` |
-| `bj.830799` | `0.830799` | Explicit BJ prefix → but EastMoney uses `0` for BJ |
+| `000001` | `0.000001` | 启发式：代码以 `0` 开头 → SZ → 市场代码 `0` |
+| `600519` | `1.600519` | 启发式：代码以 `6` 开头 → SH → 市场代码 `1` |
+| `688001` | `1.688001` | 相同启发式：`6` → SH → `1` |
+| `300750` | `0.300750` | 以 `3` 开头（非 6 或 8） → SZ → `0` |
+| `830799` | `0.830799` | 启发式：代码以 `8` 开头 → BJ → 但 EastMoney 对 BJ 使用 `0` |
+| `sh.000001` | `1.000001` | 显式 SH 前缀 → 市场 `1` |
+| `sz.000001` | `0.000001` | 显式 SZ 前缀 → 市场 `0` |
+| `bj.830799` | `0.830799` | 显式 BJ 前缀 → 但 EastMoney 对 BJ 使用 `0` |
 
-Important note: Beijing exchange uses market code `0` in EastMoney's system —
-same as Shenzhen. The distinction is handled by the code range, not the market
-code.
+重要提示：北京证券交易所在 EastMoney 系统中使用市场代码 `0`——
+与深圳相同。区分由代码区间而非市场代码完成。
 
-## Dolt symbol mapping
+## Dolt 符号映射
 
-Dolt's `investment_data` database stores symbols with exchange prefixes.
-These prefixes are the canonical identifier — in the `symbol` column of
-`stock_daily.parquet`, in the database, and in user-facing interfaces:
+Dolt 的 `investment_data` 数据库以带交换所前缀的格式存储符号。
+这些前缀是规范标识符——在 `stock_daily.parquet` 的 `symbol` 列中、
+数据库中以及面向用户的界面中：
 
-| Symbol | Stock |
+| 符号 | 股票 |
 |---|---|
 | `SZ000001` | 平安银行 |
 | `SH600519` | 贵州茅台 |
 | `BJ830799` | 艾融软件 |
 
-The `strip_prefix()` function exists for backward compatibility when matching
-bare 6-digit input, but the canonical format always includes the prefix.
+`strip_prefix()` 函数保留用于向后兼容，用于匹配裸六位输入，
+但规范格式始终包含前缀。
 
-## Timeframe mapping
+## 时间周期映射
 
-Compass accepts human-friendly timeframe strings in the GUI and CLI. These map
-to EastMoney's numeric `klt` (K-line type) parameter:
+Compass 在 GUI 和 CLI 中接受人性化的时间周期字符串。这些映射到
+EastMoney 的数值 `klt`（K 线类型）参数：
 
-| User Input | klt | Semantics | Typical Use |
+| 用户输入 | klt | 语义 | 典型用途 |
 |---|---|---|---|
-| `1m` | `1` | 1 minute | Intraday |
-| `5m` | `5` | 5 minutes | Intraday |
-| `15m` | `15` | 15 minutes | Intraday |
-| `30m` | `30` | 30 minutes | Intraday |
-| `60m`, `1h` | `60` | 60 minutes | Intraday |
-| `1d`, `daily`, `day` | `101` | Daily | Primary view |
-| `1w`, `weekly`, `week` | `102` | Weekly | Long-term trends |
-| `1M`, `monthly`, `month` | `103` | Monthly | Very long-term |
-| (numeric string) | passthrough | Raw klt value | For testing |
+| `1m` | `1` | 1 分钟 | 盘中 |
+| `5m` | `5` | 5 分钟 | 盘中 |
+| `15m` | `15` | 15 分钟 | 盘中 |
+| `30m` | `30` | 30 分钟 | 盘中 |
+| `60m`、`1h` | `60` | 60 分钟 | 盘中 |
+| `1d`、`daily`、`day` | `101` | 日线 | 主视图 |
+| `1w`、`weekly`、`week` | `102` | 周线 | 长期趋势 |
+| `1M`、`monthly`、`month` | `103` | 月线 | 超长期 |
+| （数字字符串） | 直通 | 原始 klt 值 | 用于测试 |
 
-If the input doesn't match any known string, it's passed through as-is. This
-supports direct numeric klt values (e.g., `"101"` is interpreted as klt=101,
-daily).
+如果输入不匹配任何已知字符串，则原样直通。这支持直接的数值 klt
+值（例如，`"101"` 被解释为 klt=101，日线）。
 
-### Why these particular values?
+### 为什么是这些特定值？
 
-EastMoney's klt numbering is their internal convention. `101`/`102`/`103` for
-daily/weekly/monthly is the EastMoney standard. The minute-level values
-(1/5/15/30/60) are more intuitive.
+EastMoney 的 klt 编号是其内部约定。`101`/`102`/`103` 分别对应
+日线/周线/月线，是 EastMoney 的标准。分钟级别的值（1/5/15/30/60）更加直观。
 
-### Timeframe in the data model
+### 数据模型中的时间周期
 
-The timeframe string is used as part of the composite key `(symbol, timeframe)`
-in CompassState's BarsMap. This means you can have `("600519", "1d")` and
-`("600519", "1w")` loaded simultaneously, and switching between them is instant
-(no refetch).
+时间周期字符串在 CompassState 的 BarsMap 中用作组合键
+`(symbol, timeframe)` 的一部分。这意味着你可以同时加载
+`("600519", "1d")` 和 `("600519", "1w")`，在它们之间切换是即时的
+（无需重新获取）。
 
-## Putting it all together
+## 综合示例
 
-A complete symbol conversion for a typical user flow:
+一个典型用户流程的完整符号转换过程：
 
 ```
-User opens Compass.
-Config says: default_symbol = "000001", default_timeframe = "1d"
+用户打开 Compass。
+配置设定：default_symbol = "000001"，default_timeframe = "1d"
 
     "000001" → to_exchange → "SZ"
-    "1d"     → timeframe_to_klt → 101 (conceptually; data is local)
+    "1d"     → timeframe_to_klt → 101（概念上；数据在本地）
 
-Bars stored under key ("000001", "1d") in the DuckDB stock_daily table
+K 线数据在 DuckDB stock_daily 表中以键 ("000001", "1d") 存储
 
-User types "600519", clicks Fetch.
+用户输入 "600519"，点击提取。
 
     "600519" → to_exchange → "SH"
-    Fetches from local Parquet, caches, displays.
+    从本地 Parquet 获取，缓存，显示。
 
-User types "sh.000001", wants the index.
+用户输入 "sh.000001"，想要查看指数。
 
-    "sh.000001" → explicit prefix → exchange "SH", code "000001"
-    Fetches Shanghai Composite Index instead of 平安银行.
+    "sh.000001" → 显式前缀 → 交换 "SH"，代码 "000001"
+    获取上证指数而非平安银行。
 ```
 
-The GUI resolves symbols to the canonical `EXCHANGE + code` form and queries
-the local database. There is no network round-trip in the fetch path.
+GUI 将符号解析为规范格式 `交换所 + 代码`，并查询本地数据库。
+获取路径中没有网络往返。
 
 ## 决策记录
 
@@ -207,4 +198,3 @@ the local database. There is no network round-trip in the fetch path.
 | 规范标识符：股票代码格式 | ts_code（`000001.SZ`）/ 裸六位码 / Dolt-native 前缀格式（`SZ000001`） | Dolt-native 前缀格式 | 前缀显式区分交换所，消除跨所碰撞（`SZ000852` vs `SH000852` 是不同行）；格式一致，均为一列 symbol | ts_code 混合身份与元数据，后缀格式不一致且解析需处理 `.` 分隔符；裸六位码无法区分 `000001`（平安银行 SZ）和 `000001`（上证指数 SH） |
 | 交换所推断：如何从代码确定交易所 | 按代码前缀启发式规则 / 存储独立 exchange 列 / 要求用户手动选择 | 启发式规则：6→SH、8→BJ、其余→SZ | A 股代码区间不跨所：600xxx 必为沪市，300xxx 必为深市，8xxxxx 必为北交所；无需每行存储 exchange，减少冗余 | 存储独立列增加数据冗余且无实际收益；启发式对 000xxx 区间有歧义（股 vs 指），通过显式前缀 `sh.` 解决 |
 | 歧义处理：000001 既可是股票也可是指数 | 不支持指数 / 默认选常见类型 / 显式前缀覆盖 | 默认 SZ（股票），显式前缀 `sh.` / `sz.` / `bj.` 覆盖 | 99% 使用场景是查股票，默认即可满足；极少数需要指数的场景用 `sh.000001` 显式指定 | 不支持指数会丢失功能；默认选指数会导致股票查询错误 |
-```

@@ -1,23 +1,22 @@
-# Architecture
+# 架构
 
-## What is Compass?
+## Compass 是什么？
 
-Compass is a **local-first A-share stock chart application**. Unlike web-based
-stock viewers that depend on a remote server for every interaction, Compass
-imports and caches all OHLCV data locally. Once data is imported, chart
-rendering is instant — no network calls, no rate limiting, no API keys.
+Compass 是一个**本地优先的 A 股股票图表应用**。与依赖远程服务器进行每次交互的
+网页股票查看器不同，Compass 将所有 OHLCV 数据导入并缓存到本地。一旦数据导入完成，
+图表渲染即时完成——无需网络调用、无限流、无需 API 密钥。
 
-It has two faces:
+它有两个面孔：
 
-| Face | Binary | Purpose |
+| 面孔 | 二进制 | 用途 |
 |---|---|---|
-| **Chart app** | `compass` | Interactive candlestick chart with symbol search, timeframe selection, crosshair, zoom, pan. Runs as a native desktop window via egui. Reads exclusively from local Parquet. |
-| **Data pipeline** | `compass-data` | Offline data management — import from Dolt, export to other formats, backup. EastMoney data arrives via Python collectors. |
+| **图表应用** | `compass` | 交互式 K 线图：股票搜索、时间周期选择、十字准线、缩放、平移。通过 egui 以原生桌面窗口运行。仅从本地 Parquet 文件读取数据。 |
+| **数据管线** | `compass-data` | 离线数据管理——从 Dolt 导入、导出为其他格式、备份。EastMoney 数据通过 Python collector 脚本获取。 |
 
-Both share the same library crate (`compass-core`), which defines the data
-model, provider traits, and all I/O logic.
+两者共享同一个库 crate（`compass-core`），其中定义了数据模型、provider trait
+以及所有 I/O 逻辑。
 
-## How the crates fit together
+## Crate 之间的关系
 
 ```
 compass (GUI binary)
@@ -47,44 +46,41 @@ compass (GUI binary)
         └── import / import-compass / export / backup subcommands
 ```
 
-`compass-core` contains zero UI code. It provides traits and implementations
-for fetching, storing, and querying stock data. The GUI and CLI are thin
-orchestrators that wire up providers and dispatch work.
+`compass-core` 不包含任何 UI 代码。它提供用于获取、存储和查询股票数据的 trait
+和实现。GUI 和 CLI 是薄编排层，负责连接 provider 并派发工作。
 
-The GUI binary (`compass`) uses the **egui-mobius citizen pattern** — a
-reactive architecture where UI panels are modeled as `Citizen` structs with
-outbox-based event dispatch, shared state is managed via `Dynamic<T>` reactive
-fields, and async work is routed through `Signal`/`Slot` typed channels to an
-`AsyncDispatcher` running on a dedicated tokio runtime.
+GUI 二进制（`compass`）使用 **egui-mobius citizen 模式**——一种响应式架构，其中
+UI 面板被建模为 `Citizen` 结构体，通过 outbox 进行事件派发；共享状态通过
+`Dynamic<T>` 响应式字段管理；异步工作通过 `Signal`/`Slot` 类型化通道路由到
+运行在专用 tokio runtime 上的 `AsyncDispatcher`。
 
-## Citizen pattern architecture
+## Citizen 模式架构
 
-The core architectural challenge: **egui runs synchronously on the main thread,
-but all data I/O (HTTP, DuckDB) requires async tokio.** If we block the main
-thread on I/O, the UI freezes. If we use async on the main thread, egui breaks.
+核心架构挑战：**egui 在主线程上同步运行，但所有数据 I/O（HTTP、DuckDB）都需要
+异步 tokio。** 如果在主线程上阻塞等待 I/O，UI 会冻结。如果在主线程上使用异步，
+egui 会崩溃。
 
-The solution uses the **egui-mobius citizen pattern**, a Level 3 reactive
-architecture inspired by Elm and Flux. Three layers handle the separation:
+解决方案使用 **egui-mobius citizen 模式**，一种受 Elm 和 Flux 启发的 Level 3
+响应式架构。三层负责分离关注点：
 
-| Layer | Name | Responsibility |
+| 层 | 名称 | 职责 |
 |---|---|---|
-| **1. Presentation** | `Citizen` panels + `egui_dock` | Render UI, emit outbox messages |
-| **2. Reactive state** | `SharedState` with `Dynamic<T>` | Hold application state; auto-notify on change |
-| **3. Async backend** | `Signal`/`Slot` + `AsyncDispatcher` | Execute I/O on a tokio runtime; write results back to state |
+| **1. 表现层** | `Citizen` 面板 + `egui_dock` | 渲染 UI、发出 outbox 消息 |
+| **2. 响应式状态层** | `SharedState` 与 `Dynamic<T>` | 持有应用状态；变更时自动通知 |
+| **3. 异步后端层** | `Signal`/`Slot` + `AsyncDispatcher` | 在 tokio runtime 上执行 I/O；将结果写回状态 |
 
-### Layer 1: Citizens and the DockArea
+### Layer 1: Citizen 与 DockArea
 
-The UI is split into two `Citizen` panels inside an `egui_dock::DockArea`, with a
-toolbar rendered above:
+UI 被拆分为两个 `Citizen` 面板，放置在 `egui_dock::DockArea` 内部，上方渲染
+工具栏：
 
-| Citizen | File | Role |
+| Citizen | 文件 | 角色 |
 |---|---|---|
-| **ChartCitizen** | `citizens/chart.rs` | OHLCV candlestick chart via `egui-charts`. Reads `bars` from shared state reactively and re-renders when the data changes. |
-| **LoggerPanel** | `citizens/logger.rs` | Scrollable log view. Reads log entries from shared state. |
+| **ChartCitizen** | `citizens/chart.rs` | 通过 `egui-charts` 渲染 OHLCV K 线图。从共享状态响应式读取 `bars`，在数据变化时重新渲染。 |
+| **LoggerPanel** | `citizens/logger.rs` | 可滚动日志视图。从共享状态读取日志条目。 |
 
-Panels are arranged inside an `egui_dock::DockArea`, giving the user a
-tabbed interface they can rearrange and resize. A toolbar at the top
-provides symbol search, exchange selection, and the Fetch button.
+面板排列在 `egui_dock::DockArea` 内，为用户提供可重排、可调整大小的选项卡式
+界面。顶部工具栏提供股票搜索、交易所选择和 Fetch 按钮。
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -104,9 +100,9 @@ provides symbol search, exchange selection, and the Fetch button.
 └──────────────────────────────────────────────┘
 ```
 
-The toolbar uses `CompassApp` local state (exchange index, stock picker)
-and directly calls `dispatcher::handle()` on Fetch. It replaces the
-outbox pattern previously used by ControlCitizen.
+工具栏使用 `CompassApp` 的局部状态（交易所索引、股票选择器），并在 Fetch
+时直接调用 `dispatcher::handle()`。这替代了之前 ControlCitizen 使用的 outbox
+模式。
 
 ```
 CompassApp::ui() each frame:
@@ -116,10 +112,10 @@ CompassApp::ui() each frame:
   4. request_repaint_after(200ms) for continuous update
 ```
 
-### Layer 2: Reactive state with Dynamic\<T\>
+### Layer 2: 基于 Dynamic\<T\> 的响应式状态
 
-State lives in `SharedState` (defined in `state.rs`), a struct where every
-field is a `Dynamic<T>` from `egui_mobius_reactive`:
+状态存放在 `SharedState`（定义于 `state.rs`）中，这是一个每个字段均为
+`egui_mobius_reactive` 的 `Dynamic<T>` 的结构体：
 
 ```rust
 pub struct SharedState {
@@ -132,30 +128,26 @@ pub struct SharedState {
 }
 ```
 
-`Dynamic<T>` wraps the value behind an `Arc<RwLock<T>>` and provides
-`get()`, `set()`, and `subscribe()`. Multiple readers share the same
-underlying storage — no separate `Arc<Mutex<CompassState>>` wrapper is
-needed.
+`Dynamic<T>` 将值包装在 `Arc<RwLock<T>>` 后面，提供 `get()`、`set()` 和
+`subscribe()` 方法。多个读取者共享同一底层存储——无需单独的
+`Arc<Mutex<CompassState>>` 包装。
 
-Key differences from the old `CompassState` + `Arc<Mutex<>>` approach:
+与旧版 `CompassState` + `Arc<Mutex<>>` 方案的主要区别：
 
-- **No manual version counter**: `bars_version` is gone. The chart citizen
-  compares `bars.len()` on each frame; a difference triggers data rebuild.
-  The reactive runtime could also notify subscribers automatically.
+- **无手动版本计数器**：`bars_version` 已移除。chart citizen 在每帧比较
+  `bars.len()`；差异触发数据重建。响应式运行时也可自动通知订阅者。
 
-- **No Mutex contention**: `Dynamic<T>` uses `RwLock` internally, but each
-  field is independent. Writing `bars` doesn't lock `loading`, so reads
-  from different fields never contend.
+- **无 Mutex 竞争**：`Dynamic<T>` 内部使用 `RwLock`，但每个字段独立。写入
+  `bars` 不会锁定 `loading`，因此不同字段的读取永远不会相互竞争。
 
-- **Clone-free reads**: citizens read via `Dynamic::get()` which returns a
-  cloned value. For `Vec<Bar>` this is an O(n) clone — acceptable because
-  bar counts are small (under 10k per stock). The chart only re-renders
-  when the count changes.
+- **免克隆读取**：citizen 通过 `Dynamic::get()` 读取，返回克隆值。对于
+  `Vec<Bar>`，这是 O(n) 的克隆操作——可以接受，因为每只股票的 K 线数量很小
+  （每只股票不到 10,000 条）。图表仅在数量变化时重新渲染。
 
-### Layer 3: Async backend via Signal/Slot
+### Layer 3: 基于 Signal/Slot 的异步后端
 
-Instead of a manual `mpsc` channel + worker thread loop, the app uses
-egui-mobius's Level 3 async dispatch:
+不再使用手动的 `mpsc` 通道 + 工作线程循环，应用使用 egui-mobius 的 Level 3
+异步派发：
 
 ```
 ┌─ UI THREAD (eframe) ─────────────────────┐
@@ -170,68 +162,67 @@ egui-mobius's Level 3 async dispatch:
 │    work_signal.send(FetchRequest) ───┐    │
 │                                     │    │
 └─────────────────────────────────────│────┘
-                                      │
-                               ┌──────▼─────────────────────┐
-                               │  AsyncDispatcher (tokio)   │
-                               │                             │
-                               │  attach_async(work_slot,   │
-                               │    result_signal,          │
-                               │    |req| async {           │
-                               │      reader.fetch(req)     │
-                               │      → FetchResponse       │
-                               │    })                      │
-                               │                             │
-                               └──────┬─────────────────────┘
-                                      │
-                               ┌──────▼─────────────────────┐
-                               │  result_slot.start()       │
-                               │    |resp| {                │
-                               │      state.bars.set(bars)  │
-                               │      state.loading.set(false)
-                               │      egui_ctx.request_repaint()
-                               │    }                       │
-                               └────────────────────────────┘
+                                       │
+                                ┌──────▼─────────────────────┐
+                                │  AsyncDispatcher (tokio)   │
+                                │                             │
+                                │  attach_async(work_slot,   │
+                                │    result_signal,          │
+                                │    |req| async {           │
+                                │      reader.fetch(req)     │
+                                │      → FetchResponse       │
+                                │    })                      │
+                                │                             │
+                                └──────┬─────────────────────┘
+                                       │
+                                ┌──────▼─────────────────────┐
+                                │  result_slot.start()       │
+                                │    |resp| {                │
+                                │      state.bars.set(bars)  │
+                                │      state.loading.set(false)
+                                │      egui_ctx.request_repaint()
+                                │    }                       │
+                                └────────────────────────────┘
 ```
 
-The wiring happens once at startup in `backend.rs`:
+连线在启动时一次性完成，位于 `backend.rs`：
 
-1. **`factory::create_signal_slot::<FetchRequest>()`** — creates a
-   `Signal<FetchRequest>` (sender) and `Slot<FetchRequest>` (receiver).
+1. **`factory::create_signal_slot::<FetchRequest>()`** —— 创建一个
+   `Signal<FetchRequest>`（发送端）和 `Slot<FetchRequest>`（接收端）。
 
-2. **`AsyncDispatcher::new()`** — owns the tokio runtime. Its
-   `attach_async()` method connects a `Slot<FetchRequest>` (input),
-   a `Signal<FetchResponse>` (output), and an async worker function.
+2. **`AsyncDispatcher::new()`** —— 持有 tokio runtime。其
+   `attach_async()` 方法连接一个 `Slot<FetchRequest>`（输入）、
+   一个 `Signal<FetchResponse>`（输出）和一个异步工作函数。
 
-3. **`result_slot::start()`** — a closure that runs on the UI thread
-   whenever a `FetchResponse` arrives. It writes results into the
-   `Dynamic<T>` fields and calls `request_repaint()`.
+3. **`result_slot::start()`** —— 一个在 UI 线程上运行的闭包，每当
+   `FetchResponse` 到达时执行。它将结果写入 `Dynamic<T>` 字段并调用
+   `request_repaint()`。
 
-The `BackendHandle` struct owns the `AsyncDispatcher`. As long as it's
-alive (stored on `CompassApp`), the tokio runtime keeps running. Dropping
-it shuts everything down cleanly.
+`BackendHandle` 结构体持有 `AsyncDispatcher`。只要它存活（存储在 `CompassApp`
+上），tokio runtime 就持续运行。丢弃它会干净地关闭一切。
 
-### Threading summary
+### 线程总结
 
-| Thread | Role | Code |
+| 线程 | 角色 | 代码 |
 |---|---|---|
-| **Main (UI)** | egui rendering, citizen outbox drain, event routing, result slot handler | `CompassApp::ui()` |
-| **AsyncDispatcher** | Tokio multi-thread runtime, receives `FetchRequest`, runs `DuckDbProvider`, sends `FetchResponse` | `AsyncDispatcher` via `backend.rs` |
+| **主线程 (UI)** | egui 渲染、citizen outbox 排空、事件路由、result slot 处理器 | `CompassApp::ui()` |
+| **AsyncDispatcher** | Tokio 多线程 runtime，接收 `FetchRequest`，运行 `DuckDbProvider`，发送 `FetchResponse` | `AsyncDispatcher`，通过 `backend.rs` |
 
-The old pattern used a manual `std::thread::spawn` + `mpsc::channel` +
-`Arc<Mutex<CompassState>>`. The new pattern replaces all three with
-framework-managed primitives: citizens own presentation, `Dynamic<T>`
-owns state, and `Signal`/`Slot` + `AsyncDispatcher` own async I/O.
+旧模式使用手动 `std::thread::spawn` + `mpsc::channel` +
+`Arc<Mutex<CompassState>>`。新模式用框架管理的原语替换了这三者：
+citizen 管理表现层，`Dynamic<T>` 管理状态，`Signal`/`Slot` +
+`AsyncDispatcher` 管理异步 I/O。
 
-### spawn_blocking for DuckDB
+### DuckDB 的 spawn_blocking
 
-DuckDB's C API is synchronous. All DuckDB queries run inside
-`tokio::task::spawn_blocking`, which moves the blocking work to a dedicated
-thread pool. This keeps the tokio runtime responsive for other async tasks
-(HTTP fetches, timers). This part hasn't changed from the previous architecture.
+DuckDB 的 C API 是同步的。所有 DuckDB 查询都在
+`tokio::task::spawn_blocking` 内部运行，将阻塞工作移至专用线程池。
+这使得 tokio runtime 对其他异步任务（HTTP 请求、计时器）保持响应。
+这部分与之前的架构没有变化。
 
-## Data pipeline: from user click to chart
+## 数据管线：从用户点击到图表
 
-When you type `600519`, select `1d`, and click "Fetch", here's what happens:
+当您输入 `600519`、选择 `1d` 并点击 "Fetch" 时，发生以下流程：
 
 ```
 UI (CompassApp::ui)
@@ -273,17 +264,15 @@ UI (next frame)
   │  chart.show(ui) renders candlestick chart
 ```
 
-### Why local-only?
+### 为什么只使用本地数据？
 
-With #31 and #32, the GUI reads all data from local Parquet files. No remote
-fallback, no negative cache, no inflight dedup. The data pipeline (import from
-Dolt, collectors from EastMoney) runs offline; the GUI only queries what's
-already on disk.
+随着 #31 和 #32 的实现，GUI 从本地 Parquet 文件读取所有数据。无远程回退、
+不使用 negative cache、无飞行中请求去重。数据管线（从 Dolt 导入、从 EastMoney
+采集）离线运行；GUI 仅查询已落盘的数据。
 
-## Data pipeline: CLI (compass-data)
+## 数据管线：CLI (compass-data)
 
-The CLI manages data offline, before the GUI ever runs. Its subcommands form a
-pipeline:
+CLI 在 GUI 运行之前离线管理数据。其子命令形成一条管线：
 
 ```
 Dolt investment_data ──import─────────► parquet_data/
@@ -292,75 +281,73 @@ parquet_data/ ────────export──────────► du
 parquet_data/ ────────backup──────────► Baidu Cloud (zip)
 ```
 
-The project also maintains its own Dolt repository `compass_data/` for
-custom mutable data (company profiles, financial indicators, watchlists),
-stored alongside the read-only `investment_data`. Queries join across both
-databases: `compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`.
-See `kb/dev/process.md#dolt-database-queries` for usage examples.
+项目还维护自己的 Dolt 仓库 `compass_data/`，用于自定义可变数据（公司信息、
+财务指标、自选股列表），与只读的 `investment_data` 并存。查询可跨两个数据库
+联结：`compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`。
+使用示例见 `kb/dev/process.md#dolt-database-queries`。
 
-### collectors: Python data pipeline
+### collectors：Python 数据管线
 
 ```
 EastMoney API ──collectors──► CSV ──import──► compass_data (Dolt)
 ```
 
-The `collectors/` directory contains Python scripts (uv + curl_cffi) for
-fetching data from EastMoney public APIs and importing into Dolt:
+`collectors/` 目录包含 Python 脚本（uv + curl_cffi），用于从 EastMoney 公开
+API 获取数据并导入 Dolt：
 
-| Script | Purpose | Data |
+| 脚本 | 用途 | 数据 |
 |---|---|---|
-| `main.py` | 统一 CLI: fetch/import/sync/sync-investment | — |
-| `fetch_stock_basic.py` | 公司基本信息 | 12,388 stocks, 13 fields |
-| `fetch_fin_indicators.py` | 财务指标 | 126K rows, 37 fields, 2020-2026 |
-| `fetch_balance_sheet.py` | 资产负债表 | 57 fields, quarterly, RPT_DMSK_FN_BALANCE |
-| `fetch_income.py` | 利润表 | 46 fields, quarterly, RPT_DMSK_FN_INCOME |
-| `fetch_cash_flow.py` | 现金流量表 | 48 fields, quarterly, RPT_DMSK_FN_CASHFLOW |
+| `main.py` | 统一 CLI：fetch/import/sync/sync-investment | — |
+| `fetch_stock_basic.py` | 公司基本信息 | 12,388 只股票，13 个字段 |
+| `fetch_fin_indicators.py` | 财务指标 | 126K 行，37 个字段，2020-2026 |
+| `fetch_balance_sheet.py` | 资产负债表 | 57 个字段，按季度，RPT_DMSK_FN_BALANCE |
+| `fetch_income.py` | 利润表 | 46 个字段，按季度，RPT_DMSK_FN_INCOME |
+| `fetch_cash_flow.py` | 现金流量表 | 48 个字段，按季度，RPT_DMSK_FN_CASHFLOW |
 
-Toolchain: `uv` (Python dependency manager) + `ruff` (lint/formatter) +
-`pytest` (16 tests) + `mypy` (type checking). CI via GitHub Actions,
-pre-commit/pre-push hooks enforce lint + test on every change.
+工具链：`uv`（Python 依赖管理器）+ `ruff`（lint/格式化）+
+`pytest`（16 个测试）+ `mypy`（类型检查）。CI 通过 GitHub Actions 运行，
+pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 
-Key design decisions:
-- **curl_cffi** over httpx/aiohttp: EastMoney checks TLS fingerprints (JA3/JA4);
-  curl_cffi impersonates Chrome to bypass detection
-- **CSV as intermediate**: eastmoney → CSV → Dolt, not direct
-- **Incremental mode**: state files (`.state.json`) track last fetch date;
-  `--incremental` flag fetches only new report periods
-- **Known limitation**: REPORTDATE-based increments cannot detect revisions to
-  already-fetched periods (e.g. 五粮液 2025Q1 revision). A periodic `--refresh N`
-  flag is planned (see issue #27).
+关键设计决策：
+- **curl_cffi** 而非 httpx/aiohttp：EastMoney 检查 TLS 指纹（JA3/JA4）；
+  curl_cffi 模拟 Chrome 以绕过检测
+- **CSV 作为中间格式**：eastmoney → CSV → Dolt，而非直接写入
+- **增量模式**：状态文件（`.state.json`）记录上次获取日期；
+  `--incremental` 标志仅获取新的报告期间
+- **已知限制**：基于 REPORTDATE 的增量无法检测已获取期间的修订
+  （例如五粮液 2025Q1 修订）。计划使用周期性 `--refresh N` 标志（见 issue #27）
 
-### import: Dolt investment_data → Parquet
-- Queries Dolt `investment_data` database via `dolt sql -r parquet`
-- Extracts 6000+ stocks from `final_a_stock_eod_price` table (18M+ rows)
-- Writes to a single `parquet_data/stock_daily.parquet` with a `symbol` column
-- Writes the full dataset directly (no merge mode, no `--overwrite` flag)
-- `--since` enables incremental imports of newer data
-- Also writes `stock_basic.parquet` and `stock_daily.symbols.txt`
+### import：Dolt investment_data → Parquet
+- 通过 `dolt sql -r parquet` 查询 Dolt `investment_data` 数据库
+- 从 `final_a_stock_eod_price` 表中提取 6000+ 只股票（18M+ 行）
+- 写入单个 `parquet_data/stock_daily.parquet` 文件，包含 `symbol` 列
+- 直接写入完整数据集（无合并模式，无 `--overwrite` 标志）
+- `--since` 支持增量导入较新数据
+- 同时写入 `stock_basic.parquet` 和 `stock_daily.symbols.txt`
 
-### import-compass: Dolt compass_data → Parquet
-- Imports our own tables (`stock_basic`, `fin_indicators`, `fin_balance_sheet`,
-  `fin_income`, `fin_cash_flow`) into Parquet
-- `--overwrite` replaces existing data; default is merge/skip (new data only)
-- `--since` for incremental imports
+### import-compass：Dolt compass_data → Parquet
+- 将我们自己的表（`stock_basic`、`fin_indicators`、`fin_balance_sheet`、
+  `fin_income`、`fin_cash_flow`）导入 Parquet
+- `--overwrite` 替换已有数据；默认合并/跳过（仅新增数据）
+- `--since` 用于增量导入
 
-### export: Parquet → other formats
-- Reads parquet_data/ directory
-- Exports to DuckDB, CSV, or parquet-dir format
-- `--overwrite` replaces existing data
+### export：Parquet → 其他格式
+- 读取 parquet_data/ 目录
+- 导出为 DuckDB、CSV 或 parquet-dir 格式
+- `--overwrite` 替换已有数据
 
-### backup: Parquet → Baidu Cloud
-- Zips `parquet_data/` using Python zipfile (no system `zip` dependency)
-- Uploads to Baidu Cloud via `baidupcs` CLI (`BaiduPCS-Go`)
-- Timestamped filenames: `parquet_data-YYYYMMDD-HHMMSS.zip`
-- Target folder: `/compass/` on Baidu Cloud
-- `--keep-zip` flag preserves local zip after upload
+### backup：Parquet → 百度云
+- 使用 Python zipfile 压缩 `parquet_data/`（无系统 `zip` 依赖）
+- 通过 `baidupcs` CLI（`BaiduPCS-Go`）上传到百度云
+- 带时间戳的文件名：`parquet_data-YYYYMMDD-HHMMSS.zip`
+- 目标文件夹：百度云上的 `/compass/`
+- `--keep-zip` 标志在上传后保留本地 zip 文件
 
-**Overwrite semantics**: `import-compass` and `export` default to merge/skip —
-existing data is preserved, only new data is added. Pass `--overwrite` to
-replace. `import` always writes the full dataset directly from Dolt.
+**覆盖语义**：`import-compass` 和 `export` 默认合并/跳过——已有数据保留，
+仅添加新数据。传入 `--overwrite` 进行替换。`import` 始终直接从 Dolt 写入
+完整数据集。
 
-## Storage strategy: why both DuckDB and Parquet?
+## 存储策略：为什么同时使用 DuckDB 和 Parquet？
 
 ```
 Compass uses two database formats for different purposes:
@@ -376,57 +363,52 @@ Compass uses two database formats for different purposes:
     └─ no_data_marks — negative cache table (trait implemented, GUI does not use)
 ```
 
-### Why Parquet as source of truth?
+### 为什么以 Parquet 作为唯一数据源？
 
-- **Columnar**: DuckDB queries only read the columns they need (e.g., `SELECT
-  close` reads only the close column). Much faster than row-based formats for
-  analytical queries across thousands of bars.
-- **Partitioned by symbol**: each stock is one file. Adding a new stock is a
-  new file — no table rebuilds. Deleting is `rm`.
-- **Queryable**: DuckDB's `read_parquet()` function lets us query Parquet files
-  directly with SQL, without loading them into tables.
-- **Portable**: Parquet is an open standard. You can open it with Python
-  (pandas, polars), R, or any DuckDB instance. No vendor lock-in.
-- **Compact**: columnar compression reduces storage. 6000+ stocks × 30 years ≈
-  manageable disk footprint.
+- **列式存储**：DuckDB 查询仅读取需要的列（例如 `SELECT close` 只读取 close
+  列）。对于跨数千条 K 线的分析查询，比行式格式快得多。
+- **按股票分区**：每只股票一个文件。添加新股票就是新建一个文件——无需重建表。
+  删除就是 `rm`。
+- **可直接查询**：DuckDB 的 `read_parquet()` 函数允许直接用 SQL 查询 Parquet
+  文件，无需将其加载到表中。
+- **可移植**：Parquet 是开放标准。可以用 Python（pandas、polars）、R 或任何
+  DuckDB 实例打开。无厂商锁定。
+- **紧凑**：列式压缩减少存储。6000+ 只股票 × 30 年 ≈ 可管理的磁盘占用。
 
-### Why DuckDB for caching?
+### 为什么用 DuckDB 做缓存？
 
-- **Write-friendly**: INSERT OR REPLACE/IGNORE semantics; automatic primary key
-  conflict handling. Parquet is append-only and harder to update.
-- **In-memory mode**: tests use `DuckDbProvider::new_in_memory()` for fully
-  isolated databases with zero cleanup.
-- **Bundled**: the `duckdb` crate bundles the C library — no system dependency.
-- **OLAP-optimized**: DuckDB is built for analytical workloads (aggregations,
-  window functions, time-series queries), which maps perfectly to stock data.
+- **写入友好**：INSERT OR REPLACE/IGNORE 语义；自动处理主键冲突。Parquet
+  仅支持追加，更难更新。
+- **内存模式**：测试使用 `DuckDbProvider::new_in_memory()` 创建完全隔离的
+  数据库，零清理成本。
+- **内置捆绑**：`duckdb` crate 捆绑 C 库——无系统依赖。
+- **OLAP 优化**：DuckDB 专为分析工作负载（聚合、窗口函数、时序查询）构建，
+  完美映射股票数据。
 
-### The read path
+### 读取路径
 
-The GUI reads from Parquet via `DuckDbProvider` (in-memory DuckDB with
-`read_parquet()` fallback on cache miss). The CLI writes exported data into a
-file-backed DuckDB. This two-tier design separates the concerns of "fast
-writes and caching" (DuckDB) from "durable, queryable storage" (Parquet).
+GUI 通过 `DuckDbProvider`（内存 DuckDB，缓存未命中时用 `read_parquet()`
+回退）从 Parquet 读取数据。CLI 将导出数据写入文件-backed DuckDB。这种
+两层设计分离了"快速写入与缓存"（DuckDB）和"持久、可查询存储"（Parquet）
+的关注点。
 
-## Symbol convention: Dolt-native prefixed codes
+## 符号约定：Dolt-native 前缀代码
 
-Every stock in Compass is identified by its Dolt-native symbol with exchange
-prefix: `"SZ000001"`, `"SH600519"`, `"BJ836149"`. The 2-letter prefix
-(SZ/SH/BJ) is part of the canonical identifier — it's in the Parquet
-filename, in the database column, and in the API. Bare 6-digit input is
-accepted as a convenience and resolved via exchange inference.
+Compass 中的每只股票由其带交易所前缀的 Dolt-native 符号标识：
+`"SZ000001"`、`"SH600519"`、`"BJ836149"`。2 字母前缀（SZ/SH/BJ）是规范
+标识符的一部分——它出现在 Parquet 文件名中、数据库列中以及 API 中。
+为方便使用，接受裸 6 位数字输入，并通过交易所推断解析。
 
-The older `ts_code` format (`"000001.SZ"`) was retired because it mixes
-identity with metadata: the exchange is already determinable from the code
-range, making the suffix redundant.
+旧版 `ts_code` 格式（`"000001.SZ"`）已废弃，因为它将标识与元数据混在一起：
+交易所已经可以从代码区间推断，后缀是冗余的。
 
-See `kb/design/symbols.md` for the complete market segment breakdown, exchange
-inference rules, explicit prefixes, and timeframe mapping.
+完整的市场分段、交易所推断规则、显式前缀和时间周期映射见
+`kb/design/symbols.md`。
 
-## Config system
+## 配置系统
 
-Compass loads config from `~/.config/compass/config.toml` on startup. All
-fields are optional — missing keys fall back to sensible defaults defined in
-`AppConfig::default()`.
+Compass 在启动时从 `~/.config/compass/config.toml` 加载配置。所有字段均为
+可选——缺失的键回退到 `AppConfig::default()` 中定义的合理默认值。
 
 ```toml
 [parquet]
@@ -441,16 +423,15 @@ default_symbol = "000001"     # what to show on startup
 default_timeframe = "1d"
 ```
 
-The config path is `$HOME/.config/compass/config.toml`. If the file doesn't
-exist or can't be parsed, the app starts with all defaults — no manual setup
-required. See `kb/user/config.md` for the full reference.
+配置路径为 `$HOME/.config/compass/config.toml`。如果文件不存在或无法解析，
+应用以所有默认值启动——无需手动设置。完整参考见 `kb/user/config.md`。
 
-## Logging
+## 日志
 
-Logs go to **two sinks** simultaneously:
+日志同时写入**两个输出端**：
 
-1. **stderr** — always; level controlled by `RUST_LOG` env var
-2. **`logs/compass.log`** — daily rolling file with ANSI stripped
+1. **stderr** —— 始终输出；级别由 `RUST_LOG` 环境变量控制
+2. **`logs/compass.log`** —— 每日滚动文件，ANSI 已剥离
 
 ```sh
 RUST_LOG=debug cargo run    # verbose: see every HTTP request, DuckDB query
@@ -458,47 +439,44 @@ RUST_LOG=info cargo run     # normal: state transitions, fetch counts, errors
 RUST_LOG=warn cargo run     # quiet: only problems
 ```
 
-The file appender uses `tracing-appender`'s daily rotation — each day gets a
-new file (`compass.log.2025-07-23`), and the current day is always
-`compass.log`.
+文件 appender 使用 `tracing-appender` 的每日滚动——每天一个新文件
+（`compass.log.2025-07-23`），当天始终是 `compass.log`。
 
-## Library decisions
+## 库选型
 
-Every library choice in Compass was deliberate. Here's why each one was chosen:
+Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的选择理由：
 
-| # | Decision | Choice | Why |
+| # | 决策 | 选择 | 理由 |
 |---|---|---|---|
-| 1 | GUI framework | egui 0.35 + eframe | Pure-Rust immediate-mode GUI. No HTML/CSS/JS, no webview dependency. Compiles to a single native binary. |
-| 2 | Chart widget | egui-charts (qiboda fork, `compass` branch) | Candlestick chart with built-in pan, zoom, crosshair. Matches the egui ecosystem. Forked from upstream for compass-specific fixes. |
-| 3 | Async runtime | tokio (rt-multi-thread) | DuckDbProvider uses tokio::spawn_blocking for synchronous DuckDB queries. CLI uses current_thread for simplicity. |
-| 4 | HTTP client | reqwest 0.12 (rustls-tls) | Used by the library for `DataError::Network`. GUI has no direct HTTP dependency — all data is local. |
-| 5 | Database | duckdb 1.0 (bundled) | OLAP-optimized columnar engine. Reads/writes Parquet natively. The `bundled` feature ships the C library — no system duckdb required. |
-| 6 | DB threading | spawn_blocking + Mutex | DuckDB is synchronous C. `spawn_blocking` moves queries to a thread pool so they don't block the async runtime. Mutex on the DuckDB connection ensures exclusive access. |
-| 7 | Serialization | serde + serde_json | Config parsing and test data. serde derives on all data types. |
-| 8 | Time handling | chrono 0.4 | UTC timestamps, date arithmetic (range_start/end calculation), JSON parse support. |
-| 9 | Error types | thiserror 2 (library), anyhow 1 (binaries) | Precise `DataError` enum with `From` impls for `?` propagation in the library. `anyhow` for context-wrapping in binary entry points. |
-| 10 | Logging | tracing + subscriber + appender | Structured, async, level-filtered. Daily rolling files via tracing-appender. |
-| 11 | Async traits | async-trait 0.1 | Native async traits in Rust are still unstable. This macro is the standard workaround. |
-| 12 | Config | toml → Deserialize | Simple, readable format. `#[serde(default)]` on every field means partial configs work. |
-| 13 | CLI args | clap 4 (derive) | Derive macro generates the CLI parser from a struct. Type-safe, self-documenting. |
-| 14 | Progress bars | indicatif 0.17 | Spinner + progress bar for long-running CLI operations (import). |
-| 15 | Concurrency | futures Semaphore + buffer_unordered | Bounded parallelism for bulk imports. Semaphore caps concurrent operations; buffer_unordered preserves order while processing results as they arrive. |
-| 16 | Reactive state | egui_mobius_reactive `Dynamic<T>` | Per-field `Dynamic<T>` replaces monolithic `Arc<Mutex<CompassState>>`. No manual version counter, no cross-field lock contention. Each field is independently readable/writable. |
-| 17 | Citizen pattern | egui_citizen (Citizen trait) | Frameworks citizen lifecycle (register, activate, deactivate, drain) and eliminates manual thread wiring. Citizens use outbox pattern — no direct backend coupling. |
-| 18 | Dock layout | egui_dock 0.20 | Tabbed dockable panels with resize and rearrange. Bridges to citizen activation via TabViewer. Replaces manual panel layout. |
-| 19 | Async dispatch | egui_mobius `Signal`/`Slot` + `AsyncDispatcher` | Typed channels replace `mpsc::channel` for command dispatch. `AsyncDispatcher` manages its own tokio runtime — no `std::thread::spawn` + `rt.block_on` boilerplate. |
-| 20 | Provider traits | DataProvider + DataWriter + NegativeCache | Trait-based abstraction for data backends: DuckDB, Parquet — all behind the same interface. Testable with mock implementations. |
-| 21 | Parquet storage | DuckDB read_parquet + COPY TO | Columnar format partitioned by symbol. Queryable without loading into tables. |
-| 22 | Dolt import | dolt CLI → Parquet (direct) | Offline bulk import of 18M+ rows. Dolt `sql -r parquet` writes binary Parquet directly, skipping the CSV intermediary. |
+| 1 | GUI 框架 | egui 0.35 + eframe | 纯 Rust 即时模式 GUI。无 HTML/CSS/JS，无 webview 依赖。编译为单个原生二进制文件。 |
+| 2 | 图表组件 | egui-charts（qiboda fork，`compass` 分支） | K 线图，内置平移、缩放、十字准线。与 egui 生态系统匹配。从上游 fork 以进行 compass 特定修复。 |
+| 3 | 异步运行时 | tokio（rt-multi-thread） | DuckDbProvider 使用 tokio::spawn_blocking 处理同步 DuckDB 查询。CLI 使用 current_thread 以简化。 |
+| 4 | HTTP 客户端 | reqwest 0.12（rustls-tls） | 库用于 `DataError::Network`。GUI 无直接 HTTP 依赖——所有数据均为本地。 |
+| 5 | 数据库 | duckdb 1.0（bundled） | OLAP 优化的列式引擎。原生读写 Parquet。`bundled` feature 自带 C 库——无需系统 duckdb。 |
+| 6 | 数据库线程 | spawn_blocking + Mutex | DuckDB 是同步 C 库。`spawn_blocking` 将查询移至线程池，不阻塞异步运行时。DuckDB 连接上的 Mutex 确保独占访问。 |
+| 7 | 序列化 | serde + serde_json | 配置解析和测试数据。所有数据类型派生 serde。 |
+| 8 | 时间处理 | chrono 0.4 | UTC 时间戳、日期算术（range_start/end 计算）、JSON 解析支持。 |
+| 9 | 错误类型 | thiserror 2（库）、anyhow 1（二进制） | 库中使用精确的 `DataError` 枚举，带 `From` 实现以支持 `?` 传播。二进制入口点使用 `anyhow` 包装上下文。 |
+| 10 | 日志 | tracing + subscriber + appender | 结构化、异步、级别过滤。通过 tracing-appender 每日滚动文件。 |
+| 11 | 异步 trait | async-trait 0.1 | Rust 原生异步 trait 仍不稳定。此宏是标准替代方案。 |
+| 12 | 配置 | toml → Deserialize | 简单、可读的格式。每个字段 `#[serde(default)]` 使部分配置可用。 |
+| 13 | CLI 参数 | clap 4（derive） | derive 宏从结构体生成 CLI 解析器。类型安全、自文档化。 |
+| 14 | 进度条 | indicatif 0.17 | 长时间运行的 CLI 操作（导入）的 spinner + 进度条。 |
+| 15 | 并发 | futures Semaphore + buffer_unordered | 批量导入的有界并行。Semaphore 限制并发操作；buffer_unordered 在结果到达时处理，同时保持顺序。 |
+| 16 | 响应式状态 | egui_mobius_reactive `Dynamic<T>` | 每个字段的 `Dynamic<T>` 替代了单体 `Arc<Mutex<CompassState>>`。无手动版本计数器，无跨字段锁竞争。每个字段可独立读写。 |
+| 17 | Citizen 模式 | egui_citizen（Citizen trait） | 框架管理 citizen 生命周期（register、activate、deactivate、drain），消除手动线程布线。Citizen 使用 outbox 模式——不直接耦合后端。 |
+| 18 | 停靠布局 | egui_dock 0.20 | 可停靠的选项卡式面板，支持调整大小和重排。通过 TabViewer 桥接到 citizen 激活。替代手动面板布局。 |
+| 19 | 异步派发 | egui_mobius `Signal`/`Slot` + `AsyncDispatcher` | 类型化通道替代 `mpsc::channel` 进行命令派发。`AsyncDispatcher` 管理自己的 tokio runtime——无需 `std::thread::spawn` + `rt.block_on` 样板代码。 |
+| 20 | Provider trait | DataProvider + DataWriter + NegativeCache | 基于 trait 的数据后端抽象：DuckDB、Parquet——全部在同一接口后面。可通过 mock 实现进行测试。 |
+| 21 | Parquet 存储 | DuckDB read_parquet + COPY TO | 按股票分区的列式格式。无需加载到表中即可查询。 |
+| 22 | Dolt 导入 | dolt CLI → Parquet（直接） | 18M+ 行的离线批量导入。Dolt `sql -r parquet` 直接写入二进制 Parquet，跳过 CSV 中间步骤。 |
 
-## Where to go next
+## 延伸阅读
 
-- **Data providers**: `kb/design/data-providers.md` — the trait system and each
-  provider implementation in depth
-- **Symbols**: `kb/design/symbols.md` — market segments, code conversion,
-  timeframe mapping
-- **API reference**: `cargo doc --open` — full type-level documentation for
-  all public APIs
+- **数据提供者**：`kb/design/data-providers.md` —— trait 体系及各 provider
+  实现的深入说明
+- **符号约定**：`kb/design/symbols.md` —— 市场分段、代码转换、时间周期映射
+- **API 参考**：`cargo doc --open` —— 所有公开 API 的完整类型级文档
 
 ## 决策记录
 

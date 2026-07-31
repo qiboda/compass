@@ -1,82 +1,72 @@
-# Data Pipeline (CLI)
+# 数据管线（CLI）
 
-## Overview
+## 概述
 
-`compass-data` manages A-share OHLCV data through four subcommands:
+`compass-data` 通过四个子命令管理 A 股 OHLCV 数据：
 
 ```
 Dolt investment_data ──import─────────► parquet_data/
 Dolt compass_data ────import-compass──► parquet_data/
 parquet_data/ ────────export──────────► duckdb / csv / parquet-dir
-parquet_data/ ────────backup──────────► Baidu Cloud (zip)
+parquet_data/ ────────backup──────────► 百度云（zip）
 ```
 
-EastMoney data is fetched by the Python collectors (`collectors/`) into Dolt
-`compass_data`, then imported via `import-compass`. The Rust CLI itself never
-talks to EastMoney.
+东方财富数据由 Python 采集器（`collectors/`）获取，存入 Dolt `compass_data`，再通过 `import-compass` 导入。Rust CLI 本身从不与东方财富通信。
 
-## Common options
+## 通用选项
 
-- **`--overwrite`** (on `import-compass` and `export`): replace existing data
-  with new values. Default behavior is merge/skip — existing data is preserved,
-  only new data is added.
-- `import` (Dolt investment_data) always writes the full dataset directly —
-  there is no `--overwrite` flag.
+- **`--overwrite`**（用于 `import-compass` 和 `export`）：用新值替换已有数据。默认行为是合并/跳过 — 已有数据保留，仅添加新数据。
+- `import`（Dolt investment_data）始终直接写入完整数据集 — 没有 `--overwrite` 标志。
 
 ---
 
-## `import` — Dolt investment_data → Parquet (Primary)
+## `import` — Dolt investment_data → Parquet（主要）
 
-Imports complete history from the local Dolt `investment_data` database into
-the Parquet main database.
+从本地 Dolt `investment_data` 数据库导入完整历史数据到 Parquet 主数据库。
 
 ```sh
 cargo run --bin compass-data -- import [OPTIONS]
 ```
 
-| Option | Default | Description |
+| 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--dolt-dir` | from config `[dolt].investment_data_dir` | Dolt database directory |
-| `--output` | from config `[parquet].dir` | Output directory for Parquet files |
-| `--symbols` | (all) | Comma-separated 6-digit codes (e.g. `000001,600519`) |
-| `--limit` | `0` (all) | Max number of symbols to import |
-| `--start-date` | (earliest) | Filter by start date (YYYYMMDD) |
-| `--end-date` | (latest) | Filter by end date (YYYYMMDD) |
-| `--since` | (none) | Incremental: only import data with tradedate >= since (YYYYMMDD) |
+| `--dolt-dir` | 来自配置 `[dolt].investment_data_dir` | Dolt 数据库目录 |
+| `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
+| `--symbols` | （全部） | 逗号分隔的 6 位代码（如 `000001,600519`） |
+| `--limit` | `0`（全部） | 最大导入股票数量 |
+| `--start-date` | （最早） | 按起始日期过滤（YYYYMMDD） |
+| `--end-date` | （最晚） | 按截止日期过滤（YYYYMMDD） |
+| `--since` | （无） | 增量导入：仅导入 tradedate >= since 的数据（YYYYMMDD） |
 
-The import reads each symbol's rows via `dolt sql -r parquet` (direct binary
-Parquet) and writes them into the single `stock_daily.parquet` file. Running it
-again re-imports the full dataset.
+导入过程通过 `dolt sql -r parquet`（直接二进制 Parquet）读取每只股票的行数据，写入单一的 `stock_daily.parquet` 文件。再次运行会重新导入完整数据集。
 
-### Output structure
+### 输出结构
 
 ```
 parquet_data/
-├── stock_basic.parquet             # Stock metadata (one file)
-├── stock_daily.parquet             # OHLCV data (single file with symbol column)
-└── stock_daily.symbols.txt         # Symbol index (one per line)
+├── stock_basic.parquet             # 股票元数据（单个文件）
+├── stock_daily.parquet             # OHLCV 数据（单文件，含 symbol 列）
+└── stock_daily.symbols.txt         # 股票索引（每行一个）
 ```
 
-The `symbol` column in `stock_daily.parquet` stores Dolt's native symbol format
-(e.g. `SZ000001`, `SH600519`). A stock (SZ) and an index (SH) sharing the same
-6-digit code are disambiguated by the exchange prefix.
+`stock_daily.parquet` 中的 `symbol` 列存储 Dolt 原生的股票代码格式（如 `SZ000001`、`SH600519`）。共享同一 6 位代码的股票（SZ）和指数（SH）通过交易所前缀区分。
 
-### Examples
+### 示例
 
 ```sh
-# Full import (all 6000+ stocks, ~1 hour)
+# 全量导入（全部 6000+ 只股票，约 1 小时）
 cargo run --bin compass-data -- import
 
-# Import specific stocks
+# 导入指定股票
 cargo run --bin compass-data -- import --symbols 000001,600519
 
-# Import with date filter
+# 带日期过滤的导入
 cargo run --bin compass-data -- import --start-date 20200101 --end-date 20250721
 
-# Import first 100 stocks (testing)
+# 导入前 100 只股票（测试用）
 cargo run --bin compass-data -- import --limit 100
 
-# Incremental: only data since 2026-07-25
+# 增量导入：仅导入 2026-07-25 以来的数据
 cargo run --bin compass-data -- import --since 20260725
 ```
 
@@ -84,177 +74,173 @@ cargo run --bin compass-data -- import --since 20260725
 
 ## `import-compass` — Dolt compass_data → Parquet
 
-Imports tables from our own `compass_data` Dolt repository (company profiles,
-financial indicators, balance sheet, income, cash flow) into Parquet.
+从我们自己的 `compass_data` Dolt 仓库导入表（公司概况、财务指标、资产负债表、利润表、现金流量表）到 Parquet。
 
 ```sh
 cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 ```
 
-| Option | Default | Description |
+| 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--table` | (required) | `stock_basic`, `fin_indicators`, `fin_balance_sheet`, `fin_income`, `fin_cash_flow` |
-| `--dolt-dir` | from config `[dolt].compass_data_dir` | Dolt database directory |
-| `--output` | from config `[parquet].dir` | Output directory for Parquet files |
-| `--overwrite` | `false` | Replace existing data instead of merging |
-| `--since` | (none) | Incremental: only import data with report_date >= since (YYYYMMDD) |
+| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow` |
+| `--dolt-dir` | 来自配置 `[dolt].compass_data_dir` | Dolt 数据库目录 |
+| `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
+| `--overwrite` | `false` | 替换已有数据而非合并 |
+| `--since` | （无） | 增量导入：仅导入 report_date >= since 的数据（YYYYMMDD） |
 
-### Examples
+### 示例
 
 ```sh
-# Import company profiles
+# 导入公司概况
 cargo run --bin compass-data -- import-compass --table stock_basic
 
-# Import financial indicators (incremental)
+# 导入财务指标（增量）
 cargo run --bin compass-data -- import-compass --table fin_indicators --since 20260101
 
-# Force overwrite
+# 强制覆盖
 cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 ```
 
 ---
 
-## `export` — Parquet → Other Formats
+## `export` — Parquet → 其他格式
 
-Exports the Parquet main database to DuckDB, CSV, or another Parquet directory.
+将 Parquet 主数据库导出为 DuckDB、CSV 或另一个 Parquet 目录。
 
 ```sh
 cargo run --bin compass-data -- export [OPTIONS]
 ```
 
-| Option | Default | Description |
+| 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--input` | from config `[parquet].dir` | Parquet data directory |
-| `--format` | `duckdb` | Output format: `duckdb`, `csv`, `parquet-dir` |
-| `--output` | `/data/compass-data/compass.duckdb` | Output path |
-| `--overwrite` | `false` | Replace existing data instead of skipping |
+| `--input` | 来自配置 `[parquet].dir` | Parquet 数据目录 |
+| `--format` | `duckdb` | 输出格式：`duckdb`、`csv`、`parquet-dir` |
+| `--output` | `/data/compass-data/compass.duckdb` | 输出路径 |
+| `--overwrite` | `false` | 替换已有数据而非跳过 |
 
-### Examples
+### 示例
 
 ```sh
-# Export to DuckDB
+# 导出到 DuckDB
 cargo run --bin compass-data -- export
 
-# Export to CSV
+# 导出到 CSV
 cargo run --bin compass-data -- export --format csv --output data.csv
 
-# Force overwrite
+# 强制覆盖
 cargo run --bin compass-data -- export --overwrite
 ```
 
 ---
 
-## `backup` — Parquet → Baidu Cloud
+## `backup` — Parquet → 百度云
 
-Zips `parquet_data/` and uploads to Baidu Cloud via `baidupcs` (BaiduPCS-Go).
+将 `parquet_data/` 打包为 zip 并通过 `baidupcs`（BaiduPCS-Go）上传到百度云。
 
 ```sh
 cargo run --bin compass-data -- backup [OPTIONS]
 ```
 
-| Option | Default | Description |
+| 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--input` | from config `[parquet].dir` | Parquet data directory to backup |
-| `--keep-zip` | `false` | Keep local zip file after upload |
+| `--input` | 来自配置 `[parquet].dir` | 要备份的 Parquet 数据目录 |
+| `--keep-zip` | `false` | 上传后保留本地 zip 文件 |
 
-- Timestamped filenames: `parquet_data-YYYYMMDD-HHMMSS.zip`
-- Target folder: `/compass/` on Baidu Cloud
-- Standalone: `scripts/upload-parquet.sh [--keep-zip]`
+- 文件名带时间戳：`parquet_data-YYYYMMDD-HHMMSS.zip`
+- 目标文件夹：百度云上的 `/compass/`
+- 独立脚本：`scripts/upload-parquet.sh [--keep-zip]`
 
 ---
 
-## Python collectors (EastMoney → Dolt)
+## Python 采集器（东方财富 → Dolt）
 
-The `collectors/` directory contains Python scripts (uv + curl_cffi) that fetch
-data from EastMoney APIs into CSV, then import into Dolt `compass_data`:
+`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从东方财富 API 获取数据并存入 CSV，再导入 Dolt `compass_data`：
 
 ```sh
 cd collectors/
-uv sync                                # first time: install dependencies
+uv sync                                # 首次：安装依赖
 
 uv run python main.py fetch stock_basic
-uv run python main.py sync             # fetch + import all
+uv run python main.py sync             # 获取 + 导入全部
 uv run python main.py sync-investment --restart
 ```
 
-Key concepts:
-- **curl_cffi** for TLS impersonation (EastMoney anti-crawler)
-- **CSV as intermediary** between API and Dolt
-- **`.state.json`** files track last fetch for incremental updates
-- **`--resume`** flag to continue interrupted fetches
+关键概念：
+- **curl_cffi** 用于 TLS 伪装（东方财富反爬虫）
+- **CSV 作为中间格式**，连接 API 与 Dolt
+- **`.state.json`** 文件跟踪上次获取时间，用于增量更新
+- **`--resume`** 标志用于继续中断的获取
 
-See `kb/design/architecture.md` for the full collectors pipeline description.
+采集器管线的完整描述见 `kb/design/architecture.md`。
 
 ---
 
-## Typical workflows
+## 典型工作流
 
-### First-time setup (from Dolt)
+### 首次设置（从 Dolt）
 
 ```sh
-# 1. Import all data from Dolt investment_data
+# 1. 从 Dolt investment_data 导入全部数据
 cargo run --bin compass-data -- import
 
-# 2. Import company profiles from Dolt compass_data
+# 2. 从 Dolt compass_data 导入公司概况
 cargo run --bin compass-data -- import-compass --table stock_basic
 
-# 3. Launch the chart app
+# 3. 启动图表应用
 cargo run
 ```
 
-### Fetch new data from EastMoney
+### 从东方财富获取新数据
 
 ```sh
-# 1. Fetch latest data into Dolt compass_data (Python collectors)
+# 1. 将最新数据获取到 Dolt compass_data（Python 采集器）
 cd collectors/
 uv run python main.py sync
 
-# 2. Import the new tables into Parquet
+# 2. 将新表导入到 Parquet
 cargo run --bin compass-data -- import-compass --table fin_indicators --since 20260101
 ```
 
-### Backup to Baidu Cloud
+### 备份到百度云
 
 ```sh
-cargo run --bin compass-data -- backup            # upload zip
-cargo run --bin compass-data -- backup --keep-zip # keep local zip after upload
+cargo run --bin compass-data -- backup            # 上传 zip
+cargo run --bin compass-data -- backup --keep-zip # 上传后保留本地 zip
 ```
 
 ---
 
-## Troubleshooting
+## 排障
 
-### Rate limiting (collectors)
+### 速率限制（采集器）
 
-EastMoney throttles aggressive requests. In `collectors/`, reduce concurrency
-and increase delay:
+东方财富会限制激进请求。在 `collectors/` 中，降低并发并增加延迟：
 
 ```sh
 uv run python main.py sync --concurrency 1 --delay-ms 3000
 ```
 
-### Dolt not found
+### Dolt 未找到
 
 ```sh
-# Verify Dolt is installed and investment_data/ exists
+# 验证 Dolt 已安装且 investment_data/ 存在
 dolt --data-dir=investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
 ```
 
-### Import is slow
+### 导入速度慢
 
-Import queries Dolt 6000+ times — each query takes ~0.5s. Total time is determined
-by Dolt query speed, not file I/O. Date filtering speeds it up:
+导入过程查询 Dolt 6000 多次 — 每次查询约 0.5 秒。总时间由 Dolt 查询速度决定，而非文件 I/O。日期过滤可加速：
 
 ```sh
 cargo run --bin compass-data -- import --start-date 20240101
 ```
 
-### Logs
+### 日志
 
-Set `RUST_LOG` for verbose output:
+设置 `RUST_LOG` 以获取详细输出：
 
 ```sh
 RUST_LOG=debug cargo run --bin compass-data -- import
 ```
 
-Logs appear on stderr and in `logs/compass.log` (daily rolling).
+日志输出到 stderr 和 `logs/compass.log`（按日滚动）。

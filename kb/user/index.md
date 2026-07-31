@@ -1,61 +1,56 @@
-# Compass User Guide
+# Compass 用户指南
 
-Compass is a **local-first A-share stock chart application** with a data
-pipeline for managing historical market data.
+Compass 是一个**本地优先的 A 股股票图表应用**，配备用于管理历史行情数据的数据管线。
 
-## What you can do
+## 功能概览
 
-| Tool | What it does |
+| 工具 | 用途 |
 |---|---|
-| **Chart app** (`cargo run`) | View interactive candlestick charts for any A-share stock |
-| **Data pipeline** (`compass-data`) | Import, export, and back up market data |
+| **图表应用** (`cargo run`) | 查看任意 A 股股票的交互式 K 线图 |
+| **数据管线** (`compass-data`) | 导入、导出和备份行情数据 |
 
-## How data works
+## 数据机制
 
-Compass stores all market data **locally on your machine**. Once imported,
-charts render instantly — no internet, no API keys, no rate limits.
+Compass 将所有行情数据存储在**本地机器上**。数据导入后，图表即时渲染 — 无需联网、无需 API 密钥、无速率限制。
 
 ```
-Data sources → Import → Parquet files → Chart app
+数据源 → 导入 → Parquet 文件 → 图表应用
 ```
 
-There are two ways data gets into the local Parquet database:
+数据进入本地 Parquet 数据库有两种方式：
 
-| Source | What | When to use |
+| 数据源 | 内容 | 适用场景 |
 |---|---|---|
-| **Dolt** (`investment_data`) | Complete A-share EOD history (1990–present, 18M+ rows) | Bulk import via `compass-data import` |
-| **EastMoney** (online) | Real-time and historical data via Python collectors | Fetch data not yet in Dolt, then import |
+| **Dolt** (`investment_data`) | 完整的 A 股日线历史数据（1990 年至今，1800 万+ 行） | 通过 `compass-data import` 批量导入 |
+| **东方财富**（在线） | 实时和历史数据，由 Python 采集器获取 | 获取 Dolt 中尚未存在的数据，再导入 |
 
-Dolt is the **primary** data source — complete, offline, fast. EastMoney data
-is fetched by the Python collectors (`collectors/`) and flows into Dolt
-`compass_data`, then into Parquet via import. The GUI itself is **local-only** —
-it never calls EastMoney directly.
+Dolt 是**主要**数据源 — 完整、离线、快速。东方财富数据由 Python 采集器（`collectors/`）获取，先写入 Dolt `compass_data`，再通过 import 转为 Parquet。GUI 本身**仅限本地** — 它从不直接调用东方财富接口。
 
-## Quickstart
+## 快速开始
 
 ```sh
-# 1. Import all A-share history from Dolt (one-time, ~1 hour)
+# 1. 从 Dolt 导入全部 A 股历史数据（一次性，约 1 小时）
 cargo run --bin compass-data -- import
 
-# 2. Launch the chart app
+# 2. 启动图表应用
 cargo run
 
-# Type a stock code (e.g. 600519) and click Fetch
+# 输入股票代码（如 600519），点击 Fetch
 ```
 
-## Prerequisites
+## 前置条件
 
-- **Rust** ≥ 1.85 (edition 2024)
-- **Display server** (X11 or Wayland) for the GUI
-- **Dolt CLI** for `compass-data import`
-- **Dolt database** `investment_data/` for the import source
+- **Rust** ≥ 1.85（edition 2024）
+- **显示服务器**（X11 或 Wayland）用于 GUI
+- **Dolt CLI** 用于 `compass-data import`
+- **Dolt 数据库** `investment_data/` 作为导入数据源
 
-## Documentation map
+## 文档地图
 
-| Document | Covers |
+| 文档 | 内容 |
 |---|---|
-| [GUI](gui.md) | Chart app — symbol input, timeframe, controls |
-| [CLI](cli.md) | Data pipeline — download, import, merge, export |
-| [Config](config.md) | `config.toml` — all options and defaults |
+| [GUI](gui.md) | 图表应用 — 股票代码输入、时间周期、控件 |
+| [CLI](cli.md) | 数据管线 — 导入、导出、备份 |
+| [配置](config.md) | `config.toml` — 全部选项与默认值 |
 
-For developers: [kb/design/](../design/architecture.md) covers system design and architecture.
+面向开发者：[kb/design/](../design/architecture.md) 涵盖系统设计与架构。

@@ -1,71 +1,68 @@
-# CI-Fix — CI Failure Diagnosis (Supplementary)
+# CI-Fix — CI 失败诊断（补充）
 
-> **Note**: CI failures are now routed through `/fix` (see `kb/github/fix.md`).
-> This file contains additional CI-specific diagnostic guidance referenced by `fix.md`.
+> **注意**：CI 失败现在通过 `/fix` 处理（参见 `kb/github/fix.md`）。
+> 本文件包含 `fix.md` 引用的 CI 专项诊断指南。
 
-## Role
+## 角色
 
-You diagnose CI workflow failures. When the `CI` workflow fails, you
-automatically analyze the failure and report findings. You do NOT fix
-anything — you diagnose and report.
+你诊断 CI 工作流失败。当 `CI` 工作流失败时，你自动分析失败并报告发现。你不修复任何内容 —— 只诊断和报告。
 
-## Process
+## 流程
 
-### 1. Gather context
-- Check the CI run logs (available via GitHub Actions API or run URL)
-- Identify which job failed: Build, Clippy, Format, Docs, Test, Bench, Coverage, Python Lint, Python Test
-- Read the error output
+### 1. 收集上下文
+- 检查 CI 运行日志（可通过 GitHub Actions API 或运行 URL 获取）
+- 识别失败的 job：Build、Clippy、Format、Docs、Test、Bench、Coverage、Python Lint、Python Test
+- 阅读错误输出
 
-### 2. Classify the failure
+### 2. 分类失败
 
-| Failure Type | Examples |
+| 失败类型 | 示例 |
 |---|---|
-| Compile error | Type mismatch, missing import, syntax error |
-| Clippy warning | `unwrap()` usage, dead code, complex expression |
-| Format check | Indentation, line length, trailing whitespace |
-| Test failure | Assertion failed, panic, timeout |
-| Doc error | Broken doc link, missing docs on public API |
-| Infrastructure | Dolt install failed, network timeout, disk full |
+| 编译错误 | 类型不匹配、缺少导入、语法错误 |
+| Clippy 警告 | `unwrap()` 使用、死代码、复杂表达式 |
+| 格式检查 | 缩进、行长超限、尾随空格 |
+| 测试失败 | 断言失败、panic、超时 |
+| 文档错误 | 断链、公共 API 缺少文档 |
+| 基础设施 | Dolt 安装失败、网络超时、磁盘满 |
 
-### 3. Determine scope
+### 3. 确定范围
 
-- **Recent commit caused it**: check `git log -1` for the likely culprit
-- **Pre-existing**: the failure existed before the latest commit
-- **Flaky**: intermittent failure, passed on retry
+- **最近提交导致**：通过 `git log -1` 检查可能的起因
+- **预先存在**：失败在最新提交之前就已存在
+- **不稳定的**：间歇性失败，重试时通过
 
-### 4. Diagnose root cause
+### 4. 诊断根因
 
-- Pinpoint the exact file, line, and reason
-- If it's a Rust compile/clippy/test error, quote the exact error message
-- If it's infrastructure, check if it's transient
+- 精确定位到具体文件、行号和原因
+- 如果是 Rust 编译/clippy/测试错误，引用确切的错误信息
+- 如果是基础设施问题，检查是否为临时故障
 
-### 5. Report
+### 5. 报告
 
-Post a comment on the failing commit or create an issue with:
+在失败的提交上发布评论或创建 issue，内容如下：
 
 ```
-## CI Failure Diagnosis
+## CI 失败诊断
 
-**Failed job**: <job_name>
-**Root cause**: <file:line if applicable> — <explanation>
+**失败的 job**：<job_name>
+**根因**：<file:line 如适用> — <说明>
 
-**Error**:
+**错误**：
 ```
-<exact error output>
-```
-
-**Likely culprit**: <commit or pre-existing>
-
-**Proposed fix**:
-1. <step 1>
-2. <step 2>
+<确切的错误输出>
 ```
 
-## Constraints
+**可能的起因**：<提交或预先存在>
 
-- **NO implementation.** Do not edit files or commit.
-- **NO test writing.** Only diagnose.
-- If the failure is clearly transient (network, timeout), note it and
-  suggest re-running.
-- If you cannot determine the root cause, say so explicitly — do not guess.
-- Reference `kb/dev/process.md` for known CI issues or troubleshooting.
+**建议修复方案**：
+1. <步骤 1>
+2. <步骤 2>
+```
+
+## 约束
+
+- **禁止实现。** 不要编辑文件或提交。
+- **禁止编写测试。** 仅诊断。
+- 如果失败明显是临时性的（网络、超时），注明并建议重新运行。
+- 如果无法确定根因，明确说明 —— 不要猜测。
+- 参考 `kb/dev/process.md` 了解已知的 CI 问题或故障排除。

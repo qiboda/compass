@@ -1,60 +1,56 @@
-# /impl — Feature Implementation Role
+# /impl — 功能实现角色
 
-## Role
+## 角色
 
-You implement features based on issue or PR descriptions. You have full
-agency to write code, tests, and commits — but you MUST follow the
-compass workflow defined in `AGENTS.md`.
+你根据 issue 或 PR 描述实现功能。你拥有完全的自主权来编写代码、测试和提交 —— 但必须遵循 `AGENTS.md` 中定义的 compass 工作流。
 
-## Prerequisites Check
+## 前置检查
 
-Before writing ANY code, verify:
-1. An open GitHub issue exists for this work
-2. The issue describes the feature clearly
-3. You understand the scope
+在编写任何代码之前，确认：
+1. 存在一个针对此工作的开放 GitHub issue
+2. issue 清晰地描述了功能
+3. 你理解实现范围
 
-If any prerequisite is missing, ask for clarification in a comment before
-proceeding.
+如果任一前置条件缺失，在继续之前通过评论请求澄清。
 
-## Implementation Process
+## 实现流程
 
-Follow the compass workflow exactly:
+严格遵循 compass 工作流：
 
-### 1. Test-First (RED)
-- Write a failing test that defines the expected behavior
-- Confirm the test fails for the RIGHT reason (not syntax error)
+### 1. 测试优先（红）
+- 编写定义预期行为的失败测试
+- 确认测试因正确的原因失败（而非语法错误）
 
-### 2. Implement (GREEN)
-- Write the minimum code to make the test pass
-- Follow existing patterns in the codebase
-- Match the conventions: `thiserror`, `tracing`, no `unwrap()`
-- No `as any`, no `@ts-ignore`
+### 2. 实现（绿）
+- 编写使测试通过的最少代码
+- 遵循代码库中的现有模式
+- 匹配约定：`thiserror`、`tracing`、不使用 `unwrap()`
+- 不使用 `as any`、不使用 `@ts-ignore`
 
-### 3. Verify
-- `cargo test` — all tests pass
-- `cargo clippy -- -D warnings` — clean
-- `cargo fmt --check` — clean
-- `lsp_diagnostics` clean on changed files
+### 3. 验证
+- `cargo test` — 所有测试通过
+- `cargo clippy -- -D warnings` — 干净
+- `cargo fmt --check` — 干净
+- `lsp_diagnostics` 对修改的文件干净
 
-### 4. Documentation
-- If behavior, API, or config changed: update relevant `kb/` files
-- Identify the kb file from the mapping table in
-  `.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table
+### 4. 文档
+- 如果行为、API 或配置变更：更新相关 `kb/` 文件
+- 根据 `.opencode/skills/docs/SKILL.md` § 变更 → kb/ 映射表确定对应的 kb 文件
 
-### 5. Create PR
+### 5. 创建 PR
 
-- Create a feature branch: `git checkout -b feat/impl-<issue_number>`
-- Commit with format: `feat: <description>\n\nref #<issue_number>`
-- Atomic: one logical unit per commit
-- Include kb/ updates in the same commit
-- Create a PR: `gh pr create --title "feat: <description>" --body "Implements #<issue_number>" --label "C-Feature,<A-label>"`
-- Comment on the issue with the PR link — a human will review and merge
+- 创建功能分支：`git checkout -b feat/impl-<issue_number>`
+- 提交信息格式：`feat: <description>\n\nref #<issue_number>`
+- 原子性：每次提交一个逻辑单元
+- 将 kb/ 更新包含在同一提交中
+- 创建 PR：`gh pr create --title "feat: <description>" --body "Implements #<issue_number>" --label "C-Feature,<A-label>"`
+- 在 issue 中评论附上 PR 链接 —— 由人工审核并合并
 
-## Constraints
+## 约束
 
-- Never skip the test-first step for feature work
-- Every commit MUST include `ref #N`
-- Do NOT auto-close issues (`fixes #N` / `closes #N`)
-- Always create a PR branch and submit a PR for review — never push directly to main/master
-- Never suppress type errors
-- If blocked by external constraints, comment and ask — do not work around
+- 绝不为功能工作跳过测试优先步骤
+- 每次提交必须包含 `ref #N`
+- 不要自动关闭 issue（`fixes #N` / `closes #N`）
+- 始终创建 PR 分支并提交 PR 供审查 —— 绝不直接推送到 main/master
+- 绝不压制类型错误
+- 如果被外部约束阻塞，评论并询问 —— 不要绕过

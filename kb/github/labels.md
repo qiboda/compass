@@ -1,67 +1,66 @@
-# Labels
+# 标签
 
-Issue and PR labels follow the [Bevy](https://github.com/bevyengine/bevy) taxonomy
-with a prefix-based category system. Each label is composed of `<PREFIX>-<Name>`.
+Issue 和 PR 标签遵循 [Bevy](https://github.com/bevyengine/bevy) 分类法，采用基于前缀的分类体系。每个标签由 `<PREFIX>-<Name>` 组成。
 
-## Prefixes
+## 前缀
 
-| Prefix | Category | Meaning |
+| 前缀 | 类别 | 含义 |
 |---|---|---|
-| **A-** | Area | Which part of the codebase |
-| **C-** | Category | What kind of work |
-| **D-** | Difficulty | How complex is it |
-| **P-** | Priority | How important is it |
-| **S-** | Status | Current state of the issue/PR |
+| **A-** | 领域 | 代码库的哪一部分 |
+| **C-** | 类别 | 什么类型的工作 |
+| **D-** | 难度 | 有多复杂 |
+| **P-** | 优先级 | 有多重要 |
+| **S-** | 状态 | issue/PR 的当前状态 |
 
-## A- Area
+## A- 领域
 
-| Label | Scope |
+| 标签 | 范围 |
 |---|---|
-| `A-GUI` | GUI chart window (`crates/compass-gui`) |
-| `A-Data` | Data pipeline, providers, storage (`crates/compass-data`, `compass-core`) |
-| `A-CLI` | CLI tools (`compass-data` binary) |
-| `A-CI` | CI workflows, hooks, build system |
-| `A-Docs` | Project book (`kb/`), `AGENTS.md`, README |
+| `A-GUI` | GUI 图表窗口（`crates/compass-gui`） |
+| `A-Data` | 数据管线、提供者、存储（`crates/compass-data`、`compass-core`） |
+| `A-CLI` | CLI 工具（`compass-data` 二进制文件） |
+| `A-CI` | CI 工作流、钩子、构建系统 |
+| `A-Docs` | 项目书（`kb/`）、`AGENTS.md`、README |
 
-## C- Category
+## C- 类别
 
-| Label | Usage |
+| 标签 | 用途 |
 |---|---|
-| `C-Bug` | Unexpected or incorrect behavior |
-| `C-Feature` | New feature or capability |
-| `C-Code-Quality` | Refactoring, code that is hard to understand or change |
-| `C-Performance` | Speed, memory, or compile time improvement |
-| `C-Docs` | Documentation addition or correction |
-| `C-Question` | Discussion or investigation (may become a feature request) |
-| `C-Chore` | Dependencies, CI scripts, config, or other non-code changes |
+| `C-Bug` | 意外或不正确的行为 |
+| `C-Feature` | 新功能或能力 |
+| `C-Code-Quality` | 重构、难以理解或修改的代码 |
+| `C-Performance` | 速度、内存或编译时间改进 |
+| `C-Docs` | 文档添加或修正 |
+| `C-Question` | 讨论或调研（可能转为功能请求） |
+| `C-Chore` | 依赖、CI 脚本、配置或其他非代码变更 |
 
-## D- Difficulty
+## D- 难度
 
-| Label | Meaning |
+| 标签 | 含义 |
 |---|---|
-| `D-Trivial` | Simple and obvious fix |
-| `D-Straightforward` | Clear solution exists, moderate effort |
-| `D-Complex` | Requires research, design, or domain expertise |
+| `D-Trivial` | 简单且显而易见的修复 |
+| `D-Straightforward` | 方案明确，中等工作量 |
+| `D-Complex` | 需要研究、设计或领域专业知识 |
 
-## P- Priority
+## P- 优先级
 
-| Label | Meaning |
+| 标签 | 含义 |
 |---|---|
-| `P-Critical` | Must be resolved immediately — blocks key workflow |
-| `P-High` | High importance |
-| `P-Medium` | Medium importance |
-| `P-Low` | Low importance — can wait |
+| `P-Critical` | 必须立即解决 —— 阻塞关键工作流 |
+| `P-High` | 高优先级 |
+| `P-Medium` | 中等优先级 |
+| `P-Low` | 低优先级 —— 可以等待 |
 
-## S- Status
+## S- 状态
 
-| Label | Meaning |
+| 标签 | 含义 |
 |---|---|
-| `S-Blocked` | Cannot proceed until another task is completed |
-| `S-Needs-Investigation` | Requires further investigation before action |
-| `S-CI-Failure` | Auto-created by the CI failure workflow (`opencode-ci-fix`) |
+| `S-Blocked` | 在其他任务完成之前无法继续 |
+| `S-Needs-Investigation` | 在行动前需要进一步调研 |
+| `S-CI-Failure` | 由 CI 失败工作流（`opencode-ci-fix`）自动创建 |
 
-## Usage
+## 使用
 
-- Every issue and PR must have at least one **A-** and one **C-** label.
-- **D-**, **P-**, and **S-** are optional.
-- PRs inherit the issue's labels; add or remove as needed.
+- 每个 issue 和 PR 必须至少有一个 **A-** 和一个 **C-** 标签。
+- **D-**、**P-** 和 **S-** 是可选的。
+- PR 继承 issue 的标签；根据需要添加或移除。

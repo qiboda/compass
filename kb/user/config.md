@@ -1,56 +1,55 @@
-# Configuration
+# 配置文件
 
-Compass reads configuration from `~/.config/compass/config.toml` at startup.
-All fields are optional — missing keys fall back to sensible defaults.
+Compass 启动时从 `~/.config/compass/config.toml` 读取配置。所有字段均为可选 — 缺失的键回退到合理的默认值。
 
-## Location
+## 文件位置
 
 ```sh
 ~/.config/compass/config.toml
 ```
 
-Create the file and directory if they don't exist:
+如果文件和目录不存在，请创建：
 
 ```sh
 mkdir -p ~/.config/compass
 ```
 
-## Full schema
+## 完整配置项
 
 ```toml
 [parquet]
-# Directory containing stock_basic.parquet and stock_daily/ subdirectory.
-# Default: "/data/compass-data/parquet_data"
+# 包含 stock_basic.parquet 和 stock_daily/ 子目录的文件夹。
+# 默认值："/data/compass-data/parquet_data"
 dir = "/data/compass-data/parquet_data"
 
 [dolt]
-# Directory for the Dolt investment_data repository (primary OHLCV source).
-# Default: "/data/compass-data/investment_data"
+# Dolt investment_data 仓库目录（主要 OHLCV 数据源）。
+# 默认值："/data/compass-data/investment_data"
 investment_data_dir = "/data/compass-data/investment_data"
 
-# Directory for the Dolt compass_data repository (fundamentals, custom data).
-# Default: "/data/compass-data/compass_data"
+# Dolt compass_data 仓库目录（基本面、自定义数据）。
+# 默认值："/data/compass-data/compass_data"
 compass_data_dir = "/data/compass-data/compass_data"
 
 [app]
-# Stock code displayed when the app starts.
-# Default: "000001"
+# 应用启动时显示的股票代码。
+# 默认值："000001"
 default_symbol = "000001"
 
-# Timeframe displayed when the app starts.
-# Default: "1d"
+# 应用启动时显示的时间周期。
+# 默认值："1d"
 default_timeframe = "1d"
 
-# Theme preset active at startup. Valid: "compass_dark" | "compass_light".
-# Default: "compass_dark"
+# 启动时使用的主题预设。有效值："compass_dark" | "compass_light"。
+# 默认值："compass_dark"
 theme = "compass_dark"
 ```
 
-## Defaults
+## 默认值
 
-If the config file doesn't exist or can't be parsed, these defaults apply:
+如果配置文件不存在或无法解析，将应用以下默认值：
 
-| Section | Key | Default |
+| 节 | 键 | 默认值 |
 |---|---|---|
 | `parquet` | `dir` | `/data/compass-data/parquet_data` |
 | `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
@@ -59,33 +58,33 @@ If the config file doesn't exist or can't be parsed, these defaults apply:
 | `app` | `default_timeframe` | `1d` |
 | `app` | `theme` | `compass_dark` |
 
-## Examples
+## 配置示例
 
-### Change default stock to 贵州茅台
+### 修改默认股票为 贵州茅台
 
 ```toml
 [app]
 default_symbol = "600519"
 ```
 
-A partial config works — only the keys you specify are overridden:
+部分配置也能工作 — 仅覆盖你指定的键：
 
 ```toml
 [app]
 default_symbol = "600519"
-# default_timeframe stays "1d" (default)
+# default_timeframe 保持 "1d"（默认值）
 ```
 
-### Theme preset
+### 主题预设
 
 ```toml
 [app]
 theme = "compass_light"
 ```
 
-Choose from three built-in visual themes: `compass_dark` (default), `compass_light`, or `compass_blue`.
+从三种内置视觉主题中选择：`compass_dark`（默认）、`compass_light` 或 `compass_blue`。
 
-### Custom data directories
+### 自定义数据目录
 
 ```toml
 [parquet]
@@ -96,11 +95,9 @@ investment_data_dir = "/mnt/data/investment_data"
 compass_data_dir = "/mnt/data/compass_data"
 ```
 
-## Validation
+## 验证
 
-The config is validated at startup. If parsing fails, a warning is logged and
-all defaults are used. Invalid theme values (anything other than the three valid
-presets) fall back to `compass_dark`. Check the logs for details:
+配置文件在启动时被验证。如果解析失败，将记录一条警告，并使用全部默认值。无效的主题值（三种有效预设之外的任何值）回退到 `compass_dark`。查看日志获取详情：
 
 ```sh
 RUST_LOG=info cargo run 2>&1 | grep config
