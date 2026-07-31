@@ -111,7 +111,7 @@ test databases. Clean up automatically via `TempDir` drop.
 ### DuckDB deadlock avoidance
 
 Group all direct `db.conn.lock()` calls into ONE scope before any async
-`db` method calls. See `kb/dev/testing.md` § DuckDB deadlock avoidance.
+`db` method calls. See `kb/dev/testing.md` § DuckDB 死锁规避.
 
 ## Test Organization
 

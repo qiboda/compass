@@ -122,6 +122,6 @@ reaching a commit. The main agent writes the actual `///` doc comments.
 
 ## Reference
 
-- `kb/dev/process.md` § Doc comment discipline — every pub item must have `///`
-- `kb/dev/process.md` § Before pushing — `cargo doc --no-deps` in pre-push hook
+- `kb/dev/process.md` § 文档注释纪律 — every pub item must have `///`
+- `kb/dev/process.md` § Pre-push hook 检查 — `cargo doc --no-deps` in pre-push hook
 - `kb/design/` files — for design rationale to include in doc comments

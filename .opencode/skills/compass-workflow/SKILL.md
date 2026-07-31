@@ -91,6 +91,8 @@ Only then may you create todos and begin editing files.
 
 Any code change affecting behavior, public APIs, data structures, config, or workflows MUST update the relevant `kb/` files AND `AGENTS.md` in the SAME commit.
 
+权威的「变更类型 → kb/ 文件」映射表见 `.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table。速查：
+
 | Change type | kb/ file to update |
 |---|---|
 | New data source, API call, schema change | `kb/design/data-providers.md` |
