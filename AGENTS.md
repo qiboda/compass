@@ -295,6 +295,8 @@ dolt push origin main
 
 见 `kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
+**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 + 每 crate（compass-core / compass-data / compass）各自行覆盖率 ≥80%（`cargo llvm-cov --fail-under-lines 80`）；Python collectors `--cov=.` 全量计入 ≥80%（`--cov-fail-under=80`）。GUI 用 egui_kittest 无头集成测试，Python 用 stub AsyncSession 模拟网络。详见 `kb/dev/testing.md` 覆盖率章节。
+
 ## API reference
 
 类型级 API 参考见 `cargo doc --open`（`#![warn(missing_docs)]` 强制所有 pub 项带 `///` 注释）。
