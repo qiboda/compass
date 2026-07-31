@@ -146,3 +146,37 @@ chronological OHLC within each time bucket.
    results revealed the artificial test assumptions made before aggregation was implemented
 3. Merge conflicts in worktree branches exposed `.gitignore`'d symlink data directories
    tracked on master — needed manual resolution
+
+## 2026-07-31 — ref #77 docs: 项目书重组（修正/去重/提取/格式 4 pass）
+
+**What was done**: 项目书全面重组，6 个 commit：Pass 1 以代码为准修正全部过时描述
+（GUI 纯本地、删除不存在的 download/merge 子命令与 import --overwrite、CachedProvider/
+EastMoneyProvider/to_secid 整章删除）；Pass 2 去重收敛（AGENTS.md 442→310 行瘦身为索引
++硬规则，DDL/doc-sync/CLI/config 各归单一事实源）；Pass 3 程序性内容提取到已有 skill
+（worktree/issue/TDD/gate 全部指向 skill，修复 fix.md/impl.md 对已删除 doc-sync 表的断链）；
+Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、friction/reflections 模板
+统一、docs skill 清单 17→19 同步。
+
+**What went wrong**: ① 修正 pass 发现 `import --overwrite`、`to_secid()`、`CachedProvider`
+等文档大量记载已删除的功能，说明项目书长期未随重构同步（#31/#32/#46 之后均未清理）。
+② Pass 4a 翻译首次派发漏了 kb/dev/ 两个文件，且首个 architecture.md 翻译子代理对纯翻译
+任务也套 grill-me 流程导致停滞，重派后才完成。③ Pass 4b 的 roadmap.md 删除混入了 Pass 4a
+的翻译 commit（git rm 暂存区未分离）。
+
+**Lessons learned**:
+1. 修正先行（Pass 1 前置）是关键决策 — 先以代码验证"哪个副本是对的"，去重时才不会把错误
+   内容当保留副本扩散。本次发现 8 处事实性错误全部来自代码验证。
+2. 文档引用是重组中的主要断链风险 — 去重/改名后必须全仓 grep 交叉引用（fix.md/impl.md
+   引用的 doc-sync table 在 AGENTS.md 移除后失效，product skill 8 处 roadmap 引用需批量更新）。
+3. 纯机械任务（翻译）的子代理 prompt 必须显式声明"不要 grill-me、不要提问、直接执行"，
+   且翻译范围清单要在派发前一次列全（本次漏了 kb/dev 导致补派）。
+4. docs 类工作可跳过 GATE，但 commit 仍须 ref #N；本次按用户"分别多次 review"要求拆 6 个
+   commit，每个 pass 独立 review 确认，方向偏差在早期被纠正。
+
+### Trends (last 10)
+- 文档与代码脱节反复出现（#62 Wave 3、#31、#77）：docs 修改应以代码验证为准，
+  重构后必须同步清理相关文档，而非等到用户抱怨"重复太多/描述不对"再集中处理
+- 子代理对机械任务过度流程化（#77 翻译停滞）：skill 类指令应说明适用边界，
+  纯翻译/机械任务直接执行，避免 grill-me 误用
+- 多文件批量改动时引用一致性是最高风险点（#77 roadmap 引用 ×8、doc-sync 断链 ×2）：
+  批量修改后用 grep 全仓校验引用完整性
