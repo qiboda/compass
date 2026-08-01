@@ -436,3 +436,26 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **测试环境与真实环境的差异盲区**（ref #104 隔离纪律、本次 kittest AccessKit/repaint 限制）：验证环境的行为假设（隔离、无障碍树、渲染循环）与实际不符时反复踩坑——先读目标环境的已知限制文档再写验证
 - **批量/机械操作缺校验**（ref #97 hook 正则自匹配、本次 python replace 误伤）：自动化修改（正则、批量替换、匹配）需先验证唯一性，事后 diff 检查波及面
 - **高精度审查的长期价值**（ref #96 反思机制、本次 5 轮审查修复 10 blocking）：复杂 feature 的多轮对抗审查显著降低实现期返工——计划阶段投入审查时间换取实现期确定性
+
+## 2026-08-01 — ref #105 QA 阶段：GUI 交互修复与 pgrep 自匹配复发
+
+**What was done**: PR #113 合并后进入手动 QA 阶段，完成 6 轮交互修复：行业/交易所/板块改为多选下拉 popup、popup 互斥防重叠、条件区布局（vertical → 单行流式 + 结果在下方）、结果表格改用 egui_extras TableBuilder、筛选日志写入 GUI Logger 面板（display 级）、补 2 个 backend screener 通道集成测试。
+
+**User corrections**: 用户多次 UI 反馈："行业为什么不是下拉框"（平铺 checkbox 不合适）、"其他过滤选项也需要改为下拉框"、"过滤条件重叠在一起了"（多 popup 同时打开）、"筛选条件之间加一些间距"、"筛选列表不要和筛选在同一行"（后改为条件一行/结果第二行）、"为什么你检测进程是否启动的状态总是出错"（pgrep 自匹配）。用户的 ChatGPT 咨询意见也纠正了我"全部改下拉框"的过度统一——少选项（交易所 3 项）本应 Checkbox，用户最终拍板保持下拉。
+
+**What went wrong**:
+1. **pgrep/pkill -f 自匹配复发（ref #104 纪律写了没执行）**：用 `pgrep -f "target/debug/compass"` 检测进程 → 匹配到 bash 自身 → PID 飘移假阳性；`pkill -f` 险些杀掉执行 shell；长链命令（pkill;sleep;build;tmux;sleep;pgrep）触发 bash 工具超时留下半启动状态。process.md 313 节 2026-07-31 已写纪律，本 session 没读没遵守。
+2. **UI 交互凭想象实现、未先咨询用户**：行业用平铺 checkbox 是计划契约"可搜索多选"的机械执行，但 90+ 选项平铺占用空间——用户反馈才改 popup。少选项（交易所/板块）又过度统一成 popup，被 ChatGPT 意见纠正。
+3. **布局反复**：vertical → horizontal → wrapped 三轮调整，每轮都需重启 GUI 验证——GUI 无头测试（kittest）无法覆盖布局美观，只能靠用户目视。
+
+**Lessons learned**:
+1. 调试命令先查 `kb/dev/process.md` 调试章节再执行（pgrep -x / [x] 技巧 / 分步命令）；进程存在 ≠ 窗口可见（用 wmctrl/xdotool 验证窗口）
+2. 多选项 vs 少选项的控件形态不同：行业（30-100+）用 popup+搜索+checkbox，交易所/板块（3-5 项）用直接 checkbox 更合理——先按选项数量定形态，不机械统一
+3. UI 布局类变更的验证成本高（需用户目视）：变更前先明确目标布局形态（向用户确认），减少反复
+
+**Process improvements**: 已更新 `kb/dev/process.md`（新增"检测/结束 GUI 进程的正确姿势"小节——pgrep -x / [t]arget 技巧、长链命令分步纪律、窗口可见性以 wmctrl 为准、GUI 启动用 tmux new-session -d）。UI 控件形态决策为一次性教训，写入本条目。
+
+### Trends (last 10)
+- **pgrep/pkill 自匹配复发**（ref #104 → 本次）：纪律已写入 process.md 但执行时未查阅——文档固化 ≠ 行为固化，涉及 kill/pgrep 的命令执行前必须先读调试章节；本次已把具体正确命令写进 process.md
+- **"文档已固化但未遵守"模式**（ref #96 反思机制、ref #104、本次）：reflections 趋势分析已识别过该模式，但缺执行侧钩子——调试类命令的纪律应内嵌到具体场景（如本节的 compass 命令模板）而非仅原则描述
+- **UI 反馈驱动的多轮迭代**（本次 6 轮）：GUI 布局/交互无法被无头测试覆盖，设计决策（控件形态、布局）应尽早向用户确认，减少目视验证循环

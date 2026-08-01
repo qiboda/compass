@@ -324,6 +324,32 @@ Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回�
    fixture 隔离（`/tmp` 路径）、禁止触碰真实 worktree/仓库、疑似危险命令改
    为只读 Oracle 复查。agent 误杀宿主 opencode 会话 = 用户工作区被破坏。
 
+### 检测/结束 GUI 进程的正确姿势（ref #105 QA 复发教训）
+
+ref #104 纪律**已写但未遵守**，导致 PR 合并后的 GUI 进程检测反复误判
+（PID 飘移、假阳性、长链命令超时）。具体到 compass：
+
+```sh
+# ✅ 检测：-x 精确进程名（不 -f），或 [x] 技巧
+pgrep -x compass                    # 只匹配进程名 compass
+pgrep -f "[t]arget/debug/compass"   # [t] 破坏自匹配
+
+# ✅ 结束：先列出核对，再精确杀
+pgrep -x compass | xargs -r kill    # -r：无匹配时不报错
+# 若在 tmux 内启动：tmux kill-session -t <name> 优先
+
+# ❌ 反例（本 session 踩坑）
+pgrep -f "target/debug/compass"     # 匹配 bash 自身 → PID 飘移假阳性
+pkill -f "target/debug/compass"     # 可能杀掉执行 shell → 命令超时
+```
+
+**长链命令纪律**：`pkill; sleep; build; tmux new; sleep; pgrep` 串在一起时，
+bash 工具超时（120s）中断会留下半启动状态，后续检测必然误判。启动/检测
+**分步执行**：启动命令确认返回后立即结束；检测用独立短命令。
+窗口可见性以 `wmctrl -l` / `xdotool search` 为准，进程存在 ≠ 窗口可见。
+启动 GUI 用 `tmux new-session -d`（脱离 bash 工具生命周期），
+不用 `setsid ... &`（与工具超时机制冲突）。
+
 ### 检查东方财富 API 返回内容
 
 ```sh
