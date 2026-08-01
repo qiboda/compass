@@ -28,14 +28,13 @@ description: 维护 AGENTS.md 及所有 kb/ 文件（design、dev、user、githu
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 | 符号格式变更、timeframe 映射变更、交易所逻辑变更 |
 | `kb/design/ui.md` | **UI 设计权威文档** — 设计系统、布局结构、交互规范（最终版，`.omo/designs/` 仅归档原始方案） | 设计经用户确认后同步最终要点；UI 布局/视觉/交互变更 |
 
-### kb/dev/ — 开发（4 个文件）
+### kb/dev/ — 开发（3 个文件）
 
 | 文件 | 用途 | 更新时机 |
 |---|---|---|
 | `kb/dev/testing.md` | 测试框架（rstest、tokio）、内存 DuckDB、benchmark/profiling 文档 | 测试框架变更、新增测试模式、benchmark 新增 |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、知识库同步、TDD 工作流 | 工作流变更、hook 变更、约定变更、新增命令 |
-| `kb/dev/reflections.md` | 事后反思 — 出了什么问题、经验教训 | 每次 feature/bugfix 之后（由 `/reflect` skill 处理——docs agent 不写反思） |
-| `kb/dev/friction.md` | 摩擦记录 — AI 行为纠正 | 每次纠正之后（由 `/friction` skill 处理——docs agent 不写摩擦条目） |
+| `kb/dev/reflections.md` | 事后反思 — 出了什么问题、经验教训（含历史摩擦记录章节） | 每次 feature/bugfix 之后（由 `/reflect` skill 处理——docs agent 不写反思） |
 
 ### kb/user/ — 用户参考（4 个文件）
 
@@ -173,7 +172,6 @@ kb/design/architecture.md、kb/dev/testing.md 等都可能残留旧命令——r
 - **无代码变更上下文就修改 kb/ 内容**——每次更新必须追溯到某次代码变更
 - **修改 `kb/github/ask.md`、`fix.md`、`impl.md`、`pr-review.md`、`ci-fix.md`**——GitHub bot 角色不在范围内
 - **修改 `kb/dev/reflections.md`**——由 `/reflect` skill 处理
-- **修改 `kb/dev/friction.md`**——由 `/friction` skill 处理
 - **重复内容**——AGENTS.md 是索引，kb/ 文件是唯一数据源
 - **硬编码版本号**——应引用 `Cargo.toml`
 

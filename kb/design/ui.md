@@ -16,7 +16,7 @@
 |---|---|---|
 | `compass_dark` | 默认暗色主题（TradingView 风格） | 已实现 |
 | `compass_light` | 亮色主题，适合白天使用 | 已实现 |
-| `compass_blue` | 深蓝主题 | 预留（theme.rs 已有预设定义） |
+| `compass_blue` | 深蓝主题 | 计划中（未实现；见 `.omo/plans/gui-beautify.md`） |
 
 主题持久化到 `~/.config/compass/config.toml` 的 `[app].theme`。
 
@@ -39,7 +39,7 @@
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ TopBottomPanel::top — 工具栏                            │
+│ 工具栏（egui::Frame 全宽填充）                          │
 │  [Symbol🔍] [TF⏱] [Fetch⬇] ... [Theme🎨]              │
 ├────────────────────────────────────────────────────────┤
 │ DockArea（egui_dock，可拖拽/关/开标签页）                │
@@ -50,15 +50,15 @@
 │  标签页: Chart / Logger / Screener                     │
 ├────────────────────────────────────────────────────────┤
 │ Toast 通知层（右上角，egui::Area 浮层）                  │
-│ Modal 遮罩层（全屏，egui::Area modal=true）             │
+│ Modal 遮罩层（全屏，egui::Area + Order::Foreground）     │
 └────────────────────────────────────────────────────────┘
 ```
 
-- **工具栏**：`TopBottomPanel::top`，一行排列所有控件（Symbol 搜索下拉 / TF
-  切换 / Fetch 按钮 / Theme 下拉）
+- **工具栏**：全宽 `egui::Frame` 填充（非 `TopBottomPanel`），一行排列所有控件
+  （Symbol 搜索下拉 / TF 切换 / Fetch 按钮 / Theme 下拉）
 - **Dock 区**：egui_dock `DockState`，默认 Chart + Logger 垂直分割
-  （Chart 75% / Logger 25%）；Screener 为可选标签页
-- **浮层**：Toast（右上角叠放，最多 5 条）、Modal（全屏半透明遮罩）
+  （Chart 75% / Logger 25%）；Screener 默认含于标签栏，可关闭
+- **浮层**：Toast（右上角叠放，队列上限 10 条）、Modal（全屏半透明遮罩）
   —— 渲染在 DockArea 之上，随每帧渲染
 
 ### 面板职责
@@ -91,21 +91,24 @@
 |---|---|---|
 | Loading | 工具栏 spinner | 加载完成 |
 | Success toast | 右上角 ✅ | 3 秒 |
-| Warning toast | 右上角 ⚠ | 5 秒 |
+| Warning toast | 右上角 ⚠ | 3 秒 |
 | Error toast | 右上角 ❌ | 8 秒 |
+| Info toast | 右上角 ℹ | 3 秒 |
 
-toast 使用 Phosphor 图标字形，垂直堆叠，点击可立即关闭。
+toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出淘汰最旧）。
+点击关闭为预留能力（当前未绑定交互）。
 
 ### 模态（Modal）
 
-- 全屏半透明遮罩 + 居中面板，`egui::Area` modal=true
+- 全屏半透明遮罩 + 居中面板，`egui::Area` + `Order::Foreground`，
+  背板以 `Sense::click()` 吞掉点击（非 `modal=true`——egui::Area 无原生焦点锁定）
 - 当前组件已接线但**未绑定任何操作**（破坏性操作确认等为预留能力）
 
 ## 设计变更记录
 
 | 日期 | 变更 | 来源归档 | 实现状态 |
 |---|---|---|---|
-| — | 初始骨架 | — | 待首次设计确认后填充 |
+| 2026-08-02 | 初始骨架：基于现有 GUI 提炼设计系统/布局/交互（ref #129） | — | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
