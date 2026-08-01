@@ -77,6 +77,10 @@ fn main() -> eframe::Result {
             let mut dispatcher = Dispatcher::new();
             let registered = dispatcher::register_citizens(&mut dispatcher);
 
+            // The theme drives the citizen panel styling (screener components
+            // copy the tokens at construction, like StockPicker/Modal).
+            let theme = CompassTheme::from_config(&config.app.theme);
+
             // Create citizen panels
             let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
             let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
@@ -89,6 +93,7 @@ fn main() -> eframe::Result {
                         tracing::warn!(error = %e, "failed to save screener config");
                     }
                 }),
+                theme.tokens(),
             );
 
             // Derive distinct industry/board lists for the screener conditions.
@@ -120,7 +125,6 @@ fn main() -> eframe::Result {
                 );
             }
 
-            let theme = CompassTheme::from_config(&config.app.theme);
             let theme_tokens = *theme.tokens();
             let stock_picker = StockPicker::new(
                 theme_tokens,
@@ -1037,6 +1041,8 @@ mod tests {
         let mut dispatcher = Dispatcher::new();
         let registered = crate::dispatcher::register_citizens(&mut dispatcher);
 
+        let theme = CompassTheme::compass_dark();
+        let theme_tokens = *theme.tokens();
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
         let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
         let screener = ScreenerPanel::new(
@@ -1044,10 +1050,8 @@ mod tests {
             registered.screener,
             None,
             Box::new(|_| {}),
+            &theme_tokens,
         );
-
-        let theme = CompassTheme::compass_dark();
-        let theme_tokens = *theme.tokens();
         let stock_picker = StockPicker::new(theme_tokens, "000001", stock_projection());
         let dock_style = egui_dock::Style::default();
 

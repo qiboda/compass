@@ -57,19 +57,21 @@ pub struct ColumnSpec {
 ///
 /// Sorting state (`sort_column` / `sort_descending`) lives in the component
 /// and is toggled by header clicks; callers only supply columns and rows.
-pub struct DataTable<'a> {
-    tokens: &'a ThemeTokens,
+/// The theme tokens are copied at construction (like [`super::multi_select::MultiSelect`])
+/// so the table can outlive the frame that created it.
+pub struct DataTable {
+    tokens: ThemeTokens,
     columns: Vec<ColumnSpec>,
     rows: Vec<Vec<DataCell>>,
     sort_column: usize,
     sort_descending: bool,
 }
 
-impl<'a> DataTable<'a> {
+impl DataTable {
     /// Create a table for the given theme with the given column specs.
-    pub fn new(tokens: &'a ThemeTokens, columns: Vec<ColumnSpec>) -> Self {
+    pub fn new(tokens: &ThemeTokens, columns: Vec<ColumnSpec>) -> Self {
         Self {
-            tokens,
+            tokens: *tokens,
             columns,
             rows: Vec::new(),
             sort_column: 0,
@@ -94,7 +96,7 @@ impl<'a> DataTable<'a> {
         let mut clicked_row = None;
 
         if self.rows.is_empty() {
-            EmptyState::new(tokens, EMPTY_ICON, "无符合条件").show(ui);
+            EmptyState::new(&tokens, EMPTY_ICON, "无符合条件").show(ui);
             return None;
         }
 
@@ -161,7 +163,7 @@ impl<'a> DataTable<'a> {
                         let cells = &self.rows[orig_index];
                         for cell in cells {
                             row.col(|ui| {
-                                render_cell(ui, tokens, cell);
+                                render_cell(ui, &tokens, cell);
                             });
                         }
                         if row.response().clicked() {

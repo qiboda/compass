@@ -286,6 +286,7 @@ mod tests {
             registered.screener,
             None,
             Box::new(|_| {}),
+            &compass_ui::tokens::ThemeTokens::dark(),
         );
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
