@@ -265,6 +265,25 @@ ref #N"
 - 所有范围内问题已解决 → 继续提交（或推送）
 - → 调用 /reflect 编写实现后反思
 
+### 第 6 步：Push 后关闭 issue（强制，勿忘）
+
+**push 成功到达 `origin/master` 后**，必须完成 issue 收尾——这是流程的
+一部分，不是可选项：
+
+1. **追加完成 comment**（`gh issue comment <N>`，遵守 comments.md"永远追加"规范）：
+   - 实现摘要 + 验收标准逐项状态（✅/⛔）
+   - commit 列表（`git log --oneline origin/master@{1}..HEAD` 或等价范围）
+   - 与 issue 原方案的偏差及原因（如方案被外部约束阻断、用户批准放弃）
+2. **关闭 issue**（`gh issue close <N>`）——HARD BLOCK：只在 push 后关闭，
+   push 前绝不关闭。
+   - 单 issue：直接关闭
+   - Epic：先关所有子 issues（每个注明 `Fixed by #<PR-N>`），再关 epic
+     并在 epic 上记录总结 comment
+
+> **教训来源**（ref #117）：agent 完成 push 后没有自动追加完成 comment 和
+> 关闭 issue，用户提醒"需要comment"才补做。push 成功 ≠ 任务完成——issue
+> 收尾（comment + close）必须作为强制步骤执行，不依赖用户提醒。
+
 ---
 
 ## 📝 反思记录

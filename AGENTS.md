@@ -181,6 +181,11 @@ Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 **HARD BLOCK: 只在 push 后关闭 issue。** issue 只有在修复到达
 `origin/master` 后才算 "done"。commit 后不要关闭 —— 等 push 成功。
 
+**push 成功后的强制收尾（勿忘，勿等用户提醒）**：追加完成 comment
+（`gh issue comment <N>`——实现摘要 + 验收状态 + commit 列表 + 方案偏差及原因，
+遵守 comments.md"永远追加"规范），然后关闭 issue。push 成功 ≠ 任务完成
+——issue 收尾是流程的一部分（ref #117 曾因 agent 遗漏被用户提醒）。
+
 **Epic close**: PR 合并到 master 后，先关闭所有 sub-issues，再关闭 epic。
 在 epic 上记录总结 comment 列出所有完成的 sub-issues。
 
