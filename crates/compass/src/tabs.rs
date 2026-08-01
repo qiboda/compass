@@ -56,9 +56,18 @@ pub enum TabKind {
 impl TabKind {
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Chart => "Chart",
-            Self::Logger => "Logger",
-            Self::Screener => "Screener",
+            Self::Chart => "图表",
+            Self::Logger => "日志",
+            Self::Screener => "选股器",
+        }
+    }
+
+    /// Phosphor icon glyph shown next to the tab title (design doc §Q2).
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Chart => egui_phosphor::regular::CHART_LINE,
+            Self::Logger => egui_phosphor::regular::TERMINAL,
+            Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
         }
     }
 
@@ -128,7 +137,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     type Tab = Tab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.title().into()
+        format!("{} {}", tab.kind.icon(), tab.title()).into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -167,17 +176,27 @@ mod tests {
 
     #[test]
     fn tab_kind_chart_title() {
-        assert_eq!(TabKind::Chart.title(), "Chart");
+        assert_eq!(TabKind::Chart.title(), "图表");
     }
 
     #[test]
     fn tab_kind_logger_title() {
-        assert_eq!(TabKind::Logger.title(), "Logger");
+        assert_eq!(TabKind::Logger.title(), "日志");
     }
 
     #[test]
     fn tab_kind_screener_title() {
-        assert_eq!(TabKind::Screener.title(), "Screener");
+        assert_eq!(TabKind::Screener.title(), "选股器");
+    }
+
+    #[test]
+    fn tab_kind_icons_are_phosphor_glyphs() {
+        assert_eq!(TabKind::Chart.icon(), egui_phosphor::regular::CHART_LINE);
+        assert_eq!(TabKind::Logger.icon(), egui_phosphor::regular::TERMINAL);
+        assert_eq!(
+            TabKind::Screener.icon(),
+            egui_phosphor::regular::FUNNEL_SIMPLE
+        );
     }
 
     // ------------------------------------------------------------------
@@ -206,21 +225,21 @@ mod tests {
     #[test]
     fn tab_new_chart_delegates_to_tab_kind() {
         let tab = Tab::new(TabKind::Chart);
-        assert_eq!(tab.title(), "Chart");
+        assert_eq!(tab.title(), "图表");
         assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
     }
 
     #[test]
     fn tab_new_logger_delegates_to_tab_kind() {
         let tab = Tab::new(TabKind::Logger);
-        assert_eq!(tab.title(), "Logger");
+        assert_eq!(tab.title(), "日志");
         assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
     }
 
     #[test]
     fn tab_new_screener_delegates_to_tab_kind() {
         let tab = Tab::new(TabKind::Screener);
-        assert_eq!(tab.title(), "Screener");
+        assert_eq!(tab.title(), "选股器");
         assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
     }
 
