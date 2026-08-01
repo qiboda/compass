@@ -483,3 +483,19 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"文档已固化但未遵守"模式继续出现**（ref #104、ref #105、本次）：doc-sync 规则存在于 gate 中但执行时只更新"明显"位置——本次已把全仓 grep 步骤直接写进 docs skill，把原则变成可执行动作
 - **技术假设未验证就承诺**（本次 default-run、ref #105 控件形态凭想象）：grill/计划阶段的方案推荐应基于已验证事实而非 cargo 语义推测——验证成本远低于返工成本
 - **review 抓出实现遗漏的价值**（ref #105 6 轮、本次 doc-sync FAIL lane + 2 个 sed bug）：5-agent review 的 context-mining 与多 Oracle 角度能稳定抓出实现者盲区，不可因"小变更"跳过
+
+## 2026-08-02 — ref #131 S8: Modal 三场景 + watchlist 持久化 + Screener 组件化
+
+**What was done**: epic #119 收尾子 issue：`WatchlistConfig`（`[watchlist]` TOML 节）+ `save_watchlist_config` + 侧边栏增删接线（Add 去重排序、Delete 走 Danger Modal 确认）；Modal 场景 1（启动数据缺失引导）+ 场景 2（日志导出：SectionTitle+IconButton → file_dialog → 写文本 → toast）；Chart 空态 + symbol 每帧回填；状态栏价格/涨跌填充；Screener 组件化（Card 两分区 + MultiSelect×3 + DataTable + Dropdown/Checkbox 原子化 + 间距 token）；kb 四文件同步。5 个原子 commit。
+
+**What went wrong**:
+1. **kittest 中 Modal 入口缩放动画破坏点击命中测试**：Modal 面板 150ms 缩放（`transform_layer_shapes`）期间，按钮的交互矩形与视觉位置错位，kittest 点击落空（closing 永远 false）。compass-ui 独立 Modal 测试用 `harness.run()` 自然跑完动画，全应用测试用 `step()` 卡在动画中——两个测试面行为不一致，导致侧边栏删除确认测试第一次运行全红。
+2. **测试前置逻辑错误 ×2**：自选去重测试误以为当前 symbol 已在自选（实际没有，添加合法）；"点行切换 symbol 再添加"测试没意识到侧边栏只显示自选行——写成纯逻辑单测后解决。
+3. **DataTable 借用生命周期**：DataTable<'a> 借用 ThemeTokens，无法作为面板字段跨帧持有（排序状态会每帧重置）。选择改 compass-ui（DataTable 改为值拷贝持有 token，镜像 MultiSelect 既有模式）——偏离"不改 compass-ui"指令，已在报告中说明。
+
+**Lessons learned**:
+1. 组件带动画（缩放/位移）时，kittest 点击必须在动画完成后进行——测试里显式回拨 `open_started`/`close_started`（pub 字段）推进动画，或改用 `run()` 跑完动画帧；写测试前先确认组件动画对命中测试的影响
+2. 组件化重构中"状态归属"是隐藏的契约——排序状态从面板移到 DataTable 后，跨帧持久化要求组件不借用外部 token（值语义）；先检查组件构造参数的所有权再定面板结构
+3. 行为类测试的前置条件必须与实际渲染逻辑一致（侧边栏只渲染自选行、当前 symbol 是否在自选中）——写 kittest 前先在心里跑一遍 UI 数据流
+
+**Process improvements**: 已在本条目记录 kittest 动画命中测试纪律（`kb/dev/testing.md` egui_kittest 章节的补充候选）。DataTable token 所有权改为值拷贝，为一次性架构决策，写入本条目。
