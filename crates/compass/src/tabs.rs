@@ -131,6 +131,8 @@ pub struct TabViewer<'a> {
     pub screener_boards: &'a [String],
     pub shared_state: &'a SharedState,
     pub theme: &'a CompassTheme,
+    /// Out-param: set to `true` when the logger export button was clicked.
+    pub logger_export_clicked: &'a mut bool,
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
@@ -143,7 +145,10 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.kind {
             TabKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
-            TabKind::Logger => self.logger.show(ui, self.shared_state),
+            TabKind::Logger => {
+                *self.logger_export_clicked =
+                    self.logger.show(ui, self.shared_state, self.theme.tokens());
+            }
             TabKind::Screener => self.screener.show(
                 ui,
                 self.shared_state,
@@ -287,6 +292,7 @@ mod tests {
         let shared = SharedState::new("000001", "1d");
         let theme = CompassTheme::compass_dark();
 
+        let mut logger_export_clicked = false;
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
             chart: &mut chart,
@@ -298,6 +304,7 @@ mod tests {
             screener_boards: &[],
             shared_state: &shared,
             theme: &theme,
+            logger_export_clicked: &mut logger_export_clicked,
         };
 
         for (kind, title) in [

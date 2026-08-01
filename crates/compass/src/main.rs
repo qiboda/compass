@@ -161,6 +161,7 @@ fn main() -> eframe::Result {
                 symbol_input_id: None,
                 pending_delete: None,
                 delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
+                startup_modal_shown: false,
             }))
         }),
     )
@@ -353,6 +354,40 @@ fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
     }
 }
 
+/// Write the shared log entries to `path` in a plain-text export format
+/// (header + `[timestamp] [level] message` lines, oldest first).
+fn export_logs(state: &state::SharedState, path: &std::path::Path) -> Result<(), String> {
+    let logger_state = state.log.get();
+    let mut out = String::new();
+    out.push_str("--- Logger Export ---\n");
+    out.push_str(&format!(
+        "Exported: {}\n\n",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    ));
+    for entry in &logger_state.logs {
+        if !entry.timestamp.value.value.is_empty() {
+            out.push_str(&format!("[{}] ", entry.timestamp.value.value));
+        }
+        let level = if !entry.log_level.info.value.is_empty() {
+            entry.log_level.info.value.as_str()
+        } else if !entry.log_level.debug.value.is_empty() {
+            entry.log_level.debug.value.as_str()
+        } else if !entry.log_level.warning.value.is_empty() {
+            entry.log_level.warning.value.as_str()
+        } else if !entry.log_level.error.value.is_empty() {
+            entry.log_level.error.value.as_str()
+        } else {
+            ""
+        };
+        if !level.is_empty() {
+            out.push_str(&format!("[{level}] "));
+        }
+        out.push_str(&entry.log_message.content.value);
+        out.push('\n');
+    }
+    std::fs::write(path, out).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // CompassApp — citizen-based application
 // ---------------------------------------------------------------------------
@@ -394,6 +429,8 @@ struct CompassApp {
     /// Shared flag flipped by the delete-confirm modal callback; read back
     /// after [`Modal::show`] each frame to complete the removal.
     delete_confirmed: std::rc::Rc<std::cell::RefCell<bool>>,
+    /// Whether the startup data-missing modal has been offered this session.
+    startup_modal_shown: bool,
 }
 
 impl eframe::App for CompassApp {
@@ -401,6 +438,23 @@ impl eframe::App for CompassApp {
         self.theme.apply_theme(ui.ctx());
 
         self.handle_shortcuts(ui);
+
+        // Startup guide: when the stock list is empty, offer the data-missing
+        // modal once per session (design §6.5 scenario 1).
+        if !self.startup_modal_shown {
+            self.startup_modal_shown = true;
+            if self.stock_list.is_empty() {
+                self.modal.set_title("数据未就绪");
+                self.modal.set_body(
+                    "未在本地数据目录中找到股票列表（stock_basic.parquet）。\n请先用数据管线导入数据：cargo run --bin compass-data -- import-compass --table stock_basic",
+                );
+                self.modal.set_danger(false);
+                self.modal.set_confirm_text("知道了");
+                self.modal.set_cancel_text("取消");
+                self.modal.set_on_confirm(|| {});
+                self.modal.open();
+            }
+        }
 
         // Top: group toolbar (40 px, design §6.1).
         egui::Panel::top("toolbar").show(ui, |ui| {
@@ -424,6 +478,7 @@ impl eframe::App for CompassApp {
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
+            let mut logger_export_clicked = false;
             DockArea::new(&mut self.dock_state)
                 .style(self.dock_style.clone())
                 .show_inside(
@@ -439,12 +494,22 @@ impl eframe::App for CompassApp {
                         screener_boards: &self.screener_boards,
                         shared_state: &self.shared_state,
                         theme: &self.theme,
+                        logger_export_clicked: &mut logger_export_clicked,
                     },
                 );
 
             self.toast.render(ui.ctx());
             self.modal.show(ui.ctx());
             self.file_dialog.update(ui.ctx());
+
+            // Logger export (design §6.5 scenario 2): the export button opens
+            // the save-file dialog; a picked path writes the log entries.
+            if logger_export_clicked {
+                self.file_dialog.save_file();
+            }
+            if let Some(path) = self.file_dialog.take_picked() {
+                self.handle_log_export_pick(path);
+            }
 
             // Complete a pending watchlist removal once the confirm modal
             // fires (the callback only flips the shared flag above).
@@ -707,6 +772,23 @@ impl CompassApp {
         self.modal.open();
     }
 
+    /// Handle a log-export save path: write the shared log entries and toast
+    /// the outcome (design §6.5 scenario 2).
+    fn handle_log_export_pick(&mut self, path: std::path::PathBuf) {
+        match export_logs(&self.shared_state, &path) {
+            Ok(()) => {
+                self.toast.push(
+                    ToastLevel::Success,
+                    format!("日志已导出: {}", path.display()),
+                );
+            }
+            Err(e) => {
+                self.toast
+                    .push(ToastLevel::Error, format!("日志导出失败: {e}"));
+            }
+        }
+    }
+
     /// Bottom status bar: stock summary, loading/error state, data source
     /// count and the wall-clock time (design §6.3).
     fn render_status_bar(&mut self, ui: &mut egui::Ui) {
@@ -916,7 +998,7 @@ mod tests {
     use compass_ui::tokens::ColorTokens;
     use compass_ui::widgets::modal::Modal;
     use compass_ui::widgets::searchable_dropdown::StockPicker;
-    use compass_ui::widgets::toast::ToastManager;
+    use compass_ui::widgets::toast::{ToastLevel, ToastManager};
     use egui_dock::DockState;
     use egui_kittest::kittest::Queryable;
     use std::sync::Arc;
@@ -996,6 +1078,7 @@ mod tests {
             symbol_input_id: None,
             pending_delete: None,
             delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
+            startup_modal_shown: false,
         }
     }
 
@@ -1367,6 +1450,15 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
+        // Dismiss the startup data-missing modal so its backdrop stops
+        // blocking clicks (the 100 ms fade is completed explicitly).
+        harness.get_by_label("知道了").click();
+        harness.step();
+        harness.state_mut().modal.close_started =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        harness.step();
+        assert!(!harness.state().modal.is_open());
+
         harness
             .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
             .click();
@@ -1645,6 +1737,151 @@ default_timeframe = "1w"
             harness.state().pending_delete.is_none(),
             "dismissed modal must clear the pending delete"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // S8 Modal scenarios (design §6.5): startup guide + logger export
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn startup_modal_opens_when_stock_list_empty() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let _ = harness.get_by_label("数据未就绪");
+        let _ = harness.get_by_label("知道了");
+        assert!(
+            harness.state().modal.is_open(),
+            "data-missing modal must open on first frame"
+        );
+    }
+
+    #[test]
+    fn startup_modal_skipped_when_stock_list_present() {
+        let app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("600519", "贵州茅台", "SH")],
+        );
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        assert!(
+            harness.query_by_label("数据未就绪").is_none(),
+            "no startup modal when stock data is present"
+        );
+    }
+
+    #[test]
+    fn startup_modal_dismisses_with_confirm() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.get_by_label("知道了").click();
+        harness.step();
+        assert!(
+            harness.state().modal.closing,
+            "知道了 must start the modal closing animation"
+        );
+    }
+
+    #[test]
+    fn export_logs_writes_entries_to_file() {
+        let state = SharedState::new("000001", "1d");
+        {
+            let logger = egui_lens::ReactiveEventLogger::new(&state.log);
+            logger.log_info("hello world");
+            logger.log_warning("watch out");
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("logs.txt");
+
+        crate::export_logs(&state, &path).expect("export succeeds");
+
+        let contents = std::fs::read_to_string(&path).expect("file written");
+        assert!(contents.contains("--- Logger Export ---"));
+        assert!(contents.contains("hello world"));
+        assert!(contents.contains("watch out"));
+        assert!(
+            contents.contains("[INFO]"),
+            "level prefix present: {contents}"
+        );
+        assert!(
+            contents.contains("[WARNING]"),
+            "level prefix present: {contents}"
+        );
+    }
+
+    #[test]
+    fn export_logs_empty_state_writes_header_only() {
+        let state = SharedState::new("000001", "1d");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("empty.txt");
+
+        crate::export_logs(&state, &path).expect("export succeeds");
+        let contents = std::fs::read_to_string(&path).expect("file written");
+        assert!(contents.contains("--- Logger Export ---"));
+    }
+
+    #[test]
+    fn handle_log_export_pick_pushes_success_toast_and_writes_file() {
+        let mut app = build_compass_app(egui::Context::default());
+        {
+            let logger = egui_lens::ReactiveEventLogger::new(&app.shared_state.log);
+            logger.log_info("fetch ok");
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("out.txt");
+
+        app.handle_log_export_pick(path.clone());
+
+        let toast = app.toast.pop().expect("success toast pushed");
+        assert_eq!(toast.level, ToastLevel::Success);
+        assert!(
+            toast.message.contains("日志已导出"),
+            "message: {}",
+            toast.message
+        );
+        let contents = std::fs::read_to_string(&path).expect("file written");
+        assert!(contents.contains("fetch ok"));
+    }
+
+    #[test]
+    fn handle_log_export_pick_pushes_error_toast_on_failure() {
+        let mut app = build_compass_app(egui::Context::default());
+        // Writing into a path whose parent is a file must fail.
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, "x").unwrap();
+        let bad_path = blocker.join("out.txt");
+
+        app.handle_log_export_pick(bad_path);
+
+        let toast = app.toast.pop().expect("error toast pushed");
+        assert_eq!(toast.level, ToastLevel::Error);
+        assert!(
+            toast.message.contains("日志导出失败"),
+            "message: {}",
+            toast.message
+        );
+    }
+
+    #[test]
+    fn logger_export_button_triggers_save_dialog() {
+        let app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("600519", "贵州茅台", "SH")],
+        );
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // The export icon button lives in the logger panel's title row.
+        harness.get_by_label(egui_phosphor::regular::EXPORT).click();
+        harness.step();
+        harness.run_steps(2);
+        // The save-file dialog window appears.
+        let _ = harness.get_by_label_contains("Save File");
     }
 
     #[test]
