@@ -23,7 +23,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - run: cargo build --verbose
 
@@ -38,7 +38,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - run: cargo clippy -- -D warnings
 
@@ -63,7 +63,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - run: cargo doc --no-deps
         env:
@@ -79,7 +79,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - run: cargo bench --no-run
 
@@ -93,7 +93,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - name: Install Dolt
         run: |
@@ -116,7 +116,7 @@ jobs:
           components: llvm-tools
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - name: Install Dolt
         run: |
