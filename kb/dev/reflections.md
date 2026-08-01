@@ -294,3 +294,27 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **测试质量是反复失败点**（#79 覆盖率虚高、#75 flaky、#96 测试依赖本机 worktree + 只测 echo 分支）：agent 编写测试必须自包含 + 覆盖真实路径 + 无环境依赖，这三条应纳入测试验收标准
 - **security review 对 shell/脚本注入的敏锐度**（#96 round-1 注入、round-2 xdg 残留）：git 允许的 refname 字符集（`'`/`&`/`>`）是脚本注入的天然攻击面——任何把外部名拼进命令的代码都要过 security agent 专项检查
 
+## 2026-08-01 — ref #97 fix: pre-push hook malformed ref 检测误报 --abbrev-ref 等技术术语
+
+**What was done**: 修复 pre-push hook（`.githooks/pre-push`）的 malformed-ref 检测误报——`\<ref\>` 词边界把技术术语 `--abbrev-ref`/`--detect-terminal` 中的 `-ref` 误判为独立 ref，导致含此类术语的 commit message push 被拒（阻塞了 #96 的 push）。正则改为 `(^|[[:space:](])ref`（要求 ref 前是行首/空白/`(`），两次修复（e576bf5 首修 + 0bf5b78 加固排除反斜杠片段），新增 9 用例正则测试 `scripts/tests/pre-push-ref-regex-test.sh`。
+
+**User corrections**: 「修复钩子简单」——push 被 hook 误拒时，用户指示**修 hook 而非 amend commit message**（我当时倾向 amend 14ea178 绕过）。修 hook 治本：`--abbrev-ref` 等术语未来任何 commit 都可能触发，amend 只是绕过症状。
+
+**What went wrong**:
+1. **hook 误报阻塞 push**：`\<ref\>` 词边界缺陷（`-` 非单词字符，`-ref` 中 ref 前被视为词首）——commit message 含 `--abbrev-ref` 即被拒，4 次 push 尝试才成功。
+2. **首修不完整**：`(^|[^[:alnum:]_-])ref` 仍误报 commit message 中字面书写的 `\<ref\>`（反斜杠前缀 `\` 属于 `[^[:alnum:]_-]`）——push 后才发现远端带着有缺陷的 hook，需第二次修复 + 再 push。
+3. **commit-msg hook 拒绝已关闭 issue**：第二修复 commit 引用 #97 时被拒（issue 已关闭）——需 `gh issue reopen` 再关闭。
+4. **自身 commit message 触发检测**：8ae2d11 的 message 把 `ref` 当英文名词用（"a standalone ref and"、"ref must be"）——hook 判定为 malformed，需 amend 措辞。
+
+**Lessons learned**:
+1. **正则词边界 `\<ref\>` 不可用于检测含连字符/反斜杠的代码片段**——合法 issue 引用只出现在行首/空白/`(` 后，检测正则必须用前缀位置约束而非词边界；写完用 `--abbrev-ref`、`\<ref\>`、`refactored` 三类样本实测。
+2. **hook 修复后 push 前必须用真实 commit message 全量验证**——首修后我只验证了 6 个历史 commits，未验证"修复 hook 自身的 commit message"（含正则字面量），导致缺陷推上远端。自引用场景（hook 修复 commit 本身含正则片段）是验证盲区。
+3. **commit message 描述正则/代码片段时避免独立 `ref` 词**（#95 教训的延续）——用"the keyword"、"the marker"替代，或确保 `ref` 前后有非空白字符。
+4. **push 被 hook 拒绝时先定位 hook 缺陷**：若拒绝原因是 hook 自身 bug（误报），修 hook 优于 amend message 绕过——后者只解决单次、前者解决一类。
+
+### Trends (last 10)
+- **hook 链路次生 bug 反复出现**（#16 pre-push range、#79 pre-push 阻断、#95 rebase 误拒、#97 词边界误报 + commit-msg 拒已关闭 issue）：hook 自身是持续故障源——hook 改动必须带测试 + 用真实 commit message 场景验证，且 commit message 规范应明确"正文避免 `ref` 独立词/正则字面量"
+- **修复自身引入二次缺陷**（#96 round-2 xdg 残留、#97 首修漏反斜杠）：修复不完整是常见模式——修复后必须用比触发场景更广的样本集验证（本次补 `\<ref\>` 反斜杠场景才暴露）
+- **验证盲区集中在"自引用"场景**（#97 hook 修复 commit 含正则字面量、#96 detached-HEAD 守卫 commit 含 `--abbrev-ref`）：修复类 commit 的 message 常引用被修对象本身，构成检测死循环——此类 commit 的 message 需刻意规避触发模式
+
+
