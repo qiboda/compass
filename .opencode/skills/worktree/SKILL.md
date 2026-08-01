@@ -52,7 +52,7 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
 
 2. **自动启动工作树区域（ref #96）**——无需手动解绑当前 opencode session：
    - 运行 `scripts/open-worktrees.sh [name...]`，脚本探测 OS 默认终端
-     （`$TERMINAL` → `xdg-terminal-emulator` → kitty/gnome-terminal/konsole/xfce4-terminal）
+     （`$TERMINAL` → kitty/gnome-terminal/konsole/xfce4-terminal/xterm）
      并在新终端窗口中启动 `opencode`
    - 脚本通过 `setsid` 启动新进程，使其**脱离当前对话的进程组**——当前
      对话结束，新 opencode 窗口不会随之关闭；无需用户手动退出当前实例
@@ -83,7 +83,7 @@ scripts/open-worktrees.sh --close cleanup-stock-basic   # 关闭指定区域
 scripts/open-worktrees.sh --close                        # 关闭所有区域
 ```
 
-探测链：`$TERMINAL` → `xdg-terminal-emulator` → kitty/gnome-terminal/konsole/xfce4-terminal。
+探测链：`$TERMINAL` → kitty/gnome-terminal/konsole/xfce4-terminal/xterm。
 无探测到终端时脚本打印手动运行命令。
 
 ### 列出

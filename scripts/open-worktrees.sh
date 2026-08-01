@@ -24,7 +24,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WT_DIR="$PROJECT_ROOT/.worktrees"
 
 # ---------------------------------------------------------------------------
-# Terminal detection: $TERMINAL → xdg-terminal-emulator → known list
+# Terminal detection: $TERMINAL → known terminal list
 # ---------------------------------------------------------------------------
 
 detect_terminal() {
@@ -32,11 +32,6 @@ detect_terminal() {
 
     if [ -n "${TERMINAL:-}" ] && command -v "$TERMINAL" >/dev/null 2>&1; then
         echo "$TERMINAL"
-        return 0
-    fi
-
-    if command -v xdg-terminal-emulator >/dev/null 2>&1; then
-        echo "xdg-terminal-emulator"
         return 0
     fi
 
@@ -96,13 +91,6 @@ launch_in_terminal() {
                 echo "  setsid xterm -e bash -c 'cd \"\$1\" && opencode; exec bash' _ \"$dir\" &"
             else
                 setsid xterm -e bash -c 'cd "$1" && opencode; exec bash' _ "$dir" >/dev/null 2>&1 &
-            fi
-            ;;
-        xdg-terminal-emulator)
-            if [ -n "${DRY_RUN:-}" ]; then
-                echo "  setsid xdg-terminal-emulator -e bash -c 'cd \"\$1\" && opencode; exec bash' _ \"$dir\" &"
-            else
-                setsid xdg-terminal-emulator -e bash -c 'cd "$1" && opencode; exec bash' _ "$dir" >/dev/null 2>&1 &
             fi
             ;;
         *)
@@ -251,7 +239,9 @@ for wt in $WANT; do
     dir="$WT_DIR/$wt"
     # Setsid detaches each terminal process from this session's process group,
     # so the opencode inside survives this conversation ending (ref #96).
-    launch_in_terminal "$term" "$dir"
+    # || true: an unknown/empty terminal returns 1 from launch_in_terminal
+    # (manual command already printed); do not let set -e abort the loop.
+    launch_in_terminal "$term" "$dir" || true
 done
 
 echo ""
