@@ -167,6 +167,7 @@ impl<T> SearchableDropdown<T> {
             if resp.clicked() {
                 self.popup_open = true;
                 self.filter_text.clone_from(&display_text);
+                self.highlighted = None;
             }
             resp
         };
@@ -175,6 +176,7 @@ impl<T> SearchableDropdown<T> {
             // Esc closes the popup (existing behavior preserved).
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.popup_open = false;
+                self.highlighted = None;
                 return response;
             }
 
