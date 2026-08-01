@@ -85,6 +85,10 @@ const COLUMNS: [ColumnSpec; 6] = [
     },
 ];
 
+/// Index of the market-cap column — the screener's default sort target
+/// (descending, biggest first), matching the pre-componentization behavior.
+const MARKET_CAP_COLUMN: usize = 4;
+
 /// Screener panel citizen.
 ///
 /// Renders the condition form (two card sections) and the results table.
@@ -176,7 +180,9 @@ impl ScreenerPanel {
             ms_exchange = ms_exchange.selected(q.exchanges.iter().cloned());
             ms_board = ms_board.selected(q.boards.iter().cloned());
         }
-        let table = DataTable::new(tokens, COLUMNS.to_vec());
+        let mut table = DataTable::new(tokens, COLUMNS.to_vec());
+        table.set_sort(MARKET_CAP_COLUMN, true);
+        table.set_descending_default(MARKET_CAP_COLUMN, true);
         Self {
             citizen_id,
             citizen_state,

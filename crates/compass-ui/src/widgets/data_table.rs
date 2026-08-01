@@ -65,6 +65,7 @@ pub struct DataTable {
     rows: Vec<Vec<DataCell>>,
     sort_column: usize,
     sort_descending: bool,
+    descending_defaults: std::collections::BTreeSet<usize>,
 }
 
 impl DataTable {
@@ -76,6 +77,7 @@ impl DataTable {
             rows: Vec::new(),
             sort_column: 0,
             sort_descending: false,
+            descending_defaults: std::collections::BTreeSet::new(),
         }
     }
 
@@ -84,9 +86,28 @@ impl DataTable {
         self.rows = rows;
     }
 
+    /// Set the initial sort column and direction (e.g. a business default such as
+    /// "market cap descending" for the screener).
+    pub fn set_sort(&mut self, column: usize, descending: bool) {
+        if column < self.columns.len() {
+            self.sort_column = column;
+            self.sort_descending = descending;
+        }
+    }
+
     /// Whether the current sort is descending.
     pub fn sort_descending(&self) -> bool {
         self.sort_descending
+    }
+
+    /// Columns that should default to descending when newly selected
+    /// (business preference, e.g. market cap in the screener).
+    pub fn set_descending_default(&mut self, column: usize, descending: bool) {
+        if descending {
+            self.descending_defaults.insert(column);
+        } else {
+            self.descending_defaults.remove(&column);
+        }
     }
 
     /// Show the table; returns the original index of the row that was clicked.
@@ -188,7 +209,7 @@ impl DataTable {
             self.sort_descending = !self.sort_descending;
         } else {
             self.sort_column = column;
-            self.sort_descending = false;
+            self.sort_descending = self.descending_defaults.contains(&column);
         }
     }
 }
@@ -496,6 +517,59 @@ mod tests {
         table.toggle_sort(0); // descending on column 0
         table.toggle_sort(1); // new column -> ascending
         assert!(!table.sort_descending(), "new column defaults ascending");
+    }
+
+    #[test]
+    fn set_sort_applies_initial_sort() {
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(
+            &tokens,
+            vec![
+                ColumnSpec {
+                    header: "代码",
+                    numeric: false,
+                },
+                ColumnSpec {
+                    header: "市值(亿)",
+                    numeric: true,
+                },
+            ],
+        );
+        table.set_sort(1, true);
+        assert!(table.sort_descending(), "set_sort descending applies");
+        table.set_sort(0, false);
+        assert!(!table.sort_descending(), "set_sort ascending applies");
+    }
+
+    #[test]
+    fn set_descending_default_keeps_business_preference_on_new_column() {
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(
+            &tokens,
+            vec![
+                ColumnSpec {
+                    header: "代码",
+                    numeric: false,
+                },
+                ColumnSpec {
+                    header: "市值(亿)",
+                    numeric: true,
+                },
+            ],
+        );
+        // Market cap (column 1) prefers descending, mirroring the screener.
+        table.set_descending_default(1, true);
+        table.toggle_sort(0); // select code column
+        table.toggle_sort(1); // switch to market cap -> descending default
+        assert!(
+            table.sort_descending(),
+            "new column with descending default sorts descending"
+        );
+        table.toggle_sort(0); // switch back to code -> ascending default
+        assert!(
+            !table.sort_descending(),
+            "new column without default sorts ascending"
+        );
     }
 
     // ------------------------------------------------------------------

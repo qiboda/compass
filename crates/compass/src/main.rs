@@ -561,14 +561,18 @@ impl CompassApp {
     /// selection, `Ctrl+K` focuses the sidebar search and `1/2/3` switch the
     /// timeframe.
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
+        // Guard: plain keys (digits, `/`) must not fire while a text widget has
+        // focus — typing a symbol like "601318" would otherwise flip the
+        // timeframe under the user's fingers. Ctrl-combos stay active.
+        let editing_text = ui.ctx().memory(|m| m.focused().is_some());
         let (slash, ctrl_enter, ctrl_k, num1, num2, num3) = ui.ctx().input(|i| {
             (
-                i.key_pressed(egui::Key::Slash),
+                i.key_pressed(egui::Key::Slash) && !editing_text,
                 i.key_pressed(egui::Key::Enter) && i.modifiers.command,
                 i.key_pressed(egui::Key::K) && i.modifiers.command,
-                i.key_pressed(egui::Key::Num1),
-                i.key_pressed(egui::Key::Num2),
-                i.key_pressed(egui::Key::Num3),
+                i.key_pressed(egui::Key::Num1) && !editing_text,
+                i.key_pressed(egui::Key::Num2) && !editing_text,
+                i.key_pressed(egui::Key::Num3) && !editing_text,
             )
         });
         if slash && let Some(id) = self.symbol_input_id {
@@ -2060,6 +2064,26 @@ default_timeframe = "1w"
         harness.key_press(egui::Key::Num1);
         harness.step();
         assert_eq!(harness.state().timeframe_index, 0);
+    }
+
+    #[test]
+    fn digit_keys_do_not_switch_timeframe_while_typing_in_input() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Focus the symbol input via the `/` shortcut, then type a digit:
+        // the timeframe must NOT flip while the input has focus.
+        harness.key_press(egui::Key::Slash);
+        harness.step();
+
+        harness.key_press(egui::Key::Num2);
+        harness.step();
+        assert_eq!(
+            harness.state().timeframe_index,
+            0,
+            "typing a digit in a focused input must not switch timeframe"
+        );
     }
 
     // ------------------------------------------------------------------
