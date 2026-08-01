@@ -43,10 +43,3 @@ friction 记录决策过程中的卡点和纠正，reflection 记录实施后的
 
 **教训**: 涉及 opencode/git 工具的跨目录操作，先确认工具对 worktree 的特殊处理（session/project 绑定模型），再执行启动动作。教训应沉淀到 skill 文档本身（而非仅 friction），确保后续所有 agent 在流程上不会重犯。
 
-## 2026-08-01 — CI 修复批次（#54/#75/#88/#92/#83）
-
-**我的偏差**: ① 发现 opencode-ci-fix 的 /fix 触发链断裂后，提议在 ci-fix workflow 内直接内联执行 fix agent（方案 A：加 fix job 跑 anomalyco/opencode），设计较复杂；② 默认所有 CI 修复都必须先合并到 master 才能惠及其他分支，导致 PR 互相卡进程。
-
-**你的纠正**: ① "感觉 github 修复和本地流程混在一起有点乱，目前不需要这么复杂，直接让 ci-fix 只提交 issue 就好"——简化到只保留自动建 issue，修复由人工接手；② "我们需要有从特定分支切一个新的分支的能力，来修复特定分支……才不会互相卡进程"——落地目标分支修复工作流（详见 reflection 条目 + worktree skill）。
-
-**教训**: 修复方案先问"最小可行是什么"，再考虑自动化——GITHUB_TOKEN 触发链断裂的根因是平台限制，与其绕路建复杂链路，不如砍掉自动修复回归人工（更简单可靠）。修复传播路径的技术细节（master 级 bug 直推 vs 分支级修复）见同日 reflection 条目，不在此重复。

@@ -222,6 +222,10 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **What was done**: 一次合并 3 个 PR（#88 ci-fix 移除自动 /fix、#92 rust-cache 仅 master save、#83 覆盖率 80% 门禁），全部 rebase 到新 master 后合并，master CI 全绿。修复 #75 flaky 测试（周六日期跨 ISO 周边界）、setup-uv@v9 不存在的 tag（→@v9.0.0）、pre-push hook rebase 误拒（#95）、ci-fix 既存问题（#87）。落地"目标分支修复工作流"（从 feature 分支切修复分支 cherry-pick 回，各 PR 互不阻塞）。关闭 4 个陈旧 CI Failure issues + #54 架构 issue。
 
+**User corrections**（原 friction 条目合并，friction.md 今日条目已删除）:
+1. 修复方案先问"最小可行是什么"再考虑自动化——GITHUB_TOKEN 触发链断裂的根因是平台限制，与其建复杂链路（内联 fix agent），不如砍掉自动修复回归人工（更简单可靠）
+2. CI 修复的传播路径要提前设计——master 级 bug 单独直推 master，feature 分支问题从该分支切修复分支，避免所有分支排队等 master
+
 **What went wrong**:
 1. **#75 flaky 测试再次中招**：master 上 `save_and_fetch_preserves_symbol_and_timeframe` 用 Utc::now() 生成日期，周六跨 ISO 周边界 → PR #88/#92 的 CI 全挂——#79 反思已记录此教训，但修复（固定基准日期）未及时进 master，导致后续所有分支 CI 连锁失败
 2. **rebase 后 force push 被 pre-push hook 误拒**：hook 的 range 含 master 已合并 commits（含已关闭 issue 的 ref）——暴露 hook 的 merge-master 场景缺陷（#95）
