@@ -952,9 +952,13 @@ mod tests {
     use rstest::rstest;
 
     fn make_bar(day: u32, open: f64, close: f64, volume: f64) -> Bar {
+        // Fixed mid-week, mid-month base date (2026-08-05 is a Wednesday) so
+        // weekly/monthly aggregation tests are deterministic. Utc::now()-relative
+        // dates flaked whenever day+1/day+2 crossed an ISO week or month boundary
+        // (e.g. CI failure in issue #75).
         Bar {
-            time: Utc::now()
-                .date_naive()
+            time: chrono::NaiveDate::from_ymd_opt(2026, 8, 5)
+                .expect("valid date")
                 .and_hms_opt(0, 0, 0)
                 .expect("valid datetime")
                 .and_utc()
