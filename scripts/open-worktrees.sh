@@ -1,16 +1,22 @@
 #!/bin/bash
-# Open worktree zones in the OS default terminal, each running opencode.
+# Open/close worktree zones in the OS default terminal, each running opencode.
 #
-# The new opencode processes are started detached from the current process
-# group (via setsid) so they keep running after the launching session ends.
-# No manual "unbind the current opencode session" step is required (ref #96).
+# Open: starts opencode in the worktree directory, detached from the current
+# process group (via setsid) so it keeps running after the launching session
+# ends. No manual "unbind the current opencode session" step is required
+# (ref #96).
+#
+# Close: stops any opencode whose cwd points at the worktree, then removes
+# the worktree and its branch (ref #96). Use when opencode holds the worktree
+# directory and `git worktree remove` would fail.
 #
 # Usage:
-#   scripts/open-worktrees.sh           # open all worktrees
-#   scripts/open-worktrees.sh gui data  # open specific ones
-#   scripts/open-worktrees.sh --list    # list available worktrees
+#   scripts/open-worktrees.sh            # open all worktrees
+#   scripts/open-worktrees.sh gui data   # open specific ones
+#   scripts/open-worktrees.sh --list     # list available worktrees
 #   scripts/open-worktrees.sh --detect-terminal  # print detected terminal
-#   scripts/open-worktrees.sh --dry-run # print commands without running
+#   scripts/open-worktrees.sh --dry-run [wt...]  # print commands without running
+#   scripts/open-worktrees.sh --close [wt...]    # stop opencode + remove worktree
 
 set -euo pipefail
 
@@ -44,21 +50,112 @@ detect_terminal() {
     return 1
 }
 
-# Build the command that opens a terminal at `dir` and runs `cmd` inside it.
-# Emits nothing on failure (caller falls back to printing the raw command).
-terminal_cmd() {
-    local term="$1" dir="$2" cmd="$3"
+# ---------------------------------------------------------------------------
+# Open: launch opencode in a worktree's terminal
+#
+# $dir is always passed as an argv element (never interpolated into a command
+# string), so worktree names containing quotes or $() cannot inject commands.
+# ---------------------------------------------------------------------------
+
+launch_in_terminal() {
+    local term="$1" dir="$2"
+
+    # Path safety: dir may contain spaces/quotes; as an argv element (quoted
+    # below) it is never re-parsed by a shell.
     case "$term" in
-        kitty)            echo "kitty --directory '$dir' -- $cmd" ;;
-        gnome-terminal)   echo "gnome-terminal --working-directory='$dir' -- bash -c '$cmd; exec bash'" ;;
-        konsole)          echo "konsole --workdir '$dir' -e bash -c '$cmd; exec bash'" ;;
-        xfce4-terminal)   echo "xfce4-terminal --working-directory='$dir' -- bash -c '$cmd; exec bash'" ;;
-        xterm)            echo "xterm -e bash -c 'cd \"$dir\" && $cmd; exec bash'" ;;
+        kitty)
+            if [ -n "${DRY_RUN:-}" ]; then
+                echo "  setsid kitty --directory \"$dir\" -- opencode &"
+            else
+                setsid kitty --directory "$dir" -- opencode >/dev/null 2>&1 &
+            fi
+            ;;
+        gnome-terminal)
+            if [ -n "${DRY_RUN:-}" ]; then
+                echo "  setsid gnome-terminal --working-directory=\"$dir\" -- bash -c 'opencode; exec bash' &"
+            else
+                setsid gnome-terminal --working-directory="$dir" -- bash -c 'opencode; exec bash' >/dev/null 2>&1 &
+            fi
+            ;;
+        konsole)
+            if [ -n "${DRY_RUN:-}" ]; then
+                echo "  setsid konsole --workdir \"$dir\" -e bash -c 'opencode; exec bash' &"
+            else
+                setsid konsole --workdir "$dir" -e bash -c 'opencode; exec bash' >/dev/null 2>&1 &
+            fi
+            ;;
+        xfce4-terminal)
+            if [ -n "${DRY_RUN:-}" ]; then
+                echo "  setsid xfce4-terminal --working-directory=\"$dir\" -- bash -c 'opencode; exec bash' &"
+            else
+                setsid xfce4-terminal --working-directory="$dir" -- bash -c 'opencode; exec bash' >/dev/null 2>&1 &
+            fi
+            ;;
+        xterm)
+            if [ -n "${DRY_RUN:-}" ]; then
+                echo "  setsid xterm -e bash -c 'cd \"\$1\" && opencode; exec bash' _ \"$dir\" &"
+            else
+                setsid xterm -e bash -c 'cd "$1" && opencode; exec bash' _ "$dir" >/dev/null 2>&1 &
+            fi
+            ;;
         xdg-terminal-emulator)
-            # xdg-terminal-emulator does not accept a working dir; cd in a wrapper shell.
-            echo "xdg-terminal-emulator -e bash -c 'cd \"$dir\" && $cmd; exec bash'" ;;
-        *)                return 1 ;;
+            if [ -n "${DRY_RUN:-}" ]; then
+                echo "  setsid xdg-terminal-emulator -e bash -c 'cd \"\$1\" && opencode; exec bash' _ \"$dir\" &"
+            else
+                setsid xdg-terminal-emulator -e bash -c 'cd "$1" && opencode; exec bash' _ "$dir" >/dev/null 2>&1 &
+            fi
+            ;;
+        *)
+            # No launcher for this terminal; print a manual command instead.
+            echo "  cd $dir && opencode   # run manually (no launcher for $term)" >&2
+            return 1
+            ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# Close: stop opencode holding the worktree, then remove worktree + branch
+# ---------------------------------------------------------------------------
+
+close_worktree() {
+    local wt="$1"
+    local dir="$WT_DIR/$wt"
+
+    if ! has_worktree "$wt"; then
+        echo "skip: $wt (not a worktree)" >&2
+        return 0
+    fi
+
+    # 1. Stop any opencode whose cwd is this worktree directory.
+    #    pgrep -f matches the script's own process too, but the cwd check
+    #    below (readlink /proc/PID/cwd) confines the kill to real holders.
+    local pids
+    pids="$(pgrep -f 'opencode' || true)"
+    for pid in $pids; do
+        local cwd
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+        if [ "$cwd" = "$dir" ]; then
+            echo "  stopping opencode (pid $pid) in $wt"
+            if [ -z "${DRY_RUN:-}" ]; then
+                kill "$pid" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    # 2. Remove the worktree and its branch.
+    local branch
+    branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [ -n "${DRY_RUN:-}" ]; then
+        echo "  git worktree remove --force \"$dir\""
+        if [ -n "$branch" ] && [ "$branch" != "master" ]; then
+            echo "  git branch -D $branch"
+        fi
+    else
+        git worktree remove --force "$dir"
+        if [ -n "$branch" ] && [ "$branch" != "master" ]; then
+            git branch -D "$branch"
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -83,10 +180,8 @@ list_worktrees() {
 # Main
 # ---------------------------------------------------------------------------
 
-ARG="${1:-}"
-shift 2>/dev/null || true
-
-case "$ARG" in
+# Exclusive mode flags must be the first argument.
+case "${1:-}" in
     --list)
         list_worktrees
         exit 0
@@ -99,21 +194,25 @@ case "$ARG" in
         echo "no terminal detected" >&2
         exit 1
         ;;
-    --dry-run)
-        DRY_RUN=1
-        WANT="$*"
-        ;;
-    "")
-        echo "usage: open-worktrees.sh [--list|--detect-terminal|--dry-run] [worktree...]" >&2
-        exit 1
-        ;;
-    *)
-        WANT="$ARG $*"
-        ;;
 esac
 
-# Worktrees to open: explicit args, or all available.
-if [ -z "${WANT:-}" ]; then
+# Combinable flags (--dry-run / --close) may appear anywhere; the first
+# non-flag argument starts the worktree name list.
+DRY_RUN=""
+CLOSE=""
+WANT=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        --close) CLOSE=1 ;;
+        --*) echo "usage: open-worktrees.sh [--list|--detect-terminal|--dry-run|--close] [worktree...]" >&2; exit 1 ;;
+        *) WANT="$WANT $arg" ;;
+    esac
+done
+
+# Worktrees to act on: explicit names, or all available (documented default).
+if [ -z "$WANT" ]; then
     WANT="$(list_worktrees | tr '\n' ' ')"
 fi
 
@@ -122,6 +221,18 @@ if [ -z "$WANT" ]; then
     exit 1
 fi
 
+# --- Close mode ---
+if [ -n "${CLOSE:-}" ]; then
+    echo "# close: worktrees: $WANT"
+    for wt in $WANT; do
+        close_worktree "$wt"
+    done
+    echo ""
+    echo "done. worktrees removed."
+    exit 0
+fi
+
+# --- Open mode ---
 if [ -n "${DRY_RUN:-}" ]; then
     echo "# dry-run: would open worktrees: $WANT"
 fi
@@ -140,15 +251,7 @@ for wt in $WANT; do
     dir="$WT_DIR/$wt"
     # Setsid detaches each terminal process from this session's process group,
     # so the opencode inside survives this conversation ending (ref #96).
-    if cmd="$(terminal_cmd "$term" "$dir" "opencode")"; then
-        if [ -n "${DRY_RUN:-}" ]; then
-            echo "  setsid bash -c '$cmd' &"
-        else
-            setsid bash -c "$cmd" &
-        fi
-    else
-        echo "  cd $dir && opencode   # run manually (no launcher for $term)" >&2
-    fi
+    launch_in_terminal "$term" "$dir"
 done
 
 echo ""

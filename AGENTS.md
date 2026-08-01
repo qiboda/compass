@@ -204,7 +204,8 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 
 PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），每个 worktree 对应
 一个 PR/epic，合并后清理。创建后执行 `/handoff` 并运行 `scripts/open-worktrees.sh` 自动
-启动工作树区域（探测默认终端 + setsid 脱离进程组，无需手动解绑当前 session）。
+启动工作树区域（探测默认终端 + setsid 脱离进程组，无需手动解绑当前 session）；
+opencode 仍占用目录无法删除时用 `scripts/open-worktrees.sh --close <name>` 终止并清理。
 **加载 `worktree` skill 获取完整流程**（含 post-creation MANDATORY 步骤与清理）。
 
 ## Knowledge base

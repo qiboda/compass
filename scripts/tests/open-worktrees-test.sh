@@ -39,8 +39,42 @@ check "no tmux dependency" "! grep -q 'tmux' '$SCRIPT'"
 # 7. --list works (at least lists the repo as a worktree root)
 check "list runs" "\"$SCRIPT\" --list >/dev/null 2>&1"
 
-# 8. dry-run for a nonexistent worktree exits 0 (skip path)
+# 8. No-arg dry-run does NOT print usage (regression: "" case used to exit 1)
+check "no-arg opens all (no usage error)" "! \"$SCRIPT\" --dry-run 2>&1 | grep -q '^usage:'"
+
+# 9. dry-run for a nonexistent worktree exits 0 (skip path)
 check "dry-run nonexistent exits 0" "\"$SCRIPT\" --dry-run definitely-not-a-worktree >/dev/null 2>&1"
+
+# 10. --close dry-run works for a real worktree (cleanup-stock-basic exists)
+check "close dry-run lists removal" "\"$SCRIPT\" --close --dry-run cleanup-stock-basic 2>&1 | grep -q 'git worktree remove'"
+
+# 11. --close + --dry-run flag combination (order-independent)
+check "close+dry-run reversed order" "\"$SCRIPT\" --dry-run --close cleanup-stock-basic 2>&1 | grep -q 'git worktree remove'"
+
+# 12. Close skips nonexistent worktree (no crash)
+check "close nonexistent is skip (exit 0)" "\"$SCRIPT\" --close --dry-run definitely-not-a-worktree >/dev/null 2>&1"
+
+# 13. Injection safety: dir is passed as argv, never parsed by a shell.
+#     A hostile worktree name with quotes/$() must appear verbatim (quoted)
+#     in the dry-run output, and must NOT create a file.
+check "injection-safe quoting (argv not parsed)" "bash -c '
+    func=\$(sed -n \"/^launch_in_terminal()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    DRY_RUN=1
+    dir=\"/data/codes/compass/.worktrees/evil-\\\$(touch /tmp/openwt-PWNED)\"
+    launch_in_terminal kitty \"\$dir\" >/dev/null 2>&1
+    [ ! -e /tmp/openwt-PWNED ]
+'"
+rm -f /tmp/openwt-PWNED
+
+# 14. launch_in_terminal returns 1 for unknown terminal (manual fallback)
+check "unknown terminal falls back (exit 1)" "bash -c '
+    func=\$(sed -n \"/^launch_in_terminal()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    DRY_RUN=1
+    launch_in_terminal nosuchterm /tmp >/dev/null 2>&1
+    [ \$? -eq 1 ]
+'"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then

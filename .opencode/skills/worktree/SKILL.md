@@ -60,16 +60,27 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
 
 3. **当前 session 留在 master 中**——不要在当前 session 中 `cd` 进入工作树。
 
-### 启动工作树区域
+### 启动/关闭工作树区域
 
 在 OS 默认终端中打开 worktree 区域的 opencode 会话（`setsid` 自动脱离进程组，
 对话结束新会话不随之关闭，ref #96）：
 
 ```bash
-scripts/open-worktrees.sh          # 打开所有 worktree
-scripts/open-worktrees.sh gui data # 打开指定 worktree
-scripts/open-worktrees.sh --list   # 列出可用 worktree
-scripts/open-worktrees.sh --dry-run # 打印将执行的命令，不实际启动
+scripts/open-worktrees.sh            # 打开所有 worktree
+scripts/open-worktrees.sh gui data   # 打开指定 worktree
+scripts/open-worktrees.sh --list     # 列出可用 worktree
+scripts/open-worktrees.sh --dry-run [wt...]  # 打印将执行的命令，不实际启动
+scripts/open-worktrees.sh --close [wt...]    # 终止 opencode + 删除 worktree 与分支
+```
+
+**`--close`（边界问题，ref #96）**：当 opencode 仍在 worktree 目录中运行时，
+`git worktree remove` 因目录被进程占用而失败。`--close` 先终止 cwd 指向该
+worktree 的 opencode 进程，再 `git worktree remove --force` + `git branch -D`，
+一次完成退出与清理：
+
+```bash
+scripts/open-worktrees.sh --close cleanup-stock-basic   # 关闭指定区域
+scripts/open-worktrees.sh --close                        # 关闭所有区域
 ```
 
 探测链：`$TERMINAL` → `xdg-terminal-emulator` → kitty/gnome-terminal/konsole/xfce4-terminal。

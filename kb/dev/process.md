@@ -160,7 +160,7 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 分支命名：`feat/<short-description>` 或 `fix/<short-description>`。
 
 **加载 `/worktree` skill 获取完整流程**（创建、post-creation MANDATORY 步骤、
-`/handoff`、自动启动区域、合并后清理）。
+`/handoff`、自动启动区域、`--close` 退出清理、合并后清理）。
 
 **为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco/worktree via OCX），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。
