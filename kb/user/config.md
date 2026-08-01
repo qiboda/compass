@@ -21,6 +21,21 @@ mkdir -p ~/.config/compass
 # 默认值："compass_dark"
 theme = "compass_dark"
 
+[screener]
+# 选股器条件（Screener tab）。全部可选——缺省键用默认值。
+# 由 GUI 在每次点击"筛选"时自动写回，重启后恢复。
+# industries = ["白酒", "银行"]          # 行业多选（OR），空 = 不限
+# exchanges = ["SH", "SZ"]               # 交易所多选，空 = 不限
+# boards = ["主板"]                      # 板块多选，空 = 不限
+# list_years = 3                        # 上市时长下限（年），缺省 = 不限
+# market_cap_min = 100.0                # 市值下限（亿元）
+# market_cap_max = 5000.0               # 市值上限（亿元）
+# exclude_delisted = true               # 排除退市（默认 true）
+# ma = "bullish_align"                  # 均线：above_ma20 / above_ma60 / bullish_align
+# breakout = { days = 60 }              # N 日新高
+# momentum = { days = 20, min_pct = 0.0, max_pct = 100.0 }  # 动量区间
+# volume = { days = 20, times = 2.0 }   # 量能：近 N 日均量 ≥ 倍数 × 近 3N 日均量
+
 [parquet]
 # 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
 # 默认值："/data/compass-data/parquet_data"

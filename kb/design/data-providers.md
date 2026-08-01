@@ -199,6 +199,27 @@ ORDER BY tradedate ASC
 
 标的行为 DuckDB 参数 (`?`) 绑定，不拼接到 SQL 字符串中。数据不加载到表中。DuckDB 每次查询时读取 Parquet 文件，利用列式投影和谓词下推提高效率。
 
+### 横截面读取（fetch_cross_section）
+
+`fetch_cross_section(range_start, range_end)` 是**全市场扫描**原语：不像
+`fetch_bars_blocking` 那样按 `WHERE symbol = ?` 过滤，而是按日期范围一次返回
+**所有标的**的 bar，供选股器等横截面分析使用：
+
+```sql
+SELECT symbol, CAST(tradedate AS VARCHAR) AS tradedate, adjclose, close, volume
+FROM read_parquet('parquet_data/stock_daily.parquet')
+WHERE tradedate >= ? AND tradedate <= ?
+ORDER BY symbol, tradedate ASC
+```
+
+返回 `Vec<CrossSectionBar>`（`symbol`、`trade_date: NaiveDate`、`adjclose`、
+`close`、`volume`）— 这是代码库中**首个把 `adjclose` 带出读取层**的路径
+（`fetch_bars` 的 fallback 查询虽 SELECT 了 adjclose 但映射时丢弃）。
+
+注意：parquet 的 `tradedate` 列实际类型是 **TIMESTAMP**（非 DATE），
+`CAST AS VARCHAR` 产出 `"1991-04-04 00:00:00"` 带时间分量。解析必须用
+`date_str_to_utc`（兼容 DATE 与 TIMESTAMP 两种格式），不能只用 `%F`。
+
 ### 标的发现
 
 `list_symbols()` 首先检查 `stock_daily.symbols.txt`（每行一个标的，已排序），该文件由导入管线与 `stock_daily.parquet` 一起生成。这是快速路径 — 一次简单的文件读取。
@@ -288,4 +309,8 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 错误处理：错误类型设计 | anyhow 通用错误 / 精确枚举 | DataError 枚举：Network / Database / Parse / RateLimited / NoData，含 From 实现 | 调用方可区分错误类型（如 NoData 表示标的不存在 vs Network 表示网络中断），GUI 可据此展示不同提示；From 实现支持 `?` 传播 | anyhow 丢失错误分类信息，调用方无法做差异化处理；Parse 携带原始字符串便于排查 API 响应变更 |
 | stock_basic 数据源 | 东财 push2 (EM_FS) / investment_data ts_a_stock_list / 三大交易所官网 | 官网 | 数据权威含退市日期、无新三板污染（东财 t:81 段混入 6841 只新三板/老三板）、ts_a_stock_list 过时 4 年 | 东财段位不可靠且无退市日期；ts_a_stock_list max list_date 2022-07-18 无法覆盖新股 |
 | stock_basic 元数据存储 | DuckDB 表 + Parquet 双轨 / 仅 Parquet | 仅 Parquet（`import-compass --table stock_basic` 生成，ParquetReader 直读） | duckdb.rs 的旧 stock_basic 路径（8 列旧 schema + upsert/get）零生产调用者；`import` 写 5 列占位文件会覆盖新 10 列 parquet；单一数据源避免双 schema 维护 | DuckDB 双轨徒增第二份 schema 定义与同步成本；`import` 保留导出会持续制造错误列文件（ref #80） |
+| 横截面原语位置 | DataProvider trait 方法 / DuckDbProvider 方法 / ParquetReader 固有方法 | ParquetReader 固有方法 `fetch_cross_section` | 与 `load_all_stock_basics` 同源同模式；避免 trait 三 impl（duckdb/parquet/synthetic）牵连；符合"直读 parquet"契约 | trait 扩展需同时改三处 impl 且 synthetic 为私有 mod；DuckDbProvider 依赖内存表缓存模型，与全表扫描不兼容 |
+| CrossSectionBar 字段集 | 全 OHLCV / 仅 adjclose / adjclose+close+volume | `symbol, trade_date, adjclose, close, volume` | 足以支撑选股器全部条件（均线/动量/突破用 adjclose，量能用 volume，最新价/市值用 close）；DuckDB 列裁剪最小化 I/O | 全字段浪费内存（约 1.6M 行）；仅 adjclose 无法算市值/最新价 |
+| `tradedate` 列类型解析 | `%F` 严格解析 / `date_str_to_utc` 双格式 | `date_str_to_utc`（兼容 DATE 与 TIMESTAMP） | 真实 parquet 列为 TIMESTAMP，`CAST AS VARCHAR` 带时间分量；`%F` 会静默丢弃全部行（测试 DATE fixture 不暴露） | `%F` 在生产环境静默空结果，是真实数据核验发现的陷阱 |
+| 选股市值计算 | total_share × 最新 adjclose / × 最新 close ÷ 1e8 | `total_share × 最新 close ÷ 1e8`（亿元） | 最新日 adjclose == close（前复权锚点）；市值是现实世界值，用原始价 | adjclose 复权价会失真；单位显式 ÷1e8 与 GUI 亿元输入一致 |
 

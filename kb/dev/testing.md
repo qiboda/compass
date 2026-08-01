@@ -231,7 +231,7 @@ cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=80
 ```
 
 - Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
-- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，检查 workspace 总 + 每 crate（compass-core / compass-data / compass）各自 ≥80%；任一低于阈值或未测到文件即退出码 1。单次运行而非每条 `-p` 命令，避免 4 次全量测试（约 4x 加速）。
+- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，检查 workspace 总 + 每 crate（compass-core / compass-data / compass / compass-strategy / compass-types）各自 ≥80%；任一低于阈值或未测到文件即退出码 1。单次运行而非每条 `-p` 命令，避免 6 次全量测试（约 6x 加速）。
 - Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`（`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计。
 - coverage job 会执行完整测试套件（llvm-cov 插桩运行），因此是 `nextest` 之外的隐式第二次测试。
 - 本地测量：`cargo llvm-cov --json --summary-only > cov.json && bash scripts/check-coverage.sh 80 cov.json`。
