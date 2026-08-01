@@ -28,12 +28,19 @@ Git 工作树为 PR 开发提供隔离的工作目录。
 ### 创建
 
 ```bash
+# 从 master 切 PR 分支（默认场景）
 git worktree add -b feat/<name> .worktrees/<name> master
+
+# 从目标分支切修复分支（场景：修复特定 PR 分支的 CI/测试，不依赖 master 先行合并）
+git worktree add -b fix/<name> .worktrees/<name> <target-branch>
 ```
 
 **规则**：
 - `<name>` = 与 PR 匹配的 kebab-case 短名（例如 `fix-candle-rendering`、`add-sector-filter`）
-- 基于 `master`——PR 合并回 master
+- 默认基于 `master`——PR 合并回 master
+- **目标分支场景**：当 CI 失败在某个 feature/PR 分支（如 `fix/ci-fix-issue-only`）时，
+  从**该分支**切修复分支（`<target-branch>`），修复后 merge/cherry-pick 回目标分支，
+  **目标分支直接 push**（不经 PR 到 master）——目标分支自身的 PR 负责最终进入 master
 - 绝不在 `.worktrees/` 之外创建工作树
 
 **创建后步骤（MANDATORY）**——每次 `git worktree add` 之后：
@@ -105,6 +112,28 @@ done
 # 用户："切一个fix candle的worktree"
 # → 触发此 skill，然后：
 git worktree add -b feat/fix-candle-rendering .worktrees/fix-candle-rendering master
+```
+
+## 示例：从目标分支切修复分支
+
+```bash
+# 场景：PR 分支 fix/ci-fix-issue-only 的 CI 失败（flaky 测试，issue #75），
+# 修复不依赖 master 先合并——从目标分支切修复分支
+# 用户："从 fix/ci-fix-issue-only 切一个修 flaky 测试的 worktree"
+git worktree add -b fix/deterministic-aggregation-test .worktrees/deterministic-aggregation-test fix/ci-fix-issue-only
+```
+
+修复完成后（`git commit` 到 `fix/<name>`），合并回目标分支：
+
+```bash
+# 方式 A：merge（保留修复分支历史）
+git checkout fix/ci-fix-issue-only && git merge fix/deterministic-aggregation-test
+
+# 方式 B：cherry-pick（单 commit 修复，推荐——引用清晰）
+git checkout fix/ci-fix-issue-only && git cherry-pick <fix-commit-sha>
+
+# 目标分支直接 push（不经 PR 到 master）——其自身 PR 负责最终合并
+git push origin fix/ci-fix-issue-only
 ```
 
 **然后**（同一回合，`git worktree add` 成功后立即执行）：

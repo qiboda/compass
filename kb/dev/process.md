@@ -110,6 +110,31 @@ feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
 **合并策略**：使用常规 merge（非 squash）。保留所有提交历史 —
 每个提交映射到一个 issue 引用（`ref #N`），丢失这种粒度会破坏可追溯性。
 
+### 目标分支修复工作流
+
+当 CI 失败在某个 **feature/PR 分支**（而非 master）时，修复不必经 master 中转——
+直接从目标分支切修复分支，修复后合并回目标分支，各 PR 互不阻塞：
+
+```sh
+# 1. 从目标分支切修复分支（复用 /worktree skill）
+git worktree add -b fix/<desc> .worktrees/<name> <target-branch>
+
+# 2. 修复 + commit（ref #N）
+
+# 3. 合并回目标分支（cherry-pick 单 commit 修复，推荐）
+git checkout <target-branch> && git cherry-pick <fix-commit-sha>
+
+# 4. 目标分支直接 push（不经 PR 到 master）——目标分支自身的 PR 负责最终合并
+git push origin <target-branch>
+```
+
+**实例**：`fix/ci-fix-issue-only`（PR #88）CI 因 flaky 聚合测试失败（#75），
+修复 commit `175cc80`（fix/deterministic-aggregation-test 分支）直接
+cherry-pick 进目标分支 → push → PR #88 CI 变绿，无需等 master 先合并。
+
+**何时用**：修复只影响目标分支的 CI/测试，且目标分支本身有独立 PR 进 master。
+**何时不用**：修复属于 master 级 bug 且目标分支即将废弃——此时直接修 master。
+
 ### PR 合并工作流
 
 PR 合并后、关闭关联 issue 前，在该 issue 上添加评论，注明实际变更与 PR 描述
