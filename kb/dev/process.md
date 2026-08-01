@@ -310,6 +310,20 @@ Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回�
 
 ## 调试技巧
 
+### 验证 kill/pgrep 类脚本的安全纪律（ref #104 事故教训）
+
+调试或集成验证任何含 `kill`/`pkill`/`pgrep` 的脚本时，三条纪律缺一不可：
+
+1. **`-f` 模式自指**：`pgrep -f 'opencode'` / `pkill -f 'pattern'` 会匹配**执行该命令的 shell 自身**
+   （命令文本含 pattern 字样）——先列出再核对 pid，或用 `[x]` 技巧
+   （`pgrep -f '[o]pencode'`）避免自匹配。杀到自己的 bash 会话 = 会话挂死。
+2. **持久 shell 的 cwd 污染**：bash 工具的持久会话 `cd` 进 fixture worktree 后，
+   cwd 检查（`readlink /proc/PID/cwd`）会把会话自身卷进 kill 范围。验证一律
+   通过**脚本文件**运行（脚本内 `cd` 只影响自身进程），不在持久会话直接 `cd`。
+3. **子代理委托**：委托 QA/集成验证 agent 执行 kill 类验证时，明确要求
+   fixture 隔离（`/tmp` 路径）、禁止触碰真实 worktree/仓库、疑似危险命令改
+   为只读 Oracle 复查。agent 误杀宿主 opencode 会话 = 用户工作区被破坏。
+
 ### 检查东方财富 API 返回内容
 
 ```sh
