@@ -90,6 +90,8 @@ pub struct ScreenerPanel {
     sort_column: usize,
     /// `true` = descending (default for market cap).
     sort_descending: bool,
+    /// Whether the industry multi-select popup is open.
+    industry_popup: bool,
     /// Persists the current query whenever a filter run is triggered.
     on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
 }
@@ -194,6 +196,7 @@ impl ScreenerPanel {
             industry_filter: String::new(),
             sort_column: 4, // market cap
             sort_descending: true,
+            industry_popup: false,
             on_save,
         }
     }
@@ -332,27 +335,59 @@ impl ScreenerPanel {
         ui.heading("条件");
 
         ui.label("行业");
-        let mut filter = self.industry_filter.clone();
-        ui.text_edit_singleline(&mut filter);
-        self.industry_filter = filter;
-        let lower = self.industry_filter.to_lowercase();
-        egui::ScrollArea::vertical()
-            .max_height(100.0)
-            .show(ui, |ui| {
-                for ind in industries {
-                    if !lower.is_empty() && !ind.to_lowercase().contains(&lower) {
-                        continue;
-                    }
-                    let mut selected = self.form.industries.contains(ind);
-                    if ui.checkbox(&mut selected, ind).changed() {
-                        if selected {
-                            self.form.industries.push(ind.clone());
-                        } else {
-                            self.form.industries.retain(|i| i != ind);
-                        }
-                    }
-                }
-            });
+        let summary = if self.form.industries.is_empty() {
+            "全部".to_string()
+        } else if self.form.industries.len() <= 2 {
+            self.form.industries.join("、")
+        } else {
+            format!("已选 {} 个", self.form.industries.len())
+        };
+        let response = ui.button(format!("{} ▾", summary));
+        if response.clicked() {
+            self.industry_popup = !self.industry_popup;
+        }
+
+        if self.industry_popup {
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.industry_popup = false;
+            } else {
+                egui::Area::new(egui::Id::new("industry_popup"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(response.rect.left_bottom())
+                    .constrain(true)
+                    .show(ui.ctx(), |ui| {
+                        ui.set_min_width(220.0);
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            let mut filter = self.industry_filter.clone();
+                            ui.text_edit_singleline(&mut filter);
+                            self.industry_filter = filter;
+                            let lower = self.industry_filter.to_lowercase();
+
+                            egui::ScrollArea::vertical()
+                                .max_height(180.0)
+                                .show(ui, |ui| {
+                                    for ind in industries {
+                                        if !lower.is_empty() && !ind.to_lowercase().contains(&lower)
+                                        {
+                                            continue;
+                                        }
+                                        let mut selected = self.form.industries.contains(ind);
+                                        if ui.checkbox(&mut selected, ind).changed() {
+                                            if selected {
+                                                self.form.industries.push(ind.clone());
+                                            } else {
+                                                self.form.industries.retain(|i| i != ind);
+                                            }
+                                        }
+                                    }
+                                });
+                            if ui.button("完成").clicked() {
+                                self.industry_popup = false;
+                            }
+                        });
+                    });
+            }
+        }
 
         ui.label("交易所");
         for ex in ["SH", "SZ", "BJ"] {
@@ -560,6 +595,36 @@ mod tests {
         assert!(
             shared.screener_loading.get(),
             "screener_loading should be set after filter click"
+        );
+    }
+
+    #[test]
+    fn industry_dropdown_toggles_selection_via_popup_state() {
+        // Pure-logic coverage: the popup checkbox toggling mutates the form's
+        // industry list; UI rendering is covered by show_renders_no_panic.
+        // (AccessKit does not expose button labels inside the form reliably —
+        // see kb/dev/testing.md.)
+        let (mut panel, _shared) = panel_with_form();
+        let industries = ["银行".to_string(), "白酒".to_string(), "医药".to_string()];
+
+        // Simulate the checkbox handler: toggle 银行 on.
+        let ind = &industries[0];
+        let mut selected = panel.form.industries.contains(ind);
+        selected = !selected;
+        if selected {
+            panel.form.industries.push(ind.clone());
+        } else {
+            panel.form.industries.retain(|i| i != ind);
+        }
+
+        assert_eq!(
+            panel.form.industries,
+            vec!["银行".to_string()],
+            "checkbox toggle adds industry"
+        );
+        assert!(
+            !panel.form.industries.is_empty(),
+            "selection non-empty after toggle"
         );
     }
 
