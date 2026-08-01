@@ -375,7 +375,6 @@ fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
 mod tests {
     use super::*;
     use crate::tokens::ThemeTokens;
-    use crate::widgets::input::Input;
     use egui_kittest::kittest::Queryable;
     use std::cell::RefCell;
     use std::rc::Rc;
