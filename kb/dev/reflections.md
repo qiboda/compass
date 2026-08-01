@@ -359,4 +359,23 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **AI 自行拟定"为什么"层面内容被纠正**（#98 目的定义、#77 翻译流程化）：目的/定义/原则类内容先问用户定调，不先给草稿；引用编号/上下文时附说明（#98 ref #80 未解释）
 - **流程自举工作集中发生**（#96 skill 合并、#97 hook 修复、#98 反思机制）：流程工具自身的改进连续三个 issue，且都曾出现"改流程的工具没走流程"风险（#96 直推 master）——流程自举工作同样完整走 gate，且反思记录本身就是检验
 
+## 2026-08-01 — ref #80 清理 stock_basic 遗留 DuckDB/import_dolt 旧 schema 路径
 
+**What was done**: 删除 duckdb.rs 旧 StockBasic 路径（SCHEMA_SQL 中 stock_basic 表 DDL、本地 StockBasic struct、upsert_stock_basic/get_stock_basic、3 个测试）+ import_dolt.rs 的 stock_basic 导出段（5 列占位文件覆盖风险）+ export.rs TABLES 条目 + integration_test 表清单 + 4 处 kb 文档同步 + review 修复（cli.md 输出树标注来源、data-providers.md 决策记录）。RED→GREEN 测试锁定「import 不再生成 stock_basic.parquet」，2 commits（f9f897a + 8b17b77）`ref #80`，5-agent review 全 PASS。
+
+**User corrections**: 「这些是不是handoff已经问过了」——session 开始时我未读 `.omo/handoff.md`，把已在 handoff 锁定的 7 项 grill-me 决策（Q1 范围、Q2 duckdb 删除方式）当成新问题重新访谈，被用户提醒后才去读 handoff 确认决策已存在。
+
+**What went wrong**:
+1. **重复访谈已锁定决策**：新 session 只读了 `stock-basic-official.md`（#78 的旧 plan，属另一 worktree），未读本 worktree 的 `.omo/handoff.md`——handoff 完整记录 7 项决策 + C1-C5 清单，读它可跳过 Q1/Q2 直接确认
+2. **handoff 删除清单遗漏 2 处**：① duckdb.rs 第 3 个测试 `upsert_stock_basic_skips_existing_when_overwrite_false`（引用被删 API，编译失败才暴露）；② `integration_test.rs` 的必需表清单含 stock_basic（cargo test 失败才暴露）——handoff 只列了 2 个测试，未 grep 全仓引用
+3. **review 发现 cli.md 输出结构树失实**：4 处文档清单（gui/architecture/testing/data-providers）漏了 cli.md——它同样暗示 `import` 产出 stock_basic.parquet，与 #80 宗旨（消除「docs 暗示 import 写 stock_basic」）同类
+
+**Lessons learned**:
+1. **worktree session 第一步必读 `.omo/handoff.md`**——它含已锁定的 grill-me 决策 + 完整待办 + 已知坑；先读 handoff 再访谈，决策已在的直接引用而非重问
+2. **删除类改动不能只信 handoff 的测试清单**——必须 `grep -rn` 全仓（含 integration_test.rs、tests/ 目录）反查被删符号的所有引用，编译失败是最后的防线而不是第一道
+3. **文档同步清单要覆盖"描述该命令输出"的所有 kb 文件**——cli.md 的「输出结构」树与 gui.md 是同类失实点，列文档清单时应 grep 关键词（如 `stock_basic`）反查所有 kb 引用而非依赖 issue/plan 列举
+
+### Trends (last 10)
+- **删除/重构遗漏引用检查**（#80 第 3 测试 + integration_test、#78 review 发现 duckdb.rs 遗留）：删除类改动后必须 grep 全仓反查引用（含集成测试/文档），handoff/plan 的清单可能不完整——grep 验证应纳入删除类任务的验收标准
+- **文档与代码脱节反复出现**（#78 review 遗留 schema、#80 cli.md 输出树失实、#77 文档与代码脱节）：多模块改动后 grep 旧引用/旧 schema 是全仓一致性最后一道防线，不能只更新 plan 列举的文件
+- **新 session 上下文利用不足**（#80 未读 handoff 重问决策、此前 worktree 流程教训）：worktree/压缩交接场景下，handoff 文件是决策的权威来源——先读交接文档再动手是避免重复劳动的关键
