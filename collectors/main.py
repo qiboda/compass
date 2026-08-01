@@ -139,6 +139,8 @@ def _import_fin_indicators() -> None:
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
+# ── sync_investment_data ────────────────────────────────────────
+
 def sync_investment_data(restart: bool = False) -> None:
     """Sync investment_data: fetch from chenditc, push to skwy fork."""
     invest_dir = PROJECT_ROOT / "investment_data"
@@ -178,6 +180,122 @@ def sync_investment_data(restart: bool = False) -> None:
     print("[sync-investment] Done.", file=sys.stderr)
 
 
+# ── Dispatch functions ──────────────────────────────────────────
+
+
+def dispatch_fetch(
+    target: str,
+    years: list[int] | None = None,
+) -> None:
+    """Fetch data for the given target table.
+
+    Args:
+        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow.
+        years: Years to fetch (financial tables only; defaults to sub-module default).
+    """
+    if target == "stock_basic":
+        import fetch_stock_basic_official
+        sys.argv = ["fetch_stock_basic_official"]
+        fetch_stock_basic_official.main()
+
+    elif target == "fin_indicators":
+        import fetch_fin_indicators
+        sys.argv = ["fetch_fin_indicators"]
+        if years:
+            sys.argv.extend(["--years", ",".join(str(y) for y in years)])
+        asyncio.run(fetch_fin_indicators.main())
+
+    elif target == "balance_sheet":
+        import fetch_balance_sheet
+        asyncio.run(fetch_balance_sheet.run(years=years))
+
+    elif target == "income":
+        import fetch_income
+        asyncio.run(fetch_income.run(years=years))
+
+    elif target == "cash_flow":
+        import fetch_cash_flow
+        asyncio.run(fetch_cash_flow.run(years=years))
+
+
+def dispatch_import(target: str) -> None:
+    """Import CSV data into Dolt for the given target table.
+
+    Args:
+        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow.
+    """
+    if target == "stock_basic":
+        _import_stock_basic()
+    elif target == "fin_indicators":
+        _import_fin_indicators()
+    elif target == "balance_sheet":
+        import fetch_balance_sheet
+        fetch_balance_sheet.import_to_dolt()
+    elif target == "income":
+        import fetch_income
+        fetch_income.import_to_dolt()
+    elif target == "cash_flow":
+        import fetch_cash_flow
+        fetch_cash_flow.import_to_dolt()
+
+
+def do_sync(restart: bool = False) -> None:
+    """Fetch all 5 tables from EastMoney, import into Dolt, and update data_updates.
+
+    Args:
+        restart: Reserved for future use; does not change sync behavior.
+    """
+    _ = restart  # reserved — no behavior change in sync subcommand
+
+    from common import dolt_sql
+
+    # 1. stock_basic
+    print("[sync] Fetching stock_basic...", file=sys.stderr)
+    import fetch_stock_basic_official
+    sys.argv = ["fetch_stock_basic_official"]
+    fetch_stock_basic_official.main()
+    _import_stock_basic()
+
+    # 2. fin_indicators
+    print("\n[sync] Fetching fin_indicators (incremental)...", file=sys.stderr)
+    import fetch_fin_indicators
+    sys.argv = ["fetch_fin_indicators", "--incremental"]
+    asyncio.run(fetch_fin_indicators.main())
+    _import_fin_indicators()
+
+    # 3. balance_sheet
+    print("\n[sync] Fetching balance_sheet...", file=sys.stderr)
+    import fetch_balance_sheet
+    asyncio.run(fetch_balance_sheet.run())
+    fetch_balance_sheet.import_to_dolt()
+
+    # 4. income
+    print("\n[sync] Fetching income...", file=sys.stderr)
+    import fetch_income
+    asyncio.run(fetch_income.run())
+    fetch_income.import_to_dolt()
+
+    # 5. cash_flow
+    print("\n[sync] Fetching cash_flow...", file=sys.stderr)
+    import fetch_cash_flow
+    asyncio.run(fetch_cash_flow.run())
+    fetch_cash_flow.import_to_dolt()
+
+    # Update data_updates for all tables
+    print("\n[sync] Updating data_updates...", file=sys.stderr)
+    for tbl in [
+        "stock_basic", "fin_indicators",
+        "fin_balance_sheet", "fin_income", "fin_cash_flow",
+    ]:
+        dolt_sql(
+            f"INSERT INTO data_updates (table_name, last_updated, row_count) "
+            f"VALUES ('{tbl}', CURDATE(), (SELECT COUNT(*) FROM {tbl})) "
+            f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), "
+            f"row_count=VALUES(row_count)"
+        )
+    print("[sync] Complete.", file=sys.stderr)
+
+
 # ── Main CLI ────────────────────────────────────────────────────
 
 def main() -> None:
@@ -205,94 +323,13 @@ def main() -> None:
 
     if args.command == "fetch":
         years = _parse_years(args.years)
-
-        if args.target == "stock_basic":
-            import fetch_stock_basic_official
-            sys.argv = ["fetch_stock_basic_official"]
-            fetch_stock_basic_official.main()
-
-        elif args.target == "fin_indicators":
-            import fetch_fin_indicators
-            sys.argv = ["fetch_fin_indicators"]
-            if args.years:
-                sys.argv.extend(["--years", args.years])
-            asyncio.run(fetch_fin_indicators.main())
-
-        elif args.target == "balance_sheet":
-            import fetch_balance_sheet
-            asyncio.run(fetch_balance_sheet.run(years=years))
-
-        elif args.target == "income":
-            import fetch_income
-            asyncio.run(fetch_income.run(years=years))
-
-        elif args.target == "cash_flow":
-            import fetch_cash_flow
-            asyncio.run(fetch_cash_flow.run(years=years))
+        dispatch_fetch(args.target, years=years)
 
     elif args.command == "import":
-        if args.target == "stock_basic":
-            _import_stock_basic()
-        elif args.target == "fin_indicators":
-            _import_fin_indicators()
-        elif args.target == "balance_sheet":
-            import fetch_balance_sheet
-            fetch_balance_sheet.import_to_dolt()
-        elif args.target == "income":
-            import fetch_income
-            fetch_income.import_to_dolt()
-        elif args.target == "cash_flow":
-            import fetch_cash_flow
-            fetch_cash_flow.import_to_dolt()
+        dispatch_import(args.target)
 
     elif args.command == "sync":
-        from common import dolt_sql
-
-        # 1. stock_basic
-        print("[sync] Fetching stock_basic...", file=sys.stderr)
-        import fetch_stock_basic_official
-        sys.argv = ["fetch_stock_basic_official"]
-        fetch_stock_basic_official.main()
-        _import_stock_basic()
-
-        # 2. fin_indicators
-        print("\n[sync] Fetching fin_indicators (incremental)...", file=sys.stderr)
-        import fetch_fin_indicators
-        sys.argv = ["fetch_fin_indicators", "--incremental"]
-        asyncio.run(fetch_fin_indicators.main())
-        _import_fin_indicators()
-
-        # 3. balance_sheet
-        print("\n[sync] Fetching balance_sheet...", file=sys.stderr)
-        import fetch_balance_sheet
-        asyncio.run(fetch_balance_sheet.run())
-        fetch_balance_sheet.import_to_dolt()
-
-        # 4. income
-        print("\n[sync] Fetching income...", file=sys.stderr)
-        import fetch_income
-        asyncio.run(fetch_income.run())
-        fetch_income.import_to_dolt()
-
-        # 5. cash_flow
-        print("\n[sync] Fetching cash_flow...", file=sys.stderr)
-        import fetch_cash_flow
-        asyncio.run(fetch_cash_flow.run())
-        fetch_cash_flow.import_to_dolt()
-
-        # Update data_updates for all tables
-        print("\n[sync] Updating data_updates...", file=sys.stderr)
-        for tbl in [
-            "stock_basic", "fin_indicators",
-            "fin_balance_sheet", "fin_income", "fin_cash_flow",
-        ]:
-            dolt_sql(
-                f"INSERT INTO data_updates (table_name, last_updated, row_count) "
-                f"VALUES ('{tbl}', CURDATE(), (SELECT COUNT(*) FROM {tbl})) "
-                f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), "
-                f"row_count=VALUES(row_count)"
-            )
-        print("[sync] Complete.", file=sys.stderr)
+        do_sync()
 
     elif args.command == "sync-investment":
         sync_investment_data(args.restart)
@@ -301,5 +338,5 @@ def main() -> None:
         parser.print_help()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

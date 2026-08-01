@@ -190,6 +190,9 @@ impl Default for Modal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::kittest::Queryable;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     #[test]
     fn modal_starts_closed() {
@@ -227,5 +230,156 @@ mod tests {
         // closed → open again
         modal.toggle();
         assert!(modal.is_open());
+    }
+
+    // --- Builder tests (set_title, set_body, set_on_confirm) ---
+
+    #[test]
+    fn set_title_sets_field() {
+        let mut modal = Modal::new();
+        modal.set_title("Confirm Delete");
+        assert_eq!(modal.title, "Confirm Delete");
+    }
+
+    #[test]
+    fn set_title_accepts_string_types() {
+        let mut modal = Modal::new();
+        modal.set_title(String::from("owned"));
+        assert_eq!(modal.title, "owned");
+        modal.set_title("borrowed");
+        assert_eq!(modal.title, "borrowed");
+    }
+
+    #[test]
+    fn set_body_sets_field() {
+        let mut modal = Modal::new();
+        modal.set_body("Are you sure you want to continue?");
+        assert_eq!(modal.body, "Are you sure you want to continue?");
+    }
+
+    #[test]
+    fn set_on_confirm_stores_callback() {
+        let mut modal = Modal::new();
+        modal.set_on_confirm(|| {});
+        assert!(modal.on_confirm.is_some());
+    }
+
+    // --- Headless rendering tests via egui_kittest ---
+
+    /// Helper: create a harness for a modal, running one frame.
+    fn harness_for_modal(modal: &Rc<RefCell<Modal>>) -> egui_kittest::Harness<'static> {
+        let m = modal.clone();
+        egui_kittest::Harness::new_ui(move |ui| {
+            m.borrow_mut().show(ui.ctx());
+        })
+    }
+
+    #[test]
+    fn show_closed_is_noop() {
+        let modal = Rc::new(RefCell::new(Modal::new()));
+        let mut harness = harness_for_modal(&modal);
+        harness.run();
+        assert!(!modal.borrow().is_open());
+    }
+
+    #[test]
+    fn show_open_renders_buttons() {
+        let modal = Rc::new(RefCell::new(Modal::new()));
+        modal.borrow_mut().open();
+        modal.borrow_mut().set_title("Test");
+        modal.borrow_mut().set_body("Body");
+
+        let mut harness = harness_for_modal(&modal);
+        harness.run();
+
+        assert!(modal.borrow().is_open());
+        // Buttons must exist in the rendered tree
+        let _cancel = harness.get_by_label("Cancel");
+        let _ok = harness.get_by_label("  OK  ");
+    }
+
+    #[test]
+    fn cancel_closes_modal_without_calling_callback() {
+        let called = Rc::new(Cell::new(false));
+        let modal = Rc::new(RefCell::new(Modal::new()));
+        modal.borrow_mut().open();
+        modal.borrow_mut().set_on_confirm({
+            let called = called.clone();
+            move || {
+                called.set(true);
+            }
+        });
+
+        let mut harness = harness_for_modal(&modal);
+        harness.run();
+
+        harness.get_by_label("Cancel").click();
+        harness.run();
+
+        assert!(!modal.borrow().is_open(), "modal should close on Cancel");
+        assert!(!called.get(), "callback should NOT be called on Cancel");
+        assert!(
+            modal.borrow().on_confirm.is_some(),
+            "callback should remain unconsumed after Cancel"
+        );
+    }
+
+    #[test]
+    fn ok_button_calls_callback_and_closes() {
+        let called = Rc::new(Cell::new(false));
+        let modal = Rc::new(RefCell::new(Modal::new()));
+        modal.borrow_mut().open();
+        modal.borrow_mut().set_on_confirm({
+            let called = called.clone();
+            move || {
+                called.set(true);
+            }
+        });
+
+        let mut harness = harness_for_modal(&modal);
+        harness.run();
+
+        harness.get_by_label("  OK  ").click();
+        harness.run();
+
+        assert!(called.get(), "callback should have been called");
+        assert!(!modal.borrow().is_open(), "modal should close after OK");
+        assert!(
+            modal.borrow().on_confirm.is_none(),
+            "callback should be consumed after OK"
+        );
+    }
+
+    #[test]
+    fn ok_button_consumes_callback_exactly_once() {
+        let call_count = Rc::new(Cell::new(0u32));
+        let modal = Rc::new(RefCell::new(Modal::new()));
+        modal.borrow_mut().open();
+        modal.borrow_mut().set_on_confirm({
+            let call_count = call_count.clone();
+            move || {
+                call_count.set(call_count.get() + 1);
+            }
+        });
+
+        let mut harness = harness_for_modal(&modal);
+        harness.run();
+
+        // First click — callback runs
+        harness.get_by_label("  OK  ").click();
+        harness.run();
+        assert_eq!(call_count.get(), 1);
+        assert!(!modal.borrow().is_open());
+
+        // Re-open and click again — callback already consumed
+        modal.borrow_mut().open();
+        harness.run();
+        harness.get_by_label("  OK  ").click();
+        harness.run();
+        assert_eq!(
+            call_count.get(),
+            1,
+            "callback should never be called again after first consumption"
+        );
     }
 }

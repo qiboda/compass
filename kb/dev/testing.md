@@ -214,3 +214,41 @@ Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可
 | `cargo build --features tracy` 失败 | 缺少 C++ 工具链或 cmake | `sudo apt install cmake build-essential` |
 | Tracy GUI 中没有数据出现 | 防火墙阻止了 8086 端口 | 检查 `tracy-capture` 是否在同一台机器上运行 |
 | 链接错误：符号未找到 | `tracy-client-sys` 版本与已安装的 Tracy 不匹配 | 使用与 `tracy-client-sys 0.24` 匹配的 `tracy-capture` 版本 |
+
+## 覆盖率
+
+### 门槛（CI 强制）
+
+CI coverage job 强制以下行覆盖率门槛，低于阈值退出码 1（CI 失败）：
+
+```sh
+# Rust：单次 llvm-cov --json 采集，脚本校验 workspace 总 + 每 crate（4 门槛 1 次运行）
+cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
+bash scripts/check-coverage.sh 80 target/llvm-cov/coverage.json
+
+# Python
+cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=80
+```
+
+- Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
+- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，检查 workspace 总 + 每 crate（compass-core / compass-data / compass）各自 ≥80%；任一低于阈值或未测到文件即退出码 1。单次运行而非每条 `-p` 命令，避免 4 次全量测试（约 4x 加速）。
+- Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`（`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计。
+- coverage job 会执行完整测试套件（llvm-cov 插桩运行），因此是 `nextest` 之外的隐式第二次测试。
+- 本地测量：`cargo llvm-cov --json --summary-only > cov.json && bash scripts/check-coverage.sh 80 cov.json`。
+
+### GUI 无头集成测试（egui_kittest）
+
+`compass` crate 的 UI 测试用官方 `egui_kittest`（dev-dependency，`features = ["eframe"]`）：
+
+- `Harness::new_ui(|ui| ...)` 直接驱动 `Fn(&mut egui::Ui)` —— 纯 CPU，**无需显示服务器**，CI 无头环境可跑。
+- `Harness::new_eframe` + `eframe::Frame::_new_kittest()` 驱动完整 `eframe::App::ui`（CompassApp）。
+- `get_by_label` / `Node::click` / `type_text` / `harness.run()` 模拟交互，基于 AccessKit 树查询。
+- **限制**：egui_dock 0.20 tab 按钮不暴露 AccessKit label（raw `ui.interact` + TextShape），无法 `get_by_label` 定位 —— tab 切换测试用程序化 `DockState::set_active_tab`，断言 tab 内容 widget。
+
+### Python 网络 mock（stub AsyncSession）
+
+EastMoney collector 测试用 `tests/conftest.py` 的 `make_stub_session` fixture（手写 stub，不用 respx —— curl-cffi 不被 respx/responses 支持）：
+
+- `async get(url, params, headers)` 返回 canned JSON / 注入 429 / 异常。
+- 实现 `async __aenter__/__aexit__`（`main()` 用 `async with AsyncSession(...)`）。
+- 所有 fetch 函数 `session` 均为参数，注入即通，无需真实网络。

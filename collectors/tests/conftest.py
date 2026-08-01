@@ -1,5 +1,99 @@
-"""Pytest configuration — add collectors dir to Python path."""
+"""Pytest configuration — add collectors dir to Python path, plus stub HTTP fixtures."""
+from __future__ import annotations
+
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
+class StubResponse:
+    """Fake curl-cffi Response for unit-testing collector call-sites.
+
+    Call-sites use ``resp.status_code`` (int), ``resp.raise_for_status()``
+    (sync, raises on >= 400 or injected exception), and ``resp.json()``
+    (sync, returns canned dict).
+    """
+
+    __slots__ = ("status_code", "_json", "_exc")
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        json_data: dict[str, Any] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._json = json_data
+        self._exc = exc
+
+    def raise_for_status(self) -> None:
+        if self._exc is not None:
+            raise self._exc
+        if self.status_code >= 400:
+            raise Exception(f"HTTP {self.status_code}")
+
+    def json(self) -> dict[str, Any]:
+        return self._json if self._json is not None else {}
+
+
+class StubSession:
+    """Async context-manager stub for ``curl_cffi.requests.AsyncSession``.
+
+    Supports ``async with``, ``await stub.get(url, params=, headers=)``,
+    and per-test canned-response injection via ``canned_responses`` or
+    per-URL overrides in ``canned_responses`` dict.
+    """
+
+    def __init__(
+        self,
+        *,
+        canned_responses: dict[str, StubResponse | dict[str, Any]] | None = None,
+        status_code: int = 200,
+        json_data: dict[str, Any] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        self._canned = canned_responses or {}
+        self._status_code = status_code
+        self._json_data = json_data
+        self._exc = exc
+
+    async def get(
+        self, url: str, params: Any = None, headers: Any = None
+    ) -> StubResponse:
+        cfg = self._canned.get(url)
+        if cfg is not None:
+            if isinstance(cfg, StubResponse):
+                return cfg
+            return StubResponse(**cfg)  # type: ignore[arg-type]
+        return StubResponse(
+            status_code=self._status_code,
+            json_data=self._json_data,
+            exc=self._exc,
+        )
+
+    async def __aenter__(self) -> StubSession:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+
+@pytest.fixture
+def make_stub_session():
+    """Factory fixture: returns a ``StubSession`` constructor.
+
+    Usage::
+
+        async def test_foo(make_stub_session):
+            s = make_stub_session(json_data={"success": True, "result": {"data": [...], "pages": 1}})
+            records = await fetch_paginated(s, Throttle(min_interval=0), ...)
+
+    Keyword args mirror ``StubSession.__init__`` — ``status_code``,
+    ``json_data``, ``exc``, ``canned_responses``.
+    """
+    return StubSession

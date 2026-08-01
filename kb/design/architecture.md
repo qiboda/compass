@@ -487,5 +487,6 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | 数据访问策略：GUI 读取数据的来源 | 在线 API 直接请求 / 本地文件缓存 / 纯本地无回退 | 纯本地 Parquet 文件，无在线回退 | 本地读取零延迟、无网络依赖、无 API 限流；数据管线（import/collector）离线运行，GUI 只查询已落盘数据 | 在线 API 增加延迟和失败点；缓存策略需处理过期和同步问题，增加复杂度 |
 | 异步架构：UI 线程与 I/O 分离方案 | 手动 std::thread + mpsc / 框架托管的 citizen 模式 | egui-mobius citizen 模式：Citizen trait + Dynamic\<T\> + Signal/Slot + AsyncDispatcher | 消除手动线程布线、Arc\<Mutex\> 竞争和版本计数器；Citizen 通过 outbox 解耦，AsyncDispatcher 自管 tokio runtime | 手动线程方案代码量大、易出错；Dynamic\<T\> 提供字段级独立读写，无跨字段锁竞争 |
 | 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），但通过 `import --since` 增量导入缓解；每标的单独文件增加文件管理开销 |
+| 测试覆盖率门槛：CI 强制 80% vs 无门槛 | 无门槛（continue-on-error）/ 总覆盖率 80% / 总 + 每 crate 各 80% + Python 全量 80% | 总 ≥80% 且每 crate（core/data/compass）各 ≥80%，Python `--cov=.` 全量 ≥80% | 防止核心库高覆盖率拉平 GUI/CLI 短板；GUI 以 egui_kittest 无头集成测试达成；Python 未测文件按 0% 计，杜绝假达标 | 仅总覆盖率可被高覆盖模块掩盖；单门槛无法约束 Python 侧 |
 
 符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。

@@ -369,6 +369,315 @@ mod tests {
     }
 
     #[test]
+    fn compass_table_from_str_all_valid_variants() {
+        assert!(matches!(
+            "stock_basic".parse::<CompassTable>(),
+            Ok(CompassTable::StockBasic)
+        ));
+        assert!(matches!(
+            "fin_indicators".parse::<CompassTable>(),
+            Ok(CompassTable::FinIndicators)
+        ));
+        assert!(matches!(
+            "fin_balance_sheet".parse::<CompassTable>(),
+            Ok(CompassTable::FinBalanceSheet)
+        ));
+        assert!(matches!(
+            "fin_income".parse::<CompassTable>(),
+            Ok(CompassTable::FinIncome)
+        ));
+        assert!(matches!(
+            "fin_cash_flow".parse::<CompassTable>(),
+            Ok(CompassTable::FinCashFlow)
+        ));
+    }
+
+    #[test]
+    fn compass_table_from_str_invalid_variant() {
+        let result = "unknown_table".parse::<CompassTable>();
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap(), "unknown table: unknown_table");
+    }
+
+    #[test]
+    fn compass_table_from_str_empty_string() {
+        let result = "".parse::<CompassTable>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fin_indicators_skips_tiny_data() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        // Create fin_indicators with full schema but insert 0 rows.
+        // When dolt's parquet output for empty result is <500 bytes, the
+        // "empty or tiny data, skipping" path is triggered (lines 106-109).
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(FIN_SCHEMA)
+            .output()
+            .expect("create table");
+
+        // No INSERT — table is empty
+        // The import_fin_indicators call should not panic regardless of whether
+        // the parquet output falls below the 500-byte threshold.
+        let result = import_fin_indicators(tmp.path(), tmp.path(), false, None);
+        assert!(result.is_ok(), "import with empty table should succeed");
+    }
+
+    #[test]
+    fn fin_indicators_since_merge_with_existing_parquet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(FIN_SCHEMA)
+            .output()
+            .expect("create table");
+
+        // Insert data with report_date 2024-12-31
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2024-12-31', 1.5e11, 7e10, 59.0, '贵州茅台')")
+            .output().expect("insert 2024");
+
+        // First import — creates initial parquet
+        import_fin_indicators(tmp.path(), tmp.path(), false, None).expect("first import");
+        let parquet = tmp.path().join("fin_indicators.parquet");
+        assert!(parquet.exists(), "initial parquet should exist");
+
+        // Insert more data with later report_date
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2025-12-31', 1.72e11, 8.23e10, 65.66, '贵州茅台')")
+            .output().expect("insert 2025");
+
+        // Incremental import with since — triggers merge path
+        import_fin_indicators(tmp.path(), tmp.path(), false, Some("2025-01-01"))
+            .expect("incremental import");
+
+        // Read back merged parquet and verify both rows exist
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let count: usize = duck
+            .query_row(
+                &format!("SELECT COUNT(*) FROM read_parquet('{}')", parquet.display()),
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(count, 2, "merged parquet should have both rows");
+    }
+
+    fn setup_financial_table(dolt_dir: &std::path::Path, table_name: &str) {
+        let schema = format!(
+            "CREATE TABLE {table_name} (\
+             symbol VARCHAR(20) NOT NULL, \
+             report_date DATE NOT NULL, \
+             total_assets DOUBLE, \
+             total_liabilities DOUBLE, \
+             shareholder_equity DOUBLE, \
+             revenue DOUBLE, \
+             net_profit DOUBLE, \
+             PRIMARY KEY (symbol, report_date))"
+        );
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dolt_dir)
+            .arg("sql")
+            .arg("-q")
+            .arg(&schema)
+            .output()
+            .unwrap_or_else(|_| panic!("create {table_name}"));
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(dolt_dir)
+            .arg("sql").arg("-q")
+            .arg(format!(
+                "INSERT INTO {table_name} (symbol, report_date, total_assets, total_liabilities, shareholder_equity, revenue, net_profit) VALUES \
+                 ('SH600519', '2024-12-31', 2.6e11, 4.8e10, 2.1e11, 1.5e11, 7e10)"
+            ))
+            .output().unwrap_or_else(|_| panic!("insert {table_name}"));
+    }
+
+    #[test]
+    fn run_fin_balance_sheet_exports_parquet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+        setup_financial_table(tmp.path(), "fin_balance_sheet");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::FinBalanceSheet,
+            false,
+            None,
+        )
+        .expect("run fin_balance_sheet");
+
+        let parquet = tmp.path().join("fin_balance_sheet.parquet");
+        assert!(parquet.exists(), "parquet should exist");
+        assert!(
+            parquet.metadata().unwrap().len() > 500,
+            "parquet should have data"
+        );
+    }
+
+    #[test]
+    fn run_fin_income_exports_parquet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+        setup_financial_table(tmp.path(), "fin_income");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::FinIncome,
+            false,
+            None,
+        )
+        .expect("run fin_income");
+
+        let parquet = tmp.path().join("fin_income.parquet");
+        assert!(parquet.exists(), "parquet should exist");
+        assert!(parquet.metadata().unwrap().len() > 500);
+    }
+
+    #[test]
+    fn run_fin_cash_flow_exports_parquet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+        setup_financial_table(tmp.path(), "fin_cash_flow");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::FinCashFlow,
+            false,
+            None,
+        )
+        .expect("run fin_cash_flow");
+
+        let parquet = tmp.path().join("fin_cash_flow.parquet");
+        assert!(parquet.exists(), "parquet should exist");
+        assert!(parquet.metadata().unwrap().len() > 500);
+    }
+
+    #[test]
+    fn financial_table_skip_tiny_data() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        // Create fin_balance_sheet with minimal schema, 0 rows
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE fin_balance_sheet (\
+                symbol VARCHAR(20) NOT NULL, \
+                report_date DATE NOT NULL, \
+                PRIMARY KEY (symbol, report_date))",
+            )
+            .output()
+            .expect("create table");
+
+        import_financial_table("fin_balance_sheet", tmp.path(), tmp.path(), false, None)
+            .expect("import_financial_table");
+
+        let parquet = tmp.path().join("fin_balance_sheet.parquet");
+        assert!(
+            !parquet.exists(),
+            "empty table should be skipped due to tiny data"
+        );
+    }
+
+    fn read_parquet_row_count(path: &std::path::Path) -> usize {
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        duck.query_row(
+            &format!("SELECT COUNT(*) FROM read_parquet('{}')", path.display()),
+            [],
+            |row| row.get(0),
+        )
+        .expect("count")
+    }
+
+    #[test]
+    fn financial_table_since_merge_preserves_old_rows() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE fin_balance_sheet (\
+                symbol VARCHAR(20) NOT NULL, \
+                report_date DATE NOT NULL, \
+                total_assets DOUBLE, \
+                net_profit DOUBLE, \
+                PRIMARY KEY (symbol, report_date))",
+            )
+            .output()
+            .expect("create table");
+
+        // Insert 2024 data
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_balance_sheet (symbol, report_date, total_assets, net_profit) VALUES \
+                ('SH600519', '2024-12-31', 2.6e11, 7e10)")
+            .output().expect("insert 2024");
+
+        // First full import
+        import_financial_table("fin_balance_sheet", tmp.path(), tmp.path(), false, None)
+            .expect("first import");
+
+        let parquet = tmp.path().join("fin_balance_sheet.parquet");
+        assert!(parquet.exists());
+        assert_eq!(read_parquet_row_count(&parquet), 1);
+
+        // Insert 2025 data
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_balance_sheet (symbol, report_date, total_assets, net_profit) VALUES \
+                ('SH600519', '2025-12-31', 2.8e11, 8e10)")
+            .output().expect("insert 2025");
+
+        // Incremental import with since — triggers merge path
+        import_financial_table(
+            "fin_balance_sheet",
+            tmp.path(),
+            tmp.path(),
+            false,
+            Some("2025-01-01"),
+        )
+        .expect("incremental import");
+
+        // Should have both rows after merge
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            2,
+            "merge should preserve both rows"
+        );
+    }
+
+    #[test]
     fn parquet_data_matches_dolt_source() {
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());

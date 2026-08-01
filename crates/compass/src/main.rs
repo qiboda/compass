@@ -540,4 +540,335 @@ mod tests {
         assert_eq!(timeframe_value(1), "1w");
         assert_eq!(timeframe_value(2), "1M");
     }
+
+    // ======================================================================
+    // #79 coverage gate: kittest integration + non-UI function tests
+    // ======================================================================
+
+    use crate::CompassApp;
+    use crate::tabs::{Tab, TabKind};
+    use crate::theme::CompassTheme;
+    use crate::widgets::modal::Modal;
+    use crate::widgets::searchable_dropdown::StockPicker;
+    use crate::widgets::toast::ToastManager;
+    use compass_core::model::AppConfig;
+    use egui_dock::DockState;
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
+
+    fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
+        let config = AppConfig::default();
+        let shared_state = Arc::new(SharedState::new("000001", "1d"));
+
+        let (work_signal, _backend_handle) =
+            crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
+
+        let mut dispatcher = Dispatcher::new();
+        let registered = crate::dispatcher::register_citizens(&mut dispatcher);
+
+        let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+
+        let stock_list: Vec<StockBasic> = Vec::new();
+        let stock_picker = StockPicker::new("000001", &stock_list);
+        let theme = CompassTheme::compass_dark();
+        let dock_style = egui_dock::Style::default();
+
+        let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
+        if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
+            && let Some(tree) = surface.node_tree_mut()
+        {
+            let _ = tree.split_below(
+                egui_dock::NodeIndex::root(),
+                0.75,
+                vec![Tab::new(TabKind::Logger)],
+            );
+        }
+
+        CompassApp {
+            dock_state,
+            dispatcher,
+            chart,
+            logger,
+            shared_state,
+            work_signal,
+            stock_list,
+            stock_picker,
+            timeframe_index: 0,
+            theme,
+            dock_style,
+            _backend_handle,
+            toast: ToastManager::new(),
+            modal: Modal::new(),
+            file_dialog: egui_file_dialog::FileDialog::new(),
+            last_error: None,
+            last_loading: false,
+        }
+    }
+
+    // --- Non-UI function tests ---
+
+    /// Serializes tests that mutate the global `HOME` env var. Rust runs tests
+    /// in parallel within a binary; concurrent `set_var("HOME", ...)` makes
+    /// these tests racy (flaky `load_config` failures under `cargo test`).
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn load_config_missing_file_returns_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.app.default_symbol,
+            AppConfig::default().app.default_symbol
+        );
+    }
+
+    #[test]
+    fn load_config_valid_toml_returns_parsed() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[parquet]
+dir = "/custom/parquet/dir"
+
+[app]
+default_symbol = "600519"
+default_timeframe = "1w"
+"#,
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(config.app.default_symbol, "600519");
+        assert_eq!(config.app.default_timeframe, "1w");
+        assert_eq!(config.parquet.dir, "/custom/parquet/dir");
+    }
+
+    #[test]
+    fn load_config_invalid_toml_falls_back_to_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), "{{{ not valid toml").unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.app.default_symbol,
+            AppConfig::default().app.default_symbol
+        );
+    }
+
+    #[test]
+    fn load_stock_list_empty_dir_returns_empty_vec() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.parquet.dir = tmp.path().to_string_lossy().to_string();
+
+        let stocks = crate::load_stock_list(&config);
+        assert!(stocks.is_empty());
+    }
+
+    #[test]
+    fn setup_cjk_fonts_missing_file_no_panic() {
+        let ctx = egui::Context::default();
+        crate::setup_cjk_fonts(&ctx);
+    }
+
+    #[test]
+    fn init_tracing_no_panic() {
+        let _guard = crate::init_tracing();
+    }
+
+    // --- render_toolbar kittest tests ---
+
+    #[test]
+    fn render_toolbar_renders_combo_and_button() {
+        let mut app = build_compass_app(egui::Context::default());
+        let harness = egui_kittest::Harness::new_ui(|ui| {
+            app.render_toolbar(ui);
+        });
+
+        let _ = harness.get_by_value("1d");
+        let _ = harness.get_by_value("compass_dark");
+    }
+
+    #[test]
+    fn render_toolbar_timeframe_switch_changes_index() {
+        let mut app = build_compass_app(egui::Context::default());
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.get_by_value("1d").click();
+            harness.step();
+            harness.get_by_label("1w").click();
+            harness.step();
+        }
+
+        assert_eq!(app.timeframe_index, 1);
+    }
+
+    #[test]
+    fn render_toolbar_theme_switch_changes_theme() {
+        let mut app = build_compass_app(egui::Context::default());
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.get_by_value("compass_dark").click();
+            harness.step();
+            harness.get_by_label("compass_light").click();
+            harness.step();
+        }
+
+        assert_eq!(app.theme.name(), "compass_light");
+    }
+
+    #[test]
+    fn render_toolbar_fetch_sets_loading() {
+        let mut app = build_compass_app(egui::Context::default());
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+
+            let fetch_label = format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE);
+            harness.get_by_label(&fetch_label).click();
+            harness.step();
+        }
+
+        assert!(
+            app.shared_state.loading.get(),
+            "loading must be true after fetch click"
+        );
+    }
+
+    #[test]
+    fn render_toolbar_error_transition_pushes_toast() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.error.set(Some("test error".to_string()));
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.step();
+        }
+
+        let count_first = app.toast.len();
+        assert!(
+            count_first > 0,
+            "error toast should be pushed on None→Some transition"
+        );
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.step();
+        }
+
+        assert_eq!(
+            app.toast.len(),
+            count_first,
+            "no duplicate toasts on subsequent frames"
+        );
+    }
+
+    #[test]
+    fn render_toolbar_success_transition_pushes_toast() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.last_loading = true;
+        app.shared_state.loading.set(false);
+        app.shared_state.error.set(None);
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.step();
+        }
+
+        assert!(
+            !app.toast.is_empty(),
+            "success toast on loading true→false with no error"
+        );
+    }
+
+    #[test]
+    fn compass_app_ui_renders_no_panic() {
+        let mut harness =
+            egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
+        harness.step();
+    }
+
+    #[test]
+    fn compass_app_ui_multiple_frames_no_panic() {
+        let mut harness =
+            egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
+
+        harness.step();
+        harness.step();
+        harness.step();
+    }
 }

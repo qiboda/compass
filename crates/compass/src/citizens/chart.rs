@@ -68,3 +68,74 @@ impl ChartCitizen {
         self.chart.show(ui);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use egui_charts::model::Bar;
+    use egui_citizen::CitizenState;
+
+    fn make_bar(
+        time: chrono::DateTime<Utc>,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: f64,
+    ) -> Bar {
+        Bar::new(time, open, high, low, close, volume)
+    }
+
+    #[test]
+    fn new_creates_citizen_with_correct_id() {
+        let id = CitizenId::new("test_chart");
+        let state = CitizenState::new();
+        let citizen = ChartCitizen::new(id.clone(), state.clone());
+
+        assert_eq!(citizen.citizen_id, id);
+        assert_eq!(citizen.id(), &id);
+    }
+
+    #[test]
+    fn show_empty_bars_no_panic() {
+        let id = CitizenId::new("chart");
+        let state = CitizenState::new();
+        let mut citizen = ChartCitizen::new(id, state);
+
+        let shared = SharedState::new("000001", "1d");
+        let theme = CompassTheme::compass_dark();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            citizen.show(ui, &shared, &theme);
+        });
+        harness.run();
+    }
+
+    #[test]
+    fn show_with_bars_no_panic() {
+        let id = CitizenId::new("chart");
+        let state = CitizenState::new();
+        let mut citizen = ChartCitizen::new(id, state);
+
+        let shared = SharedState::new("000001", "1d");
+        shared.bars.set(vec![
+            make_bar(Utc::now(), 100.0, 105.0, 98.0, 103.0, 1000.0),
+            make_bar(
+                Utc::now() + chrono::Duration::days(1),
+                103.0,
+                108.0,
+                101.0,
+                106.0,
+                1200.0,
+            ),
+        ]);
+
+        let theme = CompassTheme::compass_dark();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            citizen.show(ui, &shared, &theme);
+        });
+        harness.run();
+    }
+}

@@ -40,3 +40,42 @@ impl LoggerPanel {
         logger.show(ui);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_citizen::CitizenState;
+
+    #[test]
+    fn new_creates_panel_with_correct_id() {
+        let id = CitizenId::new("test_logger");
+        let state = CitizenState::new();
+        let panel = LoggerPanel::new(id.clone(), state.clone());
+
+        assert_eq!(panel.citizen_id, id);
+        assert_eq!(panel.id(), &id);
+    }
+
+    #[test]
+    fn new_creates_panel() {
+        let id = CitizenId::new("logger");
+        let state = CitizenState::new();
+        let panel = LoggerPanel::new(id, state);
+
+        assert_eq!(*panel.id(), CitizenId::new("logger"));
+    }
+
+    #[test]
+    fn show_no_panic() {
+        let id = CitizenId::new("logger");
+        let state = CitizenState::new();
+        let mut panel = LoggerPanel::new(id, state);
+
+        let shared = SharedState::new("000001", "1d");
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared);
+        });
+        harness.run();
+    }
+}

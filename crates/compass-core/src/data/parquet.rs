@@ -798,4 +798,209 @@ mod tests {
         let range = reader.get_stored_range("NONEXIST").expect("range");
         assert!(range.is_none(), "nonexistent symbol should return None");
     }
+
+    // -----------------------------------------------------------------------
+    // load_all_stock_basics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_all_stock_basics_returns_all_rows() {
+        let (_tmp, reader) = create_test_parquet_dir();
+
+        let basics = reader.load_all_stock_basics().expect("load");
+        assert_eq!(basics.len(), 3, "should return all 3 rows");
+
+        // Ordered by symbol: 000001, 600519, hack
+        let pab = basics
+            .iter()
+            .find(|b| b.symbol == "000001")
+            .expect("find 000001");
+        assert_eq!(pab.name, "平安银行");
+        assert_eq!(pab.exchange.as_deref(), Some("SZ"));
+        assert!(
+            pab.list_date.is_some(),
+            "list_date should be Some for 000001"
+        );
+
+        let hack = basics
+            .iter()
+            .find(|b| b.symbol == "hack")
+            .expect("find hack");
+        assert!(hack.list_date.is_none(), "NULL list_date should be None");
+        assert!(
+            hack.delist_date.is_none(),
+            "NULL delist_date should be None"
+        );
+    }
+
+    #[test]
+    fn load_all_stock_basics_returns_empty_when_file_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let basics = reader.load_all_stock_basics().expect("load");
+        assert!(
+            basics.is_empty(),
+            "should return empty vec when stock_basic.parquet missing"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // get_stock_basic_blocking edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_stock_basic_blocking_returns_nodata_for_valid_but_unknown_symbol() {
+        let (_tmp, reader) = create_test_parquet_dir();
+        let result = reader.get_stock_basic_blocking("999999");
+        assert!(
+            matches!(result, Err(DataError::NoData { .. })),
+            "valid symbol with no matching row should return NoData"
+        );
+    }
+
+    #[test]
+    fn get_stock_basic_blocking_returns_none_when_basic_path_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let result = reader
+            .get_stock_basic_blocking("000001")
+            .expect("should be Ok");
+        assert!(
+            result.is_none(),
+            "missing basic_path should return Ok(None)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_bars_blocking edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fetch_bars_blocking_returns_nodata_for_zero_results() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+
+        // Date range outside any data
+        let start = DateTime::from_naive_utc_and_offset(
+            NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            Utc,
+        );
+        let end = DateTime::from_naive_utc_and_offset(
+            NaiveDate::from_ymd_opt(2025, 12, 31)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            Utc,
+        );
+        let result = reader.fetch_bars_blocking("SZ000001", start, end);
+        assert!(
+            matches!(result, Err(DataError::NoData { .. })),
+            "zero results in date range should return NoData"
+        );
+    }
+
+    #[test]
+    fn fetch_bars_blocking_rejects_invalid_symbol_even_when_data_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let start = DateTime::from_timestamp(0, 0).unwrap();
+        let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
+
+        // Empty string is invalid and should fail validate_symbol BEFORE any I/O
+        let result = reader.fetch_bars_blocking("", start, end);
+        assert!(
+            matches!(result, Err(DataError::NoData { .. })),
+            "invalid symbol (empty) should be rejected by validate_symbol"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // escape_sql_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn escape_sql_path_doubles_single_quotes() {
+        let input = "/path/with/'quote'/file.parquet";
+        let escaped = escape_sql_path(input);
+        assert_eq!(escaped, "/path/with/''quote''/file.parquet");
+    }
+
+    #[test]
+    fn escape_sql_path_passes_through_no_quotes() {
+        let input = "/normal/path/file.parquet";
+        let escaped = escape_sql_path(input);
+        assert_eq!(escaped, input);
+    }
+
+    // -----------------------------------------------------------------------
+    // search_symbols (async trait impl)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn search_symbols_empty_query_returns_all() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[
+                ("SZ000001", &[("2024-01-02", 10.0)]),
+                ("SH600519", &[("2024-01-02", 1500.0)]),
+            ],
+        );
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let symbols = reader.search_symbols("").await.expect("search");
+        assert_eq!(symbols.len(), 2);
+        // list_symbols sorts alphabetically: SH600519, SZ000001
+        assert_eq!(symbols[0].code, "SH600519");
+        assert_eq!(symbols[1].code, "SZ000001");
+    }
+
+    #[tokio::test]
+    async fn search_symbols_filters_by_partial_match() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[
+                ("SZ000001", &[("2024-01-02", 10.0)]),
+                ("SH600519", &[("2024-01-02", 1500.0)]),
+            ],
+        );
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let symbols = reader.search_symbols("600519").await.expect("search");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].code, "SH600519");
+    }
+
+    #[tokio::test]
+    async fn search_symbols_case_insensitive_filter() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let symbols = reader.search_symbols("sz").await.expect("search");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].code, "SZ000001");
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_bars (async trait impl via spawn_blocking)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fetch_bars_async_delegates_to_blocking() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let start = DateTime::from_timestamp(0, 0).unwrap();
+        let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
+        let bars = reader
+            .fetch_bars("SZ000001", "1d", start, end)
+            .await
+            .expect("fetch");
+        assert_eq!(bars.len(), 1);
+        assert!((bars[0].close - 10.0).abs() < 0.01);
+    }
 }

@@ -147,10 +147,27 @@ impl StockPicker {
     }
 }
 
+fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
+    if name.is_empty() {
+        if exchange.is_empty() {
+            symbol.to_string()
+        } else {
+            format!("{exchange} | {symbol}")
+        }
+    } else if exchange.is_empty() {
+        format!("{symbol} | {name}")
+    } else {
+        format!("{exchange} | {symbol} | {name}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use compass_core::model::StockBasic;
+    use egui_kittest::kittest::Queryable;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn make_stock(symbol: &str, name: &str, exchange: &str) -> StockBasic {
         StockBasic {
@@ -166,6 +183,25 @@ mod tests {
             list_date: None,
             delist_date: None,
         }
+    }
+
+    fn make_stocks() -> Vec<StockBasic> {
+        vec![
+            make_stock("000001", "平安银行", "SZ"),
+            make_stock("000002", "万科A", "SZ"),
+            make_stock("600519", "贵州茅台", "SH"),
+            make_stock("300750", "宁德时代", "SZ"),
+        ]
+    }
+
+    fn harness_for_picker<'a>(
+        picker: &Rc<RefCell<StockPicker>>,
+        stocks: &'a [StockBasic],
+    ) -> egui_kittest::Harness<'a> {
+        let p = picker.clone();
+        egui_kittest::Harness::new_ui(move |ui| {
+            p.borrow_mut().show(ui, stocks);
+        })
     }
 
     #[test]
@@ -212,18 +248,113 @@ mod tests {
         picker.popup_open = true;
         assert_ne!(picker.filter_text, picker.last_filter_text);
     }
-}
 
-fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
-    if name.is_empty() {
-        if exchange.is_empty() {
-            symbol.to_string()
-        } else {
-            format!("{exchange} | {symbol}")
-        }
-    } else if exchange.is_empty() {
-        format!("{symbol} | {name}")
-    } else {
-        format!("{exchange} | {symbol} | {name}")
+    // --- egui_kittest headless tests ---
+
+    /// Helper: find the TextInput node by its value text and click it.
+    fn click_text_input(harness: &egui_kittest::Harness<'_>, value: &str) {
+        harness
+            .get_all_by_value(value)
+            .next()
+            .expect("should find text input node")
+            .click();
+    }
+
+    #[test]
+    fn test_show_click_opens_popup() {
+        let stocks = make_stocks();
+        let picker = Rc::new(RefCell::new(StockPicker::new("000001", &stocks)));
+
+        let mut harness = harness_for_picker(&picker, &stocks);
+        harness.run();
+
+        assert!(!picker.borrow().popup_open);
+
+        click_text_input(&harness, "SZ | 000001 | 平安银行");
+        harness.run();
+
+        assert!(
+            picker.borrow().popup_open,
+            "popup should open on text edit click"
+        );
+    }
+
+    #[test]
+    fn test_escape_closes_popup() {
+        let stocks = make_stocks();
+        let picker = Rc::new(RefCell::new(StockPicker::new("000001", &stocks)));
+
+        let mut harness = harness_for_picker(&picker, &stocks);
+        harness.run();
+
+        click_text_input(&harness, "SZ | 000001 | 平安银行");
+        harness.run();
+        assert!(picker.borrow().popup_open);
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+
+        assert!(!picker.borrow().popup_open, "popup should close on Escape");
+    }
+
+    #[test]
+    fn test_row_click_selects_stock() {
+        let stocks = make_stocks();
+        let picker = Rc::new(RefCell::new(StockPicker::new("000001", &stocks)));
+
+        picker.borrow_mut().popup_open = true;
+        picker.borrow_mut().filter_text = "6".into();
+
+        let mut harness = harness_for_picker(&picker, &stocks);
+        harness.run();
+        assert!(picker.borrow().popup_open);
+
+        harness.get_by_label("SH | 600519 | 贵州茅台").click();
+        harness.run();
+
+        assert_eq!(picker.borrow().selected_symbol, "600519");
+        assert_eq!(picker.borrow().selected_name, "贵州茅台");
+        assert_eq!(picker.borrow().selected_exchange, "SH");
+        assert!(
+            !picker.borrow().popup_open,
+            "popup should close after selection"
+        );
+    }
+
+    #[test]
+    fn test_popup_repopulates_cached_indices() {
+        let stocks = make_stocks();
+        let picker = Rc::new(RefCell::new(StockPicker::new("000001", &stocks)));
+
+        picker.borrow_mut().popup_open = true;
+        picker.borrow_mut().filter_text = "0".into();
+
+        let mut harness = harness_for_picker(&picker, &stocks);
+        harness.run();
+
+        assert!(
+            !picker.borrow().cached_indices.is_empty(),
+            "cached_indices should be populated when popup opens with filter"
+        );
+    }
+
+    #[test]
+    fn test_refilter_caching_last_filter_text_updated() {
+        let stocks = make_stocks();
+        let picker = Rc::new(RefCell::new(StockPicker::new("000001", &stocks)));
+
+        let mut harness = harness_for_picker(&picker, &stocks);
+        harness.run();
+
+        assert!(picker.borrow().last_filter_text.is_empty());
+
+        click_text_input(&harness, "SZ | 000001 | 平安银行");
+        harness.run();
+        harness.run();
+
+        assert!(
+            !picker.borrow().last_filter_text.is_empty(),
+            "last_filter_text should be updated after popup open triggers refilter"
+        );
     }
 }
