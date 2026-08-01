@@ -74,7 +74,7 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 - **工具栏**：`compass-ui::widgets::Toolbar` 组件（40px），逻辑四组：
   **标的**（`SearchableDropdown`，Symbol 搜索）/ **周期**（`Segmented` 1d|1w|1M）/
   **操作**（`Button(Primary)` Fetch，loading 禁用+spinner）/ **显示**（侧栏切换
-  `IconButton` + 主题 `Dropdown`）；组间强分隔线 + 12px 间距（ref #130）
+  `IconButton` + 主题 `Dropdown`）；组间强分隔线 + 16px 间距（ref #130）
 - **Sidebar**：`SidePanel::left` 240px（resizable 200–320），自选股分组列表
   （名称 + mono 代码 + 交易所标签），行点击切图表、hover 删除（Modal 确认）、
   顶部搜索 + 添加按钮；watchlist 持久化到 `[watchlist]` 配置节（ref #131）
