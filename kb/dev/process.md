@@ -164,12 +164,12 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 `/handoff`、自动启动区域、`--close` 退出清理、合并后清理）。
 
 `--close <name>` 停止 cwd 指向该 worktree 的 opencode 进程、关闭其承载终端窗口，
-然后移除 worktree 与分支。**当从 worktree 自身内部执行**（例如在该 worktree 的
-opencode 会话里运行 `--close`），清理会交给一个 `setsid` 脱离会话的子进程完成
-（`logs/open-worktrees-close.log`），因此调用者被终止后清理仍会执行完毕
-（ref #104）。终端窗口关闭对每窗口终端（kitty/xterm/konsole）可靠；对
-client-server 终端（gnome-terminal）为尽力而为，xfce4-terminal 因单实例守护
-进程（进程名即 xfce4-terminal）不尝试关闭，避免误关所有窗口。
+然后移除 worktree 与分支。**当该 worktree 存在运行中的持有进程**（包括从 worktree
+自身内部执行时的调用者——例如在该 worktree 的 opencode 会话里运行 `--close`），
+清理会交给一个 `setsid` 脱离会话的子进程完成（`logs/open-worktrees-close.log`），
+因此调用者被终止后清理仍会执行完毕（ref #104）。终端窗口关闭对每窗口终端
+（kitty/xterm/konsole）可靠；对 client-server 终端（gnome-terminal）为尽力而为，
+xfce4-terminal 因单实例守护进程（进程名即 xfce4-terminal）不尝试关闭，避免误关所有窗口。
 
 **为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco/worktree via OCX），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。

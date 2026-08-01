@@ -164,26 +164,15 @@ check "open loop guards launch with || true" "grep -q 'launch_in_terminal \"\$te
 #     ref #96 round-2 security review: Debian-only command, argv not preserved)
 check "no xdg-terminal-emulator branch" "! grep -q 'xdg-terminal-emulator' '$SCRIPT'"
 
-# 15. is_ancestor_of_self: self is an ancestor of itself; init (pid 1) is not.
-#     Guards the kill-loop "never hit the caller's own process chain" fix for
-#     --close run inside the target worktree (ref #104).
-check "is_ancestor_of_self identifies self, rejects init" "bash -c '
+# 16. Any cwd=$dir holder (caller OR external) must trigger a setsid-detached
+#     cleanup — close_worktree must never kill in-process, because killing a
+#     holder that is the caller would kill the script mid-cleanup. This holds
+#     even when the holder is NOT an ancestor of the caller (ppid chains are
+#     unreliable under opencode's bash tool, ref #104 round-2). Stub pgrep to
+#     report an external child-process holder, stub setsid to capture argv.
+check "close with holder detaches via setsid" "bash -c '
     set -e
-    func=\$(sed -n \"/^is_ancestor_of_self()/,/^}/p\" \"$SCRIPT\")
-    eval \"\$func\"
-    declare -F is_ancestor_of_self >/dev/null
-    is_ancestor_of_self \$\$
-    ! is_ancestor_of_self 1
-'"
-
-# 16. Self-hold: caller lives inside the target worktree, so close must NOT
-#     remove anything in-process (it would die with the caller). It must
-#     hand off to a setsid-detached cleanup instead (ref #104). Stub pgrep to
-#     report the caller itself, stub setsid to capture the handoff argv.
-check "close self-hold detaches cleanup via setsid" "bash -c '
     func=\$(sed -n \"/^has_worktree()/,/^}/p\" \"$SCRIPT\")
-    eval \"\$func\"
-    func=\$(sed -n \"/^is_ancestor_of_self()/,/^}/p\" \"$SCRIPT\")
     eval \"\$func\"
     func=\$(sed -n \"/^find_terminal_pid()/,/^}/p\" \"$SCRIPT\")
     eval \"\$func\"
@@ -198,11 +187,18 @@ check "close self-hold detaches cleanup via setsid" "bash -c '
 #!/bin/sh
 printf \"%s\\n\" \"\$@\" >> $TMP/detached-argv
 EOF
-    chmod +x $TMP/stub/setsid
+    cat > $TMP/stub/git <<\"EOF\"
+#!/bin/sh
+printf \"GIT-STUB %s\\n\" \"\$@\" >> $TMP/git-argv
+exit 0
+EOF
+    chmod +x $TMP/stub/setsid $TMP/stub/git
     PATH=$TMP/stub:\$PATH
-    pgrep() { echo \$\$; }
-    cd $TMP/wt
+    (cd $TMP/wt && sleep 30) &
+    HOLDER=\$!
+    pgrep() { echo \$HOLDER; }
     close_worktree wt 2>&1
+    kill \$HOLDER 2>/dev/null || true
     i=0
     while [ ! -s $TMP/detached-argv ] && [ \$i -lt 50 ]; do
         sleep 0.05
@@ -221,17 +217,10 @@ check "find_terminal_pid rejects non-terminal chain" "bash -c '
     ! find_terminal_pid 1
 '"
 
-# 18. close_worktree kill loop must consult is_ancestor_of_self so the caller
-#     (and its ancestors) can never be killed (ref #104).
-check "close kill loop excludes caller chain" "bash -c '
-    body=\$(sed -n \"/^close_worktree()/,/^}/p\" \"$SCRIPT\")
-    echo \"\$body\" | grep -q is_ancestor_of_self
-'"
-
-# 19. close_worktree must locate the holding terminal so its window can be
+# 19. detached_cleanup must locate the holding terminal so its window can be
 #     closed together with the opencode process (ref #104, user decision B).
-check "close path locates holding terminal" "bash -c '
-    body=\$(sed -n \"/^close_worktree()/,/^}/p\" \"$SCRIPT\")
+check "detached cleanup locates holding terminal" "bash -c '
+    body=\$(sed -n \"/^detached_cleanup()/,/^}/p\" \"$SCRIPT\")
     echo \"\$body\" | grep -q find_terminal_pid
 '"
 
