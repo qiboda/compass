@@ -12,18 +12,20 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Create CI failure issue
         env:
           GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
         run: |
           gh issue create \
-            --title "CI Failure: ${{ github.event.workflow_run.head_branch }}" \
+            --title "CI Failure: ${HEAD_BRANCH}" \
             --label "A-CI,C-Bug,S-CI-Failure" \
-            --body "CI workflow **failed** on branch \`${{ github.event.workflow_run.head_branch }}\`.
+            --body "CI workflow **failed** on branch \`${HEAD_BRANCH}\`.
 
-          **Commit**: ${{ github.event.workflow_run.head_sha }}
-          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.run_id }}
+          **Commit**: ${HEAD_SHA}
 
-          Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+          Details: ${RUN_URL}"
