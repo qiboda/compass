@@ -184,8 +184,10 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 ## 摩擦记录（并入反思）
 
 任何「AI 行为偏差被用户纠正」的场合（grill-me 分歧、执行方向偏离、意图误解、约束遗漏等），
-在写事后反思时记录到 `reflections.md` 条目的 **User corrections** 小节
-（自动检测：用户纠正时提示是否记录；随 `/reflect` 一并写入）。
+在写事后反思时记录到 `reflections.md` 条目的 **User corrections** 小节。
+**/reflect 必须读取本 session 对话记录（`session_read`）逐条提取用户纠正，
+逐字引用原话——不凭记忆，对话记录是客观存在的**（执行者会忘，对话不会忘）；
+同时用 git 命令客观验证流程（commit 分支归属、worktree 是否创建未用）。
 `friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `reflections.md` 末尾
 "历史摩擦记录"章节。
 

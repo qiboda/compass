@@ -5,6 +5,12 @@ description: 编写实施后反思并追加到 kb/dev/reflections.md，含趋势
 
 # Reflect — 实施后反思 Agent
 
+## 目的
+
+反思的目的是**学习**，然后让开发流程更加完善和自动化，减少摩擦损耗：
+每次 feature/bugfix 的经验（含用户纠正、流程偏差）沉淀为可操作的流程改进，
+让同样的摩擦不再发生。
+
 ## 角色
 
 在每次 feature 或 bugfix 完成后，将强制的实施后反思写入 `kb/dev/reflections.md`。
@@ -20,6 +26,29 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 - compass-workflow 实施后 review 第 5 步（通过 `→ Invoke /reflect` 自动触发）
 
 ## 工作流
+
+### 第 0 步：读取对话记录，提取用户纠正（强制）
+
+**反思的输入必须来自客观记录，而不是结束时的记忆。** 反思不到流程偏差
+（如"创建 worktree 后留在 master 开发"）的根本原因是：结束时执行者已无意识
+接受了偏离，记忆里根本没有"偏差"。对话记录是客观存在的——执行者会忘，
+对话不会忘。因此 /reflect 的第一步（任何其他步骤之前）必须：
+
+1. **读取本 session 的对话记录**（`session_read`），逐条浏览**用户消息**，
+   识别所有纠正型消息：
+   - 明确纠正（"不对"、"应该 X"、"预期是 Y"）
+   - 流程提醒（"切换worktree啊"、"现在没有在worktree吧"）
+   - 语义纠正（"解绑指让新的进程脱离当前对话的约束"）
+   - 范围/方向纠偏（"两个skill合并"、"修复钩子简单"）
+2. **逐条对照反思条目**：每条用户纠正必须出现在 User corrections 章节
+   （逐字引用用户原话）。遗漏任何一条 = 反思不完整。
+3. **git 客观流程验证**（命令可查，不凭印象）：
+   - `git branch --contains <commit>` — 本次 commit 落在哪个分支？
+     存在活跃 worktree 而 commit 在 master = 流程偏差
+   - `git worktree list` — 是否有"创建了但从未使用"的 worktree？
+   - `git log --oneline <range>` — commit 数量/范围与预期一致？
+4. 将发现写入反思条目：对话中提取的纠正 → User corrections；git 验证发现的
+   流程偏差 → What went wrong + Lessons learned。
 
 ### 第 1 步：收集上下文
 
