@@ -219,20 +219,22 @@ impl ScreenerPanel {
         ui.horizontal(|ui| {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_width(260.0);
-                self.condition_form(ui, industries, boards);
-                ui.separator();
-                if ui.button("筛选").clicked() {
-                    let query = self.form.to_query();
-                    (self.on_save)(&query);
-                    shared_state.screener_loading.set(true);
-                    shared_state.screener_error.set(None);
-                    if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
-                        shared_state.screener_loading.set(false);
-                        shared_state
-                            .screener_error
-                            .set(Some(format!("failed to run screener: {e}")));
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.condition_form(ui, industries, boards);
+                    ui.separator();
+                    if ui.button("筛选").clicked() {
+                        let query = self.form.to_query();
+                        (self.on_save)(&query);
+                        shared_state.screener_loading.set(true);
+                        shared_state.screener_error.set(None);
+                        if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
+                            shared_state.screener_loading.set(false);
+                            shared_state
+                                .screener_error
+                                .set(Some(format!("failed to run screener: {e}")));
+                        }
                     }
-                }
+                });
             });
 
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -338,6 +340,7 @@ impl ScreenerPanel {
     /// Condition form: metadata + technical conditions.
     fn condition_form(&mut self, ui: &mut egui::Ui, industries: &[String], boards: &[String]) {
         ui.heading("条件");
+        const BLOCK_SPACING: f32 = 10.0;
 
         ui.label("行业");
         Self::multi_select_popup(
@@ -348,6 +351,7 @@ impl ScreenerPanel {
             industries,
             &mut self.form.industries,
         );
+        ui.add_space(BLOCK_SPACING);
 
         ui.label("交易所");
         const EXCHANGES: [&str; 3] = ["SH", "SZ", "BJ"];
@@ -360,6 +364,7 @@ impl ScreenerPanel {
             &exchanges,
             &mut self.form.exchanges,
         );
+        ui.add_space(BLOCK_SPACING);
 
         ui.label("板块");
         Self::multi_select_popup(
@@ -370,6 +375,7 @@ impl ScreenerPanel {
             boards,
             &mut self.form.boards,
         );
+        ui.add_space(BLOCK_SPACING);
 
         ui.label("上市时长");
         let options: [(&str, Option<u32>); 4] = [
@@ -391,6 +397,7 @@ impl ScreenerPanel {
                     }
                 }
             });
+        ui.add_space(BLOCK_SPACING);
 
         ui.label("市值区间（亿元）");
         ui.horizontal(|ui| {
@@ -406,7 +413,9 @@ impl ScreenerPanel {
             }
         });
 
+        ui.add_space(BLOCK_SPACING);
         ui.separator();
+        ui.add_space(BLOCK_SPACING);
 
         let mut ma_enabled = self.form.ma_enabled;
         ui.checkbox(&mut ma_enabled, "均线");
@@ -427,6 +436,7 @@ impl ScreenerPanel {
                 });
             self.form.ma_kind = kind;
         }
+        ui.add_space(BLOCK_SPACING);
 
         let mut breakout_enabled = self.form.breakout_enabled;
         ui.checkbox(&mut breakout_enabled, "突破 N 日新高");
@@ -437,6 +447,7 @@ impl ScreenerPanel {
                 ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
             });
         }
+        ui.add_space(BLOCK_SPACING);
 
         let mut momentum_enabled = self.form.momentum_enabled;
         ui.checkbox(&mut momentum_enabled, "动量（近 N 日涨幅）");
@@ -453,6 +464,7 @@ impl ScreenerPanel {
                 ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
             });
         }
+        ui.add_space(BLOCK_SPACING);
 
         let mut volume_enabled = self.form.volume_enabled;
         ui.checkbox(&mut volume_enabled, "量能（近 N 日均量）");
@@ -465,6 +477,7 @@ impl ScreenerPanel {
                 ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
             });
         }
+        ui.add_space(BLOCK_SPACING);
 
         ui.checkbox(&mut self.form.exclude_delisted, "排除退市");
     }
@@ -620,6 +633,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
             panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
         });
+        harness.fit_contents();
         let btn = harness.get_by_label("筛选");
         btn.click();
         harness.step();
@@ -761,6 +775,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
             panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
         });
+        harness.fit_contents();
         harness.step();
         harness.get_by_label("600519").click();
         harness.step();
