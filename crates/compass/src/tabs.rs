@@ -22,9 +22,12 @@
 //! ```
 
 use egui_citizen::{CitizenId, Dispatcher};
+use egui_mobius::signals::Signal;
 
 use crate::citizens::chart::ChartCitizen;
 use crate::citizens::logger::LoggerPanel;
+use crate::citizens::screener::ScreenerPanel;
+use crate::messages::{FetchRequest, RunScreenerRequest};
 use crate::state::SharedState;
 
 // ---------------------------------------------------------------------------
@@ -33,6 +36,7 @@ use crate::state::SharedState;
 
 pub const CHART_ID: &str = "chart";
 pub const LOGGER_ID: &str = "logger";
+pub const SCREENER_ID: &str = "screener";
 
 // ---------------------------------------------------------------------------
 // TabKind — enum of dockable panel types
@@ -46,6 +50,7 @@ pub const LOGGER_ID: &str = "logger";
 pub enum TabKind {
     Chart,
     Logger,
+    Screener,
 }
 
 impl TabKind {
@@ -53,6 +58,7 @@ impl TabKind {
         match self {
             Self::Chart => "Chart",
             Self::Logger => "Logger",
+            Self::Screener => "Screener",
         }
     }
 
@@ -60,6 +66,7 @@ impl TabKind {
         match self {
             Self::Chart => CitizenId::new(CHART_ID),
             Self::Logger => CitizenId::new(LOGGER_ID),
+            Self::Screener => CitizenId::new(SCREENER_ID),
         }
     }
 }
@@ -108,6 +115,11 @@ pub struct TabViewer<'a> {
     pub dispatcher: &'a mut Dispatcher,
     pub chart: &'a mut ChartCitizen,
     pub logger: &'a mut LoggerPanel,
+    pub screener: &'a mut ScreenerPanel,
+    pub run_screener_signal: &'a Signal<RunScreenerRequest>,
+    pub work_signal: &'a Signal<FetchRequest>,
+    pub screener_industries: &'a [String],
+    pub screener_boards: &'a [String],
     pub shared_state: &'a SharedState,
     pub theme: &'a CompassTheme,
 }
@@ -123,6 +135,14 @@ impl egui_dock::TabViewer for TabViewer<'_> {
         match tab.kind {
             TabKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
             TabKind::Logger => self.logger.show(ui, self.shared_state),
+            TabKind::Screener => self.screener.show(
+                ui,
+                self.shared_state,
+                self.run_screener_signal,
+                self.work_signal,
+                self.screener_industries,
+                self.screener_boards,
+            ),
         }
     }
 
@@ -155,6 +175,11 @@ mod tests {
         assert_eq!(TabKind::Logger.title(), "Logger");
     }
 
+    #[test]
+    fn tab_kind_screener_title() {
+        assert_eq!(TabKind::Screener.title(), "Screener");
+    }
+
     // ------------------------------------------------------------------
     // TabKind::citizen_id
     // ------------------------------------------------------------------
@@ -167,6 +192,11 @@ mod tests {
     #[test]
     fn tab_kind_logger_citizen_id() {
         assert_eq!(TabKind::Logger.citizen_id(), CitizenId::new(LOGGER_ID));
+    }
+
+    #[test]
+    fn tab_kind_screener_citizen_id() {
+        assert_eq!(TabKind::Screener.citizen_id(), CitizenId::new(SCREENER_ID));
     }
 
     // ------------------------------------------------------------------
@@ -188,9 +218,18 @@ mod tests {
     }
 
     #[test]
+    fn tab_new_screener_delegates_to_tab_kind() {
+        let tab = Tab::new(TabKind::Screener);
+        assert_eq!(tab.title(), "Screener");
+        assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
+    }
+
+    #[test]
     fn tab_same_kind_are_equal() {
         assert_eq!(Tab::new(TabKind::Chart), Tab::new(TabKind::Chart));
         assert_eq!(Tab::new(TabKind::Logger), Tab::new(TabKind::Logger));
+        assert_eq!(Tab::new(TabKind::Screener), Tab::new(TabKind::Screener));
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Logger));
+        assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Screener));
     }
 }

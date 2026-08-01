@@ -9,6 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 compass-core = { path = "../compass-core" }
+compass-types = { path = "../compass-types" }
+compass-strategy = { path = "../compass-strategy" }
 chrono = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }

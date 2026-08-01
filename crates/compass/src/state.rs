@@ -1,3 +1,4 @@
+use compass_types::ScreenerRow;
 use egui_charts::model::Bar;
 use egui_lens::ReactiveEventLoggerState;
 use egui_mobius_reactive::Dynamic;
@@ -20,6 +21,14 @@ pub struct SharedState {
     pub error: Dynamic<Option<String>>,
     /// Logger state for the egui_lens reactive event logger panel.
     pub log: Dynamic<ReactiveEventLoggerState>,
+    /// Latest screener result rows.
+    pub screener_result: Dynamic<Vec<ScreenerRow>>,
+    /// Total matches before the 100-row cap.
+    pub screener_total: Dynamic<usize>,
+    /// `true` while a screener run is in flight.
+    pub screener_loading: Dynamic<bool>,
+    /// Last screener error message, if any.
+    pub screener_error: Dynamic<Option<String>>,
 }
 
 impl SharedState {
@@ -35,6 +44,10 @@ impl SharedState {
             loading: Dynamic::new(false),
             error: Dynamic::new(None),
             log: Dynamic::new(ReactiveEventLoggerState::new()),
+            screener_result: Dynamic::new(Vec::new()),
+            screener_total: Dynamic::new(0),
+            screener_loading: Dynamic::new(false),
+            screener_error: Dynamic::new(None),
         }
     }
 }

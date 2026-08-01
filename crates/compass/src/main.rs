@@ -20,7 +20,8 @@ mod widgets;
 
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
-use tabs::{CHART_ID, LOGGER_ID, Tab, TabKind, TabViewer};
+use citizens::screener::ScreenerPanel;
+use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
 use widgets::modal::Modal;
 use widgets::searchable_dropdown::StockPicker;
@@ -82,7 +83,7 @@ fn main() -> eframe::Result {
             let stock_list = load_stock_list(&config);
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
-            let (work_signal, _backend_handle) =
+            let (work_signal, run_screener_signal, _backend_handle) =
                 backend::wire_backend(config.clone(), shared_state.clone(), egui_ctx);
 
             // Register citizens
@@ -92,8 +93,21 @@ fn main() -> eframe::Result {
             // Create citizen panels
             let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
             let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+            let screener = ScreenerPanel::new(CitizenId::new(SCREENER_ID), registered.screener);
 
-            // Create initial dock state with 2 tabs in vertical stack
+            // Derive distinct industry/board lists for the screener conditions.
+            let mut industries: Vec<String> = stock_list
+                .iter()
+                .filter_map(|s| s.industry.clone())
+                .collect();
+            industries.sort();
+            industries.dedup();
+            let mut boards: Vec<String> =
+                stock_list.iter().filter_map(|s| s.board.clone()).collect();
+            boards.sort();
+            boards.dedup();
+
+            // Create initial dock state: Chart (root), Logger + Screener below.
             let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
             if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
                 && let Some(tree) = surface.node_tree_mut()
@@ -103,6 +117,11 @@ fn main() -> eframe::Result {
                     0.75,
                     vec![Tab::new(TabKind::Logger)],
                 );
+                let _ = tree.split_below(
+                    egui_dock::NodeIndex::root(),
+                    0.5,
+                    vec![Tab::new(TabKind::Screener)],
+                );
             }
 
             let stock_picker = StockPicker::new(&config.app.default_symbol, &stock_list);
@@ -110,11 +129,17 @@ fn main() -> eframe::Result {
             let theme = CompassTheme::from_config(&config.theme);
             let dock_style = Style::from_egui(&cc.egui_ctx.style_of(cc.egui_ctx.theme()));
 
+            let startup_symbol = shared_state.symbol.get();
+
             Ok(Box::new(CompassApp {
                 dock_state,
                 dispatcher,
                 chart,
                 logger,
+                screener,
+                run_screener_signal,
+                screener_industries: industries,
+                screener_boards: boards,
                 shared_state,
                 work_signal,
                 stock_list,
@@ -128,6 +153,8 @@ fn main() -> eframe::Result {
                 file_dialog: FileDialog::new(),
                 last_error: None,
                 last_loading: false,
+                last_screener_error: None,
+                last_screener_synced_symbol: startup_symbol,
             }))
         }),
     )
@@ -226,6 +253,10 @@ struct CompassApp {
     dispatcher: Dispatcher,
     chart: ChartCitizen,
     logger: LoggerPanel,
+    screener: ScreenerPanel,
+    run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
+    screener_industries: Vec<String>,
+    screener_boards: Vec<String>,
     shared_state: Arc<state::SharedState>,
     work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
     stock_list: Vec<compass_core::model::StockBasic>,
@@ -239,6 +270,11 @@ struct CompassApp {
     file_dialog: FileDialog,
     last_error: Option<String>,
     last_loading: bool,
+    // Consumed by the screener reverse-sync + toast logic (Todo 6).
+    #[allow(dead_code)]
+    last_screener_error: Option<String>,
+    #[allow(dead_code)]
+    last_screener_synced_symbol: String,
 }
 
 impl eframe::App for CompassApp {
@@ -281,6 +317,11 @@ impl eframe::App for CompassApp {
                         dispatcher: &mut self.dispatcher,
                         chart: &mut self.chart,
                         logger: &mut self.logger,
+                        screener: &mut self.screener,
+                        run_screener_signal: &self.run_screener_signal,
+                        work_signal: &self.work_signal,
+                        screener_industries: &self.screener_industries,
+                        screener_boards: &self.screener_boards,
                         shared_state: &self.shared_state,
                         theme: &self.theme,
                     },
@@ -418,8 +459,9 @@ mod tests {
 
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
+    use crate::citizens::screener::ScreenerPanel;
     use crate::state::SharedState;
-    use crate::tabs::{CHART_ID, LOGGER_ID};
+    use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
     use egui_citizen::{CitizenId, Dispatcher};
@@ -560,7 +602,7 @@ mod tests {
         let config = AppConfig::default();
         let shared_state = Arc::new(SharedState::new("000001", "1d"));
 
-        let (work_signal, _backend_handle) =
+        let (work_signal, run_screener_signal, _backend_handle) =
             crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
 
         let mut dispatcher = Dispatcher::new();
@@ -568,6 +610,7 @@ mod tests {
 
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
         let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let screener = ScreenerPanel::new(CitizenId::new(SCREENER_ID), registered.screener);
 
         let stock_list: Vec<StockBasic> = Vec::new();
         let stock_picker = StockPicker::new("000001", &stock_list);
@@ -583,13 +626,24 @@ mod tests {
                 0.75,
                 vec![Tab::new(TabKind::Logger)],
             );
+            let _ = tree.split_below(
+                egui_dock::NodeIndex::root(),
+                0.5,
+                vec![Tab::new(TabKind::Screener)],
+            );
         }
+
+        let startup_symbol = shared_state.symbol.get();
 
         CompassApp {
             dock_state,
             dispatcher,
             chart,
             logger,
+            screener,
+            run_screener_signal,
+            screener_industries: Vec::new(),
+            screener_boards: Vec::new(),
             shared_state,
             work_signal,
             stock_list,
@@ -603,6 +657,8 @@ mod tests {
             file_dialog: egui_file_dialog::FileDialog::new(),
             last_error: None,
             last_loading: false,
+            last_screener_error: None,
+            last_screener_synced_symbol: startup_symbol,
         }
     }
 

@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use chrono::Utc;
+use compass_core::data::parquet::ParquetReader;
 use egui_lens::ReactiveEventLogger;
 use egui_mobius::dispatching::AsyncDispatcher;
 use egui_mobius::factory;
@@ -17,29 +19,40 @@ use egui_mobius::signals::Signal;
 
 use compass_core::data::{duckdb::DuckDbProvider, provider::DataProvider};
 use compass_core::model::AppConfig;
+use compass_strategy::run_screener;
 
-use crate::messages::{FetchRequest, FetchResponse};
+use crate::messages::{FetchRequest, FetchResponse, RunScreenerRequest, RunScreenerResponse};
 use crate::state::SharedState;
 
-/// Owns the `AsyncDispatcher` so the Tokio runtime stays alive for the
-/// program duration. Dropping this shuts down the runtime.
+/// Owns the `AsyncDispatcher`s so the Tokio runtimes stay alive for the
+/// program duration. Dropping this shuts down the runtimes.
 pub struct BackendHandle {
     _dispatcher: AsyncDispatcher<FetchRequest, FetchResponse>,
+    _screener_dispatcher: AsyncDispatcher<RunScreenerRequest, RunScreenerResponse>,
 }
 
 /// Build the async work pipeline. Returns:
-/// - `Signal<FetchRequest>` — UI thread submits work via `.send(req)`
+/// - `Signal<FetchRequest>` — UI thread submits bar fetches via `.send(req)`
+/// - `Signal<RunScreenerRequest>` — UI thread submits screener runs
 /// - `BackendHandle` — keep alive on the App struct
 ///
-/// The result slot is started internally — it writes response values
-/// into the reactive `SharedState` and requests a UI repaint.
+/// The result slots are started internally — they write response values
+/// into the reactive `SharedState` and request a UI repaint.
 pub fn wire_backend(
     config: AppConfig,
     state: Arc<SharedState>,
     egui_ctx: egui::Context,
-) -> (Signal<FetchRequest>, BackendHandle) {
+) -> (
+    Signal<FetchRequest>,
+    Signal<RunScreenerRequest>,
+    BackendHandle,
+) {
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
     let (result_signal, mut result_slot) = factory::create_signal_slot::<FetchResponse>();
+
+    let (screener_signal, screener_slot) = factory::create_signal_slot::<RunScreenerRequest>();
+    let (screener_result_signal, mut screener_result_slot) =
+        factory::create_signal_slot::<RunScreenerResponse>();
 
     let parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
 
@@ -81,6 +94,7 @@ pub fn wire_backend(
     let loading = state.loading.clone();
     let error = state.error.clone();
     let log_dyn = state.log.clone();
+    let repaint_ctx = egui_ctx.clone();
 
     result_slot.start(move |resp: FetchResponse| {
         let logger = ReactiveEventLogger::new(&log_dyn);
@@ -94,13 +108,63 @@ pub fn wire_backend(
             error.set(None);
             logger.log_info(&format!("fetch completed: {bar_count} bars"));
         }
-        egui_ctx.request_repaint();
+        repaint_ctx.request_repaint();
+    });
+
+    let screener_parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
+    let screener_dispatcher = AsyncDispatcher::<RunScreenerRequest, RunScreenerResponse>::new();
+    screener_dispatcher.attach_async(
+        screener_slot,
+        screener_result_signal,
+        move |req: RunScreenerRequest| {
+            let parquet_dir = screener_parquet_dir.clone();
+            async move {
+                let reader = match ParquetReader::new(&parquet_dir) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return RunScreenerResponse {
+                            rows: vec![],
+                            total: 0,
+                            error: Some(format!("failed to open parquet: {e}")),
+                        };
+                    }
+                };
+                match run_screener(&req.query, &reader, Utc::now().date_naive()) {
+                    Ok(res) => RunScreenerResponse {
+                        rows: res.rows,
+                        total: res.total,
+                        error: None,
+                    },
+                    Err(e) => RunScreenerResponse {
+                        rows: vec![],
+                        total: 0,
+                        error: Some(format!("{e}")),
+                    },
+                }
+            }
+        },
+    );
+
+    let screener_result_dyn = state.screener_result.clone();
+    let screener_total_dyn = state.screener_total.clone();
+    let screener_loading = state.screener_loading.clone();
+    let screener_error = state.screener_error.clone();
+    let screener_repaint_ctx = egui_ctx.clone();
+
+    screener_result_slot.start(move |resp: RunScreenerResponse| {
+        screener_result_dyn.set(resp.rows);
+        screener_total_dyn.set(resp.total);
+        screener_loading.set(false);
+        screener_error.set(resp.error);
+        screener_repaint_ctx.request_repaint();
     });
 
     (
         work_signal,
+        screener_signal,
         BackendHandle {
             _dispatcher: dispatcher,
+            _screener_dispatcher: screener_dispatcher,
         },
     )
 }
@@ -207,7 +271,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _backend) = wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx);
 
         // Signal that work is in flight so wait_for_response can detect
         // the handler's loading.set(false).
@@ -251,7 +316,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _backend) = wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx);
         state.loading.set(true);
         work_signal
             .send(fetch_request("000001"))
@@ -287,7 +353,8 @@ mod tests {
         let state = Arc::new(SharedState::new("999999", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _backend) = wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx);
         state.loading.set(true);
         work_signal
             .send(fetch_request("999999"))
