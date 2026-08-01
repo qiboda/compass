@@ -1,20 +1,26 @@
 ---
 name: reflect
-description: 编写实施后反思并追加到 kb/dev/reflections.md，含趋势分析。检查最近 10 条记录，识别重复模式。
+description: 编写实施后反思并追加到 kb/dev/reflections.md，把教训落实为流程改进（AGENTS.md 规则/skill 步骤/hook/回归测试），含趋势分析。检查最近 10 条记录，识别重复模式。
 ---
 
 # Reflect — 实施后反思 Agent
 
 ## 目的
 
-反思的目的是**学习**，然后让开发流程更加完善和自动化，减少摩擦损耗：
-每次 feature/bugfix 的经验（含用户纠正、流程偏差）沉淀为可操作的流程改进，
-让同样的摩擦不再发生。
+反思的目的是**学习**，然后让开发流程更加完善和自动化，减少摩擦损耗。
+本 skill 的一切机制都服务于这个目的：
+
+| 目的 | 对应机制 |
+|---|---|
+| 学习 | 反思条目沉淀经验——输入客观化（第 0 步读对话记录 + git 验证） |
+| 完善 | 第 3 步把教训落实为流程机制变更（AGENTS.md / skill / hook / 脚本 / 回归测试） |
+| 自动化 | 可检测的失误固化为 hook/CI，可复现的失败固化为回归测试——执行不再依赖人工记忆 |
+| 减少摩擦 | 趋势分析揭示重复模式 → 触发落实；已融入流程的条目标记退役 |
 
 ## 角色
 
-在每次 feature 或 bugfix 完成后，将强制的实施后反思写入 `kb/dev/reflections.md`。
-分析近期的反思历史（最近 10 条记录），发现重复出现的模式，并提出可操作的流程改进建议。
+在每次 feature 或 bugfix 完成后，将强制的实施后反思写入 `kb/dev/reflections.md`，
+并把可固化的教训落实为流程改进。**反思的终点不是"记录"，而是"流程变得更好"。**
 
 本 agent **替代** compass-workflow 中的手动反思指令。
 compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
@@ -85,14 +91,35 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 - **What went wrong**：仅在确实出了问题时才写。如果没有问题，写 `**What went wrong**: No issues.` 或直接省略该章节。
 - **Lessons learned**：可操作的内容 — 下次具体要做出什么改变。不能泛泛而谈（如"更小心"）。至少一条。
 
-### 第 3 步：趋势分析（有条件触发）
+### 第 3 步：落实流程改进（目的核心步骤）
+
+逐条评估 **Lessons learned** 是否可以固化为流程机制——把"下次我要记得做 X"
+变成"流程自动做 X"：
+
+| 教训类型 | 落实为 | 例子 |
+|---|---|---|
+| 规则/流程约束 | AGENTS.md 规则、compass-workflow skill 步骤 | "重构不直推 master" → AGENTS.md 分支策略 |
+| 工具/语义误读 | 相关 skill 文档 | "解绑=setsid 自动脱离" → worktree skill |
+| 可检测的失误 | pre-commit/pre-push hook、CI 检查 | "commit 缺 ref #N" → commit-msg hook |
+| 可复现的失败 | 回归测试（scripts/tests/、Rust/Python 测试） | hook 正则误报 → 9 用例测试套件 |
+
+执行方式：
+- **纯文档类**（AGENTS.md、skill、kb/）：直接更新
+- **代码/hook/脚本类**：走 PRE-IMPLEMENTATION GATE——反思 agent 输出改进建议清单，
+  由主 agent 建 issue 排期（test-first）
+- 把落实结果写入反思条目的 **Process improvements** 章节：
+  - 已直接落实 → 写机制变更内容
+  - 已建 issue → 写 `proposed (ref #N)`
+  - 一次性教训、无法固化 → 写 `None`
+
+### 第 4 步：趋势分析（有条件触发）
 
 **当 `kb/dev/reflections.md` 中已有 ≥3 条反思条目时**：
 
 1. 读取**最近 10 条**条目（如果总数不到 10 条则读取全部）
 2. 识别跨条目的**重复模式**：
    - 相同类型的失败多次出现
-   - 相同的教训被反复"学到"但未落实
+   - 相同的教训被反复"学到"但未落实——**这是上次第 3 步没落实的信号，必须在本次落实**
    - 流程漏洞反复出现（如"跳过 gate"多次出现）
    - 工作流规则被反复违反
 3. 输出**最多 3 条**观察要点的 bullet points：
@@ -103,7 +130,9 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 - [Actionable suggestion for process improvement]
 ```
 
-4. 将 "Trends" 子章节追加在新的反思条目之后。
+4. **重复模式必须触发第 3 步的落实动作**——趋势分析不只是观察，
+   它是"上次教训未固化"的报警器：同一模式出现第二次 = 上次没落实。
+5. 将 "Trends" 子章节追加在新的反思条目之后。
 
 **如果条目数 <3**：完全跳过趋势分析。不要创建 "Trends" 章节。
 
@@ -131,6 +160,8 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 1. <actionable item>
 2. <actionable item>
 
+**Process improvements**: <what was solidified — AGENTS.md rule / skill step / hook / script / regression test, or "None">
+
 ### Trends (last 10)  ← only if ≥3 entries exist
 - <pattern observation with issue refs>
 ```
@@ -142,6 +173,9 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 
 ### Reflection Entry
 <the written entry>
+
+### Process Improvements
+<mechanism changes made (docs) or proposed (code — with issue refs)>
 
 ### Trend Analysis
 <skipped (N entries, need ≥3)> or <N patterns found>
@@ -161,17 +195,23 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 | 发生了流程违规（gate 被跳过等） | 必须在 "What went wrong" 中记录 — 流程违规就是 bug |
 | 同一 issue 有多个 commit | 一条反思覆盖该批次的所有 commit |
 | 该 issue 已有反思条目 | 检查上一条的 ref — 如果重复，改为追加 "Updated: <date>" 注释 |
+| 教训无法固化为机制 | Process improvements 写 "None"——一次性教训，留在条目中即可 |
+| 落实涉及代码/hook | 反思 agent 输出建议清单 → 主 agent 走 gate 建 issue；条目记录 "proposed (ref #N)" |
 | 趋势分析未发现模式 | 写 "No significant patterns observed." 作为唯一的趋势 bullet |
 
 ## 禁止事项
 
-- **修改过去的反思条目** — 只能追加新条目
+- **删除或改写过去的反思条目** — 只能追加新条目。
+  **唯一例外**：追加退役标记——教训已融入流程的旧条目，在其后追加一行
+  `> retired: 已融入 <机制>（<date>）`，原文不得改动（对齐 AGENTS.md 的条目退役约定）
 - **趋势 bullet points 超过 3 条** — 硬性上限
 - **分析超过 10 条历史条目** — 硬性上限
 - **创建单独的趋势报告文件** — 所有内容写入 `kb/dev/reflections.md`
 - **删除或截断反思文件** — 防止意外数据丢失
 - **凭空编造 issue** — 如果没有上下文，写一条最小的事实条目
 - **评判代码质量** — 反思关乎流程，而非代码 review
+- **把落实步骤变成事后口头承诺** — Process improvements 必须落到文件变更或 issue，
+  不能只写"下次注意"
 
 ## 与 compass-workflow 的协作
 
@@ -180,5 +220,5 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 3. 反思条目与实施代码在同一批次中 commit
 4. Reflect agent 替代旧的 "REFLECTION RECORD (MANDATORY)" 手动章节
 
-Reflect agent 是**流程历史记录者** — 它确保每次 feature 和 bugfix 都留下经验痕迹，
-并在同样的错误反复发生时予以揭示。
+Reflect agent 是**流程改进驱动器** — 学习经验、完善流程、固化机制，
+让同样的摩擦不再发生。
