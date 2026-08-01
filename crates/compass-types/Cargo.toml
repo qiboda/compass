@@ -1,0 +1,12 @@
+[package]
+name = "compass-types"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-crate shared boundary types for the compass workspace"
+
+[dependencies]
+serde = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }

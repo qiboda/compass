@@ -1,0 +1,322 @@
+//! Shared boundary types for the stock screener.
+//!
+//! These types cross crate boundaries (GUI ↔ strategy ↔ core) and live in
+//! their own crate so no crate in the dependency graph needs to depend on
+//! another just to reach a shared type. Dependency direction:
+//! `strategy → types` and `GUI → types`; `core` must NOT depend on this crate.
+
+use serde::{Deserialize, Serialize};
+
+/// Condition on the relationship between the latest adjusted close and
+/// moving averages.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaCondition {
+    /// Latest adjclose is above MA20.
+    AboveMa20,
+    /// Latest adjclose is above MA60.
+    AboveMa60,
+    /// MA5 > MA20 > MA60 (bullish alignment).
+    BullishAlign,
+}
+
+/// N-day new-high breakout condition.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BreakoutCondition {
+    /// Lookback window in trading days.
+    #[serde(default = "default_breakout_days")]
+    pub days: u32,
+}
+
+fn default_breakout_days() -> u32 {
+    60
+}
+
+impl BreakoutCondition {
+    /// Default condition: 60-day new high.
+    pub fn new(days: u32) -> Self {
+        Self { days }
+    }
+}
+
+/// Default: 60 trading days.
+impl Default for BreakoutCondition {
+    fn default() -> Self {
+        Self { days: 60 }
+    }
+}
+
+/// N-day momentum (return) condition.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MomentumCondition {
+    /// Lookback window in trading days.
+    #[serde(default = "default_momentum_days")]
+    pub days: u32,
+    /// Minimum return percent (inclusive).
+    #[serde(default = "default_momentum_min_pct")]
+    pub min_pct: f64,
+    /// Maximum return percent (inclusive).
+    #[serde(default = "default_momentum_max_pct")]
+    pub max_pct: f64,
+}
+
+fn default_momentum_days() -> u32 {
+    20
+}
+
+fn default_momentum_min_pct() -> f64 {
+    0.0
+}
+
+fn default_momentum_max_pct() -> f64 {
+    100.0
+}
+
+impl MomentumCondition {
+    /// Create a momentum condition with the given window and bounds.
+    pub fn new(days: u32, min_pct: f64, max_pct: f64) -> Self {
+        Self {
+            days,
+            min_pct,
+            max_pct,
+        }
+    }
+}
+
+/// Default: 20-day momentum between 0% and 100%.
+impl Default for MomentumCondition {
+    fn default() -> Self {
+        Self {
+            days: 20,
+            min_pct: 0.0,
+            max_pct: 100.0,
+        }
+    }
+}
+
+/// Volume-surge condition: recent N-day average volume ≥ times × baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VolumeCondition {
+    /// Recent window in trading days.
+    #[serde(default = "default_volume_days")]
+    pub days: u32,
+    /// Multiplier against the 3×N-day baseline average.
+    #[serde(default = "default_volume_times")]
+    pub times: f64,
+}
+
+fn default_volume_days() -> u32 {
+    20
+}
+
+fn default_volume_times() -> f64 {
+    2.0
+}
+
+impl VolumeCondition {
+    /// Create a volume condition with the given window and multiplier.
+    pub fn new(days: u32, times: f64) -> Self {
+        Self { days, times }
+    }
+}
+
+/// Default: 20-day average volume ≥ 2× the 60-day baseline.
+impl Default for VolumeCondition {
+    fn default() -> Self {
+        Self {
+            days: 20,
+            times: 2.0,
+        }
+    }
+}
+
+/// Full set of screener conditions. All conditions are AND-ed together;
+/// multi-value fields (industries/exchanges/boards) are OR-ed within the field.
+///
+/// `None`/empty fields mean "no constraint".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenerQuery {
+    /// Industries to include (OR). Empty = all.
+    #[serde(default)]
+    pub industries: Vec<String>,
+    /// Exchanges to include, e.g. "SH"/"SZ"/"BJ" (OR). Empty = all.
+    #[serde(default)]
+    pub exchanges: Vec<String>,
+    /// Boards to include, e.g. "主板"/"创业板" (OR). Empty = all.
+    #[serde(default)]
+    pub boards: Vec<String>,
+    /// Minimum listing age in years. `None` = no constraint.
+    #[serde(default)]
+    pub list_years: Option<u32>,
+    /// Minimum market cap in 亿元. `None` = no constraint.
+    #[serde(default)]
+    pub market_cap_min: Option<f64>,
+    /// Maximum market cap in 亿元. `None` = no constraint.
+    #[serde(default)]
+    pub market_cap_max: Option<f64>,
+    /// Exclude delisted stocks (default true).
+    #[serde(default = "default_exclude_delisted")]
+    pub exclude_delisted: bool,
+    /// Moving-average condition. `None` = disabled.
+    #[serde(default)]
+    pub ma: Option<MaCondition>,
+    /// Breakout condition. `None` = disabled.
+    #[serde(default)]
+    pub breakout: Option<BreakoutCondition>,
+    /// Momentum condition. `None` = disabled.
+    #[serde(default)]
+    pub momentum: Option<MomentumCondition>,
+    /// Volume condition. `None` = disabled.
+    #[serde(default)]
+    pub volume: Option<VolumeCondition>,
+}
+
+fn default_exclude_delisted() -> bool {
+    true
+}
+
+/// Default: all conditions empty, delisted stocks excluded.
+impl Default for ScreenerQuery {
+    fn default() -> Self {
+        Self {
+            industries: Vec::new(),
+            exchanges: Vec::new(),
+            boards: Vec::new(),
+            list_years: None,
+            market_cap_min: None,
+            market_cap_max: None,
+            exclude_delisted: true,
+            ma: None,
+            breakout: None,
+            momentum: None,
+            volume: None,
+        }
+    }
+}
+
+/// One result row of a screener run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenerRow {
+    /// Bare 6-digit stock code.
+    pub symbol: String,
+    /// Chinese display name.
+    pub name: String,
+    /// Latest raw close price.
+    pub latest_price: f64,
+    /// 20-day adjusted-close return in percent.
+    pub change_20d: f64,
+    /// Market cap in 亿元 (0.0 when total_share is missing).
+    pub market_cap: f64,
+    /// Industry classification.
+    pub industry: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_query_excludes_delisted_and_has_no_conditions() {
+        let q = ScreenerQuery::default();
+        assert!(q.exclude_delisted);
+        assert!(q.industries.is_empty());
+        assert!(q.exchanges.is_empty());
+        assert!(q.boards.is_empty());
+        assert_eq!(q.list_years, None);
+        assert_eq!(q.market_cap_min, None);
+        assert_eq!(q.market_cap_max, None);
+        assert_eq!(q.ma, None);
+        assert_eq!(q.breakout, None);
+        assert_eq!(q.momentum, None);
+        assert_eq!(q.volume, None);
+    }
+
+    #[test]
+    fn condition_defaults_match_contract() {
+        assert_eq!(BreakoutCondition::default().days, 60);
+        assert_eq!(MomentumCondition::default().days, 20);
+        assert_eq!(MomentumCondition::default().min_pct, 0.0);
+        assert_eq!(MomentumCondition::default().max_pct, 100.0);
+        assert_eq!(VolumeCondition::default().days, 20);
+        assert_eq!(VolumeCondition::default().times, 2.0);
+    }
+
+    #[test]
+    fn serde_roundtrip_preserves_query() {
+        let q = ScreenerQuery {
+            industries: vec!["白酒".to_string(), "银行".to_string()],
+            exchanges: vec!["SH".to_string()],
+            boards: vec!["主板".to_string()],
+            list_years: Some(3),
+            market_cap_min: Some(100.0),
+            market_cap_max: Some(5000.0),
+            exclude_delisted: true,
+            ma: Some(MaCondition::BullishAlign),
+            breakout: Some(BreakoutCondition::new(120)),
+            momentum: Some(MomentumCondition::new(30, -5.0, 50.0)),
+            volume: Some(VolumeCondition::new(10, 1.5)),
+        };
+        let toml_str = toml::to_string(&q).expect("serialize");
+        let back: ScreenerQuery = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(back, q);
+    }
+
+    #[test]
+    fn serde_roundtrip_preserves_enum_snake_case() {
+        let q = ScreenerQuery {
+            ma: Some(MaCondition::AboveMa20),
+            ..ScreenerQuery::default()
+        };
+        let toml_str = toml::to_string(&q).expect("serialize");
+        assert!(
+            toml_str.contains("above_ma20"),
+            "enum serialized snake_case: {toml_str}"
+        );
+        let back: ScreenerQuery = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(back.ma, Some(MaCondition::AboveMa20));
+    }
+
+    #[test]
+    fn partial_section_missing_exclude_delisted_defaults_true() {
+        // B2 regression: per-field default for the bool must be true,
+        // not bool::default() = false.
+        let src = "industries = [\"白酒\"]\n";
+        let q: ScreenerQuery = toml::from_str(src).expect("partial section parses");
+        assert!(
+            q.exclude_delisted,
+            "missing exclude_delisted must default true"
+        );
+        assert_eq!(q.industries, vec!["白酒".to_string()]);
+    }
+
+    #[test]
+    fn empty_condition_table_uses_struct_default() {
+        // B2 regression: `breakout = {}` must deserialize via the manual
+        // Default impl instead of failing.
+        let src = "breakout = {}\n";
+        let q: ScreenerQuery = toml::from_str(src).expect("empty table parses");
+        assert_eq!(q.breakout, Some(BreakoutCondition::default()));
+        assert_eq!(q.breakout.unwrap().days, 60);
+    }
+
+    #[test]
+    fn absent_section_uses_query_default() {
+        let src = "";
+        let q: ScreenerQuery = toml::from_str(src).expect("absent section parses");
+        assert_eq!(q, ScreenerQuery::default());
+    }
+
+    #[test]
+    fn explicit_false_respected() {
+        let src = "exclude_delisted = false\n";
+        let q: ScreenerQuery = toml::from_str(src).expect("parses");
+        assert!(!q.exclude_delisted);
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored() {
+        let src = "future_key = 42\n";
+        let q: ScreenerQuery = toml::from_str(src).expect("unknown keys ignored");
+        assert_eq!(q, ScreenerQuery::default());
+    }
+}
