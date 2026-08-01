@@ -1,0 +1,17 @@
+[package]
+name = "compass-strategy"
+version = "0.1.0"
+edition = "2024"
+description = "Stock screening engine: metadata and technical conditions over whole-market cross-section data"
+
+[dependencies]
+compass-types = { path = "../compass-types" }
+compass-core = { path = "../compass-core" }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+duckdb = { workspace = true }
+tracing-subscriber = { workspace = true }

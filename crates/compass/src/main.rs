@@ -4,10 +4,12 @@ use std::time::Duration;
 use egui_citizen::{CitizenId, Dispatcher};
 use egui_dock::{DockArea, DockState, Style};
 use egui_file_dialog::FileDialog;
+use serde::Deserialize;
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
 use compass_core::model::AppConfig;
+use compass_types::ScreenerQuery;
 
 mod backend;
 mod citizens;
@@ -20,7 +22,8 @@ mod widgets;
 
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
-use tabs::{CHART_ID, LOGGER_ID, Tab, TabKind, TabViewer};
+use citizens::screener::ScreenerPanel;
+use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
 use widgets::modal::Modal;
 use widgets::searchable_dropdown::StockPicker;
@@ -61,8 +64,8 @@ fn main() -> eframe::Result {
 
     // Create reactive shared state
     let shared_state = Arc::new(state::SharedState::new(
-        &config.app.default_symbol,
-        &config.app.default_timeframe,
+        &config.app.app.default_symbol,
+        &config.app.app.default_timeframe,
     ));
 
     let options = eframe::NativeOptions {
@@ -79,11 +82,11 @@ fn main() -> eframe::Result {
             setup_cjk_fonts(&egui_ctx);
 
             // Load stock list from parquet at startup
-            let stock_list = load_stock_list(&config);
+            let stock_list = load_stock_list(&config.app);
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
-            let (work_signal, _backend_handle) =
-                backend::wire_backend(config.clone(), shared_state.clone(), egui_ctx);
+            let (work_signal, run_screener_signal, _backend_handle) =
+                backend::wire_backend(config.app.clone(), shared_state.clone(), egui_ctx);
 
             // Register citizens
             let mut dispatcher = Dispatcher::new();
@@ -92,8 +95,30 @@ fn main() -> eframe::Result {
             // Create citizen panels
             let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
             let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+            let screener = ScreenerPanel::new(
+                CitizenId::new(SCREENER_ID),
+                registered.screener,
+                Some(&config.screener),
+                Box::new(|q| {
+                    if let Err(e) = save_screener_config(q) {
+                        tracing::warn!(error = %e, "failed to save screener config");
+                    }
+                }),
+            );
 
-            // Create initial dock state with 2 tabs in vertical stack
+            // Derive distinct industry/board lists for the screener conditions.
+            let mut industries: Vec<String> = stock_list
+                .iter()
+                .filter_map(|s| s.industry.clone())
+                .collect();
+            industries.sort();
+            industries.dedup();
+            let mut boards: Vec<String> =
+                stock_list.iter().filter_map(|s| s.board.clone()).collect();
+            boards.sort();
+            boards.dedup();
+
+            // Create initial dock state: Chart (root), Logger + Screener below.
             let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
             if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
                 && let Some(tree) = surface.node_tree_mut()
@@ -103,18 +128,29 @@ fn main() -> eframe::Result {
                     0.75,
                     vec![Tab::new(TabKind::Logger)],
                 );
+                let _ = tree.split_below(
+                    egui_dock::NodeIndex::root(),
+                    0.5,
+                    vec![Tab::new(TabKind::Screener)],
+                );
             }
 
-            let stock_picker = StockPicker::new(&config.app.default_symbol, &stock_list);
+            let stock_picker = StockPicker::new(&config.app.app.default_symbol, &stock_list);
 
-            let theme = CompassTheme::from_config(&config.theme);
+            let theme = CompassTheme::from_config(&config.app.theme);
             let dock_style = Style::from_egui(&cc.egui_ctx.style_of(cc.egui_ctx.theme()));
+
+            let startup_symbol = shared_state.symbol.get();
 
             Ok(Box::new(CompassApp {
                 dock_state,
                 dispatcher,
                 chart,
                 logger,
+                screener,
+                run_screener_signal,
+                screener_industries: industries,
+                screener_boards: boards,
                 shared_state,
                 work_signal,
                 stock_list,
@@ -128,6 +164,8 @@ fn main() -> eframe::Result {
                 file_dialog: FileDialog::new(),
                 last_error: None,
                 last_loading: false,
+                last_screener_error: None,
+                last_screener_synced_symbol: startup_symbol,
             }))
         }),
     )
@@ -173,9 +211,20 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 // Config loading
 // ---------------------------------------------------------------------------
 
+/// Top-level config file contents: the legacy `AppConfig` sections plus the
+/// screener condition section. Flattening keeps existing TOML keys mapping to
+/// `AppConfig` while `[screener]` parses into `ScreenerQuery`.
+#[derive(Deserialize)]
+struct FullConfig {
+    #[serde(flatten)]
+    app: AppConfig,
+    #[serde(default)]
+    screener: ScreenerQuery,
+}
+
 /// Reads `~/.config/compass/config.toml`. Falls back to `AppConfig::default()`
 /// if the file is missing or malformed.
-fn load_config() -> AppConfig {
+fn load_config() -> FullConfig {
     let config_path = std::env::var("HOME")
         .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
@@ -188,14 +237,54 @@ fn load_config() -> AppConfig {
             }
             Err(e) => {
                 tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
-                AppConfig::default()
+                FullConfig {
+                    app: AppConfig::default(),
+                    screener: ScreenerQuery::default(),
+                }
             }
         },
         Err(e) => {
             tracing::warn!(path = %config_path.display(), error = %e, "config file not found, using defaults");
-            AppConfig::default()
+            FullConfig {
+                app: AppConfig::default(),
+                screener: ScreenerQuery::default(),
+            }
         }
     }
+}
+
+/// Persist the screener conditions to the `[screener]` section of
+/// `~/.config/compass/config.toml`.
+///
+/// Reads the existing file as a `toml::Value`, replaces the `screener`
+/// table, and writes it back. Creates the file (with only `[screener]`)
+/// when it does not exist. Comments and unknown sections are lost on
+/// rewrite — accepted trade-off.
+fn save_screener_config(query: &ScreenerQuery) -> Result<(), String> {
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    let mut doc = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents
+            .parse::<toml::Value>()
+            .map_err(|e| format!("failed to parse config.toml: {e}"))?,
+        Err(_) => toml::Value::Table(Default::default()),
+    };
+
+    let screener_value = toml::Value::try_from(query)
+        .map_err(|e| format!("failed to serialize screener config: {e}"))?;
+    doc.as_table_mut()
+        .expect("value is a table")
+        .insert("screener".to_string(), screener_value);
+
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&config_path, serialized)
+        .map_err(|e| format!("failed to write config.toml: {e}"))
 }
 
 fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
@@ -226,6 +315,10 @@ struct CompassApp {
     dispatcher: Dispatcher,
     chart: ChartCitizen,
     logger: LoggerPanel,
+    screener: ScreenerPanel,
+    run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
+    screener_industries: Vec<String>,
+    screener_boards: Vec<String>,
     shared_state: Arc<state::SharedState>,
     work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
     stock_list: Vec<compass_core::model::StockBasic>,
@@ -239,6 +332,8 @@ struct CompassApp {
     file_dialog: FileDialog,
     last_error: Option<String>,
     last_loading: bool,
+    last_screener_error: Option<String>,
+    last_screener_synced_symbol: String,
 }
 
 impl eframe::App for CompassApp {
@@ -281,6 +376,11 @@ impl eframe::App for CompassApp {
                         dispatcher: &mut self.dispatcher,
                         chart: &mut self.chart,
                         logger: &mut self.logger,
+                        screener: &mut self.screener,
+                        run_screener_signal: &self.run_screener_signal,
+                        work_signal: &self.work_signal,
+                        screener_industries: &self.screener_industries,
+                        screener_boards: &self.screener_boards,
                         shared_state: &self.shared_state,
                         theme: &self.theme,
                     },
@@ -290,6 +390,21 @@ impl eframe::App for CompassApp {
             self.modal.show(ui.ctx());
             self.file_dialog.update(ui.ctx());
 
+            // Push screener error toast only on None→Some transition.
+            let current_screener_err = self.shared_state.screener_error.get();
+            if current_screener_err != self.last_screener_error {
+                if let Some(ref err) = current_screener_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_screener_error = current_screener_err;
+            }
+
+            // Reverse-sync: when the symbol changed (e.g. a screener row
+            // click), reflect it in the StockPicker — but only for bare
+            // 6-digit codes; prefixed toolbar symbols must not clobber the
+            // picker's exchange state.
+            self.sync_picker_from_symbol();
+
             dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
             ui.ctx().request_repaint_after(Duration::from_millis(200));
@@ -298,6 +413,33 @@ impl eframe::App for CompassApp {
 }
 
 impl CompassApp {
+    /// Reflect `shared_state.symbol` changes back into the StockPicker.
+    ///
+    /// Only bare 6-digit codes are synced — the toolbar writes prefixed
+    /// symbols ("sz.000001") when an exchange is selected, and copying those
+    /// back would corrupt the picker. The marker field tracks the last seen
+    /// symbol so per-frame checks fire only on actual changes.
+    fn sync_picker_from_symbol(&mut self) {
+        let symbol = self.shared_state.symbol.get();
+        if symbol == self.last_screener_synced_symbol {
+            return;
+        }
+        self.last_screener_synced_symbol = symbol.clone();
+        let is_bare_code = symbol.len() == 6 && symbol.chars().all(|c| c.is_ascii_digit());
+        if !is_bare_code {
+            return;
+        }
+        let name = self
+            .stock_list
+            .iter()
+            .find(|s| s.symbol == symbol)
+            .map(|s| s.name.clone())
+            .unwrap_or_default();
+        self.stock_picker.selected_symbol = symbol;
+        self.stock_picker.selected_name = name;
+        self.stock_picker.selected_exchange.clear();
+    }
+
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(format!(
@@ -414,12 +556,15 @@ fn timeframe_value(idx: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::FullConfig;
     use compass_core::model::{Exchange, StockBasic};
+    use compass_types::ScreenerQuery;
 
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
+    use crate::citizens::screener::ScreenerPanel;
     use crate::state::SharedState;
-    use crate::tabs::{CHART_ID, LOGGER_ID};
+    use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
     use egui_citizen::{CitizenId, Dispatcher};
@@ -560,7 +705,7 @@ mod tests {
         let config = AppConfig::default();
         let shared_state = Arc::new(SharedState::new("000001", "1d"));
 
-        let (work_signal, _backend_handle) =
+        let (work_signal, run_screener_signal, _backend_handle) =
             crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
 
         let mut dispatcher = Dispatcher::new();
@@ -568,6 +713,12 @@ mod tests {
 
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
         let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let screener = ScreenerPanel::new(
+            CitizenId::new(SCREENER_ID),
+            registered.screener,
+            None,
+            Box::new(|_| {}),
+        );
 
         let stock_list: Vec<StockBasic> = Vec::new();
         let stock_picker = StockPicker::new("000001", &stock_list);
@@ -583,13 +734,24 @@ mod tests {
                 0.75,
                 vec![Tab::new(TabKind::Logger)],
             );
+            let _ = tree.split_below(
+                egui_dock::NodeIndex::root(),
+                0.5,
+                vec![Tab::new(TabKind::Screener)],
+            );
         }
+
+        let startup_symbol = shared_state.symbol.get();
 
         CompassApp {
             dock_state,
             dispatcher,
             chart,
             logger,
+            screener,
+            run_screener_signal,
+            screener_industries: Vec::new(),
+            screener_boards: Vec::new(),
             shared_state,
             work_signal,
             stock_list,
@@ -603,6 +765,8 @@ mod tests {
             file_dialog: egui_file_dialog::FileDialog::new(),
             last_error: None,
             last_loading: false,
+            last_screener_error: None,
+            last_screener_synced_symbol: startup_symbol,
         }
     }
 
@@ -638,7 +802,7 @@ mod tests {
         }
 
         assert_eq!(
-            config.app.default_symbol,
+            config.app.app.default_symbol,
             AppConfig::default().app.default_symbol
         );
     }
@@ -679,9 +843,9 @@ default_timeframe = "1w"
             }
         }
 
-        assert_eq!(config.app.default_symbol, "600519");
-        assert_eq!(config.app.default_timeframe, "1w");
-        assert_eq!(config.parquet.dir, "/custom/parquet/dir");
+        assert_eq!(config.app.app.default_symbol, "600519");
+        assert_eq!(config.app.app.default_timeframe, "1w");
+        assert_eq!(config.app.parquet.dir, "/custom/parquet/dir");
     }
 
     #[test]
@@ -710,7 +874,7 @@ default_timeframe = "1w"
         }
 
         assert_eq!(
-            config.app.default_symbol,
+            config.app.app.default_symbol,
             AppConfig::default().app.default_symbol
         );
     }
@@ -870,5 +1034,216 @@ default_timeframe = "1w"
         harness.step();
         harness.step();
         harness.step();
+    }
+
+    // ------------------------------------------------------------------
+    // Screener reverse-sync (Todo 6)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn sync_picker_from_symbol_syncs_bare_code_and_clears_exchange() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.symbol.set("600519".to_string());
+        app.last_screener_synced_symbol = "000001".to_string();
+
+        app.sync_picker_from_symbol();
+
+        assert_eq!(app.stock_picker.selected_symbol, "600519");
+        assert!(
+            app.stock_picker.selected_exchange.is_empty(),
+            "bare code sync must clear stale exchange"
+        );
+        assert_eq!(app.last_screener_synced_symbol, "600519");
+    }
+
+    #[test]
+    fn sync_picker_from_symbol_ignores_prefixed_symbol() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.symbol.set("sz.000001".to_string());
+        app.last_screener_synced_symbol = "000001".to_string();
+
+        app.sync_picker_from_symbol();
+
+        assert_eq!(
+            app.stock_picker.selected_symbol, "000001",
+            "prefixed symbol must not clobber picker selection"
+        );
+        assert_eq!(
+            app.last_screener_synced_symbol, "sz.000001",
+            "marker still advances"
+        );
+    }
+
+    #[test]
+    fn sync_picker_from_symbol_noop_when_symbol_unchanged() {
+        let mut app = build_compass_app(egui::Context::default());
+        // marker == symbol at startup → no-op, picker untouched.
+        app.sync_picker_from_symbol();
+        assert_eq!(app.stock_picker.selected_symbol, "000001");
+        assert_eq!(app.last_screener_synced_symbol, "000001");
+    }
+
+    // ------------------------------------------------------------------
+    // Screener config persistence (Todo 7)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn save_screener_config_roundtrips() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"600519\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let query = ScreenerQuery {
+            industries: vec!["白酒".to_string()],
+            ma: Some(compass_types::MaCondition::BullishAlign),
+            ..ScreenerQuery::default()
+        };
+        let save_result = crate::save_screener_config(&query);
+        let loaded: FullConfig =
+            toml::from_str(&std::fs::read_to_string(config_dir.join("config.toml")).unwrap())
+                .unwrap();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(save_result.is_ok(), "save should succeed");
+        assert_eq!(
+            loaded.app.app.default_symbol, "600519",
+            "existing sections preserved"
+        );
+        assert_eq!(loaded.screener.industries, vec!["白酒".to_string()]);
+        assert_eq!(
+            loaded.screener.ma,
+            Some(compass_types::MaCondition::BullishAlign)
+        );
+        assert!(
+            loaded.screener.exclude_delisted,
+            "default true survives roundtrip"
+        );
+    }
+
+    #[test]
+    fn save_screener_config_creates_file_when_missing() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let query = ScreenerQuery::default();
+        let result = crate::save_screener_config(&query);
+        let contents =
+            std::fs::read_to_string(config_dir.join("config.toml")).expect("file created");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(result.is_ok());
+        assert!(
+            contents.contains("[screener]"),
+            "created file has [screener] section"
+        );
+    }
+
+    #[test]
+    fn load_config_parses_screener_section() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[screener]\nindustries = [\"银行\"]\nbreakout = { days = 120 }\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(config.screener.industries, vec!["银行".to_string()]);
+        assert_eq!(
+            config.screener.breakout,
+            Some(compass_types::BreakoutCondition::new(120))
+        );
+        assert!(
+            config.screener.exclude_delisted,
+            "missing key defaults true"
+        );
+    }
+
+    #[test]
+    fn load_config_missing_screener_section_uses_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"000001\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(config.screener, ScreenerQuery::default());
+        assert_eq!(config.app.app.default_symbol, "000001");
     }
 }

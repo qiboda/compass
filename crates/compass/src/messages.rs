@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use compass_types::{ScreenerQuery, ScreenerRow};
 use egui_charts::model::Bar;
 
 /// Application-level message for egui-mobius citizen pattern.
@@ -23,5 +24,20 @@ pub struct FetchRequest {
 #[derive(Clone)]
 pub struct FetchResponse {
     pub bars: Vec<Bar>,
+    pub error: Option<String>,
+}
+
+/// Sent from the screener panel to the backend via the screener signal.
+#[derive(Clone)]
+pub struct RunScreenerRequest {
+    pub query: ScreenerQuery,
+}
+
+/// Sent from the backend worker back to the UI after a screener run.
+#[derive(Clone)]
+pub struct RunScreenerResponse {
+    pub rows: Vec<ScreenerRow>,
+    /// Total matches before the 100-row cap (for the "共 N 只" label).
+    pub total: usize,
     pub error: Option<String>,
 }

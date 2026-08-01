@@ -23,26 +23,33 @@ compass (GUI binary)
   │
   ├── main.rs        ─ CompassApp (eframe::App), entry point, wiring
   ├── state.rs       ─ SharedState with Dynamic<T> reactive fields
-  ├── messages.rs    ─ AppMessage, FetchRequest, FetchResponse
+  ├── messages.rs    ─ AppMessage, FetchRequest/FetchResponse, RunScreenerRequest/Response
   ├── tabs.rs        ─ Tab/TabKind/TabViewer (egui_dock bridge)
-  ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring
+  ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring (2 channels)
   ├── dispatcher.rs  ─ register_citizens, lifecycle draining, message routing
   ├── citizens/
   │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart
-  │   └── logger.rs  ─ LoggerPanel: scrollable log viewer
+  │   ├── logger.rs  ─ LoggerPanel: scrollable log viewer
+  │   └── screener.rs ─ ScreenerPanel: condition form + results table (stock screener)
   ├── widgets/
   │   ├── searchable_dropdown.rs ─ StockPicker widget, filter_stocks()
   │   ├── toast.rs     ─ ToastManager: 状态通知
   │   └── modal.rs     ─ Modal: 预留的对话框组件（未启用）
   │
   ├── compass-core (library)
-  │     ├── model.rs      ─ shared types: AppConfig, Exchange, StockBasic, Bar
+  │     ├── model.rs      ─ shared types: AppConfig, Exchange, StockBasic, CrossSectionBar, Bar
   │     ├── data/mod.rs   ─ Module declarations
   │     ├── data/provider.rs ─ DataProvider, DataWriter, NegativeCache traits
   │     ├── data/duckdb.rs   ─ DuckDbProvider (in-memory + Parquet-backed)
-  │     ├── data/parquet.rs   ─ ParquetReader (main database)
+  │     ├── data/parquet.rs   ─ ParquetReader (main database, fetch_cross_section)
   │     ├── data/symbol.rs    ─ Exchange inference, code conversion
   │     └── data/synthetic.rs ─ Test data generator
+  │
+  ├── compass-types (library)
+  │     └── lib.rs      ─ ScreenerQuery/ScreenerRow/MaCondition/... (cross-crate boundary types)
+  │
+  ├── compass-strategy (library)
+  │     └── lib.rs      ─ run_screener 选股引擎（元数据 + 技术面条件）
   │
   └── compass-data (CLI binary)
         └── import / import-compass / export / backup subcommands
@@ -50,6 +57,9 @@ compass (GUI binary)
 
 `compass-core` 不包含任何 UI 代码。它提供用于获取、存储和查询股票数据的 trait
 和实现。GUI 和 CLI 是薄编排层，负责连接 provider 并派发工作。
+
+依赖方向：`compass → compass-strategy → compass-core`，`compass-strategy → compass-types`，
+`compass → compass-types`；`compass-core` 不依赖 `compass-types`（无循环）。
 
 GUI 二进制（`compass`）使用 **egui-mobius citizen 模式**——一种响应式架构，其中
 UI 面板被建模为 `Citizen` 结构体，通过 outbox 进行事件派发；共享状态通过
@@ -80,6 +90,7 @@ UI 被拆分为两个 `Citizen` 面板，放置在 `egui_dock::DockArea` 内部�
 |---|---|---|
 | **ChartCitizen** | `citizens/chart.rs` | 通过 `egui-charts` 渲染 OHLCV K 线图。从共享状态响应式读取 `bars`，在数据变化时重新渲染。 |
 | **LoggerPanel** | `citizens/logger.rs` | 可滚动日志视图。从共享状态读取日志条目。 |
+| **ScreenerPanel** | `citizens/screener.rs` | 条件选股器：条件输入表单 + 结果表格（排序、计数、点击行切换图表）。通过第二条 Signal/Slot 通道把 `RunScreenerRequest` 发给后端，`run_screener` 在 tokio 上执行。 |
 
 面板排列在 `egui_dock::DockArea` 内，为用户提供可重排、可调整大小的选项卡式
 界面。顶部工具栏提供股票搜索、交易所选择和 Fetch 按钮。

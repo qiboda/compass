@@ -413,3 +413,26 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **破坏性脚本验证事故**（ref #104 ×2：bash 工具会话自杀、QA agent 误杀用户会话）：验证 kill 类逻辑缺强制隔离纪律——本次已固化为 process.md 调试纪律，下次同型验证须先读
 - **自引用/自指匹配问题**（ref #97 hook 正则字面量自匹配、ref #104 pgrep -f 匹配执行命令的 shell 自身）：匹配逻辑与命令文本互相污染是反复出现的调试盲区，`[x]` 技巧应成为默认习惯
 - **流程自举工作**（ref #96/#97/#98/#104）：修复工具自身的工具（skill 合并、hook 修复、反思机制、open-worktrees.sh 自修复）连续出现——自举工作的验证更需隔离真实环境，且必须完整走 gate
+
+## 2026-08-01 — ref #105/#106/#107/#108/#109 条件选股器（stock screener）
+
+**What was done**: 实现选股功能——core 新增 `fetch_cross_section` 横截面原语（首个透出 adjclose 的读取路径）、新建 `compass-types`/`compass-strategy` 两个 crate（交界类型 + 选股引擎）、GUI 新增 `TabKind::Screener` tab（条件表单 + 结果表格 + 图表联动 + config 持久化）、CI 覆盖率脚本覆盖新 crate。10 个 todos 全部完成，335 tests 全过，5 轮 high-accuracy 审查（累计修复 10 个 blocking 问题）。
+
+**User corrections**: 唯一分叉决策——watchlist 语义澄清，用户回答"不需要自选股"（watchlist 相关功能排除在第一版范围外）。无流程纠正。
+
+**What went wrong**:
+1. 计划制定阶段：手算测试期望值错误 3 处（市值 18840 vs 实际 18842.97、动量 92% vs 实际 34.5%、volume 窗口方向反了）——测试数学没对照真实公式推导就写断言
+2. egui_kittest 0.4 的 AccessKit 限制浪费约 8 轮调试：Grid 内 `selectable_label` 的 label 不可查询、`harness.run()` 遇 ScrollArea 无限 repaint——kb/dev/testing.md 只记录了 egui_dock tab 按钮的同类限制，未覆盖 Grid 场景
+3. python 批量 replace 误伤 `config.app.parquet.dir`（AppConfig 结构是 `app: AppSection, parquet: ParquetConfig`，sed 替换把不相关的测试也改了）——正则批量替换缺乏上下文校验
+
+**Lessons learned**:
+1. 测试断言数值必须由公式推导验证，不能凭直觉写（尤其涉及单位换算、百分比、序列方向时）——写断言前先手动算一遍或用独立工具验证
+2. egui_kittest 中 UI 断言优先用纯逻辑测试（提取可测函数），避免依赖 Grid/ScrollArea 内的 AccessKit label；`harness.run()` 遇无限 repaint 时改用 `step()`
+3. 批量文本替换（sed/python）前先确认匹配串的唯一性，替换后跑一次 `git diff` 检查非目标文件是否被误改
+
+**Process improvements**: 已更新 `kb/dev/testing.md`（egui_kittest 章节补充 Grid 内 label 不可查询限制 + ScrollArea 无限 repaint 的 step() 规避）。3 条教训中的 kittest 限制已固化；数值推导与批量替换纪律为一次性教训，写入本条目。
+
+### Trends (last 10)
+- **测试环境与真实环境的差异盲区**（ref #104 隔离纪律、本次 kittest AccessKit/repaint 限制）：验证环境的行为假设（隔离、无障碍树、渲染循环）与实际不符时反复踩坑——先读目标环境的已知限制文档再写验证
+- **批量/机械操作缺校验**（ref #97 hook 正则自匹配、本次 python replace 误伤）：自动化修改（正则、批量替换、匹配）需先验证唯一性，事后 diff 检查波及面
+- **高精度审查的长期价值**（ref #96 反思机制、本次 5 轮审查修复 10 blocking）：复杂 feature 的多轮对抗审查显著降低实现期返工——计划阶段投入审查时间换取实现期确定性

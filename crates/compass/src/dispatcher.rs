@@ -8,7 +8,7 @@ use egui_mobius::signals::Signal;
 
 use crate::messages::{AppMessage, FetchRequest};
 use crate::state::SharedState;
-use crate::tabs::{CHART_ID, LOGGER_ID};
+use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
 
 /// Holds the `CitizenState` handles returned during registration.
 ///
@@ -17,9 +17,10 @@ use crate::tabs::{CHART_ID, LOGGER_ID};
 pub struct RegisteredCitizens {
     pub chart: CitizenState,
     pub logger: CitizenState,
+    pub screener: CitizenState,
 }
 
-/// Register the two core citizens with the dispatcher and activate the
+/// Register the core citizens with the dispatcher and activate the
 /// chart panel (one-hot: exactly one citizen is active at a time).
 ///
 /// Returns the `CitizenState` handles so callers can construct the citizen
@@ -27,10 +28,15 @@ pub struct RegisteredCitizens {
 pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
     let chart = dispatcher.register(CitizenId::new(CHART_ID));
     let logger = dispatcher.register(CitizenId::new(LOGGER_ID));
+    let screener = dispatcher.register(CitizenId::new(SCREENER_ID));
 
     dispatcher.activate(&CitizenId::new(CHART_ID));
 
-    RegisteredCitizens { chart, logger }
+    RegisteredCitizens {
+        chart,
+        logger,
+        screener,
+    }
 }
 
 /// Drain citizen lifecycle messages from the dispatcher and append them
@@ -108,6 +114,9 @@ mod tests {
         let logger_state = dispatcher
             .get(&CitizenId::new(LOGGER_ID))
             .expect("logger citizen should be registered");
+        let screener_state = dispatcher
+            .get(&CitizenId::new(SCREENER_ID))
+            .expect("screener citizen should be registered");
 
         // Chart is active (one-hot), logger is inactive.
         assert!(chart_state.active.get(), "chart should be active");
@@ -115,10 +124,18 @@ mod tests {
             !logger_state.active.get(),
             "logger should be inactive after register_citizens"
         );
+        assert!(
+            !screener_state.active.get(),
+            "screener should be inactive after register_citizens"
+        );
 
         // The returned handles share the same reactive state.
         assert_eq!(registered.chart.active.get(), chart_state.active.get());
         assert_eq!(registered.logger.active.get(), logger_state.active.get());
+        assert_eq!(
+            registered.screener.active.get(),
+            screener_state.active.get()
+        );
     }
 
     // ------------------------------------------------------------------
