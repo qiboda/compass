@@ -50,24 +50,30 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
    - 内容包含：已做出的决策、下一步计划、相关设计上下文
    - 如果 `/handoff` 命令不可用，使用 `write` 工具创建 handoff 文件
 
-2. **⚠️ 先解绑当前 opencode session（MANDATORY）**——在打开工作树中的新 opencode 之前：
-   - **原因**：opencode 将工作树目录识别为与 master 的*同一项目*
-     （通过 `git_worktree` 关联，`~/.local/share/opencode/opencode.db` 中相同的 `project_id`）。
-     当前在 master 中运行的 opencode 实例仍然*绑定*着该项目的 session，因此在工作树中启动新的
-     `opencode` 会失败。
-   - **做法**：先释放当前 session 绑定——例如退出当前 opencode
-     实例（或停止/退出其 session）使项目解除绑定，*然后*在工作树中启动新的
-     opencode。
-   - 不要跳过此步骤。当 master session 仍处于绑定状态时，打开工作树的 opencode 会失败。
+2. **自动启动工作树区域（ref #96）**——无需手动解绑当前 opencode session：
+   - 运行 `scripts/open-worktrees.sh [name...]`，脚本探测 OS 默认终端
+     （`$TERMINAL` → `xdg-terminal-emulator` → kitty/gnome-terminal/konsole/xfce4-terminal）
+     并在新终端窗口中启动 `opencode`
+   - 脚本通过 `setsid` 启动新进程，使其**脱离当前对话的进程组**——当前
+     对话结束，新 opencode 窗口不会随之关闭；无需用户手动退出当前实例
+   - 无探测到终端时，脚本打印手动运行命令
 
-3. **告知用户**在工作树中打开新的 opencode session（仅在步骤 2 之后）：
-   ```
-   工作树已就绪。请在新终端中继续：
-       cd .worktrees/<name> && opencode
-   ```
-   新的 opencode session 将自动读取 `.omo/handoff.md` 获取上下文。
+3. **当前 session 留在 master 中**——不要在当前 session 中 `cd` 进入工作树。
 
-4. **当前 session 留在 master 中**——不要在当前 session 中 `cd` 进入工作树。
+### 启动工作树区域
+
+在 OS 默认终端中打开 worktree 区域的 opencode 会话（`setsid` 自动脱离进程组，
+对话结束新会话不随之关闭，ref #96）：
+
+```bash
+scripts/open-worktrees.sh          # 打开所有 worktree
+scripts/open-worktrees.sh gui data # 打开指定 worktree
+scripts/open-worktrees.sh --list   # 列出可用 worktree
+scripts/open-worktrees.sh --dry-run # 打印将执行的命令，不实际启动
+```
+
+探测链：`$TERMINAL` → `xdg-terminal-emulator` → kitty/gnome-terminal/konsole/xfce4-terminal。
+无探测到终端时脚本打印手动运行命令。
 
 ### 列出
 
@@ -139,7 +145,7 @@ git push origin fix/ci-fix-issue-only
 **然后**（同一回合，`git worktree add` 成功后立即执行）：
 
 1. 运行 `/handoff` → 将当前上下文写入 `.worktrees/fix-candle-rendering/.omo/handoff.md`
-2. **解绑当前 opencode session**（见上方创建后步骤 2，MANDATORY）
-3. 告知用户：`cd .worktrees/fix-candle-rendering && opencode`
+2. 运行 `scripts/open-worktrees.sh fix-candle-rendering` 自动启动（setsid 脱离进程组，无需手动解绑）
+3. 告知用户：worktree 区域已在默认终端中打开
 
 工作树是临时的——PR 合并后清理。

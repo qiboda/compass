@@ -100,8 +100,7 @@ Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败�
 |---|---|---|
 | `compass-workflow` | `/compass-workflow` | 强制执行 issue 驱动开发、doc-sync、test-first、分步验证、commit 纪律 |
 | `issue-workflow` | `/issue-workflow` | 创建和管理 issues（单 issue + epic/sub-issue 分解与批量关闭） |
-| `worktree` | `/worktree` | 管理 PR 开发的 git worktrees |
-| `open-worktrees` | `//open-worktrees` | 在独立 kitty 窗口启动所有 worktree 区域 |
+| `worktree` | `/worktree` | 管理 PR 开发的 git worktrees（创建/删除/启动区域） |
 | `qa` (test) | `/test` | 编写单元/集成测试（TDD/BDD）、测试覆盖 |
 | `rustdoc` | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 |
 | `docs` | `/docs` | 根据代码变更识别并更新 `kb/` 文件 |
@@ -204,7 +203,8 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 ## Worktrees
 
 PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），每个 worktree 对应
-一个 PR/epic，合并后清理。创建后必须执行 `/handoff` + 解绑当前 opencode session。
+一个 PR/epic，合并后清理。创建后执行 `/handoff` 并运行 `scripts/open-worktrees.sh` 自动
+启动工作树区域（探测默认终端 + setsid 脱离进程组，无需手动解绑当前 session）。
 **加载 `worktree` skill 获取完整流程**（含 post-creation MANDATORY 步骤与清理）。
 
 ## Knowledge base
