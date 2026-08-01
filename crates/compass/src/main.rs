@@ -270,10 +270,7 @@ struct CompassApp {
     file_dialog: FileDialog,
     last_error: Option<String>,
     last_loading: bool,
-    // Consumed by the screener reverse-sync + toast logic (Todo 6).
-    #[allow(dead_code)]
     last_screener_error: Option<String>,
-    #[allow(dead_code)]
     last_screener_synced_symbol: String,
 }
 
@@ -340,6 +337,12 @@ impl eframe::App for CompassApp {
                 self.last_screener_error = current_screener_err;
             }
 
+            // Reverse-sync: when the symbol changed (e.g. a screener row
+            // click), reflect it in the StockPicker — but only for bare
+            // 6-digit codes; prefixed toolbar symbols must not clobber the
+            // picker's exchange state.
+            self.sync_picker_from_symbol();
+
             dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
             ui.ctx().request_repaint_after(Duration::from_millis(200));
@@ -348,6 +351,33 @@ impl eframe::App for CompassApp {
 }
 
 impl CompassApp {
+    /// Reflect `shared_state.symbol` changes back into the StockPicker.
+    ///
+    /// Only bare 6-digit codes are synced — the toolbar writes prefixed
+    /// symbols ("sz.000001") when an exchange is selected, and copying those
+    /// back would corrupt the picker. The marker field tracks the last seen
+    /// symbol so per-frame checks fire only on actual changes.
+    fn sync_picker_from_symbol(&mut self) {
+        let symbol = self.shared_state.symbol.get();
+        if symbol == self.last_screener_synced_symbol {
+            return;
+        }
+        self.last_screener_synced_symbol = symbol.clone();
+        let is_bare_code = symbol.len() == 6 && symbol.chars().all(|c| c.is_ascii_digit());
+        if !is_bare_code {
+            return;
+        }
+        let name = self
+            .stock_list
+            .iter()
+            .find(|s| s.symbol == symbol)
+            .map(|s| s.name.clone())
+            .unwrap_or_default();
+        self.stock_picker.selected_symbol = symbol;
+        self.stock_picker.selected_name = name;
+        self.stock_picker.selected_exchange.clear();
+    }
+
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(format!(
@@ -935,5 +965,52 @@ default_timeframe = "1w"
         harness.step();
         harness.step();
         harness.step();
+    }
+
+    // ------------------------------------------------------------------
+    // Screener reverse-sync (Todo 6)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn sync_picker_from_symbol_syncs_bare_code_and_clears_exchange() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.symbol.set("600519".to_string());
+        app.last_screener_synced_symbol = "000001".to_string();
+
+        app.sync_picker_from_symbol();
+
+        assert_eq!(app.stock_picker.selected_symbol, "600519");
+        assert!(
+            app.stock_picker.selected_exchange.is_empty(),
+            "bare code sync must clear stale exchange"
+        );
+        assert_eq!(app.last_screener_synced_symbol, "600519");
+    }
+
+    #[test]
+    fn sync_picker_from_symbol_ignores_prefixed_symbol() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.symbol.set("sz.000001".to_string());
+        app.last_screener_synced_symbol = "000001".to_string();
+
+        app.sync_picker_from_symbol();
+
+        assert_eq!(
+            app.stock_picker.selected_symbol, "000001",
+            "prefixed symbol must not clobber picker selection"
+        );
+        assert_eq!(
+            app.last_screener_synced_symbol, "sz.000001",
+            "marker still advances"
+        );
+    }
+
+    #[test]
+    fn sync_picker_from_symbol_noop_when_symbol_unchanged() {
+        let mut app = build_compass_app(egui::Context::default());
+        // marker == symbol at startup → no-op, picker untouched.
+        app.sync_picker_from_symbol();
+        assert_eq!(app.stock_picker.selected_symbol, "000001");
+        assert_eq!(app.last_screener_synced_symbol, "000001");
     }
 }
