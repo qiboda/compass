@@ -76,6 +76,14 @@ impl ConditionForm {
     }
 }
 
+/// Which multi-select popup is currently open (mutually exclusive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PopupKind {
+    Industry,
+    Exchange,
+    Board,
+}
+
 /// Screener panel citizen.
 ///
 /// Renders the condition form (left) and results table (right). The heavy
@@ -88,12 +96,8 @@ pub struct ScreenerPanel {
     sort_column: usize,
     /// `true` = descending (default for market cap).
     sort_descending: bool,
-    /// Whether the industry multi-select popup is open.
-    industry_popup: bool,
-    /// Whether the exchange multi-select popup is open.
-    exchange_popup: bool,
-    /// Whether the board multi-select popup is open.
-    board_popup: bool,
+    /// Currently open multi-select popup; at most one at a time.
+    active_popup: Option<PopupKind>,
     /// Persists the current query whenever a filter run is triggered.
     on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
 }
@@ -197,9 +201,7 @@ impl ScreenerPanel {
             form,
             sort_column: 4, // market cap
             sort_descending: true,
-            industry_popup: false,
-            exchange_popup: false,
-            board_popup: false,
+            active_popup: None,
             on_save,
         }
     }
@@ -340,8 +342,9 @@ impl ScreenerPanel {
         ui.label("行业");
         Self::multi_select_popup(
             ui,
+            PopupKind::Industry,
             "industry_popup",
-            &mut self.industry_popup,
+            &mut self.active_popup,
             industries,
             &mut self.form.industries,
         );
@@ -351,8 +354,9 @@ impl ScreenerPanel {
         let exchanges: Vec<String> = EXCHANGES.iter().map(|s| s.to_string()).collect();
         Self::multi_select_popup(
             ui,
+            PopupKind::Exchange,
             "exchange_popup",
-            &mut self.exchange_popup,
+            &mut self.active_popup,
             &exchanges,
             &mut self.form.exchanges,
         );
@@ -360,8 +364,9 @@ impl ScreenerPanel {
         ui.label("板块");
         Self::multi_select_popup(
             ui,
+            PopupKind::Board,
             "board_popup",
-            &mut self.board_popup,
+            &mut self.active_popup,
             boards,
             &mut self.form.boards,
         );
@@ -469,10 +474,12 @@ impl ScreenerPanel {
     ///
     /// Shared by industry / exchange / board filters. An associated function
     /// so the caller can pass independent `&mut` state without self-borrows.
+    /// `active` is a single shared slot — opening one popup closes any other.
     fn multi_select_popup(
         ui: &mut egui::Ui,
+        kind: PopupKind,
         id: &str,
-        open: &mut bool,
+        active: &mut Option<PopupKind>,
         options: &[String],
         selected: &mut Vec<String>,
     ) {
@@ -485,12 +492,16 @@ impl ScreenerPanel {
         };
         let response = ui.button(format!("{summary} ▾"));
         if response.clicked() {
-            *open = !*open;
+            *active = if *active == Some(kind) {
+                None
+            } else {
+                Some(kind)
+            };
         }
 
-        if *open {
+        if *active == Some(kind) {
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                *open = false;
+                *active = None;
             } else {
                 egui::Area::new(egui::Id::new(id))
                     .order(egui::Order::Foreground)
@@ -524,7 +535,7 @@ impl ScreenerPanel {
                                     }
                                 });
                             if ui.button("完成").clicked() {
-                                *open = false;
+                                *active = None;
                             }
                         });
                     });
@@ -647,6 +658,34 @@ mod tests {
             !panel.form.industries.is_empty(),
             "selection non-empty after toggle"
         );
+    }
+
+    #[test]
+    fn popup_kind_is_mutually_exclusive() {
+        // Opening a second popup must close the first (no overlap).
+        let (panel, _shared) = panel_with_form();
+        assert_eq!(panel.active_popup, None);
+
+        // Simulate the toggle logic from multi_select_popup.
+        let click = |active: &mut Option<PopupKind>, kind: PopupKind| {
+            *active = if *active == Some(kind) {
+                None
+            } else {
+                Some(kind)
+            };
+        };
+
+        let mut active = panel.active_popup;
+        click(&mut active, PopupKind::Industry);
+        assert_eq!(active, Some(PopupKind::Industry));
+        click(&mut active, PopupKind::Exchange);
+        assert_eq!(
+            active,
+            Some(PopupKind::Exchange),
+            "opening exchange closes industry"
+        );
+        click(&mut active, PopupKind::Exchange);
+        assert_eq!(active, None, "clicking active kind closes it");
     }
 
     // ------------------------------------------------------------------
