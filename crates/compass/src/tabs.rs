@@ -251,4 +251,70 @@ mod tests {
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Logger));
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Screener));
     }
+
+    // ------------------------------------------------------------------
+    // TabViewer::title — icon + Chinese title (design §Q2)
+    // ------------------------------------------------------------------
+    //
+    // egui_dock 0.20 paints tab buttons with `ui.interact` + painter, so the
+    // labels are invisible to the accesskit tree — the rendered title is
+    // asserted at this unit level instead of via kittest queries.
+
+    #[test]
+    fn tab_viewer_title_combines_icon_and_chinese_title() {
+        use crate::citizens::chart::ChartCitizen;
+        use crate::citizens::logger::LoggerPanel;
+        use crate::citizens::screener::ScreenerPanel;
+        use crate::dispatcher::register_citizens;
+        use crate::messages::{FetchRequest, RunScreenerRequest};
+        use crate::state::SharedState;
+        use crate::theme::CompassTheme;
+        use egui_dock::TabViewer as _;
+        use egui_mobius::factory;
+
+        let mut dispatcher = Dispatcher::new();
+        let registered = register_citizens(&mut dispatcher);
+        let mut chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let mut logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let mut screener = ScreenerPanel::new(
+            CitizenId::new(SCREENER_ID),
+            registered.screener,
+            None,
+            Box::new(|_| {}),
+        );
+        let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
+        let shared = SharedState::new("000001", "1d");
+        let theme = CompassTheme::compass_dark();
+
+        let mut viewer = TabViewer {
+            dispatcher: &mut dispatcher,
+            chart: &mut chart,
+            logger: &mut logger,
+            screener: &mut screener,
+            run_screener_signal: &run_signal,
+            work_signal: &work_signal,
+            screener_industries: &[],
+            screener_boards: &[],
+            shared_state: &shared,
+            theme: &theme,
+        };
+
+        for (kind, title) in [
+            (TabKind::Chart, "图表"),
+            (TabKind::Logger, "日志"),
+            (TabKind::Screener, "选股器"),
+        ] {
+            let mut tab = Tab::new(kind);
+            let text = viewer.title(&mut tab).text().to_string();
+            assert!(
+                text.contains(title),
+                "tab title must contain {title}, got {text}"
+            );
+            assert!(
+                text.contains(kind.icon()),
+                "tab title must carry the icon glyph, got {text}"
+            );
+        }
+    }
 }
