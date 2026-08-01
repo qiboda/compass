@@ -19,13 +19,14 @@ description: 维护 AGENTS.md 及所有 kb/ 文件（design、dev、user、githu
 
 项目书共包含 18 个文件，分属 4 个目录：
 
-### kb/design/ — 架构与设计（3 个文件）
+### kb/design/ — 架构与设计（4 个文件）
 
 | 文件 | 用途 | 更新时机 |
 |---|---|---|
 | `kb/design/architecture.md` | 系统总览、crate 关系、线程模型、数据管线、存储策略 | 线程变更、管线变更、库增删、存储格式变更 |
 | `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL | 新增数据源、schema 变更、provider 新增 |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 | 符号格式变更、timeframe 映射变更、交易所逻辑变更 |
+| `kb/design/ui.md` | **UI 设计权威文档** — 设计系统、布局结构、交互规范（最终版，`.omo/designs/` 仅归档原始方案） | 设计经用户确认后同步最终要点；UI 布局/视觉/交互变更 |
 
 ### kb/dev/ — 开发（4 个文件）
 
@@ -71,7 +72,7 @@ description: 维护 AGENTS.md 及所有 kb/ 文件（design、dev、user、githu
 | 测试框架、测试模式 | `kb/dev/testing.md` | — |
 | 工作流、hook、约定 | `kb/dev/process.md` | `AGENTS.md`（如项目级别） |
 | 新增 CLI 命令或 flag 变更 | `kb/user/cli.md` | `kb/dev/process.md`（调试章节） |
-| GUI 布局、控件变更 | `kb/user/gui.md` | `kb/design/architecture.md`（如涉及线程变更） |
+| GUI 布局、控件变更 | `kb/user/gui.md` | `kb/design/ui.md`（布局/视觉/交互设计变更）+ `kb/design/architecture.md`（如涉及线程变更） |
 | 配置项新增/变更 | `kb/user/config.md` | — |
 | 重大功能（用户侧） | `kb/user/index.md` | 相关 design + GUI/CLI 文件 |
 | 项目级别约定 | `AGENTS.md` | `kb/dev/process.md` |

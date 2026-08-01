@@ -29,7 +29,8 @@ reached"。如果尚未调用 `/grill-me`，请返回并先完成。
 
 ☐ 第 1 步 — DESIGN（仅界面相关变更强制）
    涉及界面布局/视觉风格/交互效果的工作，先委派 ui-designer
-   产出 .omo/designs/<feature>.md 设计方案，并经用户确认
+   产出 .omo/designs/<feature>.md 设计方案，并经用户确认；
+   确认后须将最终设计要点同步到 kb/design/ui.md（权威文档）
    → [必须展示设计方案要点 + 用户确认；纯逻辑/数据变更可跳过]
 
 ☐ 第 2 步 — ISSUE

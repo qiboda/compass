@@ -132,7 +132,11 @@ deepseek-v4-flash），负责 GUI 布局、视觉风格与交互效果设计，�
 用户展示要点并获确认，方可进入后续步骤。纯逻辑/数据变更可跳过此步。
 
 **设计方案留档**：`.omo/designs/` 下的设计方案文件必须随实现一并提交（
-`.gitignore` 已放行该目录）。
+`.gitignore` 已放行该目录），作为**过程归档**。
+
+**最终版沉淀 kb/（强制）**：设计经用户确认后，最终设计要点必须同步到
+`kb/design/ui.md` —— 这是 UI 设计的**权威文档**，与代码同步维护。
+`.omo/designs/` 仅归档原始方案；一切 UI 设计决策以 `kb/design/ui.md` 为准。
 
 ### Epic & Sub-Issue Workflow
 
@@ -260,6 +264,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/design/architecture.md` | 系统总览、crate 关系、线程模型、数据管线、存储策略、库选型 |
 | `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
+| `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.omo/designs/` 仅归档） |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、Dolt 操作、重置 |
 | `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 + 历史摩擦记录（User corrections） |
