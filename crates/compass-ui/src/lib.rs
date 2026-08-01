@@ -12,3 +12,13 @@
 ///
 /// See design doc `.omo/designs/gui-upgrade.md` §4 for the full value spec.
 pub mod tokens;
+
+/// Font registration: SourceHanSansCN (Chinese) + JetBrains Mono (numeric).
+pub mod fonts;
+
+/// Theme: CompassTheme maps [`tokens::ThemeTokens`] to `egui::Visuals` + chart config,
+/// plus the egui_dock `Style` builder.
+pub mod theme;
+
+/// Widget library: base atoms + composite molecules.
+pub mod widgets;
