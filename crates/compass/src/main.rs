@@ -608,8 +608,14 @@ mod tests {
 
     // --- Non-UI function tests ---
 
+    /// Serializes tests that mutate the global `HOME` env var. Rust runs tests
+    /// in parallel within a binary; concurrent `set_var("HOME", ...)` makes
+    /// these tests racy (flaky `load_config` failures under `cargo test`).
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn load_config_missing_file_returns_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
         std::fs::create_dir_all(&config_dir).unwrap();
@@ -639,6 +645,7 @@ mod tests {
 
     #[test]
     fn load_config_valid_toml_returns_parsed() {
+        let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
         std::fs::create_dir_all(&config_dir).unwrap();
@@ -679,6 +686,7 @@ default_timeframe = "1w"
 
     #[test]
     fn load_config_invalid_toml_falls_back_to_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
         std::fs::create_dir_all(&config_dir).unwrap();

@@ -59,33 +59,30 @@ class TestParseYears:
 class TestDispatchFetch:
     """dispatch_fetch(target, years, resume, page_size, max_pages)"""
 
-    def test_stock_basic_sets_sys_argv_and_calls_main(
+    def test_stock_basic_sets_sys_argv_and_calls_official_main(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """dispatch_fetch('stock_basic') → fetch_stock_basic.main() via asyncio.run."""
-        import fetch_stock_basic as fsb
+        """dispatch_fetch('stock_basic') → fetch_stock_basic_official.main() (sync)."""
+        import fetch_stock_basic_official as fsbo
         import main as main_mod
 
-        mock_run = Mock()
-        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
-        mock_fsb_main = Mock()
-        monkeypatch.setattr(fsb, "main", mock_fsb_main)
-
-        main_mod.dispatch_fetch("stock_basic", max_pages=50, resume=True)
-
-        mock_run.assert_called_once()
-
-    def test_stock_basic_defaults_max_pages(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import fetch_stock_basic as fsb
-        import main as main_mod
-
-        mock_run = Mock()
-        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
-        monkeypatch.setattr(fsb, "main", Mock())
+        mock_fsbo_main = Mock()
+        monkeypatch.setattr(fsbo, "main", mock_fsbo_main)
 
         main_mod.dispatch_fetch("stock_basic")
 
-        mock_run.assert_called_once()
+        mock_fsbo_main.assert_called_once()
+
+    def test_stock_basic_defaults_no_extra_args(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import fetch_stock_basic_official as fsbo
+        import main as main_mod
+
+        mock_fsbo_main = Mock()
+        monkeypatch.setattr(fsbo, "main", mock_fsbo_main)
+
+        main_mod.dispatch_fetch("stock_basic")
+
+        mock_fsbo_main.assert_called_once()
 
     def test_fin_indicators_sets_sys_argv_with_years(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -254,13 +251,13 @@ class TestDoSync:
         import fetch_cash_flow as fcf
         import fetch_fin_indicators as ffi
         import fetch_income as fi
-        import fetch_stock_basic as fsb
+        import fetch_stock_basic_official as fsbo
         import main as main_mod
 
         mock_run = Mock()
         monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
 
-        monkeypatch.setattr(fsb, "main", Mock())
+        monkeypatch.setattr(fsbo, "main", Mock())
         monkeypatch.setattr(ffi, "main", Mock())
         monkeypatch.setattr(fbs, "run", Mock())
         monkeypatch.setattr(fi, "run", Mock())
@@ -277,8 +274,8 @@ class TestDoSync:
 
         main_mod.do_sync()
 
-        # 5 fetch → 5 asyncio.run calls
-        assert mock_run.call_count == 5
+        # stock_basic is sync (official source); 4 remaining tables via asyncio.run
+        assert mock_run.call_count == 4
         # 5 import calls + 5 data_updates inserts
         assert mock_dolt.call_count >= 5
 
@@ -291,14 +288,17 @@ class TestDoSync:
         import fetch_cash_flow as fcf
         import fetch_fin_indicators as ffi
         import fetch_income as fi
-        import fetch_stock_basic as fsb
+        import fetch_stock_basic_official as fsbo
         import main as main_mod
 
         mock_run = Mock()
         monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
 
-        for mod in (fsb, ffi, fbs, fi, fcf):
-            monkeypatch.setattr(mod, "main" if mod in (fsb, ffi) else "run", Mock())
+        monkeypatch.setattr(fsbo, "main", Mock())
+        monkeypatch.setattr(ffi, "main", Mock())
+        monkeypatch.setattr(fbs, "run", Mock())
+        monkeypatch.setattr(fi, "run", Mock())
+        monkeypatch.setattr(fcf, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
         for mod in (fbs, fi, fcf):
@@ -309,7 +309,7 @@ class TestDoSync:
 
         main_mod.do_sync(restart=True)
 
-        assert mock_run.call_count == 5
+        assert mock_run.call_count == 4
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -393,15 +393,13 @@ class TestMain:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["main.py", "fetch", "stock_basic", "--max-pages", "100"],
+            ["main.py", "fetch", "stock_basic"],
         )
         mock_dispatch = Mock()
         monkeypatch.setattr(main_mod, "dispatch_fetch", mock_dispatch)
 
         main_mod.main()
-        mock_dispatch.assert_called_once_with(
-            "stock_basic", years=None, resume=False, max_pages=100,
-        )
+        mock_dispatch.assert_called_once_with("stock_basic", years=None)
 
     def test_fetch_fin_indicators_with_years(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -416,27 +414,22 @@ class TestMain:
         monkeypatch.setattr(main_mod, "dispatch_fetch", mock_dispatch)
 
         main_mod.main()
-        mock_dispatch.assert_called_once_with(
-            "fin_indicators", years=[2024, 2025], resume=False,
-            max_pages=200,
-        )
+        mock_dispatch.assert_called_once_with("fin_indicators", years=[2024, 2025])
 
-    def test_fetch_with_resume(
+    def test_fetch_with_years_list(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
         monkeypatch.setattr(
             sys, "argv",
-            ["main.py", "fetch", "stock_basic", "--resume"],
+            ["main.py", "fetch", "stock_basic", "--years", "2024"],
         )
         mock_dispatch = Mock()
         monkeypatch.setattr(main_mod, "dispatch_fetch", mock_dispatch)
 
         main_mod.main()
-        mock_dispatch.assert_called_once_with(
-            "stock_basic", years=None, resume=True, max_pages=200,
-        )
+        mock_dispatch.assert_called_once_with("stock_basic", years=[2024])
 
     def test_import_stock_basic(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -537,8 +530,8 @@ class TestImportStockBasic:
         import common
         import main as main_mod
 
-        # Create a dummy CSV
-        csv_path = tmp_path / "stock_basic.csv"
+        # Create a dummy CSV (official-source filename)
+        csv_path = tmp_path / "stock_basic_official.csv"
         csv_path.write_text("header\n1\n")
 
         monkeypatch.setattr(main_mod, "COLLECTORS_DIR", tmp_path)

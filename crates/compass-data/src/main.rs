@@ -523,6 +523,7 @@ compass_data_dir = "/custom/compass"
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_MUTEX serializes global CWD/env across the whole backup run
     async fn run_backup_succeeds_with_dummy_script() {
         use std::io::Write;
 
@@ -558,6 +559,7 @@ compass_data_dir = "/custom/compass"
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_MUTEX serializes global CWD/env across the whole backup run
     async fn run_backup_with_keep_zip_uses_flag() {
         use std::io::Write;
 

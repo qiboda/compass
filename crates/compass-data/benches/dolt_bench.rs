@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use compass_data::import_dolt::{run_dolt_sql_csv, run_dolt_sql_parquet};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};

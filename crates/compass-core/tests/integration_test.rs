@@ -26,7 +26,7 @@ async fn duckdb_in_memory_has_required_tables() {
                 duckdb::params![table],
                 |row| row.get(0),
             )
-            .expect(&format!("query for table {table}"));
+            .unwrap_or_else(|_| panic!("query for table {table}"));
         assert!(exists, "table '{table}' should exist in DuckDB schema");
     }
 }
