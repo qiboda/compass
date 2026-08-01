@@ -20,5 +20,9 @@ pub mod fonts;
 /// plus the egui_dock `Style` builder.
 pub mod theme;
 
+/// egui_dock `Style` builder: maps [`tokens::ThemeTokens`] onto dock chrome
+/// (tab bar, tabs, separators, borders, drag overlay).
+pub mod dock_style;
+
 /// Widget library: base atoms + composite molecules.
 pub mod widgets;
