@@ -3,7 +3,7 @@ use compass_core::model::AdjFactor;
 /// Fetch adjustment factors from Baostock Python script using the default
 /// script path (`scripts/fetch_adj_factor.py`).
 ///
-/// This is a convenience wrapper around [`fetch_adj_factors_with_script`].
+/// Convenience wrapper around the crate-internal `fetch_adj_factors_with_script`.
 #[allow(dead_code)]
 pub async fn fetch_adj_factors(
     ts_code: &str,
