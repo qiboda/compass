@@ -15,11 +15,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Create CI failure issue
-        id: create
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ISSUE_URL=$(gh issue create \
+          gh issue create \
             --title "CI Failure: ${{ github.event.workflow_run.head_branch }}" \
             --label "A-CI,C-Bug,S-CI-Failure" \
             --body "CI workflow **failed** on branch \`${{ github.event.workflow_run.head_branch }}\`.
@@ -27,15 +26,4 @@ jobs:
           **Commit**: ${{ github.event.workflow_run.head_sha }}
           **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.run_id }}
 
-          Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}")
-
-          echo "issue_url=${ISSUE_URL}" >> "${GITHUB_OUTPUT}"
-          ISSUE_NUMBER=$(echo "${ISSUE_URL}" | grep -oP '\d+$')
-          echo "issue_number=${ISSUE_NUMBER}" >> "${GITHUB_OUTPUT}"
-
-      - name: Trigger /fix
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment ${{ steps.create.outputs.issue_number }} \
-            --body "/fix"
+          Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"

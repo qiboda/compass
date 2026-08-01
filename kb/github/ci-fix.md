@@ -1,11 +1,15 @@
 # CI-Fix — CI 失败诊断（补充）
 
-> **注意**：CI 失败现在通过 `/fix` 处理（参见 `kb/github/fix.md`）。
+> **注意**：`opencode-ci-fix` 工作流现在**仅自动创建 CI failure issue**，不再自动触发
+> `/fix` 修复。修复由人工接手——可手动在 issue 上评论 `/fix` 走修复链路
+> （参见 `kb/github/fix.md`），或本地直接处理。
 > 本文件包含 `fix.md` 引用的 CI 专项诊断指南。
 
 ## 角色
 
-你诊断 CI 工作流失败。当 `CI` 工作流失败时，你自动分析失败并报告发现。你不修复任何内容 —— 只诊断和报告。
+`opencode-ci-fix` 工作流在 CI 失败时自动创建带 `S-CI-Failure` 标签的 issue，
+但不修复任何内容 —— 修复由人工处理。本文件的诊断指南供手动 `/fix`
+（或本地 agent）在收到 CI failure issue 时使用。
 
 ## 流程
 
