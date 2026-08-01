@@ -84,14 +84,16 @@ pub struct ScreenerPanel {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
     form: ConditionForm,
-    /// Industry search filter text.
-    industry_filter: String,
     /// Sort column index into `ScreenerRow` fields (0-5).
     sort_column: usize,
     /// `true` = descending (default for market cap).
     sort_descending: bool,
     /// Whether the industry multi-select popup is open.
     industry_popup: bool,
+    /// Whether the exchange multi-select popup is open.
+    exchange_popup: bool,
+    /// Whether the board multi-select popup is open.
+    board_popup: bool,
     /// Persists the current query whenever a filter run is triggered.
     on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
 }
@@ -193,10 +195,11 @@ impl ScreenerPanel {
             citizen_id,
             citizen_state,
             form,
-            industry_filter: String::new(),
             sort_column: 4, // market cap
             sort_descending: true,
             industry_popup: false,
+            exchange_popup: false,
+            board_popup: false,
             on_save,
         }
     }
@@ -335,83 +338,33 @@ impl ScreenerPanel {
         ui.heading("条件");
 
         ui.label("行业");
-        let summary = if self.form.industries.is_empty() {
-            "全部".to_string()
-        } else if self.form.industries.len() <= 2 {
-            self.form.industries.join("、")
-        } else {
-            format!("已选 {} 个", self.form.industries.len())
-        };
-        let response = ui.button(format!("{} ▾", summary));
-        if response.clicked() {
-            self.industry_popup = !self.industry_popup;
-        }
-
-        if self.industry_popup {
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.industry_popup = false;
-            } else {
-                egui::Area::new(egui::Id::new("industry_popup"))
-                    .order(egui::Order::Foreground)
-                    .fixed_pos(response.rect.left_bottom())
-                    .constrain(true)
-                    .show(ui.ctx(), |ui| {
-                        ui.set_min_width(220.0);
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            let mut filter = self.industry_filter.clone();
-                            ui.text_edit_singleline(&mut filter);
-                            self.industry_filter = filter;
-                            let lower = self.industry_filter.to_lowercase();
-
-                            egui::ScrollArea::vertical()
-                                .max_height(180.0)
-                                .show(ui, |ui| {
-                                    for ind in industries {
-                                        if !lower.is_empty() && !ind.to_lowercase().contains(&lower)
-                                        {
-                                            continue;
-                                        }
-                                        let mut selected = self.form.industries.contains(ind);
-                                        if ui.checkbox(&mut selected, ind).changed() {
-                                            if selected {
-                                                self.form.industries.push(ind.clone());
-                                            } else {
-                                                self.form.industries.retain(|i| i != ind);
-                                            }
-                                        }
-                                    }
-                                });
-                            if ui.button("完成").clicked() {
-                                self.industry_popup = false;
-                            }
-                        });
-                    });
-            }
-        }
+        Self::multi_select_popup(
+            ui,
+            "industry_popup",
+            &mut self.industry_popup,
+            industries,
+            &mut self.form.industries,
+        );
 
         ui.label("交易所");
-        for ex in ["SH", "SZ", "BJ"] {
-            let mut selected = self.form.exchanges.contains(&ex.to_string());
-            if ui.checkbox(&mut selected, ex).changed() {
-                if selected {
-                    self.form.exchanges.push(ex.to_string());
-                } else {
-                    self.form.exchanges.retain(|e| e != ex);
-                }
-            }
-        }
+        const EXCHANGES: [&str; 3] = ["SH", "SZ", "BJ"];
+        let exchanges: Vec<String> = EXCHANGES.iter().map(|s| s.to_string()).collect();
+        Self::multi_select_popup(
+            ui,
+            "exchange_popup",
+            &mut self.exchange_popup,
+            &exchanges,
+            &mut self.form.exchanges,
+        );
 
         ui.label("板块");
-        for b in boards {
-            let mut selected = self.form.boards.contains(b);
-            if ui.checkbox(&mut selected, b).changed() {
-                if selected {
-                    self.form.boards.push(b.clone());
-                } else {
-                    self.form.boards.retain(|x| x != b);
-                }
-            }
-        }
+        Self::multi_select_popup(
+            ui,
+            "board_popup",
+            &mut self.board_popup,
+            boards,
+            &mut self.form.boards,
+        );
 
         ui.label("上市时长");
         let options: [(&str, Option<u32>); 4] = [
@@ -509,6 +462,74 @@ impl ScreenerPanel {
         }
 
         ui.checkbox(&mut self.form.exclude_delisted, "排除退市");
+    }
+
+    /// Multi-select dropdown popup: a summary button that opens a searchable
+    /// checkbox list. Selections accumulate without closing the popup.
+    ///
+    /// Shared by industry / exchange / board filters. An associated function
+    /// so the caller can pass independent `&mut` state without self-borrows.
+    fn multi_select_popup(
+        ui: &mut egui::Ui,
+        id: &str,
+        open: &mut bool,
+        options: &[String],
+        selected: &mut Vec<String>,
+    ) {
+        let summary = if selected.is_empty() {
+            "全部".to_string()
+        } else if selected.len() <= 2 {
+            selected.join("、")
+        } else {
+            format!("已选 {} 个", selected.len())
+        };
+        let response = ui.button(format!("{summary} ▾"));
+        if response.clicked() {
+            *open = !*open;
+        }
+
+        if *open {
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                *open = false;
+            } else {
+                egui::Area::new(egui::Id::new(id))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(response.rect.left_bottom())
+                    .constrain(true)
+                    .show(ui.ctx(), |ui| {
+                        ui.set_min_width(220.0);
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            // Filter state is local to the popup: it resets
+                            // each time the dropdown reopens.
+                            let mut filter = String::new();
+                            ui.text_edit_singleline(&mut filter);
+                            let lower = filter.to_lowercase();
+
+                            egui::ScrollArea::vertical()
+                                .max_height(180.0)
+                                .show(ui, |ui| {
+                                    for opt in options {
+                                        if !lower.is_empty() && !opt.to_lowercase().contains(&lower)
+                                        {
+                                            continue;
+                                        }
+                                        let mut is_selected = selected.contains(opt);
+                                        if ui.checkbox(&mut is_selected, opt).changed() {
+                                            if is_selected {
+                                                selected.push(opt.clone());
+                                            } else {
+                                                selected.retain(|s| s != opt);
+                                            }
+                                        }
+                                    }
+                                });
+                            if ui.button("完成").clicked() {
+                                *open = false;
+                            }
+                        });
+                    });
+            }
+        }
     }
 }
 
