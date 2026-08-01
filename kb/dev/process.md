@@ -244,6 +244,24 @@ cargo fmt --check                       # verify formatting
 cargo clippy -- -D warnings             # strict lint
 ```
 
+### CI 缓存策略（rust-cache）
+
+CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save** 策略：
+
+```yaml
+- uses: Swatinem/rust-cache@v2
+  with:
+    save-if: ${{ github.ref == 'refs/heads/master' }}
+    prefix-key: ${{ github.job }}   # 各 job 缓存独立
+```
+
+- **master**：每次 push 更新缓存（key 含 `Cargo.lock` hash，锁文件不变则命中旧缓存）
+- **分支**：只 restore（GitHub cache 自动 fallback 到默认分支命中 master 条目），不写自己的缓存——避免短命分支产生孤儿缓存（7 天 LRU 淘汰前无人复用）
+- **锁文件变化**（如 PR 加依赖）：key 变 → miss → 全量编译（依赖集变了，缓存无意义）
+- `save-if: false` 时 **restore 仍生效**（Swatinem/rust-cache 语义），仅跳过 save
+
+历史：`572e688` 曾用 `save-if: true`（分支自缓存提速），因短命分支孤儿缓存浪费回退为仅 master save（`d55eead`, ref #89）。
+
 ## Config
 
 Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回退到
