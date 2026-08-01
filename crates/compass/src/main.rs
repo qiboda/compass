@@ -812,14 +812,19 @@ impl CompassApp {
             (StatusKind::Idle, String::new())
         };
 
+        // Latest close as the price; the change vs. the previous close when
+        // both are available (None otherwise — design §6.3 keeps the slot
+        // optional).
+        let (price, change) = latest_quote(&self.shared_state.bars.get());
+
         StatusBar::new(&tokens).show(
             ui,
             &StatusBarData {
                 summary: Some(StockSummary {
                     symbol,
                     name,
-                    price: None,
-                    change: None,
+                    price,
+                    change,
                 }),
                 status,
                 status_text,
@@ -919,6 +924,21 @@ fn timeframe_label(idx: usize) -> &'static str {
     }
 }
 
+/// Latest close as the status-bar price plus the change vs. the previous
+/// close (percent). `(None, None)` when there is no data; a single bar
+/// yields a price with no change.
+fn latest_quote(bars: &[egui_charts::model::Bar]) -> (Option<f32>, Option<f32>) {
+    match bars {
+        [last] => (Some(last.close as f32), None),
+        [.., prev, last] => {
+            let change = (prev.close != 0.0)
+                .then_some((((last.close - prev.close) / prev.close) * 100.0) as f32);
+            (Some(last.close as f32), change)
+        }
+        _ => (None, None),
+    }
+}
+
 fn timeframe_value(idx: usize) -> String {
     timeframe_label(idx).to_string()
 }
@@ -936,6 +956,7 @@ mod tests {
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
     use crate::citizens::screener::ScreenerPanel;
+    use crate::latest_quote;
     use crate::state::SharedState;
     use crate::stock_projection;
     use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
@@ -1396,7 +1417,8 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let _ = harness.get_by_label_contains("Fetch");
+        let fetch_label = format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE);
+        let _ = harness.get_by_label(&fetch_label);
         let _ = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
         let _ = harness.get_by_label("本地数据源 · 0 只");
         // Dock area renders: the logger citizen's "Logs: n/1000" counter is
@@ -1905,6 +1927,62 @@ default_timeframe = "1w"
             harness.state().shared_state.watchlist.get().len(),
             2,
             "both watchlist symbols render as sidebar rows"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // S8 status bar market data (design §6.3)
+    // ------------------------------------------------------------------
+
+    fn make_bar(close: f64) -> egui_charts::model::Bar {
+        egui_charts::model::Bar::new(
+            chrono::Utc::now(),
+            close - 1.0,
+            close + 1.0,
+            close - 2.0,
+            close,
+            1000.0,
+        )
+    }
+
+    #[test]
+    fn latest_quote_computes_price_and_change() {
+        assert_eq!(latest_quote(&[]), (None, None));
+        assert_eq!(
+            latest_quote(&[make_bar(10.0)]),
+            (Some(10.0), None),
+            "single bar has no change"
+        );
+        let (price, change) = latest_quote(&[make_bar(10.0), make_bar(10.5)]);
+        assert_eq!(price, Some(10.5));
+        assert!(
+            (change.expect("change present") - 5.0).abs() < 0.001,
+            "change must be +5% vs previous close, got {change:?}"
+        );
+        let (_, change) = latest_quote(&[make_bar(0.0), make_bar(10.5)]);
+        assert_eq!(change, None, "zero previous close must not divide");
+    }
+
+    #[test]
+    fn status_bar_renders_price_and_change_from_bars() {
+        let app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .bars
+            .set(vec![make_bar(10.0), make_bar(10.5)]);
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let _ = harness.get_by_label("10.50 +5.00%");
+    }
+
+    #[test]
+    fn status_bar_omits_price_when_no_bars() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        assert!(
+            harness.query_by_label_contains("+0.00%").is_none(),
+            "no price text when no bars"
         );
     }
 
