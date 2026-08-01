@@ -118,6 +118,16 @@ Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败�
 所有 skill 位于 `.opencode/skills/<name>/SKILL.md`。OpenCode 从文件系统
 自动发现 skill —— 无需注册。
 
+### ui-designer Agent（界面设计）
+
+`.opencode/agent/ui-designer.md` 定义了界面设计 agent **`ui-designer`**（只读、
+deepseek-v4-flash），负责 GUI 布局、视觉风格与交互效果设计，输出设计方案到
+`.omo/designs/<feature>.md`。
+
+**路由规则（强制）**：任何涉及界面设计的工作 —— 布局、视觉风格、交互效果、
+动画、hover/快捷键/反馈状态 —— 主 agent 必须先委派 `ui-designer` 产出
+设计方案，再由实现 agent 按方案落地。`ui-designer` 不写源码，只输出方案。
+
 ### Epic & Sub-Issue Workflow
 
 跨多模块的大型需求分解为 **epic**（父 issue）+ **sub-issues**（子 issue）
