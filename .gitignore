@@ -1,6 +1,7 @@
 /target
 .omo/*
 !.omo/plans/
+!.omo/designs/
 compass.db
 compass.duckdb
 logs/

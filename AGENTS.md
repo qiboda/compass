@@ -128,6 +128,9 @@ deepseek-v4-flash），负责 GUI 布局、视觉风格与交互效果设计，�
 动画、hover/快捷键/反馈状态 —— 主 agent 必须先委派 `ui-designer` 产出
 设计方案，再由实现 agent 按方案落地。`ui-designer` 不写源码，只输出方案。
 
+**设计方案留档**：`.omo/designs/` 下的设计方案文件必须随实现一并提交（
+`.gitignore` 已放行该目录）。
+
 ### Epic & Sub-Issue Workflow
 
 跨多模块的大型需求分解为 **epic**（父 issue）+ **sub-issues**（子 issue）
