@@ -217,14 +217,10 @@ impl ScreenerPanel {
         boards: &[String],
     ) {
         ui.vertical(|ui| {
-            // Conditions on top, results below — not side by side.
+            // Conditions on one wrapped row, results below.
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                egui::ScrollArea::vertical()
-                    .max_height(220.0)
-                    .show(ui, |ui| {
-                        self.condition_form(ui, industries, boards);
-                    });
+                self.condition_form(ui, industries, boards);
                 ui.separator();
                 if ui.button("筛选").clicked() {
                     let query = self.form.to_query();
@@ -364,149 +360,143 @@ impl ScreenerPanel {
         }
     }
 
-    /// Condition form: metadata + technical conditions.
+    /// Condition form: all conditions on one wrapped row.
     fn condition_form(&mut self, ui: &mut egui::Ui, industries: &[String], boards: &[String]) {
-        ui.heading("条件");
-        const BLOCK_SPACING: f32 = 10.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("行业");
+            Self::multi_select_popup(
+                ui,
+                PopupKind::Industry,
+                "industry_popup",
+                &mut self.active_popup,
+                industries,
+                &mut self.form.industries,
+            );
+            ui.separator();
 
-        ui.label("行业");
-        Self::multi_select_popup(
-            ui,
-            PopupKind::Industry,
-            "industry_popup",
-            &mut self.active_popup,
-            industries,
-            &mut self.form.industries,
-        );
-        ui.add_space(BLOCK_SPACING);
+            ui.label("交易所");
+            const EXCHANGES: [&str; 3] = ["SH", "SZ", "BJ"];
+            let exchanges: Vec<String> = EXCHANGES.iter().map(|s| s.to_string()).collect();
+            Self::multi_select_popup(
+                ui,
+                PopupKind::Exchange,
+                "exchange_popup",
+                &mut self.active_popup,
+                &exchanges,
+                &mut self.form.exchanges,
+            );
+            ui.separator();
 
-        ui.label("交易所");
-        const EXCHANGES: [&str; 3] = ["SH", "SZ", "BJ"];
-        let exchanges: Vec<String> = EXCHANGES.iter().map(|s| s.to_string()).collect();
-        Self::multi_select_popup(
-            ui,
-            PopupKind::Exchange,
-            "exchange_popup",
-            &mut self.active_popup,
-            &exchanges,
-            &mut self.form.exchanges,
-        );
-        ui.add_space(BLOCK_SPACING);
+            ui.label("板块");
+            Self::multi_select_popup(
+                ui,
+                PopupKind::Board,
+                "board_popup",
+                &mut self.active_popup,
+                boards,
+                &mut self.form.boards,
+            );
+            ui.separator();
 
-        ui.label("板块");
-        Self::multi_select_popup(
-            ui,
-            PopupKind::Board,
-            "board_popup",
-            &mut self.active_popup,
-            boards,
-            &mut self.form.boards,
-        );
-        ui.add_space(BLOCK_SPACING);
-
-        ui.label("上市时长");
-        let options: [(&str, Option<u32>); 4] = [
-            ("不限", None),
-            ("≥1年", Some(1)),
-            ("≥3年", Some(3)),
-            ("≥5年", Some(5)),
-        ];
-        let mut current_idx = options
-            .iter()
-            .position(|(_, v)| *v == self.form.list_years)
-            .unwrap_or(0);
-        egui::ComboBox::from_id_salt("list_years_combo")
-            .selected_text(options[current_idx].0)
-            .show_ui(ui, |ui| {
-                for (idx, (label, val)) in options.iter().enumerate() {
-                    if ui.selectable_value(&mut current_idx, idx, *label).clicked() {
-                        self.form.list_years = *val;
+            ui.label("上市时长");
+            let options: [(&str, Option<u32>); 4] = [
+                ("不限", None),
+                ("≥1年", Some(1)),
+                ("≥3年", Some(3)),
+                ("≥5年", Some(5)),
+            ];
+            let mut current_idx = options
+                .iter()
+                .position(|(_, v)| *v == self.form.list_years)
+                .unwrap_or(0);
+            egui::ComboBox::from_id_salt("list_years_combo")
+                .selected_text(options[current_idx].0)
+                .show_ui(ui, |ui| {
+                    for (idx, (label, val)) in options.iter().enumerate() {
+                        if ui.selectable_value(&mut current_idx, idx, *label).clicked() {
+                            self.form.list_years = *val;
+                        }
                     }
-                }
-            });
-        ui.add_space(BLOCK_SPACING);
+                });
+            ui.separator();
 
-        ui.label("市值区间（亿元）");
-        ui.horizontal(|ui| {
-            ui.label("min");
+            ui.label("市值(亿)");
             let mut min = self.form.market_cap_min.unwrap_or(0.0);
-            if ui.add(egui::DragValue::new(&mut min).speed(1.0)).changed() {
+            if ui
+                .add(egui::DragValue::new(&mut min).speed(1.0).prefix("min "))
+                .changed()
+            {
                 self.form.market_cap_min = (min > 0.0).then_some(min);
             }
-            ui.label("max");
             let mut max = self.form.market_cap_max.unwrap_or(0.0);
-            if ui.add(egui::DragValue::new(&mut max).speed(1.0)).changed() {
+            if ui
+                .add(egui::DragValue::new(&mut max).speed(1.0).prefix("max "))
+                .changed()
+            {
                 self.form.market_cap_max = (max > 0.0).then_some(max);
             }
-        });
+            ui.separator();
 
-        ui.add_space(BLOCK_SPACING);
-        ui.separator();
-        ui.add_space(BLOCK_SPACING);
+            let mut ma_enabled = self.form.ma_enabled;
+            ui.checkbox(&mut ma_enabled, "均线");
+            self.form.ma_enabled = ma_enabled;
+            if self.form.ma_enabled {
+                let mut kind = self.form.ma_kind;
+                let label = match kind {
+                    MaKind::AboveMa20 => "站上 MA20",
+                    MaKind::AboveMa60 => "站上 MA60",
+                    MaKind::BullishAlign => "多头排列 MA5>MA20>MA60",
+                };
+                egui::ComboBox::from_id_salt("ma_combo")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut kind, MaKind::AboveMa20, "站上 MA20");
+                        ui.selectable_value(&mut kind, MaKind::AboveMa60, "站上 MA60");
+                        ui.selectable_value(
+                            &mut kind,
+                            MaKind::BullishAlign,
+                            "多头排列 MA5>MA20>MA60",
+                        );
+                    });
+                self.form.ma_kind = kind;
+            }
+            ui.separator();
 
-        let mut ma_enabled = self.form.ma_enabled;
-        ui.checkbox(&mut ma_enabled, "均线");
-        self.form.ma_enabled = ma_enabled;
-        if self.form.ma_enabled {
-            let mut kind = self.form.ma_kind;
-            let label = match kind {
-                MaKind::AboveMa20 => "站上 MA20",
-                MaKind::AboveMa60 => "站上 MA60",
-                MaKind::BullishAlign => "多头排列 MA5>MA20>MA60",
-            };
-            egui::ComboBox::from_id_salt("ma_combo")
-                .selected_text(label)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut kind, MaKind::AboveMa20, "站上 MA20");
-                    ui.selectable_value(&mut kind, MaKind::AboveMa60, "站上 MA60");
-                    ui.selectable_value(&mut kind, MaKind::BullishAlign, "多头排列 MA5>MA20>MA60");
-                });
-            self.form.ma_kind = kind;
-        }
-        ui.add_space(BLOCK_SPACING);
-
-        let mut breakout_enabled = self.form.breakout_enabled;
-        ui.checkbox(&mut breakout_enabled, "突破 N 日新高");
-        self.form.breakout_enabled = breakout_enabled;
-        if self.form.breakout_enabled {
-            ui.horizontal(|ui| {
+            let mut breakout_enabled = self.form.breakout_enabled;
+            ui.checkbox(&mut breakout_enabled, "突破新高");
+            self.form.breakout_enabled = breakout_enabled;
+            if self.form.breakout_enabled {
                 ui.label("N:");
                 ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
-            });
-        }
-        ui.add_space(BLOCK_SPACING);
+            }
+            ui.separator();
 
-        let mut momentum_enabled = self.form.momentum_enabled;
-        ui.checkbox(&mut momentum_enabled, "动量（近 N 日涨幅）");
-        self.form.momentum_enabled = momentum_enabled;
-        if self.form.momentum_enabled {
-            ui.horizontal(|ui| {
+            let mut momentum_enabled = self.form.momentum_enabled;
+            ui.checkbox(&mut momentum_enabled, "动量");
+            self.form.momentum_enabled = momentum_enabled;
+            if self.form.momentum_enabled {
                 ui.label("N:");
                 ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
-            });
-            ui.horizontal(|ui| {
                 ui.label("min%:");
                 ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
                 ui.label("max%:");
                 ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
-            });
-        }
-        ui.add_space(BLOCK_SPACING);
+            }
+            ui.separator();
 
-        let mut volume_enabled = self.form.volume_enabled;
-        ui.checkbox(&mut volume_enabled, "量能（近 N 日均量）");
-        self.form.volume_enabled = volume_enabled;
-        if self.form.volume_enabled {
-            ui.horizontal(|ui| {
+            let mut volume_enabled = self.form.volume_enabled;
+            ui.checkbox(&mut volume_enabled, "量能");
+            self.form.volume_enabled = volume_enabled;
+            if self.form.volume_enabled {
                 ui.label("N:");
                 ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
                 ui.label("倍数:");
                 ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
-            });
-        }
-        ui.add_space(BLOCK_SPACING);
+            }
+            ui.separator();
 
-        ui.checkbox(&mut self.form.exclude_delisted, "排除退市");
+            ui.checkbox(&mut self.form.exclude_delisted, "排除退市");
+        });
     }
 
     /// Multi-select dropdown popup: a summary button that opens a searchable
