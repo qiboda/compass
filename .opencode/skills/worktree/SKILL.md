@@ -78,8 +78,9 @@ scripts/open-worktrees.sh --close [wt...]    # 终止 opencode + 删除 worktree
 worktree 的 opencode 进程、关闭其承载终端窗口（每窗口终端可靠；client-server
 终端如 gnome-terminal 尽力而为，xfce4-terminal 因单实例守护进程不尝试），
 再 `git worktree remove --force` + `git branch -D`，一次完成退出与清理。
-**从 worktree 内部执行**（例如在该 worktree 的 opencode 会话里运行 `--close`）
-时，清理自动交给 `setsid` 脱离会话的子进程（日志 `logs/open-worktrees-close.log`），
+**当该 worktree 存在运行中的持有进程**（包括从 worktree 内部执行时的调用者
+自身——例如在该 worktree 的 opencode 会话里运行 `--close`），清理自动交给
+`setsid` 脱离会话的子进程（日志 `logs/open-worktrees-close.log`），
 调用者被终止后清理仍会完成：
 
 ```bash

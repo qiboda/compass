@@ -8,9 +8,10 @@
 #
 # Close: stops any opencode whose cwd points at the worktree, closes the
 # holding terminal window, then removes the worktree and its branch (ref #96).
-# When the caller itself lives inside the worktree (e.g. --close issued from
-# that worktree's own opencode session), cleanup is handed off to a
-# setsid-detached subprocess so it survives the caller being killed (ref #104).
+# When any process holds the worktree (including the caller itself — e.g.
+# --close issued from that worktree's own opencode session), the whole close
+# is handed off to a setsid-detached subprocess that survives the caller
+# being killed (ref #104).
 #
 # Usage:
 #   scripts/open-worktrees.sh            # open all worktrees
@@ -109,18 +110,6 @@ launch_in_terminal() {
 # worktree + branch
 # ---------------------------------------------------------------------------
 
-# Returns 0 if $1 is the calling process or one of its ancestors (walking the
-# ppid chain via /proc/$pid/stat field 4). Guards the close kill loop against
-# ever killing the caller itself (ref #104).
-is_ancestor_of_self() {
-    local target="$1" cur="$$"
-    while [ "$cur" -gt 1 ] 2>/dev/null; do
-        [ "$cur" = "$target" ] && return 0
-        cur="$(awk '{print $4}' "/proc/$cur/stat" 2>/dev/null || echo 0)"
-    done
-    return 1
-}
-
 # Prints the pid of the terminal window hosting $1, walking its ppid chain.
 # Matches per-window terminal binaries only. gnome-terminal-server (client-
 # server) and xfce4-terminal (single-instance D-Bus daemon whose process name
@@ -212,44 +201,32 @@ close_worktree() {
         return 0
     fi
 
-    # 1. Stop any opencode whose cwd is this worktree directory.
-    #    pgrep -f matches the script's own process too, but the cwd check
-    #    below (readlink /proc/PID/cwd) confines the kill to real holders.
-    #    A holder on the caller's own ancestor chain means the caller runs
-    #    inside this worktree — hand the whole close off to a detached
-    #    session instead of killing ourselves mid-cleanup (ref #104).
-    local holders="" pid cwd term seen_terms=""
+    # 1. Any process whose cwd is this worktree directory is a holder.
+    #    If any holder exists, hand the whole close to a setsid-detached
+    #    session — close_worktree must NEVER kill in-process. A holder may be
+    #    the caller itself (opencode living inside the worktree); ppid chains
+    #    are unreliable under opencode's bash tool, so no ancestor detection
+    #    is attempted: the detached cleanup kills all holders (including the
+    #    caller) after this function has already returned (ref #104 round-2).
+    local holders="" pid cwd
     for pid in $(pgrep -f 'opencode' || true) $(pgrep -f 'bash-language-server' || true); do
         [ -n "$pid" ] || continue
         cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
         [ "$cwd" = "$dir" ] || continue
-        if is_ancestor_of_self "$pid"; then
-            echo "  caller runs inside $wt; handing off cleanup to a detached session"
-            if [ -z "${DRY_RUN:-}" ]; then
-                launch_detached_cleanup "$wt" "$dir"
-            else
-                echo "  (dry-run) would detach cleanup for $wt"
-            fi
-            return 0
-        fi
         holders="$holders $pid"
     done
 
-    # 2. Stop external holders and close their terminal windows.
-    for pid in $holders; do
-        echo "  stopping opencode (pid $pid) in $wt"
+    if [ -n "$holders" ]; then
+        echo "  $wt is held by running processes; handing off cleanup to a detached session"
         if [ -z "${DRY_RUN:-}" ]; then
-            term="$(find_terminal_pid "$pid" || true)"
-            kill "$pid" 2>/dev/null || true
-            if [ -n "$term" ] && ! echo "$seen_terms" | grep -qw "$term"; then
-                seen_terms="$seen_terms $term"
-                echo "  closing terminal (pid $term)"
-                kill "$term" 2>/dev/null || true
-            fi
+            launch_detached_cleanup "$wt" "$dir"
+        else
+            echo "  (dry-run) would detach cleanup for $wt"
         fi
-    done
+        return 0
+    fi
 
-    # 3. Remove the worktree and its branch.
+    # 2. No holders: remove the worktree and its branch synchronously.
     #    Detached-HEAD worktrees report "HEAD" from --abbrev-ref; never try to
     #    `git branch -D HEAD` (it fails) — just remove the worktree itself.
     #    git runs with -C PROJECT_ROOT: close may be invoked from any cwd.
