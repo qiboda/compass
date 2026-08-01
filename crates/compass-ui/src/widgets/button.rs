@@ -9,10 +9,9 @@ use crate::tokens::ThemeTokens;
 use egui::{Color32, CornerRadius, Pos2, Rect, Response, RichText, Sense, Stroke, Ui, Vec2};
 
 /// Visual variant of a [`Button`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonVariant {
     /// Neutral default button (panel-alt fill + border).
-    #[default]
     Default,
     /// Accent-filled primary action.
     Primary,
@@ -23,12 +22,11 @@ pub enum ButtonVariant {
 }
 
 /// Size of a [`Button`] (controls the height via the spacing tokens).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonSize {
     /// Small (24 px).
     Sm,
     /// Regular (32 px).
-    #[default]
     Md,
     /// Large (40 px).
     Lg,
