@@ -247,7 +247,6 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 ---
 
 ## 历史摩擦记录（并入自 friction.md，2026-08-01）
-
 > friction 机制已合并入本文件的 User corrections 章节。以下为历史摩擦条目，
 > 记录用户纠正 AI 行为的时刻，保留防重犯价值。
 
@@ -268,3 +267,30 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 **User corrections**: 「开启新的 opencode，要先解绑当前的 opencode 的 session」。opencode 将 worktree 目录映射到与 master 相同的 project_id（`git_worktree` 关联），master 实例仍绑定该 project 的 session 时，worktree 新实例无法启动。该经验已写入 worktree skill 的 Post-Creation MANDATORY 步骤。
 
 **教训**: 涉及 opencode/git 工具的跨目录操作，先确认工具对 worktree 的特殊处理（session/project 绑定模型），再执行启动动作。教训应沉淀到 skill 文档本身，确保后续所有 agent 在流程上不会重犯。
+
+## 2026-08-01 — ref #96 refactor: 合并 worktree skills，脚本自动启动替代手动解绑
+
+**What was done**: 合并 `worktree` + `open-worktrees` 两个 skill 为单一权威源；重写 `scripts/open-worktrees.sh` 为探测 OS 默认终端 + setsid 自动启动（新 opencode 脱离当前对话进程组）；新增 `--close [wt...]` 子命令（终止 cwd 指向 worktree 的 opencode 进程 → `git worktree remove --force` + `git branch -D`）；同步 AGENTS.md/process.md 索引句；新增自包含测试套件（16 检查）。4 commits（080fc0c/6ae7f6c/aa9d374/14ea178），4 轮 5-agent review 后通过。
+
+**User corrections**:
+1. 「解绑」语义纠正：worktree skill 原把"解绑"描述为**手动退出当前 opencode 实例**，正确语义是**新进程自动脱离当前对话进程组**（setsid）——对话结束新 opencode 窗口不随之关闭，无需用户手动处理。此纠正推翻了 #76 反思记录的经验（该经验基于错误语义，历史条目保留但已被本工作取代）。
+2. 两个 worktree skill（worktree + open-worktrees）是重复维护负担——合并为一个，机制描述只写一处。
+3. 边界问题：opencode 仍占据 worktree 目录导致 `git worktree remove` 失败——需要一个退出脚本（`--close`）先终止进程再清理。
+
+**What went wrong**: 4 轮 review 每轮都有实质 blocking，全部由 review agent 发现而非自检：
+1. **round-1**：no-arg 调用回归（`""` case exit 1 而文档/旧脚本要求打开全部）+ **HIGH 命令注入**（`terminal_cmd` 把 `$dir` 插值进 shell 字符串经 `setsid bash -c` 执行——git 分支名允许 `'`，可逃逸执行任意命令）。
+2. **round-2**：xdg-terminal-emulator 分支注入未关闭（Debian 系非标准命令，`-e` 参数拼串后经 `sh -c` 重解析）+ set -e 中止 open 循环（`launch_in_terminal` 返回 1 无 `|| true`）+ 测试硬编码依赖本机 worktree。
+3. **round-3**：detached-HEAD worktree 使 `--close` 中途中止（`--abbrev-ref` 返回 "HEAD" 通过 `!= master` 守卫 → `git branch -D HEAD` 失败 → set -e 中止循环，剩余 worktree 跳过）+ 测试 2 无头环境 set -e 中止整个套件 + 测试 12 后台 stub 写入竞态。
+
+**Lessons learned**:
+1. **shell 脚本中用户可控路径（worktree 名 = git 分支名，允许 `'`/`$()`/`&`）绝不能插值进命令字符串**——必须作为 argv 元素传递（`setsid kitty --directory "$dir"`）或作为位置参数传给内层 bash（`bash -c 'cd "$1" ...' _ "$dir"`）。写完立即用恶意 payload（含 `&`/`>`/`$()`）实测注入路径。
+2. **bash 脚本的 `set -euo pipefail` 是双刃剑**：函数返回 1 会静默中止循环——所有可能失败的调用点（`launch_in_terminal ... || true`）和分支守卫（skip 返回 0）必须在写时显式处理，否则只能在 review 中暴露。
+3. **测试套件必须自包含**：硬编码本机 worktree（cleanup-stock-basic）依赖使套件在 CI/他人机器误失败——用临时 git repo + worktree fixture；无头环境检测要 `set +e` 捕获 rc 而非无条件执行。
+4. **安全相关的回归测试必须覆盖真实执行路径**：只测 dry-run echo 分支会让未来回归溜过——用 PATH stub（fake setsid/kitty）捕获真实 argv 断言完整性。
+5. **review 是多轮的必要流程而非形式**：4 轮 5-agent review 暴露的 blocking（注入、set -e 中止、detached-HEAD 守卫）都是单 agent/自测难发现的组合缺陷——每轮修复后必须重跑全部 agent，不能因"改动小"跳过。
+
+### Trends (last 10)
+- **工具/平台语义误读反复出现**（#76 手动解绑经验、#96 解绑语义纠正）：涉及 opencode/git 的机制描述，用户纠正后必须立即同步 skill/文档，并警惕历史反思条目记录了被推翻的语义（#76 条目与 #96 结论矛盾，历史保留但需在后续工作中明确新旧替代关系）
+- **测试质量是反复失败点**（#79 覆盖率虚高、#75 flaky、#96 测试依赖本机 worktree + 只测 echo 分支）：agent 编写测试必须自包含 + 覆盖真实路径 + 无环境依赖，这三条应纳入测试验收标准
+- **security review 对 shell/脚本注入的敏锐度**（#96 round-1 注入、round-2 xdg 残留）：git 允许的 refname 字符集（`'`/`&`/`>`）是脚本注入的天然攻击面——任何把外部名拼进命令的代码都要过 security agent 专项检查
+
