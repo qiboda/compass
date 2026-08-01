@@ -196,8 +196,9 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
         } => {
             let dolt_dir = dolt_dir.unwrap_or_else(|| PathBuf::from(&config.dolt.compass_data_dir));
             let output = output.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
-            let table: import_compass::CompassTable =
-                table.parse().map_err(|e: String| format!("invalid table: {e}"))?;
+            let table: import_compass::CompassTable = table
+                .parse()
+                .map_err(|e: String| format!("invalid table: {e}"))?;
             if let Err(e) =
                 import_compass::run(dolt_dir, output, table, overwrite, since.as_deref())
             {
