@@ -2,9 +2,9 @@
 # One-command launcher for the Compass GUI chart app.
 #
 # Runs `cargo run --bin compass` in the foreground: Ctrl+C to quit, logs go
-# straight to the terminal. A plain `cargo run` also works now that the
-# workspace declares `default-run = "compass"` (ref #117), but the explicit
-# --bin keeps this script robust regardless of workspace metadata.
+# straight to the terminal. The explicit --bin is required because this is a
+# virtual workspace (root Cargo.toml has no [package], so default-run is not
+# available); --bin also keeps the script robust to future workspace changes.
 #
 # Usage:
 #   scripts/run.sh               # launch the GUI (foreground)
