@@ -217,3 +217,25 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **测试相关教训反复出现**（#62 Wave 3、#46、#79）：测试正确性/确定性/质量是高频失败点——#79 再次印证"测试数量≠测试质量"，需把 clippy --all-targets 和断言抽查纳入 agent 测试任务的验收标准
 - **gate/流程违规历史条目**（07-26 流程违规、本次 agent 卡 grill-me）：AI agent 加载 AGENTS.md 后可能做出违背任务意图的行为——delegation prompt 的显式禁令是必要防呆（本次已验证有效）
 - **hook/工具链问题**（#16 pre-push hook、#79 pre-push 阻断）：pre-push hook 是质量最后防线，本地验证命令应与其对齐（fmt/doc 全套），避免 push 时才暴露
+
+## 2026-08-01 — ref #75/#88/#89/#92/#83 合并批次：多 PR rebase 落地 + CI 全绿
+
+**What was done**: 一次合并 3 个 PR（#88 ci-fix 移除自动 /fix、#92 rust-cache 仅 master save、#83 覆盖率 80% 门禁），全部 rebase 到新 master 后合并，master CI 全绿。修复 #75 flaky 测试（周六日期跨 ISO 周边界）、setup-uv@v9 不存在的 tag（→@v9.0.0）、pre-push hook rebase 误拒（#95）、ci-fix 既存问题（#87）。落地"目标分支修复工作流"（从 feature 分支切修复分支 cherry-pick 回，各 PR 互不阻塞）。关闭 4 个陈旧 CI Failure issues + #54 架构 issue。
+
+**What went wrong**:
+1. **#75 flaky 测试再次中招**：master 上 `save_and_fetch_preserves_symbol_and_timeframe` 用 Utc::now() 生成日期，周六跨 ISO 周边界 → PR #88/#92 的 CI 全挂——#79 反思已记录此教训，但修复（固定基准日期）未及时进 master，导致后续所有分支 CI 连锁失败
+2. **rebase 后 force push 被 pre-push hook 误拒**：hook 的 range 含 master 已合并 commits（含已关闭 issue 的 ref）——暴露 hook 的 merge-master 场景缺陷（#95）
+3. **rebase 3 处深度冲突**：main.py（官方源迁移 × dispatch 提取）、duckdb.rs（#75 修复双版本）、reflections.md、pre-push hook（双版本）——跨 PR 架构性冲突，需逐文件判断保留哪侧
+4. **PR #83 rebase 后 clippy --all-targets 暴露 3 类问题**：expect_fun_call、unused Path、await_holding_lock + load_config 测试 HOME env 竞态（Mutex 串行化修复）
+5. **关闭 issue 触发 8 个 opencode workflow skipped run 刷屏**——平台行为（issue_comment 事件级触发，无法按 body 过滤）
+
+**Lessons learned**:
+1. **flaky 测试修复必须立即进 master**（不等 PR 合并批次）——#75 修复在分支上滞留导致所有后续分支 CI 连环挂；master 级 bug 应单独直推 master（"目标分支工作流"的"何时不用"场景）
+2. **rebase 大 PR 前先跑 `cargo clippy --all-targets` + 全量 pytest**——rebase 后 master 变更（官方源迁移）会让旧测试/旧 lint 失效，先本地暴露再 push，避免 CI 轮次浪费
+3. **跨 PR 冲突解决原则**：保留"已在 master 验证过"的版本（如 #75 修复 2026-08-05 vs 2026-01-01 基准日期），功能性冲突（dispatch × 官方源）需理解双方意图后合并而非二选一
+4. **hook 类代码的 commit message 避免在正文写 `ref #N` 字面量**（commit-msg hook 会误提取已关闭 issue）——用"issue 75"等不带 ref 前缀的表述
+
+### Trends (last 10)
+- **hook 链路的次生 bug**（#16 pre-push range、#79 pre-push 阻断、#95 rebase 误拒、commit-msg 误提取正文 ref）：hook 自身成为新的故障源——hook 改动需带测试/模拟验证，且 commit message 规范应明确"正文勿用 ref #N 字面量"
+- **跨 PR 合并成本被低估**（#78 × #79、#75 × #83）：并发 PR 共享文件时，rebase 冲突解决 + 测试适配是主要工作量——提前识别共享文件（main.py/duckdb.rs/reflections.md）可预判冲突
+- **时间/环境依赖测试反复出现**（#75、#79 review、#62）：测试必须用固定基准（日期/路径/端口），agent 生成的测试要专项检查"是否依赖 now()/环境变量"
