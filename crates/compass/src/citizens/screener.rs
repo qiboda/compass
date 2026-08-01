@@ -90,6 +90,8 @@ pub struct ScreenerPanel {
     sort_column: usize,
     /// `true` = descending (default for market cap).
     sort_descending: bool,
+    /// Persists the current query whenever a filter run is triggered.
+    on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
 }
 
 /// Column keys for the results table.
@@ -136,23 +138,63 @@ impl Citizen for ScreenerPanel {
 
 impl ScreenerPanel {
     /// Create a screener panel with the given citizen identity/state.
-    pub fn new(citizen_id: CitizenId, citizen_state: CitizenState) -> Self {
+    ///
+    /// `restore` optionally provides saved conditions from config; `on_save`
+    /// is invoked with the current query whenever the filter runs.
+    pub fn new(
+        citizen_id: CitizenId,
+        citizen_state: CitizenState,
+        restore: Option<&ScreenerQuery>,
+        on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
+    ) -> Self {
+        let mut form = ConditionForm {
+            exclude_delisted: true,
+            breakout_days: BreakoutCondition::default().days,
+            momentum_days: MomentumCondition::default().days,
+            momentum_min_pct: MomentumCondition::default().min_pct,
+            momentum_max_pct: MomentumCondition::default().max_pct,
+            volume_days: VolumeCondition::default().days,
+            volume_times: VolumeCondition::default().times,
+            ..ConditionForm::default()
+        };
+        if let Some(q) = restore {
+            form.industries = q.industries.clone();
+            form.exchanges = q.exchanges.clone();
+            form.boards = q.boards.clone();
+            form.list_years = q.list_years;
+            form.market_cap_min = q.market_cap_min;
+            form.market_cap_max = q.market_cap_max;
+            form.exclude_delisted = q.exclude_delisted;
+            form.ma_enabled = q.ma.is_some();
+            form.ma_kind = match q.ma {
+                Some(MaCondition::AboveMa60) => MaKind::AboveMa60,
+                Some(MaCondition::BullishAlign) => MaKind::BullishAlign,
+                _ => MaKind::AboveMa20,
+            };
+            form.breakout_enabled = q.breakout.is_some();
+            if let Some(b) = q.breakout {
+                form.breakout_days = b.days;
+            }
+            form.momentum_enabled = q.momentum.is_some();
+            if let Some(m) = q.momentum {
+                form.momentum_days = m.days;
+                form.momentum_min_pct = m.min_pct;
+                form.momentum_max_pct = m.max_pct;
+            }
+            form.volume_enabled = q.volume.is_some();
+            if let Some(v) = q.volume {
+                form.volume_days = v.days;
+                form.volume_times = v.times;
+            }
+        }
         Self {
             citizen_id,
             citizen_state,
-            form: ConditionForm {
-                exclude_delisted: true,
-                breakout_days: BreakoutCondition::default().days,
-                momentum_days: MomentumCondition::default().days,
-                momentum_min_pct: MomentumCondition::default().min_pct,
-                momentum_max_pct: MomentumCondition::default().max_pct,
-                volume_days: VolumeCondition::default().days,
-                volume_times: VolumeCondition::default().times,
-                ..ConditionForm::default()
-            },
+            form,
             industry_filter: String::new(),
             sort_column: 4, // market cap
             sort_descending: true,
+            on_save,
         }
     }
 
@@ -173,6 +215,7 @@ impl ScreenerPanel {
                 ui.separator();
                 if ui.button("筛选").clicked() {
                     let query = self.form.to_query();
+                    (self.on_save)(&query);
                     shared_state.screener_loading.set(true);
                     shared_state.screener_error.set(None);
                     if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
@@ -443,7 +486,7 @@ mod tests {
     fn panel_with_form() -> (ScreenerPanel, SharedState) {
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
-        let panel = ScreenerPanel::new(id, state);
+        let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}));
         (panel, SharedState::new("000001", "1d"))
     }
 
