@@ -196,10 +196,8 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
         } => {
             let dolt_dir = dolt_dir.unwrap_or_else(|| PathBuf::from(&config.dolt.compass_data_dir));
             let output = output.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
-            let table: import_compass::CompassTable = table.parse().map_err(|e: String| {
-                error!("{e}");
-                e
-            })?;
+            let table: import_compass::CompassTable =
+                table.parse().map_err(|e: String| format!("invalid table: {e}"))?;
             if let Err(e) =
                 import_compass::run(dolt_dir, output, table, overwrite, since.as_deref())
             {
@@ -593,19 +591,20 @@ compass_data_dir = "/custom/compass"
 
     #[tokio::test]
     async fn run_uses_config_defaults_when_cli_options_are_none() {
-        // Export with no --input → uses config.parquet.dir.
-        // Use an empty tempdir to avoid real data access.
+        // Export with no --input → uses config.parquet.dir (the fallback path).
+        // Point config at an empty tempdir so ParquetReader succeeds with no data.
         let dir = tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.parquet.dir = dir.path().to_string_lossy().to_string();
         let output = dir.path().join("test.duckdb");
         let cli = Cli {
             command: Command::Export {
-                input: Some(dir.path().to_path_buf()),
+                input: None,
                 format: "duckdb".to_string(),
                 output: Some(output.clone()),
                 overwrite: false,
             },
         };
-        let config = AppConfig::default();
         let result = run(cli, config).await;
         assert!(result.is_ok());
     }
