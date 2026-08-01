@@ -97,6 +97,10 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     # Determine commit range — only scan commits unique to this push.
     # For new branches, find the merge-base with origin/master so we
     # don't scan the entire reachable history.
+    # Always exclude commits already on origin/master (e.g. after a rebase,
+    # master's commits — with their closed-issue refs — must not be rescanned).
+    # NOTE: $range holds a bare revision range (no spaces); the exclusion is
+    # appended at each git log call site so git parses it as a separate arg.
     if [ "$remote_oid" = "0000000000000000000000000000000000000000" ]; then
         base=$(git merge-base origin/master "$local_oid" 2>/dev/null \
             || git merge-base origin/main "$local_oid" 2>/dev/null \
@@ -109,11 +113,13 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     else
         range="${remote_oid}..${local_oid}"
     fi
+    # Exclusion applied at call sites: git log $range --not origin/master
+    excl_origin="--not origin/master"
 
     # Detect malformed ref references: standalone "ref" not followed by #N.
     # Uses \<ref\> word boundary to avoid matching "references", "refactored", etc.
-    all_refs=$(git log "$range" --format="%B" 2>/dev/null | grep -ciE '\<ref\>[[:space:]]+')
-    valid_refs=$(git log "$range" --format="%B" 2>/dev/null | grep -ciE '\<ref\>[[:space:]]+#[0-9]+')
+    all_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '\<ref\>[[:space:]]+')
+    valid_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '\<ref\>[[:space:]]+#[0-9]+')
 
     if [ "$all_refs" -gt "$valid_refs" ]; then
         echo ""
@@ -127,7 +133,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
 
     # Extract issue references from all commits in the range
-    issues=$(git log "$range" --format="%B" 2>/dev/null \
+    issues=$(git log "$range" $excl_origin --format="%B" 2>/dev/null \
         | grep -ioE '\<ref\>[[:space:]]+#[0-9]+' \
         | grep -oE '#[0-9]+' \
         | sort -u \
