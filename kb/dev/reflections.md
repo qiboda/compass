@@ -459,3 +459,27 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **pgrep/pkill 自匹配复发**（ref #104 → 本次）：纪律已写入 process.md 但执行时未查阅——文档固化 ≠ 行为固化，涉及 kill/pgrep 的命令执行前必须先读调试章节；本次已把具体正确命令写进 process.md
 - **"文档已固化但未遵守"模式**（ref #96 反思机制、ref #104、本次）：reflections 趋势分析已识别过该模式，但缺执行侧钩子——调试类命令的纪律应内嵌到具体场景（如本节的 compass 命令模板）而非仅原则描述
 - **UI 反馈驱动的多轮迭代**（本次 6 轮）：GUI 布局/交互无法被无头测试覆盖，设计决策（控件形态、布局）应尽早向用户确认，减少目视验证循环
+
+## 2026-08-01 — ref #117 一键启动脚本 scripts/run.sh
+
+**What was done**: 新增 `scripts/run.sh`（前台运行 `cargo run --bin compass`，Ctrl+C 退出，支持 `-h/--help` 与 `--release` 透传），同步 AGENTS.md 及 6 个 kb/ 文件的启动命令引用。3 commits（746ed40 feat / bcddb78 fix 注释 / 3a81cc9 fix doc-sync + 帮助截断）。
+
+**User corrections**: 「不要这个了。」——grill 阶段推荐"脚本 + Cargo.toml 加 default-run 修根因"，实现时发现根 `Cargo.toml` 是 virtual workspace（无 `[package]` 段），`default-run` 是 package 级 key 无处安放；`.cargo/config.toml` alias 方案也被 cargo 拒绝（`run` 是内置命令不可覆盖）。向用户如实报告方案偏离后，用户拍板放弃根因修复、只保留脚本。
+
+**What went wrong**:
+1. **技术假设未在 grill 阶段验证**：推荐"default-run 修根因"时未先确认该 key 对 virtual workspace 的有效性，导致实现期发现方案不可行、需返工询问用户。验证时用 `cargo run --help` 判断，被 cargo 自身的 help 输出误导，误报"default-run 生效"——`--help` 短路了 binary 解析，不能作为验证手段。
+2. **doc-sync 不完整**（review 抓出，FAIL lane）：gate 第 4b 步只更新了 kb/user/gui.md 和 kb/dev/process.md 两处"明显"位置，漏掉 AGENTS.md、kb/user/{index,config,cli}.md、kb/design/architecture.md、kb/dev/testing.md 共 7 处裸 `cargo run` 引用——这些文档本身就在教用户执行一条会报错的命令。
+3. **帮助输出截断**（两个 Oracle 独立发现）：`show_help` 用 `sed -n '2,11p'` 硬编码行号，头部注释扩写后 sed 范围未同步，`-h|--help` 用法行被截掉。
+
+**Lessons learned**:
+1. grill 推荐方案中的技术可行性假设（cargo 语义、API 行为）应先小成本验证再承诺——"修根因"这类看似显然的方案可能撞上工具限制
+2. 变更命令/CLI/配置 key 时，doc-sync 必须全仓 grep 该标识符的所有引用，不能只按"明显相关"更新——每个 `cargo run` 指引都是用户踩坑点
+3. 帮助文本不要用硬编码行号提取（sed 2,11p），用语义标记（awk 定位 `# Usage:` 块）——头部改动不会静默截断帮助
+4. `cargo run --help` 是 cargo 的帮助，验证 binary 选择必须用实际启动（冒烟测试看启动日志）
+
+**Process improvements**: 已更新 `.opencode/skills/docs/SKILL.md` 第 2 步——新增"命令/术语引用全仓搜索（强制）"步骤：变更涉及命令/CLI flag/配置 key/API 名称时，必须全仓 grep 该标识符的所有引用逐一核对（ref #117 案例已写入作为范例）。awk 帮助提取与验证纪律为一次性教训，写入本条目。
+
+### Trends (last 10)
+- **"文档已固化但未遵守"模式继续出现**（ref #104、ref #105、本次）：doc-sync 规则存在于 gate 中但执行时只更新"明显"位置——本次已把全仓 grep 步骤直接写进 docs skill，把原则变成可执行动作
+- **技术假设未验证就承诺**（本次 default-run、ref #105 控件形态凭想象）：grill/计划阶段的方案推荐应基于已验证事实而非 cargo 语义推测——验证成本远低于返工成本
+- **review 抓出实现遗漏的价值**（ref #105 6 轮、本次 doc-sync FAIL lane + 2 个 sed bug）：5-agent review 的 context-mining 与多 Oracle 角度能稳定抓出实现者盲区，不可因"小变更"跳过

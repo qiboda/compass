@@ -100,6 +100,14 @@ description: 维护 AGENTS.md 及所有 kb/ 文件（design、dev、user、githu
 | kb/user/cli.md | 新增 --verbose flag | CLI 变更 |
 ```
 
+**命令/术语引用全仓搜索（强制）**：变更涉及**命令、CLI flag、配置 key、API 名称**
+等会被其他文档引用的标识符时，除映射表外还必须全仓 grep 该标识符的所有引用，
+逐一核对是否需同步——不能只更新映射表指出的"主要"文件。例如新增/改动了启动命令
+（`cargo run` → `scripts/run.sh`），必须 `grep -rn "cargo run" AGENTS.md kb/` 找全
+所有引用点（AGENTS.md 索引、kb/user/index.md 快速开始、kb/user/config.md、
+kb/design/architecture.md、kb/dev/testing.md 等都可能残留旧命令——ref #117 曾因此
+在 review 中被抓出 7 处遗漏）。
+
 ### 第 3 步：评估当前状态
 
 读取每个识别出的 kb/ 文件。检查现有内容是否已充分覆盖新变更，或者是否需要新增/修改章节。
