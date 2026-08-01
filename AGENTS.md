@@ -28,7 +28,7 @@ grill-me 访谈必须达到 "shared understanding reached" 才能进行任何其
 包括读文件、分类请求、创建 todos、写代码。
 
 **Grill-me 完成后 → 任何 feature 或 bugfix 工作必须进入下面的 PRE-IMPLEMENTATION GATE。
-Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共识就跳过 gate。**
+Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成共识就跳过 gate。**
 
 **子代理（delegated agents）例外**：子代理收到的是主 agent 的委托任务而非用户
 消息——不强制触发 grill-me。子代理自行判断任务是否需要澄清：有设计歧义时自行
@@ -51,12 +51,13 @@ Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共
 
 | Step | 动作 | 所需证据 |
 |---|---|---|
-| **1. Issue** | 调用 `/issue-workflow` 创建/管理 issue | 向用户展示 issue URL |
-| **2. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.omo/plans/*.md` 文件创建 + 用户批准 |
-| **3. Tests** | 调用 `/test`（qa skill）写失败测试 | 测试失败输出 |
-| **4a. Rustdoc** | 调用 `/rustdoc` 验证 `#![warn(missing_docs)]` 合规 | `cargo doc --no-deps` 无警告 |
-| **4b. Docs** | 调用 `/docs` 确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
-| **4c. 决策记录** | 检查相关 `kb/design/` 文件是否含 `## 决策记录` 章节 | 缺失则补齐后再继续 |
+| **1. Design** | 涉及界面设计时：委派 `ui-designer` 产出 `.omo/designs/<feature>.md` 方案并经用户确认；纯逻辑/数据变更可跳过 | 展示方案要点 + 用户确认 |
+| **2. Issue** | 调用 `/issue-workflow` 创建/管理 issue | 向用户展示 issue URL |
+| **3. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.omo/plans/*.md` 文件创建 + 用户批准 |
+| **4. Tests** | 调用 `/test`（qa skill）写失败测试 | 测试失败输出 |
+| **5a. Rustdoc** | 调用 `/rustdoc` 验证 `#![warn(missing_docs)]` 合规 | `cargo doc --no-deps` 无警告 |
+| **5b. Docs** | 调用 `/docs` 确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
+| **5c. 决策记录** | 检查相关 `kb/design/` 文件是否含 `## 决策记录` 章节 | 缺失则补齐后再继续 |
 
 **任何一步未完成即 STOP。不实现。不创建 todos。不改文件。**
 
@@ -227,7 +228,7 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 关键设计决策的 **what + why + why-not**。
 
 - **格式**: 表格 `| 决策 | 选项 | 选择 | 理由 | 排除原因 |`
-- **保障**: `compass-workflow` PRE-IMPLEMENTATION GATE Step 4c 检查是否存在
+- **保障**: `compass-workflow` PRE-IMPLEMENTATION GATE Step 5c 检查是否存在
 - **自包含**: 决策记录不依赖外部引用（如 friction.md），所有理由直接写在设计文档内
 
 ---

@@ -236,7 +236,7 @@ PR: #<PR-N>
 1. compass-workflow 门禁第 2 步显示 `→ 调用 /issue-workflow 创建/管理 issues`
 2. 在门禁第 2 步，compass-workflow 调用 issue-workflow 创建 issue(s)
 3. issue-workflow 决定单 issue 还是 epic 模式，创建 issues，返回结果
-4. compass-workflow 对每个子 issue 独立执行门禁步骤 3-5b
+4. compass-workflow 对每个子 issue 独立执行门禁步骤 3-5c
 5. 所有子 issues 完成后 → PR 合并 → issue-workflow 处理批次关闭
 6. compass-workflow 处理 commit、test、review 和 push（不变）
 

@@ -70,7 +70,8 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
 ## worktree 会话启动规则（MANDATORY）
 
 **worktree 内的 opencode 会话启动后，第一步必须读取
-`.worktrees/<name>/.omo/handoff.md`**（若存在）——这是主 session
+`.omo/handoff.md`**（worktree 根目录，即 `.worktrees/<name>/.omo/handoff.md`；
+若存在）——这是主 session
 移交的上下文契约，包含：用途简述、对应 issue URL、已锁定的
 grill-me 决策、下一步计划。读取 handoff 之后才允许开始任何工作
 （grill-me 延续、设计、计划、实现）。
