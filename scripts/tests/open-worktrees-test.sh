@@ -164,6 +164,94 @@ check "open loop guards launch with || true" "grep -q 'launch_in_terminal \"\$te
 #     ref #96 round-2 security review: Debian-only command, argv not preserved)
 check "no xdg-terminal-emulator branch" "! grep -q 'xdg-terminal-emulator' '$SCRIPT'"
 
+# 15. is_ancestor_of_self: self is an ancestor of itself; init (pid 1) is not.
+#     Guards the kill-loop "never hit the caller's own process chain" fix for
+#     --close run inside the target worktree (ref #104).
+check "is_ancestor_of_self identifies self, rejects init" "bash -c '
+    set -e
+    func=\$(sed -n \"/^is_ancestor_of_self()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    declare -F is_ancestor_of_self >/dev/null
+    is_ancestor_of_self \$\$
+    ! is_ancestor_of_self 1
+'"
+
+# 16. Self-hold: caller lives inside the target worktree, so close must NOT
+#     remove anything in-process (it would die with the caller). It must
+#     hand off to a setsid-detached cleanup instead (ref #104). Stub pgrep to
+#     report the caller itself, stub setsid to capture the handoff argv.
+check "close self-hold detaches cleanup via setsid" "bash -c '
+    func=\$(sed -n \"/^has_worktree()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    func=\$(sed -n \"/^is_ancestor_of_self()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    func=\$(sed -n \"/^find_terminal_pid()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    func=\$(sed -n \"/^launch_detached_cleanup()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    func=\$(sed -n \"/^close_worktree()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    PROJECT_ROOT=$TMP
+    WT_DIR=$TMP
+    mkdir -p $TMP/stub
+    cat > $TMP/stub/setsid <<\"EOF\"
+#!/bin/sh
+printf \"%s\\n\" \"\$@\" >> $TMP/detached-argv
+EOF
+    chmod +x $TMP/stub/setsid
+    PATH=$TMP/stub:\$PATH
+    pgrep() { echo \$\$; }
+    cd $TMP/wt
+    close_worktree wt 2>&1
+    i=0
+    while [ ! -s $TMP/detached-argv ] && [ \$i -lt 50 ]; do
+        sleep 0.05
+        i=\$((i + 1))
+    done
+    [ -s $TMP/detached-argv ]
+' 2>/dev/null"
+
+# 17. find_terminal_pid: an ordinary process chain (init, pid 1) has no
+#     terminal window to close (ref #104 terminal-close requirement).
+check "find_terminal_pid rejects non-terminal chain" "bash -c '
+    set -e
+    func=\$(sed -n \"/^find_terminal_pid()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    declare -F find_terminal_pid >/dev/null
+    ! find_terminal_pid 1
+'"
+
+# 18. close_worktree kill loop must consult is_ancestor_of_self so the caller
+#     (and its ancestors) can never be killed (ref #104).
+check "close kill loop excludes caller chain" "bash -c '
+    body=\$(sed -n \"/^close_worktree()/,/^}/p\" \"$SCRIPT\")
+    echo \"\$body\" | grep -q is_ancestor_of_self
+'"
+
+# 19. close_worktree must locate the holding terminal so its window can be
+#     closed together with the opencode process (ref #104, user decision B).
+check "close path locates holding terminal" "bash -c '
+    body=\$(sed -n \"/^close_worktree()/,/^}/p\" \"$SCRIPT\")
+    echo \"\$body\" | grep -q find_terminal_pid
+'"
+
+# 20. launch_detached_cleanup must hand the cleanup off via setsid (detached
+#     session survives the caller being killed, ref #104).
+check "close path detaches via setsid" "bash -c '
+    body=\$(sed -n \"/^launch_detached_cleanup()/,/^}/p\" \"$SCRIPT\")
+    echo \"\$body\" | grep -q setsid
+'"
+
+# 21. find_terminal_pid must NOT match xfce4-terminal (single-instance D-Bus
+#     daemon whose process name is xfce4-terminal — killing it closes every
+#     window) nor gnome-terminal-server (client-server daemon, ref #104).
+check "terminal whitelist excludes daemons" "bash -c '
+    body=\$(sed -n \"/^find_terminal_pid()/,/^}/p\" \"$SCRIPT\")
+    echo \"\$body\" | grep -q \"kitty|konsole|gnome-terminal|xterm\"
+    ! echo \"\$body\" | grep -q xfce4-terminal
+    ! echo \"\$body\" | grep -q gnome-terminal-server
+'"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
     echo "ALL TESTS PASSED"

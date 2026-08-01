@@ -163,6 +163,14 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 **加载 `/worktree` skill 获取完整流程**（创建、post-creation MANDATORY 步骤、
 `/handoff`、自动启动区域、`--close` 退出清理、合并后清理）。
 
+`--close <name>` 停止 cwd 指向该 worktree 的 opencode 进程、关闭其承载终端窗口，
+然后移除 worktree 与分支。**当从 worktree 自身内部执行**（例如在该 worktree 的
+opencode 会话里运行 `--close`），清理会交给一个 `setsid` 脱离会话的子进程完成
+（`logs/open-worktrees-close.log`），因此调用者被终止后清理仍会执行完毕
+（ref #104）。终端窗口关闭对每窗口终端（kitty/xterm/konsole）可靠；对
+client-server 终端（gnome-terminal）为尽力而为，xfce4-terminal 因单实例守护
+进程（进程名即 xfce4-terminal）不尝试关闭，避免误关所有窗口。
+
 **为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco/worktree via OCX），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。
 手动 worktrees + `/worktree` skill 提供了完全的控制，避免了这些问题。
@@ -301,6 +309,20 @@ Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回�
 - 文件：`logs/compass.log`（每日滚动）。
 
 ## 调试技巧
+
+### 验证 kill/pgrep 类脚本的安全纪律（ref #104 事故教训）
+
+调试或集成验证任何含 `kill`/`pkill`/`pgrep` 的脚本时，三条纪律缺一不可：
+
+1. **`-f` 模式自指**：`pgrep -f 'opencode'` / `pkill -f 'pattern'` 会匹配**执行该命令的 shell 自身**
+   （命令文本含 pattern 字样）——先列出再核对 pid，或用 `[x]` 技巧
+   （`pgrep -f '[o]pencode'`）避免自匹配。杀到自己的 bash 会话 = 会话挂死。
+2. **持久 shell 的 cwd 污染**：bash 工具的持久会话 `cd` 进 fixture worktree 后，
+   cwd 检查（`readlink /proc/PID/cwd`）会把会话自身卷进 kill 范围。验证一律
+   通过**脚本文件**运行（脚本内 `cd` 只影响自身进程），不在持久会话直接 `cd`。
+3. **子代理委托**：委托 QA/集成验证 agent 执行 kill 类验证时，明确要求
+   fixture 隔离（`/tmp` 路径）、禁止触碰真实 worktree/仓库、疑似危险命令改
+   为只读 Oracle 复查。agent 误杀宿主 opencode 会话 = 用户工作区被破坏。
 
 ### 检查东方财富 API 返回内容
 

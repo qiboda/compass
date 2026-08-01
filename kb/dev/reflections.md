@@ -383,3 +383,33 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **删除/重构遗漏引用检查**（#80 第 3 测试 + integration_test、#78 review 发现 duckdb.rs 遗留）：删除类改动后必须 grep 全仓反查引用（含集成测试/文档），handoff/plan 的清单可能不完整——grep 验证应纳入删除类任务的验收标准
 - **文档与代码脱节反复出现**（#78 review 遗留 schema、#80 cli.md 输出树失实、#77 文档与代码脱节）：多模块改动后 grep 旧引用/旧 schema 是全仓一致性最后一道防线，不能只更新 plan 列举的文件
 - **新 session 上下文利用不足**（#80 未读 handoff 重问决策、#80 push 前未 rebase）：worktree/压缩交接场景下，handoff 文件是决策的权威来源——先读交接文档再动手；push 前必须先 fetch + rebase base 分支（已固化为 AGENTS.md 硬约束）
+
+## 2026-08-01 — ref #104 open-worktrees.sh --close 自伤修复（detached 清理）
+
+**What was done**: 修复 `scripts/open-worktrees.sh --close` 在目标 worktree 内执行时杀掉调用者自身、清理中断留残骸的 bug：新增 `is_ancestor_of_self` 检测 self-hold → `setsid` detached 清理子进程（`--close-detached` 内部模式，日志落盘）→ 关闭承载终端窗口（用户决策 B：每窗口终端可靠，client-server 尽力而为，xfce4-terminal 单实例守护进程排除）→ git 命令 `-C PROJECT_ROOT`。测试套件 23 检查（6+1 新增）全绿；集成验证外部持有者 / self-hold 两路径通过。2 commits（9798de4 / d7ce932）。
+
+**User corrections**:
+1. 「你脚本倒是修复了。。。。但是没有提交和push吧。。。现在内容都被删除的个了。。。。」—— 指出上会话的清理 workaround 未 commit/push 就删除了 worktree 内容（分支 commits 从远程恢复，零损失；未提交内容丢失）。
+2. 「那看来是丢完了，重新修吧。问题就是删除worktree没有删干净，被打开的opencode阻止了，因为就是opencode启动的删除脚本。」—— 定义本次任务：重新修 #104。
+3. 「B。worktree的终端是专门给worktree用的。」—— 纠正我推荐的方案 A（只杀 opencode、不管终端）：`--close` 必须连承载终端窗口一起关。
+4. 「你把自己进程杀死了。。。。。。。。」—— 调试时 `pgrep -f` 自指匹配 + 持久 shell cwd 被 cd 进 fixture，导致 bash 工具会话自杀。
+5. 「继续，然后现在在worktree了，因为你又把opencode的终端杀掉了。。」—— QA review agent 集成验证时误杀用户主仓库 opencode 会话，用户被迫在 close-fix worktree 重开。
+
+**What went wrong**:
+1. 调试集成验证时 bash 工具持久会话被 `pgrep -f` 自指命中（命令文本含模式字样）且 cwd 已被 `cd` 进 fixture worktree → 会话自杀（事故 1）。
+2. QA review agent（可执行命令）集成验证时误杀用户主仓库 opencode 会话（事故 2）——prompt 安全警告不足，未强制"只读复查"或强隔离。
+3. self-hold 集成验证两次模拟失真：bash 解释器执行脚本文件时重置 argv[0]（shebang）、bash -c 最后命令 exec 优化吞掉调用者——耗两轮排查。
+4. review 发现 2 个 BLOCKING：xfce4-terminal 单实例守护进程名即 xfce4-terminal（kill 关所有窗口）、worktree/SKILL.md（机制唯一权威源）未同步。
+
+**Lessons learned**:
+1. 验证含 kill/pgrep 的脚本：`pgrep/pkill -f` 用 `[x]` 技巧防自指；集成验证一律通过脚本文件运行（脚本内 cd 不影响持久会话），不把持久 shell cd 进 fixture。
+2. 委托子 agent 做可能 kill 进程的验证时，强制"只读 Oracle 复查"或"/tmp 强隔离 fixture"，prompt 明确禁止触碰真实 worktree / 宿主 opencode 会话。
+3. 终端守护进程知识：gnome-terminal-server 与 xfce4-terminal（单实例 daemon 进程名即 client 名）必须排除在 close 白名单外，只匹配每窗口终端（kitty/konsole/xterm）。
+4. 模拟"调用者进程"验证 self-hold：需 `& wait` 保持调用者存活（防 bash exec 优化），且调用者与脚本须为父子进程关系。
+
+**Process improvements**: kb/dev/process.md「调试技巧」新增「验证 kill/pgrep 类脚本的安全纪律」小节（ref #104 事故教训：`[x]` 技巧防自指、持久 shell cwd 污染、子代理只读/隔离委托）。
+
+### Trends (last 10)
+- **破坏性脚本验证事故**（ref #104 ×2：bash 工具会话自杀、QA agent 误杀用户会话）：验证 kill 类逻辑缺强制隔离纪律——本次已固化为 process.md 调试纪律，下次同型验证须先读
+- **自引用/自指匹配问题**（ref #97 hook 正则字面量自匹配、ref #104 pgrep -f 匹配执行命令的 shell 自身）：匹配逻辑与命令文本互相污染是反复出现的调试盲区，`[x]` 技巧应成为默认习惯
+- **流程自举工作**（ref #96/#97/#98/#104）：修复工具自身的工具（skill 合并、hook 修复、反思机制、open-worktrees.sh 自修复）连续出现——自举工作的验证更需隔离真实环境，且必须完整走 gate
