@@ -25,26 +25,26 @@
 ### Batch 1（P0 地基）
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | | #123 | S1: workspace 挂载 + compass-ui crate 骨架 + 六类 design token + check-coverage.sh/testing.md/AGENTS.md 接线 | — |
+| done | | #123 | S1: workspace 挂载 + compass-ui crate 骨架 + 六类 design token + check-coverage.sh/testing.md/AGENTS.md 接线 | — |
 
 ### Batch 2（P0 静态层 — 三路并行）
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | | #124 | S2: fonts.rs — 思源黑体 + JetBrains Mono 全内嵌注册（+17.3MB） | S1 |
-| pending | | #126 | S3: theme 自主化（token→egui::Visuals 直构 + chart 薄封装 apply_to_config + crosshair）+ dock_style 构建器（egui_dock 0.20 全字段覆写） | S1 |
-| pending | | #125 | S4: 基础组件 16 个（atoms：button/icon_button/input/dropdown/checkbox/tag/badge/status_dot/tooltip/empty_state/card/divider/label/price_text/segmented/section_title） | S1 |
+| done | | #124 | S2: fonts.rs — 思源黑体 + JetBrains Mono 全内嵌注册（+17.3MB） | S1 |
+| done | | #126 | S3: theme 自主化（token→egui::Visuals 直构 + chart 薄封装 apply_to_config + crosshair）+ dock_style 构建器（egui_dock 0.20 全字段覆写） | S1 |
+| done | | #125 | S4: 基础组件 16 个（atoms：button/icon_button/input/dropdown/checkbox/tag/badge/status_dot/tooltip/empty_state/card/divider/label/price_text/segmented/section_title） | S1 |
 
 ### Batch 3（P1 复合层 — 两路并行）
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | | #127 | S5: 迁移并增强 SearchableDropdown（键盘导航/空态）/ Toast（token 色+入场出场动画）/ Modal（动画+closing 状态机+Danger）至 compass-ui，bin 测试随迁（~39 断言） | S4 |
-| pending | | #128 | S6: 新复合组件 MultiSelect / DataTable（sort_rows 迁移）/ Toolbar / Sidebar / StatusBar（纯 UI，零业务依赖） | S4 |
+| done | | #127 | S5: 迁移并增强 SearchableDropdown（键盘导航/空态）/ Toast（token 色+入场出场动画）/ Modal（动画+closing 状态机+Danger）至 compass-ui，bin 测试随迁（~39 断言） | S4 |
+| done | | #128 | S6: 新复合组件 MultiSelect / DataTable（sort_rows 迁移）/ Toolbar / Sidebar / StatusBar（纯 UI，零业务依赖） | S4 |
 
 ### Batch 4（P2 集成 — 串行）
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | | #130 | S7: 三栏式布局接线（main.rs ui()/render_toolbar 重写 + 1440×900 + fonts/dock_style 接线 + tab 中文标题图标 + 快捷键 + kittest 同步） | S2, S3, S4, S5, S6 |
-| pending | | #131 | S8: Modal 三真实场景 + watchlist 持久化（WatchlistConfig + save_watchlist_config）+ Chart 空态/symbol 回填 + Logger 导出 + Screener DataTable/MultiSelect 化 + 文档同步（gui.md/config.md/architecture.md）+ 反思 | S5, S6, S7 |
+| done | | #130 | S7: 三栏式布局接线（main.rs ui()/render_toolbar 重写 + 1440×900 + fonts/dock_style 接线 + tab 中文标题图标 + 快捷键 + kittest 同步） | S2, S3, S4, S5, S6 |
+| done | | #131 | S8: Modal 三真实场景 + watchlist 持久化（WatchlistConfig + save_watchlist_config）+ Chart 空态/symbol 回填 + Logger 导出 + Screener DataTable/MultiSelect 化 + 文档同步（gui.md/config.md/architecture.md）+ 反思 | S5, S6, S7 |
 
 ## 子 issue 明细
 
