@@ -88,15 +88,16 @@ tokio::task::spawn_blocking(move || {
 
 ### Schema
 
-五张表，均在首次使用时自动创建：
+四张表，均在首次使用时自动创建：
 
 | 表 | 键 | 用途 |
 |---|---|---|
 | `stock_daily` | `(symbol, trade_date)` | 核心 OHLCV bar — 主缓存表 |
-| `stock_basic` | `symbol` | 股票名称、行业、交易所、上市/退市日期、板块、全称、总股本 |
 | `stock_adj_factor` | `(symbol, trade_date)` | 价格复权因子 |
 | `stock_limit` | `(symbol, trade_date)` | 每日涨跌停价格 |
 | `no_data_marks` | `(symbol, timeframe)` | 带 TTL 时间戳的负缓存条目 |
+
+> `stock_basic` 不再由 DuckDB 管理——元数据只走 Parquet（`import-compass --table stock_basic` 生成）。
 
 DuckDB DDL（首次使用时自动创建）：
 
@@ -108,12 +109,6 @@ CREATE TABLE stock_daily (
     volume, amount DOUBLE,
     PRIMARY KEY (symbol, trade_date)
 );
-CREATE TABLE stock_basic (
-    symbol      VARCHAR PRIMARY KEY,
-    name, industry, exchange, board, full_name, region VARCHAR,
-    list_date, delist_date DATE,
-    total_share DOUBLE
-);
 CREATE TABLE stock_adj_factor (
     symbol, trade_date, adj_factor, PRIMARY KEY (symbol, trade_date)
 );
@@ -122,7 +117,7 @@ CREATE TABLE stock_limit (
 );
 ```
 
-Parquet 主数据库布局（由 `compass-data import` 生成）：
+Parquet 主数据库布局（`stock_daily.parquet` 由 `compass-data import` 生成，`stock_basic.parquet` 由 `import-compass --table stock_basic` 生成）：
 
 ```
 parquet_data/
@@ -238,10 +233,7 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
     │       → 二进制 Parquet 字节（无 CSV 中间层）
     │       → 直接写入 parquet_data/stock_daily.parquet（带 symbol 列的单个文件）
     │
-    │       → 标的列表写入 parquet_data/stock_daily.symbols.txt
-    └─ 股票基本信息 → parquet_data/stock_basic.parquet
-    （GUI 主用 `import-compass --table stock_basic` 导出的版本 — 数据来自
-      三大交易所官网：SSE/SZSE/BSE 采集器 → Dolt compass_data → import-compass）
+    └─ 标的列表写入 parquet_data/stock_daily.symbols.txt
 ```
 
 导入直接写入完整数据集 — 没有合并模式，也没有 `--overwrite` 标志。重新运行会用 Dolt 的新导出替换文件。使用 `--since` 进行增量导入更新数据。

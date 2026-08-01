@@ -119,22 +119,7 @@ pub fn run(
     );
 
     // ------------------------------------------------------------------
-    // 3. Export stock_basic — direct Parquet from Dolt (unchanged)
-    // ------------------------------------------------------------------
-    info!("Exporting stock_basic...");
-    let basic_bytes = run_dolt_sql_parquet(
-        &dolt_dir,
-        "SELECT symbol, symbol AS name, \
-         CASE WHEN exchange = 'SZSE' THEN 'SZ' WHEN exchange = 'SHSE' THEN 'SH' ELSE exchange END AS exchange, \
-         list_date, delist_date FROM ts_a_stock_list",
-    )?;
-
-    let basic_path = output.join("stock_basic.parquet");
-    std::fs::write(&basic_path, &basic_bytes)?;
-    info!("  → {}/stock_basic.parquet", output.display());
-
-    // ------------------------------------------------------------------
-    // 4. Export stock_daily — single Parquet file with symbol column
+    // 3. Export stock_daily — single Parquet file with symbol column
     //    Builds one SQL query with all filters, writes a single file,
     //    and generates a companion symbols.txt.
     // ------------------------------------------------------------------
@@ -209,7 +194,7 @@ pub fn run(
     std::fs::rename(&tmp_path, &final_path)?;
 
     // ------------------------------------------------------------------
-    // 5. Generate symbols.txt (strip prefixes, sorted alphabetically)
+    // 4. Generate symbols.txt (strip prefixes, sorted alphabetically)
     // ------------------------------------------------------------------
     let symbols_txt_path = output.join("stock_daily.symbols.txt");
     let mut sorted_codes: Vec<&str> = symbols.iter().map(|s| strip_prefix(s)).collect();
@@ -217,7 +202,7 @@ pub fn run(
     std::fs::write(&symbols_txt_path, sorted_codes.join("\n"))?;
 
     // ------------------------------------------------------------------
-    // 6. Get row count for summary
+    // 5. Get row count for summary
     // ------------------------------------------------------------------
     let count_query = if where_clause.is_empty() {
         "SELECT COUNT(*) AS cnt FROM final_a_stock_eod_price".to_string()
@@ -257,13 +242,6 @@ mod tests {
          open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, \
          adjclose DOUBLE, volume DOUBLE, amount DOUBLE, \
          PRIMARY KEY (symbol, tradedate))";
-
-    const STOCK_LIST_SCHEMA: &str = "CREATE TABLE ts_a_stock_list (\
-         symbol VARCHAR(20) PRIMARY KEY, \
-         name VARCHAR(100), \
-         exchange VARCHAR(10), \
-         list_date DATE, \
-         delist_date DATE)";
 
     fn setup_dolt(dir: &std::path::Path) {
         for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
@@ -312,13 +290,6 @@ mod tests {
 
     fn dolt_setup_tables(dolt_dir: &std::path::Path) {
         dolt_sql(dolt_dir, EOD_SCHEMA);
-        dolt_sql(dolt_dir, STOCK_LIST_SCHEMA);
-        dolt_sql(
-            dolt_dir,
-            "INSERT INTO ts_a_stock_list VALUES \
-             ('000001', '平安银行', 'SZSE', '1991-04-03', NULL), \
-             ('600519', '贵州茅台', 'SHSE', '2001-08-27', NULL)",
-        );
     }
 
     #[test]
@@ -873,42 +844,6 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
 
-        // Create ts_a_stock_list table for stock_basic export
-        let out = std::process::Command::new("dolt")
-            .arg("--data-dir")
-            .arg(dolt_tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg(
-                "CREATE TABLE ts_a_stock_list (\
-                 symbol VARCHAR(20) PRIMARY KEY, \
-                 name VARCHAR(100), \
-                 exchange VARCHAR(10), \
-                 list_date DATE, \
-                 delist_date DATE)",
-            )
-            .output()
-            .expect("dolt create stock list");
-        assert!(
-            out.status.success(),
-            "create stock list failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-
-        let out = std::process::Command::new("dolt")
-            .arg("--data-dir")
-            .arg(dolt_tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg("INSERT INTO ts_a_stock_list VALUES ('000001', '平安银行', 'SZSE', '1991-04-03', NULL)")
-            .output()
-            .expect("dolt insert stock");
-        assert!(
-            out.status.success(),
-            "insert stock failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-
         // Create output dir with legacy stock_daily/ subdirectory
         let output_tmp = tempfile::tempdir().expect("create output dir");
         let legacy_dir = output_tmp.path().join("stock_daily");
@@ -930,14 +865,15 @@ mod tests {
             result.err()
         );
 
-        // Verify both output files were created
+        // Verify stock_daily.parquet was created and stock_basic.parquet was NOT
+        // (stock_basic is owned by import-compass; import must not overwrite it, ref #80)
         assert!(
             output_tmp.path().join("stock_daily.parquet").exists(),
             "stock_daily.parquet should exist"
         );
         assert!(
-            output_tmp.path().join("stock_basic.parquet").exists(),
-            "stock_basic.parquet should exist"
+            !output_tmp.path().join("stock_basic.parquet").exists(),
+            "stock_basic.parquet should NOT be created by import"
         );
     }
 }

@@ -128,4 +128,4 @@ cargo run --bin compass-data -- import
 
 如果某只股票不在本地数据库中，GUI 显示 "no data" 消息 — 无在线回退。请先导入缺失的数据。
 
-要使股票下拉框有数据，`stock_basic.parquet` 必须存在于 parquet 数据目录中（默认：`parquet_data/`）。该文件由 `compass-data import`（或 `import-compass --table stock_basic`）创建。
+要使股票下拉框有数据，`stock_basic.parquet` 必须存在于 parquet 数据目录中（默认：`parquet_data/`）。该文件由 `import-compass --table stock_basic` 创建。

@@ -13,7 +13,6 @@ async fn duckdb_in_memory_has_required_tables() {
     let tables = [
         "stock_daily",
         "stock_adj_factor",
-        "stock_basic",
         "stock_limit",
         "no_data_marks",
     ];
