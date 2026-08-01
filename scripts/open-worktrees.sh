@@ -131,16 +131,18 @@ close_worktree() {
     done
 
     # 2. Remove the worktree and its branch.
+    #    Detached-HEAD worktrees report "HEAD" from --abbrev-ref; never try to
+    #    `git branch -D HEAD` (it fails) — just remove the worktree itself.
     local branch
     branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
     if [ -n "${DRY_RUN:-}" ]; then
         echo "  git worktree remove --force \"$dir\""
-        if [ -n "$branch" ] && [ "$branch" != "master" ]; then
+        if [ -n "$branch" ] && [ "$branch" != "master" ] && [ "$branch" != "HEAD" ]; then
             echo "  git branch -D $branch"
         fi
     else
         git worktree remove --force "$dir"
-        if [ -n "$branch" ] && [ "$branch" != "master" ]; then
+        if [ -n "$branch" ] && [ "$branch" != "master" ] && [ "$branch" != "HEAD" ]; then
             git branch -D "$branch"
         fi
     fi

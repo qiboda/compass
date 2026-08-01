@@ -36,9 +36,13 @@ bash -n "$SCRIPT"
 check "syntax valid" "true"
 
 # 2. detect-terminal: either returns a terminal or fails cleanly (env-dependent,
-#    never asserted as must-succeed on headless machines)
+#    never asserted as must-succeed on headless machines). Guarded so a
+#    nonzero exit cannot abort the suite via set -e.
+set +e
 "$SCRIPT" --detect-terminal >/dev/null 2>&1
-check "detect-terminal exit 0/1 (never crashes)" "[ \$? -le 1 ]"
+DETECT_RC=$?
+set -e
+check "detect-terminal exit 0/1 (never crashes)" "[ \$DETECT_RC -le 1 ]"
 
 # 3. --list: script lists OUR temp worktree when WT_DIR pointed at fixture.
 #    The script hardcodes WT_DIR from its own path, so simulate by extracting
@@ -94,6 +98,22 @@ check "close+dry-run reversed order" "bash -c '
 # 11. Close skips nonexistent worktree (no crash)
 check "close nonexistent is skip (exit 0)" "\"$SCRIPT\" --close --dry-run definitely-not-a-worktree >/dev/null 2>&1"
 
+# 11b. Detached-HEAD worktree: --close must not attempt `git branch -D HEAD`
+#      (regression guard, ref #96 round-3 review). Create a second fixture
+#      worktree checked out at a raw commit, close it via the real function.
+check "close detached-HEAD skips branch -D" "bash -c '
+    git -C $REPO worktree add -q --detach $TMP/wt-detached HEAD
+    func=\$(sed -n \"/^has_worktree()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    func=\$(sed -n \"/^close_worktree()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    WT_DIR=$TMP
+    DRY_RUN=1
+    out=\$(close_worktree wt-detached 2>&1)
+    echo \"\$out\" | grep -q \"git worktree remove\"
+    ! echo \"\$out\" | grep -q \"git branch -D HEAD\"
+'"
+
 # 12. Injection safety on the REAL exec path (not just dry-run echo):
 #     a stub `setsid` on PATH captures the argv passed to the terminal binary,
 #     proving $dir arrives as a SINGLE argv element, never re-parsed by a shell.
@@ -115,6 +135,13 @@ EOF
     PATH=$TMP/stub:\$PATH
     dir=\"$TMP/wt/x&touch>/tmp/openwt-PWNED\"
     launch_in_terminal kitty \"\$dir\"
+    # launch_in_terminal backgrounds the stub setsid; wait for its argv write
+    # before asserting (avoids a race between the async write and the greps).
+    i=0
+    while [ ! -s $TMP/captured-argv ] && [ \$i -lt 50 ]; do
+        sleep 0.05
+        i=\$((i + 1))
+    done
     grep -qx \"kitty\" $TMP/captured-argv
     grep -qx -- \"--directory\" $TMP/captured-argv
     grep -qx \"\$dir\" $TMP/captured-argv
