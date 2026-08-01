@@ -1,0 +1,20 @@
+[package]
+name = "compass-ui"
+version = "0.1.0"
+edition = "2024"
+description = "General-purpose GUI component library and design token system for Compass"
+
+[dependencies]
+egui = { workspace = true }
+egui_extras = { workspace = true }
+egui-phosphor = { workspace = true }
+egui-charts = { workspace = true }
+egui_dock = { workspace = true }
+emath = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
+# egui_kittest's "eframe" feature pulls eframe with default-features = false;
+# eframe::run_native_ext (used by the kittest harness) is cfg-gated behind the
+# default "wgpu" feature chain, so eframe must be unified here with defaults on.
+eframe = { workspace = true }

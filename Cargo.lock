@@ -1221,6 +1221,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-ui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui-charts",
+ "egui-phosphor",
+ "egui_dock",
+ "egui_extras",
+ "egui_kittest",
+ "emath",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
