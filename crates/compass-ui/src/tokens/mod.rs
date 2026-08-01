@@ -1,9 +1,12 @@
 //! Design token system for the Compass GUI (design doc `.omo/designs/gui-upgrade.md` §4).
 //!
-//! Six token categories are defined here — color ([`ColorTokens`]), spacing
-//! ([`SpacingTokens`]), typography ([`TypeTokens`]), radius ([`RadiusTokens`]),
-//! shadow ([`ShadowTokens`]) and motion ([`MotionTokens`]) — plus the
-//! [`ThemeTokens`] aggregate providing complete dark/light palettes.
+//! Six token categories are defined here — color ([`crate::tokens::ColorTokens`]),
+//! spacing ([`crate::tokens::SpacingTokens`]), typography ([`crate::tokens::TypeTokens`]),
+//! radius ([`crate::tokens::RadiusTokens`]), shadow ([`crate::tokens::ShadowTokens`])
+//! and motion ([`crate::tokens::MotionTokens`]) — plus the [`ThemeTokens`]
+//! aggregate providing complete dark/light palettes.
+//!
+//! [`ThemeTokens`]: crate::tokens::ThemeTokens
 
 mod color;
 mod motion;
@@ -21,8 +24,9 @@ pub use typography::TypeTokens;
 
 /// Aggregate of all six token categories for one theme (dark or light).
 ///
-/// Theme-independent scales ([`SpacingTokens`], [`TypeTokens`], [`RadiusTokens`],
-/// [`MotionTokens`]) are shared; only color and shadow differ between palettes.
+/// Theme-independent scales ([`crate::tokens::SpacingTokens`], [`crate::tokens::TypeTokens`],
+/// [`crate::tokens::RadiusTokens`], [`crate::tokens::MotionTokens`]) are shared;
+/// only color and shadow differ between palettes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThemeTokens {
     /// Color palette.
