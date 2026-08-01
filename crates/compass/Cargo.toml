@@ -15,6 +15,7 @@ serde = { workspace = true }
 chrono = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+egui_extras = { workspace = true }
 egui-charts = { workspace = true }
 egui-phosphor = "0.13"
 egui-file-dialog = "0.14"

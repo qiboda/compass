@@ -1131,6 +1131,7 @@ dependencies = [
  "egui-phosphor",
  "egui_citizen",
  "egui_dock",
+ "egui_extras",
  "egui_kittest",
  "egui_lens",
  "egui_mobius",
@@ -1207,6 +1208,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -14,6 +14,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 duckdb = { version = "1", features = ["bundled", "parquet"] }
 egui = "0.35"
+egui_extras = "0.35"
 eframe = "0.35"
 egui-charts = { git = "https://github.com/qiboda/egui-charts.git", branch = "compass" }
 futures = "0.3"
