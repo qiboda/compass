@@ -5,6 +5,7 @@ members = [
     "crates/compass",
     "crates/compass-data",
     "crates/compass-types",
+    "crates/compass-strategy",
 ]
 
 [workspace.dependencies]
