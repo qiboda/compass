@@ -194,8 +194,10 @@ git push origin main          # triggers CI
 ## 快速开始
 
 ```sh
-cargo run                       # launch the GUI app (needs X11/Wayland)
-RUST_LOG=debug cargo run        # verbose logging
+scripts/run.sh                  # one-command launch of the GUI app (foreground)
+cargo run --bin compass         # manual equivalent (needs X11/Wayland)
+cargo run --bin compass-data -- <subcommand>  # data pipeline CLI
+RUST_LOG=debug scripts/run.sh   # verbose logging
 ```
 
 ### CLI（compass-data）

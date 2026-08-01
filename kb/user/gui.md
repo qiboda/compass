@@ -3,7 +3,8 @@
 ## 启动
 
 ```sh
-cargo run
+scripts/run.sh      # 一键启动（前台运行，Ctrl+C 退出）
+cargo run --bin compass   # 等价的手动方式
 ```
 
 应用打开一个 1280×720 的暗色主题窗口，标题为 "Compass — Stock Chart"。
