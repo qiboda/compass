@@ -61,5 +61,7 @@ check "workspace" "."
 check "compass-core" "select(.filename | contains(\"/crates/compass-core/\"))"
 check "compass-data" "select(.filename | contains(\"/crates/compass-data/\"))"
 check "compass" "select(.filename | contains(\"/crates/compass/\"))"
+check "compass-strategy" "select(.filename | contains(\"/crates/compass-strategy/\"))"
+check "compass-types" "select(.filename | contains(\"/crates/compass-types/\"))"
 
 exit "$fail"
