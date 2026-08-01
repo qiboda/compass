@@ -127,6 +127,8 @@ deepseek-v4-flash），负责 GUI 布局、视觉风格与交互效果设计，�
 **路由规则（强制）**：任何涉及界面设计的工作 —— 布局、视觉风格、交互效果、
 动画、hover/快捷键/反馈状态 —— 主 agent 必须先委派 `ui-designer` 产出
 设计方案，再由实现 agent 按方案落地。`ui-designer` 不写源码，只输出方案。
+该环节即 compass-workflow 预实现门禁的 **第 1 步 DESIGN**：方案产出后须向
+用户展示要点并获确认，方可进入后续步骤。纯逻辑/数据变更可跳过此步。
 
 **设计方案留档**：`.omo/designs/` 下的设计方案文件必须随实现一并提交（
 `.gitignore` 已放行该目录）。
@@ -233,14 +235,18 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 ## Worktrees
 
 PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），每个 worktree 对应
-一个 PR/epic，合并后清理。创建后执行 `/handoff` 并运行 `scripts/open-worktrees.sh` 自动
-启动工作树区域（探测默认终端 + setsid 脱离进程组，无需手动解绑当前 session）；
-opencode 仍占用目录无法删除时用 `scripts/open-worktrees.sh --close <name>` 终止并清理
+一个 PR/epic，合并后清理。**主 session 的职责仅为确定用途 + 命名**：将用途简述、
+对应 issue URL 与已锁定决策写入 `.worktrees/<name>/.omo/handoff.md`，然后运行
+`scripts/open-worktrees.sh <name>` 自动启动工作树区域（探测默认终端 + setsid
+脱离进程组，无需手动解绑当前 session）。剩余工作（设计/计划/实现/commit/PR）
+全部由 worktree 内的 agent 自主完成——worktree 会话启动后**第一步读取
+`.omo/handoff.md`** 获取上下文契约。opencode 仍占用目录无法删除时用
+`scripts/open-worktrees.sh --close <name>` 终止并清理
 （从 worktree 内执行时自动转为 detached 清理，含关闭承载终端窗口，见 `kb/dev/process.md`）。
 **加载 `worktree` skill 获取完整流程**（含 post-creation MANDATORY 步骤与清理）。
 
 **强制规则**：worktree 一旦创建，后续实现工作必须在 worktree 内完成交接闭环
-（add → `/handoff` → `open-worktrees.sh <name>` 启动），master 上不再继续实现。
+（add → 写 handoff → `open-worktrees.sh <name>` 启动），master 上不再继续实现。
 master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree 时实现类提交
 落在 master 即流程违规，在 reflections 中记录。
 

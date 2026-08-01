@@ -45,9 +45,10 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
 
 **创建后步骤（MANDATORY）**——每次 `git worktree add` 之后：
 
-1. **运行 `/handoff`** 保存当前对话上下文：
-   - handoff 文件写入 `.worktrees/<name>/.omo/handoff.md`
-   - 内容包含：已做出的决策、下一步计划、相关设计上下文
+1. **确定用途 + 命名（主 session 唯一职责）**：
+   - 主 session 只需确认 worktree 的用途（一句话：做什么、对应哪个 issue）并命名
+   - `<name>` 即 kebab-case 短名，与 PR 匹配
+   - 将用途简述写入 `.worktrees/<name>/.omo/handoff.md`（含对应 issue URL / 已锁定的 grill-me 决策）
    - 如果 `/handoff` 命令不可用，使用 `write` 工具创建 handoff 文件
 
 2. **自动启动工作树区域（ref #96）**——无需手动解绑当前 opencode session：
@@ -58,7 +59,26 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
      对话结束，新 opencode 窗口不会随之关闭；无需用户手动退出当前实例
    - 无探测到终端时，脚本打印手动运行命令
 
-3. **当前 session 留在 master 中**——不要在当前 session 中 `cd` 进入工作树。
+3. **剩余工作全部移交 worktree agent**——主 session 不再参与：
+   - 后续的 grill-me 延续、设计（ui-designer）、计划（ulw-plan）、实现、
+     commit、PR 全部由 worktree 内的 agent 自主完成
+   - worktree agent 从 handoff 文件读取用途/决策/issue 上下文后自行推进
+   - 主 session 创建后即结束该任务的参与，不做实现、不跟进
+
+4. **当前 session 留在 master 中**——不要在当前 session 中 `cd` 进入工作树。
+
+## worktree 会话启动规则（MANDATORY）
+
+**worktree 内的 opencode 会话启动后，第一步必须读取
+`.worktrees/<name>/.omo/handoff.md`**（若存在）——这是主 session
+移交的上下文契约，包含：用途简述、对应 issue URL、已锁定的
+grill-me 决策、下一步计划。读取 handoff 之后才允许开始任何工作
+（grill-me 延续、设计、计划、实现）。
+
+- handoff 缺失时：先向用户询问该 worktree 的用途与目标 issue，
+  再补写 handoff 文件（放入 `.omo/handoff.md`），然后开始工作
+- handoff 内容与用户当前指示冲突时：以用户当前指示为准，
+  并更新 handoff 文件反映最新决策
 
 ### 启动/关闭工作树区域
 
@@ -160,8 +180,8 @@ git push origin fix/ci-fix-issue-only
 
 **然后**（同一回合，`git worktree add` 成功后立即执行）：
 
-1. 运行 `/handoff` → 将当前上下文写入 `.worktrees/fix-candle-rendering/.omo/handoff.md`
+1. 将用途简述（一句话 + 对应 issue URL + 已锁定决策）写入 `.worktrees/fix-candle-rendering/.omo/handoff.md`
 2. 运行 `scripts/open-worktrees.sh fix-candle-rendering` 自动启动（setsid 脱离进程组，无需手动解绑）
-3. 告知用户：worktree 区域已在默认终端中打开
+3. 告知用户：worktree 区域已在默认终端中打开，后续工作由 worktree 内的 agent 自主完成
 
 工作树是临时的——PR 合并后清理。

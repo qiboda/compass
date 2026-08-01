@@ -27,32 +27,37 @@ reached"。如果尚未调用 `/grill-me`，请返回并先完成。
    已达成 shared understanding
    → [必须确认]
 
-☐ 第 1 步 — ISSUE
+☐ 第 1 步 — DESIGN（仅界面相关变更强制）
+   涉及界面布局/视觉风格/交互效果的工作，先委派 ui-designer
+   产出 .omo/designs/<feature>.md 设计方案，并经用户确认
+   → [必须展示设计方案要点 + 用户确认；纯逻辑/数据变更可跳过]
+
+☐ 第 2 步 — ISSUE
    → 调用 /issue-workflow 创建/管理 issues
    → [必须向用户展示 issue URL，或 epic + 子 issue 列表]
 
-☐ 第 2 步 — PLAN（仅单文件变更可跳过）
+☐ 第 3 步 — PLAN（仅单文件变更可跳过）
    计划 agent 已运行且已获批准
    → [必须展示计划摘要]
 
-☐ 第 3 步 — TESTS（RED 阶段）
+☐ 第 4 步 — TESTS（RED 阶段）
    → 调用 /test（qa skill）编写失败测试
    → [必须展示测试失败输出]
 
-☐ 第 4a 步 — RUSTDOC
+☐ 第 5a 步 — RUSTDOC
    → 调用 /rustdoc 验证 #[warn(missing_docs)] 合规
    → [必须展示 cargo doc --no-deps 无警告]
 
-☐ 第 4b 步 — DOCS（kb/）
+☐ 第 5b 步 — DOCS（kb/）
    → 调用 /docs 识别并更新 kb/ 文件
    → [必须列出文件清单]
 
-☐ 第 4c 步 — 决策记录
+☐ 第 5c 步 — 决策记录
    → 检查相关 kb/design/ 文件是否包含 ## 决策记录 章节
    → 如缺失，先补充再继续
 ```
 
-**在上述所有五个步骤（1-4c）完成并向用户展示之前，
+**在上述所有五个步骤（1-5c）完成并向用户展示之前，
 严禁使用任何 edit/write/bash 工具进行实现。**
 
 如果你发现自己在门禁未完成时就开始编写代码，立即停止，
@@ -156,9 +161,10 @@ Feature 分支工作流：大部分工作在分支上进行，通过 PR 合并�
 简单修复（typo、配置、单行变更）可直接提交到 master。
 
 **Worktree 是分支策略的强制部分**：一旦创建 worktree（`git worktree add`），
-后续实现工作必须完成交接闭环（add → `/handoff` → `scripts/open-worktrees.sh <name>`
+后续实现工作必须完成交接闭环（add → 写 handoff → `scripts/open-worktrees.sh <name>`
 启动会话）并在 worktree 内进行——master 上的实现继续即流程违规。
-master 只允许纯文档（docs/lint/typo/反思）直推。
+worktree 会话启动后第一步读取 `.omo/handoff.md` 获取上下文，剩余工作全部
+由 worktree 内 agent 自主完成。master 只允许纯文档（docs/lint/typo/反思）直推。
 
 开始实现前用 `git worktree list` + `git branch --contains HEAD` 确认所在分支；
 不确认分支归属就不开始。
@@ -205,10 +211,11 @@ Compass 项目为特定工作流步骤提供以下 opencode skills：
 
 | Skill | 斜杠命令 | 用途 | 门禁步骤 |
 |---|---|---|---|
-| issue-workflow | `/issue-workflow` | 创建和管理 issues（单 issue + epic/子 issue） | 第 1 步 — ISSUE |
-| qa（test） | `/test` | 编写失败测试（TDD/BDD）、测试覆盖 | 第 3 步 — TESTS |
-| rustdoc | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 | 第 4a 步 — RUSTDOC |
-| docs | `/docs` | 识别并更新 kb/ 文件 | 第 4b 步 — DOCS |
+| ui-designer agent | `task(subagent_type="ui-designer")` | 界面布局/视觉风格/交互效果设计，产出 `.omo/designs/` 方案 | 第 1 步 — DESIGN |
+| issue-workflow | `/issue-workflow` | 创建和管理 issues（单 issue + epic/子 issue） | 第 2 步 — ISSUE |
+| qa（test） | `/test` | 编写失败测试（TDD/BDD）、测试覆盖 | 第 4 步 — TESTS |
+| rustdoc | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 | 第 5a 步 — RUSTDOC |
+| docs | `/docs` | 识别并更新 kb/ 文件 | 第 5b 步 — DOCS |
 | reflect | `/reflect` | 编写实现后反思（含 User corrections）+ 趋势分析 | 实现后 |
 
 当门禁清单显示 `→ 调用 /<command>` 时，加载对应的 skill 并按其工作流执行。
