@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use egui_citizen::{CitizenId, Dispatcher};
-use egui_dock::{DockArea, DockState, Style};
+use egui_dock::{DockArea, DockState};
 use egui_file_dialog::FileDialog;
 use serde::Deserialize;
 use tracing::{debug, info};
@@ -10,6 +10,16 @@ use tracing::{debug, info};
 use compass_core::data::parquet::ParquetReader;
 use compass_core::model::AppConfig;
 use compass_types::ScreenerQuery;
+use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
+use compass_ui::widgets::dropdown::Dropdown;
+use compass_ui::widgets::icon_button::IconButton;
+use compass_ui::widgets::modal::Modal;
+use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
+use compass_ui::widgets::segmented::Segmented;
+use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
+use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
+use compass_ui::widgets::toast::{ToastLevel, ToastManager};
+use compass_ui::widgets::toolbar::Toolbar;
 
 mod backend;
 mod citizens;
@@ -22,36 +32,11 @@ mod theme;
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
 use citizens::screener::ScreenerPanel;
-use compass_ui::widgets::modal::Modal;
-use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
-use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
 
-fn setup_cjk_fonts(ctx: &egui::Context) {
-    let font_path = "/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Regular.otf";
-    let font_bytes = match std::fs::read(font_path) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::warn!(path = font_path, error = %e, "CJK font not found, Chinese may display as tofu");
-            return;
-        }
-    };
-
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "SourceHanSansCN".into(),
-        std::sync::Arc::new(egui::FontData::from_owned(font_bytes)),
-    );
-    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        family.insert(0, "SourceHanSansCN".into());
-    }
-    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-        family.push("SourceHanSansCN".into());
-    }
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    ctx.set_fonts(fonts);
-}
+/// Default inner window size (design doc §Q8: 1440×900).
+const WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(1440.0, 900.0);
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -68,7 +53,7 @@ fn main() -> eframe::Result {
     ));
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW_INNER_SIZE),
         ..Default::default()
     };
 
@@ -78,7 +63,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let egui_ctx = cc.egui_ctx.clone();
 
-            setup_cjk_fonts(&egui_ctx);
+            compass_ui::fonts::setup_fonts(&egui_ctx);
 
             // Load stock list from parquet at startup
             let stock_list = load_stock_list(&config.app);
@@ -141,7 +126,7 @@ fn main() -> eframe::Result {
                 &config.app.app.default_symbol,
                 stock_projection(),
             );
-            let dock_style = Style::from_egui(&cc.egui_ctx.style_of(cc.egui_ctx.theme()));
+            let dock_style = compass_ui::dock_style::dock_style(theme.tokens());
 
             let startup_symbol = shared_state.symbol.get();
 
@@ -169,6 +154,10 @@ fn main() -> eframe::Result {
                 last_loading: false,
                 last_screener_error: None,
                 last_screener_synced_symbol: startup_symbol,
+                sidebar_visible: true,
+                sidebar_search: String::new(),
+                status_clock: String::new(),
+                symbol_input_id: None,
             }))
         }),
     )
@@ -349,40 +338,44 @@ struct CompassApp {
     last_loading: bool,
     last_screener_error: Option<String>,
     last_screener_synced_symbol: String,
+    /// Whether the left watchlist sidebar is visible.
+    sidebar_visible: bool,
+    /// Sidebar search filter text.
+    sidebar_search: String,
+    /// Clock string refreshed every frame (`%H:%M:%S`, local time).
+    status_clock: String,
+    /// Widget id of the toolbar symbol input (for the `/` shortcut).
+    symbol_input_id: Option<egui::Id>,
 }
 
 impl eframe::App for CompassApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.theme.apply_theme(ui.ctx());
 
-        // Toolbar with full-width background.
-        let toolbar_bg = {
-            let panel = ui.visuals().panel_fill;
-            let (r, g, b) = (panel.r(), panel.g(), panel.b());
-            if ui.visuals().dark_mode {
-                egui::Color32::from_rgb(
-                    r.saturating_sub(15),
-                    g.saturating_sub(15),
-                    b.saturating_sub(15),
-                )
-            } else {
-                egui::Color32::from_rgb(
-                    r.saturating_add(15),
-                    g.saturating_add(15),
-                    b.saturating_add(15),
-                )
-            }
-        };
-        egui::Frame::default().fill(toolbar_bg).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
-                self.render_toolbar(ui);
-            });
+        self.handle_shortcuts(ui);
+
+        // Top: group toolbar (40 px, design §6.1).
+        egui::Panel::top("toolbar").show(ui, |ui| {
+            self.render_toolbar(ui);
         });
 
-        // Dock area with explicit background matching the theme.
-        let dock_bg = ui.visuals().panel_fill;
-        egui::Frame::default().fill(dock_bg).show(ui, |ui| {
+        // Left: watchlist sidebar (240 px, resizable 200–320, design §6.2).
+        if self.sidebar_visible {
+            egui::Panel::left("sidebar")
+                .default_size(240.0)
+                .size_range(200.0..=320.0)
+                .resizable(true)
+                .show(ui, |ui| {
+                    self.render_sidebar(ui);
+                });
+        }
+
+        // Bottom: status bar (26 px, design §6.3).
+        egui::Panel::bottom("statusbar").show(ui, |ui| {
+            self.render_status_bar(ui);
+        });
+
+        egui::CentralPanel::default().show(ui, |ui| {
             DockArea::new(&mut self.dock_state)
                 .style(self.dock_style.clone())
                 .show_inside(
@@ -428,6 +421,95 @@ impl eframe::App for CompassApp {
 }
 
 impl CompassApp {
+    /// Global keyboard shortcuts (design §6.4 / §7).
+    ///
+    /// `/` focuses the toolbar symbol input, `Ctrl+Enter` fetches the current
+    /// selection, `Ctrl+K` focuses the sidebar search and `1/2/3` switch the
+    /// timeframe.
+    fn handle_shortcuts(&mut self, ui: &egui::Ui) {
+        let (slash, ctrl_enter, ctrl_k, num1, num2, num3) = ui.ctx().input(|i| {
+            (
+                i.key_pressed(egui::Key::Slash),
+                i.key_pressed(egui::Key::Enter) && i.modifiers.command,
+                i.key_pressed(egui::Key::K) && i.modifiers.command,
+                i.key_pressed(egui::Key::Num1),
+                i.key_pressed(egui::Key::Num2),
+                i.key_pressed(egui::Key::Num3),
+            )
+        });
+        if slash && let Some(id) = self.symbol_input_id {
+            ui.ctx().memory_mut(|m| m.request_focus(id));
+        }
+        if ctrl_enter {
+            self.fetch_bars();
+        }
+        if ctrl_k {
+            ui.ctx()
+                .memory_mut(|m| m.request_focus(Self::sidebar_search_input_id()));
+        }
+        if num1 {
+            self.set_timeframe(0);
+        }
+        if num2 {
+            self.set_timeframe(1);
+        }
+        if num3 {
+            self.set_timeframe(2);
+        }
+    }
+
+    fn set_timeframe(&mut self, idx: usize) {
+        if idx != self.timeframe_index {
+            debug!(timeframe = timeframe_label(idx), "timeframe changed");
+            self.timeframe_index = idx;
+        }
+    }
+
+    /// Widget id of the search input rendered inside [`Sidebar::show`].
+    ///
+    /// The sidebar body runs under an explicit `sidebar_body` Ui id so the
+    /// chain is fully derivable: each child Ui layer (`Sidebar`'s horizontal,
+    /// the `Input` frame and its inner horizontal) uses the default `"child"`
+    /// salt on the parent's stable id, and the `TextEdit` adds its
+    /// `"compass_input"` salt. The salts must be applied as [`egui::IdSalt`]
+    /// (hash of the salt value), matching egui's `Ui::new_child` derivation —
+    /// `Id::with(&str)` hashes the string instead and yields a different id.
+    fn sidebar_search_input_id() -> egui::Id {
+        let body = egui::Id::new("sidebar_body");
+        let child = egui::IdSalt::new("child");
+        let input = egui::IdSalt::new("compass_input");
+        body.with(child).with(child).with(child).with(input)
+    }
+
+    /// Fetch bars for a symbol through the dispatcher.
+    fn fetch_symbol(&mut self, symbol: &str) {
+        self.shared_state.symbol.set(symbol.to_string());
+        let timeframe = timeframe_value(self.timeframe_index);
+        self.shared_state.timeframe.set(timeframe.clone());
+        dispatcher::handle(
+            messages::AppMessage::FetchBars,
+            &self.shared_state,
+            &self.work_signal,
+            timeframe,
+        );
+    }
+
+    /// Fetch the current toolbar selection (exchange-prefixed when an
+    /// exchange is selected in the picker).
+    fn fetch_bars(&mut self) {
+        let symbol = if self.stock_picker.selected_exchange.is_empty() {
+            self.stock_picker.selected_symbol.clone()
+        } else {
+            format!(
+                "{}.{}",
+                self.stock_picker.selected_exchange.to_lowercase(),
+                self.stock_picker.selected_symbol
+            )
+        };
+        info!(symbol = %symbol, timeframe = %timeframe_value(self.timeframe_index), "fetch requested");
+        self.fetch_symbol(&symbol);
+    }
+
     /// Reflect `shared_state.symbol` changes back into the StockPicker.
     ///
     /// Only bare 6-digit codes are synced — the toolbar writes prefixed
@@ -455,100 +537,171 @@ impl CompassApp {
         self.stock_picker.selected_exchange.clear();
     }
 
+    /// Left watchlist sidebar: search row + a "自选" group seeded with the
+    /// current symbol (real watchlist groups arrive in S8).
+    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        let tokens = *self.theme.tokens();
+        let sidebar = Sidebar::new(&tokens);
+        let symbol = self.shared_state.symbol.get();
+        let query = self.sidebar_search.trim().to_lowercase();
+
+        let mut items = Vec::new();
+        for stock in &self.stock_list {
+            if stock.symbol != symbol {
+                continue;
+            }
+            let matches = query.is_empty()
+                || stock.symbol.to_lowercase().contains(&query)
+                || stock.name.to_lowercase().contains(&query);
+            if matches {
+                items.push(SidebarItem {
+                    symbol: stock.symbol.clone(),
+                    name: stock.name.clone(),
+                    exchange: stock.exchange.clone().unwrap_or_default(),
+                    selected: true,
+                });
+                break;
+            }
+        }
+        let groups = [SidebarGroup {
+            title: "自选".to_string(),
+            items,
+        }];
+
+        let events = ui
+            .scope_builder(
+                egui::UiBuilder::new().id(egui::Id::new("sidebar_body")),
+                |ui| sidebar.show(ui, &groups, &mut self.sidebar_search),
+            )
+            .inner;
+
+        for event in events {
+            match event {
+                SidebarEvent::Select { symbol } => self.fetch_symbol(&symbol),
+                SidebarEvent::Search(_) => {}
+                SidebarEvent::Add | SidebarEvent::DeleteRequest { .. } => {}
+            }
+        }
+    }
+
+    /// Bottom status bar: stock summary, loading/error state, data source
+    /// count and the wall-clock time (design §6.3).
+    fn render_status_bar(&mut self, ui: &mut egui::Ui) {
+        let tokens = *self.theme.tokens();
+        self.status_clock = chrono::Local::now().format("%H:%M:%S").to_string();
+
+        let symbol = self.shared_state.symbol.get();
+        let name = self
+            .stock_list
+            .iter()
+            .find(|s| s.symbol == symbol)
+            .map(|s| s.name.clone())
+            .unwrap_or_default();
+        let loading = self.shared_state.loading.get();
+        let error = self.shared_state.error.get();
+        let (status, status_text) = if loading {
+            (StatusKind::Loading, "加载中…".to_string())
+        } else if let Some(err) = error {
+            (StatusKind::Error, err)
+        } else {
+            (StatusKind::Idle, String::new())
+        };
+
+        StatusBar::new(&tokens).show(
+            ui,
+            &StatusBarData {
+                summary: Some(StockSummary {
+                    symbol,
+                    name,
+                    price: None,
+                    change: None,
+                }),
+                status,
+                status_text,
+                source: format!("本地数据源 · {} 只", self.stock_list.len()),
+                clock: self.status_clock.clone(),
+            },
+        );
+    }
+
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(format!(
-                "{} Symbol:",
-                egui_phosphor::regular::MAGNIFYING_GLASS
-            ));
-            self.stock_picker.show(ui, &self.stock_list);
+        let tokens = *self.theme.tokens();
+        let loading = self.shared_state.loading.get();
 
-            ui.separator();
+        Toolbar::new(&tokens).show(ui, |tb, ui| {
+            // Group A — 标的: symbol picker.
+            tb.group(ui, |ui| {
+                let response = self.stock_picker.show(ui, &self.stock_list);
+                self.symbol_input_id = Some(response.id);
+            });
 
-            ui.label(format!("{} TF:", egui_phosphor::regular::CLOCK));
-            let mut tf = self.timeframe_index;
-            egui::ComboBox::from_id_salt("timeframe_combo")
-                .selected_text(timeframe_label(tf))
-                .show_ui(ui, |ui| {
-                    for i in 0..=2 {
-                        let val = timeframe_label(i);
-                        if ui.selectable_value(&mut tf, i, val).clicked() {
-                            debug!(timeframe = val, "timeframe changed");
-                        }
-                    }
-                });
-            self.timeframe_index = tf;
-
-            if ui
-                .button(format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE))
-                .clicked()
-            {
-                let symbol = if self.stock_picker.selected_exchange.is_empty() {
-                    self.stock_picker.selected_symbol.clone()
-                } else {
-                    format!(
-                        "{}.{}",
-                        self.stock_picker.selected_exchange.to_lowercase(),
-                        self.stock_picker.selected_symbol
-                    )
-                };
-                let timeframe = timeframe_value(self.timeframe_index);
-                info!(
-                    symbol = %symbol,
-                    timeframe = %timeframe,
-                    "fetch requested"
-                );
-                self.shared_state.symbol.set(symbol);
-                self.shared_state.timeframe.set(timeframe.clone());
-                dispatcher::handle(
-                    messages::AppMessage::FetchBars,
-                    &self.shared_state,
-                    &self.work_signal,
-                    timeframe,
-                );
-            }
-
-            if self.shared_state.loading.get() {
-                ui.spinner();
-            }
-            // Push error toast only on None→Some transition (not every frame)
-            let current_err = self.shared_state.error.get();
-            if current_err != self.last_error {
-                if let Some(ref err) = current_err {
-                    self.toast.push(ToastLevel::Error, err.clone());
+            // Group B — 周期: segmented 1d/1w/1M.
+            tb.group(ui, |ui| {
+                if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
+                    .selected(self.timeframe_index)
+                    .show(ui)
+                {
+                    self.set_timeframe(idx);
                 }
-                self.last_error = current_err;
-            }
+            });
 
-            // Push success toast when loading transitions true→false with no error
-            let current_loading = self.shared_state.loading.get();
-            if self.last_loading && !current_loading && self.shared_state.error.get().is_none() {
-                self.toast
-                    .push(ToastLevel::Success, "Data fetched successfully");
-            }
-            self.last_loading = current_loading;
+            // Group C — 操作: primary Fetch button with loading state.
+            tb.group(ui, |ui| {
+                let fetch_clicked = Button::new(&tokens, if loading { "加载中…" } else { "Fetch" })
+                    .variant(ButtonVariant::Primary)
+                    .size(ButtonSize::Lg)
+                    .icon(egui_phosphor::regular::DOWNLOAD_SIMPLE)
+                    .loading(loading)
+                    .show(ui)
+                    .clicked();
+                if fetch_clicked && !loading {
+                    self.fetch_bars();
+                }
+            });
 
-            ui.separator();
-
-            ui.label(egui_phosphor::regular::PALETTE.to_string());
-            let themes = CompassTheme::all_names();
-            let mut current = self.theme.name().to_string();
-            egui::ComboBox::from_id_salt("theme_combo")
-                .selected_text(&current)
-                .show_ui(ui, |ui| {
-                    for &name in themes {
-                        if ui
-                            .selectable_value(&mut current, name.to_string(), name)
-                            .clicked()
-                        {
-                            self.theme = CompassTheme::from_config(name);
-                            self.theme.apply_theme(ui.ctx());
-                            self.dock_style =
-                                egui_dock::Style::from_egui(&ui.ctx().style_of(ui.ctx().theme()));
-                        }
+            // Group D — 显示: sidebar toggle + theme dropdown.
+            tb.group(ui, |ui| {
+                if IconButton::new(&tokens, egui_phosphor::regular::SIDEBAR_SIMPLE)
+                    .tooltip("切换侧边栏")
+                    .show(ui)
+                {
+                    self.sidebar_visible = !self.sidebar_visible;
+                }
+                let theme_idx = CompassTheme::all_names()
+                    .iter()
+                    .position(|n| *n == self.theme.name())
+                    .unwrap_or(0);
+                if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
+                    .selected(theme_idx)
+                    .width(140.0)
+                    .show(ui)
+                {
+                    let name = CompassTheme::all_names()[idx];
+                    if name != self.theme.name() {
+                        self.theme = CompassTheme::from_config(name);
+                        self.dock_style = compass_ui::dock_style::dock_style(self.theme.tokens());
+                        self.toast.push(ToastLevel::Info, "主题已切换");
                     }
-                });
+                }
+            });
         });
+
+        // Push error toast only on None→Some transition (not every frame)
+        let current_err = self.shared_state.error.get();
+        if current_err != self.last_error {
+            if let Some(ref err) = current_err {
+                self.toast.push(ToastLevel::Error, err.clone());
+            }
+            self.last_error = current_err;
+        }
+
+        // Push success toast when loading transitions true→false with no error
+        let current_loading = self.shared_state.loading.get();
+        if self.last_loading && !current_loading && self.shared_state.error.get().is_none() {
+            self.toast
+                .push(ToastLevel::Success, "Data fetched successfully");
+        }
+        self.last_loading = current_loading;
     }
 }
 
@@ -633,9 +786,11 @@ mod tests {
     // ======================================================================
 
     use crate::CompassApp;
+    use crate::WINDOW_INNER_SIZE;
     use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
     use compass_core::model::AppConfig;
+    use compass_ui::tokens::ColorTokens;
     use compass_ui::widgets::modal::Modal;
     use compass_ui::widgets::searchable_dropdown::StockPicker;
     use compass_ui::widgets::toast::ToastManager;
@@ -643,7 +798,10 @@ mod tests {
     use egui_kittest::kittest::Queryable;
     use std::sync::Arc;
 
-    fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
+    fn build_compass_app_with_stocks(
+        egui_ctx: egui::Context,
+        stocks: Vec<StockBasic>,
+    ) -> CompassApp {
         let config = AppConfig::default();
         let shared_state = Arc::new(SharedState::new("000001", "1d"));
 
@@ -662,7 +820,6 @@ mod tests {
             Box::new(|_| {}),
         );
 
-        let stock_list: Vec<StockBasic> = Vec::new();
         let theme = CompassTheme::compass_dark();
         let theme_tokens = *theme.tokens();
         let stock_picker = StockPicker::new(theme_tokens, "000001", stock_projection());
@@ -697,7 +854,7 @@ mod tests {
             screener_boards: Vec::new(),
             shared_state,
             work_signal,
-            stock_list,
+            stock_list: stocks,
             stock_picker,
             timeframe_index: 0,
             theme,
@@ -710,7 +867,21 @@ mod tests {
             last_loading: false,
             last_screener_error: None,
             last_screener_synced_symbol: startup_symbol,
+            sidebar_visible: true,
+            sidebar_search: String::new(),
+            status_clock: String::new(),
+            symbol_input_id: None,
         }
+    }
+
+    fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
+        build_compass_app_with_stocks(egui_ctx, Vec::new())
+    }
+
+    fn sized_harness(app: CompassApp) -> egui_kittest::Harness<'static, CompassApp> {
+        egui_kittest::Harness::builder()
+            .with_size([1440.0, 900.0])
+            .build_eframe(|_| app)
     }
 
     // --- Non-UI function tests ---
@@ -833,9 +1004,9 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn setup_cjk_fonts_missing_file_no_panic() {
+    fn setup_fonts_installs_embedded_fonts_no_panic() {
         let ctx = egui::Context::default();
-        crate::setup_cjk_fonts(&ctx);
+        compass_ui::fonts::setup_fonts(&ctx);
     }
 
     #[test]
@@ -846,14 +1017,14 @@ default_timeframe = "1w"
     // --- render_toolbar kittest tests ---
 
     #[test]
-    fn render_toolbar_renders_combo_and_button() {
+    fn render_toolbar_renders_segmented_and_theme_dropdown() {
         let mut app = build_compass_app(egui::Context::default());
         let harness = egui_kittest::Harness::new_ui(|ui| {
             app.render_toolbar(ui);
         });
 
-        let _ = harness.get_by_value("1d");
-        let _ = harness.get_by_value("compass_dark");
+        let _ = harness.get_by_label("1d");
+        let _ = harness.get_by_label_contains("compass_dark");
     }
 
     #[test]
@@ -864,8 +1035,7 @@ default_timeframe = "1w"
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
                 app.render_toolbar(ui);
             });
-            harness.get_by_value("1d").click();
-            harness.step();
+            harness.run();
             harness.get_by_label("1w").click();
             harness.step();
         }
@@ -874,20 +1044,26 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn render_toolbar_theme_switch_changes_theme() {
+    fn render_toolbar_theme_switch_changes_theme_and_rebuilds_dock_style() {
         let mut app = build_compass_app(egui::Context::default());
 
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
                 app.render_toolbar(ui);
             });
-            harness.get_by_value("compass_dark").click();
-            harness.step();
+            harness.run();
+            harness.get_by_label_contains("compass_dark").click();
+            harness.run();
             harness.get_by_label("compass_light").click();
-            harness.step();
+            harness.run();
         }
 
         assert_eq!(app.theme.name(), "compass_light");
+        assert_eq!(
+            app.dock_style.tab_bar.bg_fill,
+            ColorTokens::light().bg_panel,
+            "dock style must be rebuilt from the new theme tokens"
+        );
     }
 
     #[test]
@@ -898,7 +1074,7 @@ default_timeframe = "1w"
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
                 app.render_toolbar(ui);
             });
-
+            harness.run();
             let fetch_label = format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE);
             harness.get_by_label(&fetch_label).click();
             harness.step();
@@ -908,6 +1084,24 @@ default_timeframe = "1w"
             app.shared_state.loading.get(),
             "loading must be true after fetch click"
         );
+    }
+
+    #[test]
+    fn render_toolbar_sidebar_toggle_flips_visibility() {
+        let mut app = build_compass_app(egui::Context::default());
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.run();
+            harness
+                .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
+                .click();
+            harness.step();
+        }
+
+        assert!(!app.sidebar_visible, "toggle must hide the sidebar");
     }
 
     #[test]
@@ -977,6 +1171,209 @@ default_timeframe = "1w"
         harness.step();
         harness.step();
         harness.step();
+    }
+
+    // ======================================================================
+    // S7 three-column layout (design §6.1)
+    // ======================================================================
+
+    #[test]
+    fn window_inner_size_is_1440x900() {
+        assert_eq!(WINDOW_INNER_SIZE, egui::vec2(1440.0, 900.0));
+    }
+
+    #[test]
+    fn layout_renders_three_columns() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let _ = harness.get_by_label_contains("Fetch");
+        let _ = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        let _ = harness.get_by_label("本地数据源 · 0 只");
+        // Dock area renders: the logger citizen's "Logs: n/1000" counter is
+        // visible (egui_dock paints tab buttons without accesskit labels, so
+        // tab titles are asserted at the TabViewer::title unit level).
+        let _ = harness.get_by_label_contains("Logs:");
+    }
+
+    #[test]
+    fn sidebar_panel_is_left_anchored_at_240px() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let search = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        assert!(
+            search.rect().min.x < 60.0,
+            "sidebar must hug the left edge, got min.x={}",
+            search.rect().min.x
+        );
+        let add_button = harness.get_by_label("\u{e3d4}");
+        assert!(
+            add_button.rect().max.x > 220.0,
+            "sidebar must be ~240px wide (add button right edge), got max.x={}",
+            add_button.rect().max.x
+        );
+    }
+
+    #[test]
+    fn status_bar_is_bottom_anchored_with_source_and_clock() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let source = harness.get_by_label("本地数据源 · 0 只");
+        let rect = source.rect();
+        assert!(
+            rect.max.y > 870.0,
+            "status bar must sit at the window bottom (900px), got max.y={}",
+            rect.max.y
+        );
+        let _ = harness.get_by(|n| {
+            n.role() == egui::accesskit::Role::Label
+                && matches!(n.value(), Some(v) if v.len() == 8 && v.as_bytes()[2] == b':' && v.as_bytes()[5] == b':')
+        });
+    }
+
+    #[test]
+    fn sidebar_toggle_hides_and_reshows_sidebar() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness
+            .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
+            .click();
+        harness.step();
+        assert!(
+            harness
+                .query_all_by(|n| n.placeholder() == Some("搜索自选"))
+                .next()
+                .is_none(),
+            "sidebar must be hidden after toggle click"
+        );
+
+        harness
+            .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
+            .click();
+        harness.step();
+        let _ = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+    }
+
+    #[test]
+    fn sidebar_empty_state_shows_when_no_stock_list() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        let _ = harness.get_by_label("自选股为空");
+    }
+
+    #[test]
+    fn sidebar_row_click_fetches_selected_symbol() {
+        let stocks = vec![StockBasic {
+            symbol: "600519".to_string(),
+            name: "贵州茅台".to_string(),
+            area: None,
+            industry: None,
+            market: None,
+            board: None,
+            full_name: None,
+            total_share: None,
+            exchange: Some("SH".to_string()),
+            list_date: None,
+            delist_date: None,
+        }];
+        let app = build_compass_app_with_stocks(egui::Context::default(), stocks);
+        app.shared_state.symbol.set("600519".to_string());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.get_by_label("贵州茅台").click();
+        harness.step();
+
+        assert_eq!(harness.state().shared_state.symbol.get(), "600519");
+        assert!(
+            harness.state().shared_state.loading.get(),
+            "sidebar select must trigger a fetch"
+        );
+        assert_eq!(
+            harness.state().stock_picker.selected_symbol,
+            "600519",
+            "sidebar select must sync the picker"
+        );
+    }
+
+    // ======================================================================
+    // S7 keyboard shortcuts (design §6.4 / §7)
+    // ======================================================================
+
+    #[test]
+    fn slash_focuses_symbol_input() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.key_press(egui::Key::Slash);
+        harness.run_steps(3);
+
+        let input = harness.get_by(|n| {
+            n.role() == egui::accesskit::Role::TextInput && n.value() == Some("000001".to_string())
+        });
+        assert!(
+            input.is_focused(),
+            "slash must focus the toolbar symbol input"
+        );
+    }
+
+    #[test]
+    fn ctrl_k_focuses_sidebar_search_input() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+        harness.run_steps(3);
+
+        let search = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        assert!(
+            search.is_focused(),
+            "Ctrl+K must focus the sidebar search input"
+        );
+    }
+
+    #[test]
+    fn ctrl_enter_triggers_fetch() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+        harness.step();
+
+        assert!(
+            harness.state().shared_state.loading.get(),
+            "Ctrl+Enter must trigger a fetch"
+        );
+    }
+
+    #[test]
+    fn digit_keys_switch_timeframe() {
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.key_press(egui::Key::Num2);
+        harness.step();
+        assert_eq!(harness.state().timeframe_index, 1);
+
+        harness.key_press(egui::Key::Num3);
+        harness.step();
+        assert_eq!(harness.state().timeframe_index, 2);
+
+        harness.key_press(egui::Key::Num1);
+        harness.step();
+        assert_eq!(harness.state().timeframe_index, 0);
     }
 
     // ------------------------------------------------------------------
