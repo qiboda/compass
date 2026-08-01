@@ -18,16 +18,15 @@ mod messages;
 mod state;
 mod tabs;
 mod theme;
-mod widgets;
 
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
 use citizens::screener::ScreenerPanel;
+use compass_ui::widgets::modal::Modal;
+use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
+use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
-use widgets::modal::Modal;
-use widgets::searchable_dropdown::StockPicker;
-use widgets::toast::{ToastLevel, ToastManager};
 
 fn setup_cjk_fonts(ctx: &egui::Context) {
     let font_path = "/usr/share/fonts/adobe-source-han-sans/SourceHanSansCN-Regular.otf";
@@ -135,9 +134,13 @@ fn main() -> eframe::Result {
                 );
             }
 
-            let stock_picker = StockPicker::new(&config.app.app.default_symbol, &stock_list);
-
             let theme = CompassTheme::from_config(&config.app.theme);
+            let theme_tokens = *theme.tokens();
+            let stock_picker = StockPicker::new(
+                theme_tokens,
+                &config.app.app.default_symbol,
+                stock_projection(),
+            );
             let dock_style = Style::from_egui(&cc.egui_ctx.style_of(cc.egui_ctx.theme()));
 
             let startup_symbol = shared_state.symbol.get();
@@ -159,8 +162,8 @@ fn main() -> eframe::Result {
                 theme,
                 dock_style,
                 _backend_handle,
-                toast: ToastManager::new(),
-                modal: Modal::new(),
+                toast: ToastManager::new(theme_tokens),
+                modal: Modal::new(theme_tokens),
                 file_dialog: FileDialog::new(),
                 last_error: None,
                 last_loading: false,
@@ -287,6 +290,18 @@ fn save_screener_config(query: &ScreenerQuery) -> Result<(), String> {
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
 
+/// Projection mapping `StockBasic` rows into the searchable dropdown's fields.
+///
+/// The UI crate stays free of business-crate dependencies; the binary adapts
+/// its own row type through projection functions.
+fn stock_projection() -> StockProjection<compass_core::model::StockBasic> {
+    StockProjection::new(
+        |s: &compass_core::model::StockBasic| &s.symbol,
+        |s: &compass_core::model::StockBasic| &s.name,
+        |s: &compass_core::model::StockBasic| s.exchange.as_deref(),
+    )
+}
+
 fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
     match ParquetReader::new(&config.parquet.dir) {
         Ok(reader) => match reader.load_all_stock_basics() {
@@ -322,7 +337,7 @@ struct CompassApp {
     shared_state: Arc<state::SharedState>,
     work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
     stock_list: Vec<compass_core::model::StockBasic>,
-    stock_picker: StockPicker,
+    stock_picker: StockPicker<compass_core::model::StockBasic>,
     timeframe_index: usize,
     theme: CompassTheme,
     dock_style: egui_dock::Style,
@@ -557,13 +572,14 @@ fn timeframe_value(idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use crate::FullConfig;
-    use compass_core::model::{Exchange, StockBasic};
+    use compass_core::model::StockBasic;
     use compass_types::ScreenerQuery;
 
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
     use crate::citizens::screener::ScreenerPanel;
     use crate::state::SharedState;
+    use crate::stock_projection;
     use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
@@ -597,80 +613,6 @@ mod tests {
         assert_eq!(logger.citizen_id.0, LOGGER_ID);
     }
 
-    fn make_stock_basic(symbol: &str, name: &str, exchange: &str) -> StockBasic {
-        StockBasic {
-            symbol: symbol.into(),
-            name: name.into(),
-            area: None,
-            industry: None,
-            market: None,
-            board: None,
-            full_name: None,
-            total_share: None,
-            exchange: Some(exchange.into()),
-            list_date: None,
-            delist_date: None,
-        }
-    }
-
-    fn build_stock_list() -> Vec<StockBasic> {
-        vec![
-            make_stock_basic("000001", "平安银行", "SZ"),
-            make_stock_basic("000002", "万科A", "SZ"),
-            make_stock_basic("300750", "宁德时代", "SZ"),
-            make_stock_basic("600519", "贵州茅台", "SH"),
-            make_stock_basic("600036", "招商银行", "SH"),
-            make_stock_basic("688001", "华兴源创", "SH"),
-            make_stock_basic("830799", "艾融软件", "BJ"),
-        ]
-    }
-
-    #[test]
-    fn filter_stocks_code_prefix_match() {
-        let stocks = build_stock_list();
-        let result =
-            crate::widgets::searchable_dropdown::filter_stocks(&stocks, "600", &Exchange::All);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].symbol, "600036");
-        assert_eq!(result[1].symbol, "600519");
-    }
-
-    #[test]
-    fn filter_stocks_name_substring_match() {
-        let stocks = build_stock_list();
-        let result =
-            crate::widgets::searchable_dropdown::filter_stocks(&stocks, "银行", &Exchange::All);
-        assert_eq!(result.len(), 2);
-        let found: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
-        assert!(found.contains(&"000001"));
-        assert!(found.contains(&"600036"));
-    }
-
-    #[test]
-    fn filter_stocks_exchange_filter_sh() {
-        let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(&stocks, "", &Exchange::SH);
-        assert_eq!(result.len(), 3);
-        let symbols: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
-        assert!(symbols.contains(&"600519"));
-        assert!(symbols.contains(&"688001"));
-    }
-
-    #[test]
-    fn filter_stocks_exchange_filter_sz() {
-        let stocks = build_stock_list();
-        let result = crate::widgets::searchable_dropdown::filter_stocks(&stocks, "", &Exchange::SZ);
-        assert_eq!(result.len(), 3);
-    }
-
-    #[test]
-    fn filter_stocks_empty_query_returns_all_in_exchange() {
-        let stocks = build_stock_list();
-        let result =
-            crate::widgets::searchable_dropdown::filter_stocks(&stocks, "", &Exchange::All);
-        assert_eq!(result.len(), 7);
-    }
-
     #[test]
     fn timeframe_label_returns_correct_values() {
         assert_eq!(timeframe_label(0), "1d");
@@ -693,10 +635,10 @@ mod tests {
     use crate::CompassApp;
     use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
-    use crate::widgets::modal::Modal;
-    use crate::widgets::searchable_dropdown::StockPicker;
-    use crate::widgets::toast::ToastManager;
     use compass_core::model::AppConfig;
+    use compass_ui::widgets::modal::Modal;
+    use compass_ui::widgets::searchable_dropdown::StockPicker;
+    use compass_ui::widgets::toast::ToastManager;
     use egui_dock::DockState;
     use egui_kittest::kittest::Queryable;
     use std::sync::Arc;
@@ -721,8 +663,9 @@ mod tests {
         );
 
         let stock_list: Vec<StockBasic> = Vec::new();
-        let stock_picker = StockPicker::new("000001", &stock_list);
         let theme = CompassTheme::compass_dark();
+        let theme_tokens = *theme.tokens();
+        let stock_picker = StockPicker::new(theme_tokens, "000001", stock_projection());
         let dock_style = egui_dock::Style::default();
 
         let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
@@ -760,8 +703,8 @@ mod tests {
             theme,
             dock_style,
             _backend_handle,
-            toast: ToastManager::new(),
-            modal: Modal::new(),
+            toast: ToastManager::new(theme_tokens),
+            modal: Modal::new(theme_tokens),
             file_dialog: egui_file_dialog::FileDialog::new(),
             last_error: None,
             last_loading: false,
