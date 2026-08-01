@@ -266,7 +266,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 ## Setup
 
 - **Rust edition 2024** — 需要 Rust ≥1.85。当前：1.96。
-- **GUI app** — 需要显示服务器（X11/Wayland）。`cargo run` 打开窗口。
+- **GUI app** — 需要显示服务器（X11/Wayland）。`scripts/run.sh` 一键启动（或 `cargo run --bin compass`）。
 - 日志写入 `logs/compass.log`（每日轮转）。
 - 配置在 `~/.config/compass/config.toml`（缺省回退默认值）。见 `kb/user/config.md`。
 
@@ -274,12 +274,13 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 
 ```sh
 cargo build
-cargo run                    # GUI 图表窗口
+scripts/run.sh                # 一键启动 GUI 图表窗口（前台，Ctrl+C 退出）
+cargo run --bin compass       # 等价手动方式（需 X11/Wayland）
 cargo run --bin compass-data -- <subcommand>  # 数据管线 CLI
 cargo test                   # 单元 + 集成测试
 cargo fmt
 cargo clippy
-RUST_LOG=debug cargo run     # 详细日志
+RUST_LOG=debug scripts/run.sh # 详细日志
 ```
 
 ### compass-data CLI 速查

@@ -189,7 +189,7 @@ cargo run --bin compass-data -- import
 cargo run --bin compass-data -- import-compass --table stock_basic
 
 # 3. 启动图表应用
-cargo run
+scripts/run.sh
 ```
 
 ### 从东方财富获取新数据

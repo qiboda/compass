@@ -18,7 +18,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 show_help() {
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    awk '/^# Usage:/ {flag=1} flag && /^#$/ {next} flag && /^$/ {exit} flag {sub(/^# ?/, ""); print}' "$0"
 }
 
 case "${1:-}" in

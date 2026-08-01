@@ -447,9 +447,9 @@ default_timeframe = "1d"
 2. **`logs/compass.log`** —— 每日滚动文件，ANSI 已剥离
 
 ```sh
-RUST_LOG=debug cargo run    # verbose: see every HTTP request, DuckDB query
-RUST_LOG=info cargo run     # normal: state transitions, fetch counts, errors
-RUST_LOG=warn cargo run     # quiet: only problems
+RUST_LOG=debug scripts/run.sh    # verbose: see every HTTP request, DuckDB query
+RUST_LOG=info scripts/run.sh     # normal: state transitions, fetch counts, errors
+RUST_LOG=warn scripts/run.sh     # quiet: only problems
 ```
 
 文件 appender 使用 `tracing-appender` 的每日滚动——每天一个新文件

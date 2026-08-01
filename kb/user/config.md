@@ -114,5 +114,5 @@ compass_data_dir = "/mnt/data/compass_data"
 配置文件在启动时被验证。如果解析失败，将记录一条警告，并使用全部默认值。无效的主题值（两种有效预设之外的任何值）回退到 `compass_dark`。查看日志获取详情：
 
 ```sh
-RUST_LOG=info cargo run 2>&1 | grep config
+RUST_LOG=info scripts/run.sh 2>&1 | grep config
 ```

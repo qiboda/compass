@@ -6,7 +6,7 @@ Compass 是一个**本地优先的 A 股股票图表应用**，配备用于管�
 
 | 工具 | 用途 |
 |---|---|
-| **图表应用** (`cargo run`) | 查看任意 A 股股票的交互式 K 线图 |
+| **图表应用** (`scripts/run.sh`) | 查看任意 A 股股票的交互式 K 线图 |
 | **数据管线** (`compass-data`) | 导入、导出和备份行情数据 |
 
 ## 数据机制
@@ -33,7 +33,7 @@ Dolt 是**主要**数据源 — 完整、离线、快速。东方财富数据由
 cargo run --bin compass-data -- import
 
 # 2. 启动图表应用
-cargo run
+scripts/run.sh
 
 # 输入股票代码（如 600519），点击 Fetch
 ```

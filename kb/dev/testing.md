@@ -194,7 +194,7 @@ Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可
 
 3. 启用 `tracy` feature 运行 Compass：
    ```sh
-   cargo run --features tracy
+   cargo run --bin compass --features tracy
    # or: cargo run --bin compass-data --features tracy -- import --symbols 000001
    ```
 
