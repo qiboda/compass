@@ -196,3 +196,24 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - 测试与真实数据脱节反复出现（#78 T3 xlsx 属性、#62 数据验证）：网络/数据源解析的测试 fixture 应取自真实响应，并在实现后立即做真实端到端验证（行数/字段比对），不能依赖构造数据单测全绿
 - 计划假设与工具实际行为不符（#78 NULLIF/Dolt 导入、#77 文档与代码脱节）：涉及外部工具（Dolt/API）的转换逻辑，实施前先实测工具行为或先写最小验证脚本，避免按文档假设写代码
 - 多模块跨语言改动后遗留路径检查（#78 duckdb.rs/import_dolt.rs、#77 引用断链）：主路径完成 ≠ 全仓一致，交付前 grep 旧 schema/旧引用并记 issue
+
+## 2026-08-01 — ref #79 feat: 强制 80% 测试覆盖率门禁（Rust workspace/每 crate + Python）
+
+**What was done**: 实现 CI 覆盖率门禁——coverage job 移除 continue-on-error，4 条 `cargo llvm-cov --fail-under-lines 80`（workspace + 3 crate）+ Python `--cov-fail-under=80`。补齐 +5900 行测试（GUI 从 28.87%→93.21% 用 egui_kittest 无头集成测试、Python 从 18%→91.69% 用 stub AsyncSession），3 处可测性重构（baostock 脚本路径注入、main.py/main.rs 提取 dispatch），文档同步。5-agent review 发现 2 MAJOR + 1 BLOCKING + 1 IMPORTANT 全部修复后通过。
+
+**What went wrong**:
+1. **T5/T6/T7 三个执行 agent 卡在 grill-me 自我访谈**——delegation prompt 未声明"禁止 grill-me"，agent 加载 AGENTS.md 后在 background（无用户可问）自我问答浪费一整轮，强制续跑后才实现
+2. **review 发现 3 个实质问题**：ImportCompass double-logging（map_err 闭包内 error! + main 再打）、测试名误导（input: Some 未测回退路径）、pre-existing 日期依赖测试（Utc::now() 周六跨 ISO 周边界）
+3. **pre-push 阻断 2 次**：rustdoc `private-intra-doc-link`（pub item doc 链接到 pub(crate) item）、cargo fmt 未过——这些本地 cargo test/clippy 未暴露
+4. **agent 测试代码 clippy --all-targets 14 个 lint 错误**（await_holding_lock/expect_fun_call 等），覆盖率数字达标但质量检查不过
+
+**Lessons learned**:
+1. **delegation prompt 开头必须显式声明"任务已完全指定，禁止 grill-me/访谈，直接实现"**——本仓库 AGENTS.md 强制 grill-me，background agent 无用户可访谈会卡死；T5/T6/T7 首次全部空转
+2. **本地提交前验证应包括 pre-push 全套（cargo doc -D warnings + fmt --check），不只 cargo test/clippy**——rustdoc 链接错误和格式问题在本地常规检查漏掉，推送到 pre-push hook 才暴露，浪费 push 轮次
+3. **时间依赖测试是隐藏 flake**：测试 fixture 用 `Utc::now()` 做基准日期会导致周末/月末跨周期边界失败（本次周六复现）——固定基准日期（确定周几）避免
+4. **agent 产出不能只看覆盖率数字**：需抽查断言真实性 + `clippy --all-targets` 全量质量关，否则 5900 行测试带 14 个 lint 错误进入分支
+
+### Trends (last 10)
+- **测试相关教训反复出现**（#62 Wave 3、#46、#79）：测试正确性/确定性/质量是高频失败点——#79 再次印证"测试数量≠测试质量"，需把 clippy --all-targets 和断言抽查纳入 agent 测试任务的验收标准
+- **gate/流程违规历史条目**（07-26 流程违规、本次 agent 卡 grill-me）：AI agent 加载 AGENTS.md 后可能做出违背任务意图的行为——delegation prompt 的显式禁令是必要防呆（本次已验证有效）
+- **hook/工具链问题**（#16 pre-push hook、#79 pre-push 阻断）：pre-push hook 是质量最后防线，本地验证命令应与其对齐（fmt/doc 全套），避免 push 时才暴露
