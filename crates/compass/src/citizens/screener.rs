@@ -216,29 +216,35 @@ impl ScreenerPanel {
         industries: &[String],
         boards: &[String],
     ) {
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            // Conditions on top, results below — not side by side.
             egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_width(260.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.condition_form(ui, industries, boards);
-                    ui.separator();
-                    if ui.button("筛选").clicked() {
-                        let query = self.form.to_query();
-                        (self.on_save)(&query);
-                        shared_state.screener_loading.set(true);
-                        shared_state.screener_error.set(None);
-                        if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
-                            shared_state.screener_loading.set(false);
-                            shared_state
-                                .screener_error
-                                .set(Some(format!("failed to run screener: {e}")));
-                        }
+                ui.set_min_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        self.condition_form(ui, industries, boards);
+                    });
+                ui.separator();
+                if ui.button("筛选").clicked() {
+                    let query = self.form.to_query();
+                    (self.on_save)(&query);
+                    shared_state.screener_loading.set(true);
+                    shared_state.screener_error.set(None);
+                    if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
+                        shared_state.screener_loading.set(false);
+                        shared_state
+                            .screener_error
+                            .set(Some(format!("failed to run screener: {e}")));
                     }
-                });
+                }
             });
+
+            ui.add_space(4.0);
 
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
+                ui.set_min_height(ui.available_height());
                 self.results_area(ui, shared_state, work_signal);
             });
         });
