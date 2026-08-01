@@ -1121,6 +1121,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "compass-core",
+ "compass-strategy",
+ "compass-types",
  "duckdb",
  "eframe",
  "egui",
@@ -1134,6 +1136,7 @@ dependencies = [
  "egui_mobius",
  "egui_mobius_reactive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rstest",
+ "serde",
  "tempfile",
  "tokio",
  "toml 0.8.23",
@@ -1191,6 +1194,28 @@ dependencies = [
  "tracing-subscriber",
  "tracing-tracy",
  "tracy-client-sys 0.24.3",
+]
+
+[[package]]
+name = "compass-strategy"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "compass-core",
+ "compass-types",
+ "duckdb",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
+name = "compass-types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]
