@@ -40,3 +40,11 @@ friction 记录决策过程中的卡点和纠正，reflection 记录实施后的
 **你的纠正**: 「开启新的 opencode，要先解绑当前的 opencode 的 session」。opencode 将 worktree 目录映射到与 master 相同的 project_id（`git_worktree` 关联），master 实例仍绑定该 project 的 session 时，worktree 新实例无法启动。该经验已写入 worktree skill 的 Post-Creation MANDATORY 步骤。
 
 **教训**: 涉及 opencode/git 工具的跨目录操作，先确认工具对 worktree 的特殊处理（session/project 绑定模型），再执行启动动作。教训应沉淀到 skill 文档本身（而非仅 friction），确保后续所有 agent 在流程上不会重犯。
+
+## 2026-08-01 — CI 修复批次（#54/#75/#88/#92/#83）
+
+**我的偏差**: ① 发现 opencode-ci-fix 的 /fix 触发链断裂后，提议在 ci-fix workflow 内直接内联执行 fix agent（方案 A：加 fix job 跑 anomalyco/opencode），设计较复杂；② 默认所有 CI 修复都必须先合并到 master 才能惠及其他分支，导致 PR 互相卡进程（#75 flaky 测试修复滞留在独立分支，所有后续分支 CI 连环挂）。
+
+**你的纠正**: ① "感觉 github 修复和本地流程混在一起有点乱，目前不需要这么复杂，直接让 ci-fix 只提交 issue 就好"——简化到只保留自动建 issue，修复由人工接手；② "我们需要有从特定分支切一个新的分支的能力，来修复特定分支……才不会互相卡进程"——落地目标分支修复工作流（从 feature 分支切修复分支 → cherry-pick 回 → 直接 push）。
+
+**教训**: ① 修复方案先问"最小可行是什么"，再考虑自动化——GITHUB_TOKEN 触发链断裂的根因是平台限制，与其绕路建复杂链路，不如砍掉自动修复回归人工（更简单可靠）；② CI 修复的传播路径要提前设计：master 级 bug（如 flaky 测试）应单独直推 master，feature 分支的问题应从该分支切修复分支，避免所有分支排队等 master——"目标分支修复工作流"已写入 worktree skill 和 kb/dev/process.md。
