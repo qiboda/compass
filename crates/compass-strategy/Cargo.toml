@@ -14,3 +14,4 @@ tracing = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 duckdb = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -571,3 +571,54 @@ fn empty_market_returns_empty_result() {
     assert!(res.rows.is_empty());
     assert_eq!(res.total, 0);
 }
+
+/// Capture tracing output to prove the engine emits its completion log.
+#[test]
+fn run_screener_emits_completion_log() {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct TestWriter(Arc<Mutex<String>>);
+    impl Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("lock")
+                .push_str(&String::from_utf8_lossy(buf));
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TestWriter {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            TestWriter(self.0.clone())
+        }
+    }
+
+    let stocks = vec![stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0))];
+    let (_tmp, reader) = build_fixture(&stocks);
+
+    // with_default scopes the subscriber to this test — set_default would
+    // race with other parallel tests over the global default.
+    let buf = Arc::new(Mutex::new(String::new()));
+    let writer = TestWriter(buf.clone());
+    tracing::subscriber::with_default(
+        tracing_subscriber::fmt()
+            .with_writer(writer)
+            .with_max_level(tracing::Level::DEBUG)
+            .finish(),
+        || {
+            run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+        },
+    );
+
+    let log = buf.lock().expect("lock");
+    assert!(
+        log.contains("screener run completed"),
+        "engine must emit completion log, got: {log}"
+    );
+    assert!(log.contains("matched"), "log carries match stats: {log}");
+}

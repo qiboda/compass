@@ -46,6 +46,7 @@ pub fn run_screener(
     reader: &ParquetReader,
     now: NaiveDate,
 ) -> Result<ScreenerResult, ScreenerError> {
+    let started = std::time::Instant::now();
     let range_start = now - Duration::days(READ_WINDOW_DAYS);
     let bars = reader.fetch_cross_section(range_start, now)?;
     let basics = reader.load_all_stock_basics()?;
@@ -82,6 +83,15 @@ pub fn run_screener(
             .then(a.symbol.cmp(&b.symbol))
     });
     rows.truncate(MAX_RESULTS);
+
+    tracing::debug!(
+        bars_loaded = bars.len(),
+        basics_loaded = basics.len(),
+        matched = total,
+        returned = rows.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "screener run completed"
+    );
 
     Ok(ScreenerResult { rows, total })
 }
