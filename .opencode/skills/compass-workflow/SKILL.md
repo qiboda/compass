@@ -155,10 +155,18 @@ cargo test && cargo clippy -- -D warnings && cargo fmt --check
 Feature 分支工作流：大部分工作在分支上进行，通过 PR 合并。
 简单修复（typo、配置、单行变更）可直接提交到 master。
 
+**Worktree 是分支策略的强制部分**：一旦创建 worktree（`git worktree add`），
+后续实现工作必须完成交接闭环（add → `/handoff` → `scripts/open-worktrees.sh <name>`
+启动会话）并在 worktree 内进行——master 上的实现继续即流程违规。
+master 只允许纯文档（docs/lint/typo/反思）直推。
+
+开始实现前用 `git worktree list` + `git branch --contains HEAD` 确认所在分支；
+不确认分支归属就不开始。
+
 ```
-master  ●──●──●──●────────●  (主干)
+master  ●──●──●──●────────●  (主干，仅 docs/lint/typo/反思)
                \          /
-feat/xxx      ●──●──●──┘   (feature 分支，通过 PR 合并)
+feat/xxx      ●──●──●──┘   (worktree 分支，通过 PR 合并)
 ```
 
 ### 9. 标签强制

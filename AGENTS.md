@@ -55,14 +55,17 @@ Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共
 
 **任何一步未完成即 STOP。不实现。不创建 todos。不改文件。**
 
-### SELF-CHECK（强制 —— 每次代码编辑前问自己这 4 个问题）
+### SELF-CHECK（强制 —— 每次代码编辑前问自己这 5 个问题）
 
 1. **"这项工作有 GitHub issue 吗？"** — 没有就 NOW 创建。
 2. **"我的 commit message 包含 `ref #N` 吗？"** — 没有就加。
 3. **"我先写了失败测试吗？"** — 没有就先写再实现。
 4. **"我更新了相关 kb/ 文件吗？"** — 没有就确定文件并更新。
+5. **"当前工作在正确的分支/worktree 上吗？"** — 存在活跃 worktree 时
+   （`git worktree list`），实现工作必须在 worktree 内进行；master 只允许
+   docs/lint/typo/反思类提交直推。不确认分支归属就不开始。
 
-这 4 个问题不是可选的。它们是最低标准。跳过任何一个就是违反工作流。
+这 5 个问题不是可选的。它们是最低标准。跳过任何一个就是违反工作流。
 
 **Test-first 不可妥协**：任何 bugfix 或 feature 变更必须从能复现问题的失败测试开始
 （RED），再做让它通过的修复（GREEN）。适用于 Python（`collectors/tests/`）、
@@ -209,6 +212,11 @@ PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），�
 启动工作树区域（探测默认终端 + setsid 脱离进程组，无需手动解绑当前 session）；
 opencode 仍占用目录无法删除时用 `scripts/open-worktrees.sh --close <name>` 终止并清理。
 **加载 `worktree` skill 获取完整流程**（含 post-creation MANDATORY 步骤与清理）。
+
+**强制规则**：worktree 一旦创建，后续实现工作必须在 worktree 内完成交接闭环
+（add → `/handoff` → `open-worktrees.sh <name>` 启动），master 上不再继续实现。
+master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree 时实现类提交
+落在 master 即流程违规，在 reflections 中记录。
 
 ## Knowledge base
 
