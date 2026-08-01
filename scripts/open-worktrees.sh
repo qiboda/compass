@@ -23,6 +23,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 WT_DIR="$PROJECT_ROOT/.worktrees"
 
 # ---------------------------------------------------------------------------
@@ -121,8 +122,10 @@ is_ancestor_of_self() {
 }
 
 # Prints the pid of the terminal window hosting $1, walking its ppid chain.
-# Matches per-window terminal binaries only — never gnome-terminal-server /
-# xfce4-terminal daemon, whose kill would close unrelated windows (ref #104).
+# Matches per-window terminal binaries only. gnome-terminal-server (client-
+# server) and xfce4-terminal (single-instance D-Bus daemon whose process name
+# IS xfce4-terminal) are deliberately absent: killing either would close every
+# window of that terminal, not just the holder's (ref #104).
 find_terminal_pid() {
     local pid="$1"
     local cur="$pid" cmdline base
@@ -130,7 +133,7 @@ find_terminal_pid() {
         cmdline="$(tr '\0' ' ' < "/proc/$cur/cmdline" 2>/dev/null || true)"
         base="$(basename "${cmdline%% *}" 2>/dev/null || true)"
         case "$base" in
-            kitty|konsole|xfce4-terminal|gnome-terminal|xterm)
+            kitty|konsole|gnome-terminal|xterm)
                 echo "$cur"
                 return 0
                 ;;
@@ -148,7 +151,7 @@ launch_detached_cleanup() {
     local wt="$1" dir="$2"
     local log="$PROJECT_ROOT/logs/open-worktrees-close.log"
     mkdir -p "$PROJECT_ROOT/logs"
-    setsid nohup "$0" --close-detached "$wt" "$dir" >>"$log" 2>&1 &
+    setsid nohup "$SELF" --close-detached "$wt" "$dir" >>"$log" 2>&1 &
     echo "  cleanup continues in a detached session (log: $log)"
 }
 
@@ -168,7 +171,7 @@ detached_cleanup() {
         holders="$holders $pid"
         term="$(find_terminal_pid "$pid" || true)"
         kill "$pid" 2>/dev/null || true
-        if [ -n "$term" ] && ! echo "$term_pids" | grep -q "$term"; then
+        if [ -n "$term" ] && ! echo "$term_pids" | grep -qw "$term"; then
             term_pids="$term_pids $term"
         fi
     done
@@ -238,7 +241,7 @@ close_worktree() {
         if [ -z "${DRY_RUN:-}" ]; then
             term="$(find_terminal_pid "$pid" || true)"
             kill "$pid" 2>/dev/null || true
-            if [ -n "$term" ] && ! echo "$seen_terms" | grep -q "$term"; then
+            if [ -n "$term" ] && ! echo "$seen_terms" | grep -qw "$term"; then
                 seen_terms="$seen_terms $term"
                 echo "  closing terminal (pid $term)"
                 kill "$term" 2>/dev/null || true
@@ -291,9 +294,12 @@ list_worktrees() {
 case "${1:-}" in
     --close-detached)
         # Internal mode (ref #104): invoked by launch_detached_cleanup via
-        # `setsid nohup $0 --close-detached <wt> <dir>` so the full close
+        # `setsid nohup $SELF --close-detached <wt> <dir>` so the full close
         # survives the caller (an opencode inside the worktree) being killed.
-        if [ "$#" -ne 3 ]; then
+        # $dir is re-validated here (not just in close_worktree) because a
+        # stale/hand-edited handoff must never remove an arbitrary path.
+        if [ "$#" -ne 3 ] || ! has_worktree "$2" \
+            || [ "$(realpath "$3" 2>/dev/null)" != "$(realpath "$WT_DIR/$2" 2>/dev/null)" ]; then
             echo "usage: open-worktrees.sh --close-detached <wt> <dir>" >&2
             exit 1
         fi

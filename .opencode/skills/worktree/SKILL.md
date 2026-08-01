@@ -73,10 +73,14 @@ scripts/open-worktrees.sh --dry-run [wt...]  # 打印将执行的命令，不实
 scripts/open-worktrees.sh --close [wt...]    # 终止 opencode + 删除 worktree 与分支
 ```
 
-**`--close`（边界问题，ref #96）**：当 opencode 仍在 worktree 目录中运行时，
+**`--close`（ref #96, #104）**：当 opencode 仍在 worktree 目录中运行时，
 `git worktree remove` 因目录被进程占用而失败。`--close` 先终止 cwd 指向该
-worktree 的 opencode 进程，再 `git worktree remove --force` + `git branch -D`，
-一次完成退出与清理：
+worktree 的 opencode 进程、关闭其承载终端窗口（每窗口终端可靠；client-server
+终端如 gnome-terminal 尽力而为，xfce4-terminal 因单实例守护进程不尝试），
+再 `git worktree remove --force` + `git branch -D`，一次完成退出与清理。
+**从 worktree 内部执行**（例如在该 worktree 的 opencode 会话里运行 `--close`）
+时，清理自动交给 `setsid` 脱离会话的子进程（日志 `logs/open-worktrees-close.log`），
+调用者被终止后清理仍会完成：
 
 ```bash
 scripts/open-worktrees.sh --close cleanup-stock-basic   # 关闭指定区域

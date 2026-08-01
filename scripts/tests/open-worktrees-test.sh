@@ -242,6 +242,16 @@ check "close path detaches via setsid" "bash -c '
     echo \"\$body\" | grep -q setsid
 '"
 
+# 21. find_terminal_pid must NOT match xfce4-terminal (single-instance D-Bus
+#     daemon whose process name is xfce4-terminal — killing it closes every
+#     window) nor gnome-terminal-server (client-server daemon, ref #104).
+check "terminal whitelist excludes daemons" "bash -c '
+    body=\$(sed -n \"/^find_terminal_pid()/,/^}/p\" \"$SCRIPT\")
+    echo \"\$body\" | grep -q \"kitty|konsole|gnome-terminal|xterm\"
+    ! echo \"\$body\" | grep -q xfce4-terminal
+    ! echo \"\$body\" | grep -q gnome-terminal-server
+'"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
     echo "ALL TESTS PASSED"
