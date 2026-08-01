@@ -30,6 +30,11 @@ grill-me 访谈必须达到 "shared understanding reached" 才能进行任何其
 **Grill-me 完成后 → 任何 feature 或 bugfix 工作必须进入下面的 PRE-IMPLEMENTATION GATE。
 Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共识就跳过 gate。**
 
+**子代理（delegated agents）例外**：子代理收到的是主 agent 的委托任务而非用户
+消息——不强制触发 grill-me。子代理自行判断任务是否需要澄清：有设计歧义时自行
+选择是否发起 grill 式澄清；无论是否选择，都将判断与结果报告主 agent，由主 agent
+汇总给用户。
+
 ---
 
 ## 🛑 PRE-IMPLEMENTATION GATE (任何代码变更前必读)
