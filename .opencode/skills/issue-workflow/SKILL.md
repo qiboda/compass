@@ -8,14 +8,14 @@ description: 管理完整的 issue 生命周期 — 单 issue 创建、epic/子 
 ## 角色
 
 管理 compass 项目的完整 GitHub issue 生命周期。处理
-单 issue 创建（从 compass-workflow 门禁第 1 步委派而来）、
+单 issue 创建（从 compass-workflow 门禁第 2 步委派而来）、
 使用 GitHub 原生子 issue 进行 epic 分解、通过计划文件
 跟踪批次执行、以及 PR 合并后的批次关闭。
 
 ## 触发方式
 
 - `/issue-workflow` 斜杠命令（用户发起）
-- compass-workflow 预实现门禁第 1 步自动化（通过 `→ 调用 /issue-workflow`）
+- compass-workflow 预实现门禁第 2 步自动化（通过 `→ 调用 /issue-workflow`）
 
 ## 模式
 
@@ -23,7 +23,7 @@ description: 管理完整的 issue 生命周期 — 单 issue 创建、epic/子 
 
 | 模式 | 触发条件 | 流程 |
 |---|---|---|
-| **单 issue** | compass-workflow 门禁第 1 步，单一 issue 需求 | 创建一个 issue → 展示 URL → 完成 |
+| **单 issue** | compass-workflow 门禁第 2 步，单一 issue 需求 | 创建一个 issue → 展示 URL → 完成 |
 | **Epic + 子 issues** | `/ulw-plan` 产生 2+ 任务批次且各批次有独立交付物 | 创建 epic → 批量创建子 issues → 计划中跟踪 → 批次关闭 |
 
 ## 工作流
@@ -233,10 +233,10 @@ PR: #<PR-N>
 
 ## 与 compass-workflow 的协作
 
-1. compass-workflow 门禁第 1 步显示 `→ 调用 /issue-workflow 创建/管理 issues`
-2. 在门禁第 1 步，compass-workflow 调用 issue-workflow 创建 issue(s)
+1. compass-workflow 门禁第 2 步显示 `→ 调用 /issue-workflow 创建/管理 issues`
+2. 在门禁第 2 步，compass-workflow 调用 issue-workflow 创建 issue(s)
 3. issue-workflow 决定单 issue 还是 epic 模式，创建 issues，返回结果
-4. compass-workflow 对每个子 issue 独立执行门禁步骤 2-4b
+4. compass-workflow 对每个子 issue 独立执行门禁步骤 3-5b
 5. 所有子 issues 完成后 → PR 合并 → issue-workflow 处理批次关闭
 6. compass-workflow 处理 commit、test、review 和 push（不变）
 

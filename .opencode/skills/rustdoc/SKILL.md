@@ -14,7 +14,7 @@ description: 检查 #[warn(missing_docs)] 合规性并识别 compass-core 中 pu
 ## 触发条件
 
 - `/rustdoc` 斜杠命令（用户发起）
-- compass-workflow 实现前门禁第 4a 步（通过 `→ Invoke /rustdoc` 自动触发）
+- compass-workflow 实现前门禁第 5a 步（通过 `→ Invoke /rustdoc` 自动触发）
 
 ## 工作流
 
@@ -69,7 +69,7 @@ warning: missing documentation for a <item type>
 ### 第 4 步：Pre-push 门禁集成
 
 Pre-push hook（`.githooks/pre-push`）已经运行 `cargo doc --no-deps`。
-rustdoc agent 在**更早**的阶段运行同样的检查——在门禁第 4a 步实现完成之前——
+rustdoc agent 在**更早**的阶段运行同样的检查——在门禁第 5a 步实现完成之前——
 在缺失文档到达 hook 之前就捕获它们。
 
 ## 输出格式
@@ -86,7 +86,7 @@ rustdoc agent 在**更早**的阶段运行同样的检查——在门禁第 4a �
 <CLEAN | N 项需要文档>
 
 ### 后续步骤
-- 如果 CLEAN：进入门禁第 4b 步（docs: kb/ 映射）
+- 如果 CLEAN：进入门禁第 5b 步（docs: kb/ 映射）
 - 如果有 N 项：列出每项并建议哪个 kb/ 文件记录了其用途
 ```
 
@@ -111,8 +111,8 @@ rustdoc agent 在**更早**的阶段运行同样的检查——在门禁第 4a �
 
 ## 与 compass-workflow 的协作
 
-1. compass-workflow 门禁第 4a 步指示 `→ Invoke /rustdoc to verify doc compliance`
-2. 如果 CLEAN → 门禁进入第 4b 步（docs: kb/ 映射）
+1. compass-workflow 门禁第 5a 步指示 `→ Invoke /rustdoc to verify doc compliance`
+2. 如果 CLEAN → 门禁进入第 5b 步（docs: kb/ 映射）
 3. 如果有项需要文档 → 门禁暂停；主 agent 添加文档注释；重新调用 `/rustdoc`
 4. 所有文档通过后 → pre-push hook 作为安全网再次验证
 

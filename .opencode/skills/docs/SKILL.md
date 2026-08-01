@@ -13,7 +13,7 @@ description: 维护 AGENTS.md 及所有 kb/ 文件（design、dev、user、githu
 ## 触发条件
 
 - `/docs` 斜杠命令（用户发起）
-- compass-workflow 实现前门禁第 4b 步（通过 `→ Invoke /docs` 自动触发）
+- compass-workflow 实现前门禁第 5b 步（通过 `→ Invoke /docs` 自动触发）
 
 ## kb/ 文件清单
 
@@ -178,9 +178,9 @@ kb/design/architecture.md、kb/dev/testing.md 等都可能残留旧命令——r
 
 ## 与 compass-workflow 的协作
 
-1. compass-workflow 门禁第 4b 步指示 `→ Invoke /docs to identify and update kb/ files`
-2. docs agent 在 rustdoc（第 4a 步通过）之后运行——此时文档已与代码同步
+1. compass-workflow 门禁第 5b 步指示 `→ Invoke /docs to identify and update kb/ files`
+2. docs agent 在 rustdoc（第 5a 步通过）之后运行——此时文档已与代码同步
 3. 更新后的 kb/ 文件与代码变更一同暂存于同一次 commit（文档同步规则）
-4. docs agent 的输出作为门禁第 4 步的证据
+4. docs agent 的输出作为门禁第 5 步的证据
 
 docs agent 是**知识库守护者**——它确保项目书始终反映代码库的当前状态。

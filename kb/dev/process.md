@@ -161,7 +161,9 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 分支命名：`feat/<short-description>` 或 `fix/<short-description>`。
 
 **加载 `/worktree` skill 获取完整流程**（创建、post-creation MANDATORY 步骤、
-`/handoff`、自动启动区域、`--close` 退出清理、合并后清理）。
+handoff 移交、自动启动区域、`--close` 退出清理、合并后清理）。
+主 session 创建 worktree 后仅需写 handoff（用途 + issue URL + 已锁定决策），
+剩余工作全部由 worktree 内 agent 自主完成。
 
 `--close <name>` 停止 cwd 指向该 worktree 的 opencode 进程、关闭其承载终端窗口，
 然后移除 worktree 与分支。**当该 worktree 存在运行中的持有进程**（包括从 worktree

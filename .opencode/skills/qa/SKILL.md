@@ -12,7 +12,7 @@ description: 为 compass Rust 代码库编写遵循 TDD/BDD 的单元测试/集�
 
 ## 输入 / 上下文
 
-当 compass-workflow 在门禁第 3 步或通过 `/test` 斜杠命令调用时，agent 接收：
+当 compass-workflow 在门禁第 4 步或通过 `/test` 斜杠命令调用时，agent 接收：
 
 - **Git diff**：变更文件（识别哪些代码需要测试）
 - **GitHub issue 正文**（描述功能或 bug 的 issue）
@@ -24,7 +24,7 @@ description: 为 compass Rust 代码库编写遵循 TDD/BDD 的单元测试/集�
 ## 触发条件
 
 - `/test` 斜杠命令（用户发起）
-- compass-workflow 实现前门禁第 3 步（通过 `→ Invoke /test` 自动触发）
+- compass-workflow 实现前门禁第 4 步（通过 `→ Invoke /test` 自动触发）
 
 ## 工作流
 
@@ -154,7 +154,7 @@ let provider = DuckDbProvider::new_in_memory()
 
 ## 与 compass-workflow 的协作
 
-1. compass-workflow 门禁第 3 步指示 `→ Invoke /test (qa skill) to write failing tests`
+1. compass-workflow 门禁第 4 步指示 `→ Invoke /test (qa skill) to write failing tests`
 2. qa agent 生成门禁所需的 RED 阶段证据
 3. qa agent 完成后，主 agent 实现 GREEN 阶段
 4. qa agent 可被重新调用以进行 REFACTOR 验证
