@@ -331,6 +331,15 @@ impl eframe::App for CompassApp {
             self.modal.show(ui.ctx());
             self.file_dialog.update(ui.ctx());
 
+            // Push screener error toast only on None→Some transition.
+            let current_screener_err = self.shared_state.screener_error.get();
+            if current_screener_err != self.last_screener_error {
+                if let Some(ref err) = current_screener_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_screener_error = current_screener_err;
+            }
+
             dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);
 
             ui.ctx().request_repaint_after(Duration::from_millis(200));
