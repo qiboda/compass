@@ -159,6 +159,8 @@ Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 **HARD BLOCK: Never auto-push.** 等用户明确说 "push" / "推送" 才 push。
 **Follow the user's exact words.** "commit" 只表示 commit；"push" 只表示 push。
 
+**Push 前必须 rebase base 分支**：push 前先 `git fetch origin <base>`，若分支落后 base（`git log HEAD..origin/<base>` 非空），先 `git rebase origin/<base>` 解决冲突后再 push。禁止携带过期 base 的提交直接 push——rebase 冲突在 push 后更难收拾（force-push 需小心、远端已带缺陷 commit）。
+
 完整 push gate 清单见 `kb/dev/process.md`。
 
 ### Issue Lifecycle

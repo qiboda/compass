@@ -81,6 +81,7 @@ per-step verify → commit → review → push）。以下是 skill 未覆盖的
 
 push 前按顺序执行：
 
+0. **Rebase base 分支**：`git fetch origin <base>` → `git log HEAD..origin/<base>` 非空时 `git rebase origin/<base>`，解决冲突后再继续。分支必须基于最新 base 才能 push（避免携带过期 base 的提交）。
 1. **CI 健康**：`master` 上的最新 CI 运行必须通过。如果失败，为失败创建 issue，修复后再 push。永远不要在 CI 破损的基础上 push。
 2. **cargo fmt --check**
 3. **cargo clippy -- -D warnings**
@@ -90,7 +91,7 @@ push 前按顺序执行：
 
 > **覆盖率门禁**在 CI 执行（coverage job 强制 workspace + 每 crate ≥80%、Python ≥80%），太慢不适合 pre-push 本地检查。见 `kb/dev/testing.md` 覆盖率章节。
 
-手动 pre-push checklist（与 hook 相同）：`cargo fmt --check` + `cargo clippy -- -D warnings`
+手动 pre-push checklist（与 hook 相同）：`git fetch origin <base>` + rebase 落后 commits + `cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
 
 ### 文档注释纪律

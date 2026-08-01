@@ -363,19 +363,23 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **What was done**: 删除 duckdb.rs 旧 StockBasic 路径（SCHEMA_SQL 中 stock_basic 表 DDL、本地 StockBasic struct、upsert_stock_basic/get_stock_basic、3 个测试）+ import_dolt.rs 的 stock_basic 导出段（5 列占位文件覆盖风险）+ export.rs TABLES 条目 + integration_test 表清单 + 4 处 kb 文档同步 + review 修复（cli.md 输出树标注来源、data-providers.md 决策记录）。RED→GREEN 测试锁定「import 不再生成 stock_basic.parquet」，2 commits（f9f897a + 8b17b77）`ref #80`，5-agent review 全 PASS。
 
-**User corrections**: 「这些是不是handoff已经问过了」——session 开始时我未读 `.omo/handoff.md`，把已在 handoff 锁定的 7 项 grill-me 决策（Q1 范围、Q2 duckdb 删除方式）当成新问题重新访谈，被用户提醒后才去读 handoff 确认决策已存在。
+**User corrections**: 
+1. 「这些是不是handoff已经问过了」——session 开始时我未读 `.omo/handoff.md`，把已在 handoff 锁定的 7 项 grill-me 决策（Q1 范围、Q2 duckdb 删除方式）当成新问题重新访谈，被用户提醒后才去读 handoff 确认决策已存在。
+2. 「有rebase master吗？」「加约束，push前 rebase base 分支」——push 后用户追问是否已 rebase master，随后明确指示将「push 前必须 rebase base 分支」固化为流程约束。我已按指示更新 AGENTS.md（Commit & Push 章节）+ kb/dev/process.md（Pre-push 检查 step 0 + 手动 checklist）。
 
 **What went wrong**:
 1. **重复访谈已锁定决策**：新 session 只读了 `stock-basic-official.md`（#78 的旧 plan，属另一 worktree），未读本 worktree 的 `.omo/handoff.md`——handoff 完整记录 7 项决策 + C1-C5 清单，读它可跳过 Q1/Q2 直接确认
 2. **handoff 删除清单遗漏 2 处**：① duckdb.rs 第 3 个测试 `upsert_stock_basic_skips_existing_when_overwrite_false`（引用被删 API，编译失败才暴露）；② `integration_test.rs` 的必需表清单含 stock_basic（cargo test 失败才暴露）——handoff 只列了 2 个测试，未 grep 全仓引用
 3. **review 发现 cli.md 输出结构树失实**：4 处文档清单（gui/architecture/testing/data-providers）漏了 cli.md——它同样暗示 `import` 产出 stock_basic.parquet，与 #80 宗旨（消除「docs 暗示 import 写 stock_basic」）同类
+4. **push 前未 rebase base 分支**：分支落后 master 5 个 commits（含 reflections.md 新条目）时直接 push，用户追问后才 fetch + rebase——rebase 产生 reflections.md 冲突（master 的 #96 Updated/#97/#98 vs 我的 #80 条目），解决后 3 个 commits 哈希全部改变，需 force-push 修正远端分支
 
 **Lessons learned**:
 1. **worktree session 第一步必读 `.omo/handoff.md`**——它含已锁定的 grill-me 决策 + 完整待办 + 已知坑；先读 handoff 再访谈，决策已在的直接引用而非重问
 2. **删除类改动不能只信 handoff 的测试清单**——必须 `grep -rn` 全仓（含 integration_test.rs、tests/ 目录）反查被删符号的所有引用，编译失败是最后的防线而不是第一道
 3. **文档同步清单要覆盖"描述该命令输出"的所有 kb 文件**——cli.md 的「输出结构」树与 gui.md 是同类失实点，列文档清单时应 grep 关键词（如 `stock_basic`）反查所有 kb 引用而非依赖 issue/plan 列举
+4. **push 前先 fetch + rebase base 分支**（已固化为 AGENTS.md 硬约束）：`git fetch origin <base>` → `git log HEAD..origin/<base>` 非空时 `git rebase origin/<base>` 再 push——rebase 冲突在本地好收拾，push 后只能 force-push 且远端已带过期 base 的 commit
 
 ### Trends (last 10)
 - **删除/重构遗漏引用检查**（#80 第 3 测试 + integration_test、#78 review 发现 duckdb.rs 遗留）：删除类改动后必须 grep 全仓反查引用（含集成测试/文档），handoff/plan 的清单可能不完整——grep 验证应纳入删除类任务的验收标准
 - **文档与代码脱节反复出现**（#78 review 遗留 schema、#80 cli.md 输出树失实、#77 文档与代码脱节）：多模块改动后 grep 旧引用/旧 schema 是全仓一致性最后一道防线，不能只更新 plan 列举的文件
-- **新 session 上下文利用不足**（#80 未读 handoff 重问决策、此前 worktree 流程教训）：worktree/压缩交接场景下，handoff 文件是决策的权威来源——先读交接文档再动手是避免重复劳动的关键
+- **新 session 上下文利用不足**（#80 未读 handoff 重问决策、#80 push 前未 rebase）：worktree/压缩交接场景下，handoff 文件是决策的权威来源——先读交接文档再动手；push 前必须先 fetch + rebase base 分支（已固化为 AGENTS.md 硬约束）
