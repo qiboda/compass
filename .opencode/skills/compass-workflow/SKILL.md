@@ -179,14 +179,15 @@ feat/xxx      ●──●──●──┘   (feature 分支，通过 PR 合�
 - **周日**：回顾已完成工作，所有 issues 完成后关闭 milestone，调用 `/reflect`
 - 手动触发：随时调用 `/product brainstorm` 获取新的候选
 
-### 11. 摩擦记录
+### 11. 摩擦记录（并入反思）
 
 当用户纠正 AI 行为（矛盾、范围扩张、约束遗漏、方案偏离）时——
-暂停并建议通过 `/friction` 记录。
+在写事后反思（`/reflect`）时一并记录，不再单独使用 friction 机制。
 
 - 涵盖所有纠正性交互，不限于 grill-me 分歧
-- 通过 `/friction` skill 记录到 `kb/dev/friction.md`
-- 在纠正解决后提示用户，而非活跃工作期间
+- 在 reflection 条目的 **User corrections** 小节记录"用户纠正了什么"
+  （`friction.md` 机制已移除，历史摩擦条目见 `reflections.md` 末尾"历史摩擦记录"章节）
+- 在纠正解决后提示用户记录，而非活跃工作期间
 
 ---
 
@@ -200,8 +201,7 @@ Compass 项目为特定工作流步骤提供以下 opencode skills：
 | qa（test） | `/test` | 编写失败测试（TDD/BDD）、测试覆盖 | 第 3 步 — TESTS |
 | rustdoc | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 | 第 4a 步 — RUSTDOC |
 | docs | `/docs` | 识别并更新 kb/ 文件 | 第 4b 步 — DOCS |
-| reflect | `/reflect` | 编写实现后反思 + 趋势分析 | 实现后 |
-| friction | `/friction` | 记录工作期间的 AI 行为纠正 | 纠正后 / 按需 |
+| reflect | `/reflect` | 编写实现后反思（含 User corrections）+ 趋势分析 | 实现后 |
 
 当门禁清单显示 `→ 调用 /<command>` 时，加载对应的 skill 并按其工作流执行。
 每个 skill 的详细说明见 `.opencode/skills/<name>/SKILL.md`。

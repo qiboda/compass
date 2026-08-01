@@ -243,3 +243,28 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **hook 链路的次生 bug**（#16 pre-push range、#79 pre-push 阻断、#95 rebase 误拒、commit-msg 误提取正文 ref）：hook 自身成为新的故障源——hook 改动需带测试/模拟验证，且 commit message 规范应明确"正文勿用 ref #N 字面量"
 - **跨 PR 合并成本被低估**（#78 × #79、#75 × #83）：并发 PR 共享文件时，rebase 冲突解决 + 测试适配是主要工作量——提前识别共享文件（main.py/duckdb.rs/reflections.md）可预判冲突
 - **时间/环境依赖测试反复出现**（#75、#79 review、#62）：测试必须用固定基准（日期/路径/端口），agent 生成的测试要专项检查"是否依赖 now()/环境变量"
+
+---
+
+## 历史摩擦记录（并入自 friction.md，2026-08-01）
+
+> friction 机制已合并入本文件的 User corrections 章节。以下为历史摩擦条目，
+> 记录用户纠正 AI 行为的时刻，保留防重犯价值。
+
+## 2026-07-30 — #69 grill-me
+
+**User corrections**: 摩擦记录不应局限于 grill-me，应该是**任何「我做了/说了 X，你纠正为 Y」的场合**——包括执行方向偏离、意图误解、约束遗漏等所有纠正型交互。
+
+**教训**: 不要被用户给出的例子锚定（anchoring bias）。用户举的例子是示意，不是边界定义。正确做法是追问范围边界，而非默认例子就是全部。
+
+## 2026-07-30 — 三张财务报表管线 review 修复
+
+**User corrections**: 「发现问题首先应该写测试，而不是直接写代码」。TDD 的 RED→GREEN 流程：先写能复现 bug 的测试，确认它失败，再修代码让测试通过。
+
+**教训**: 任何 bug 修复都必须先有失败测试。即使问题看起来"简单清楚"，跳过测试直接改代码就是违反 test-first 纪律——这会丢失回归保护，也无法证明修复真正有效。修复与测试应成对出现，测试先行。
+
+## 2026-07-31 — worktree opencode 启动失败 (#76)
+
+**User corrections**: 「开启新的 opencode，要先解绑当前的 opencode 的 session」。opencode 将 worktree 目录映射到与 master 相同的 project_id（`git_worktree` 关联），master 实例仍绑定该 project 的 session 时，worktree 新实例无法启动。该经验已写入 worktree skill 的 Post-Creation MANDATORY 步骤。
+
+**教训**: 涉及 opencode/git 工具的跨目录操作，先确认工具对 worktree 的特殊处理（session/project 绑定模型），再执行启动动作。教训应沉淀到 skill 文档本身，确保后续所有 agent 在流程上不会重犯。

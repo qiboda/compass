@@ -67,7 +67,7 @@ Grill-me 是第 0 步；gate 是第 1-4 步。不要因为 grill-me 已达成共
 **Test-first 不可妥协**：任何 bugfix 或 feature 变更必须从能复现问题的失败测试开始
 （RED），再做让它通过的修复（GREEN）。适用于 Python（`collectors/tests/`）、
 Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败测试是反模式 ——
-见 `kb/dev/friction.md`。
+见 `kb/dev/reflections.md` 历史摩擦记录章节（test-first 教训）。
 
 ### HARD BLOCK
 
@@ -105,8 +105,7 @@ Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败�
 | `qa` (test) | `/test` | 编写单元/集成测试（TDD/BDD）、测试覆盖 |
 | `rustdoc` | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 |
 | `docs` | `/docs` | 根据代码变更识别并更新 `kb/` 文件 |
-| `reflect` | `/reflect` | 写事后反思（含趋势分析） |
-| `friction` | `/friction` | 记录 AI 行为偏差纠正到 `kb/dev/friction.md` |
+| `reflect` | `/reflect` | 写事后反思（含 User corrections + 趋势分析） |
 | `product` | `/product` | Sprint 候选分析（只读，milestone 提议） |
 
 所有 skill 位于 `.opencode/skills/<name>/SKILL.md`。OpenCode 从文件系统
@@ -183,11 +182,13 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 `product` skill 每周一扫描代码库和 open issues，提出 3-5 个候选需求；`/product brainstorm`
 可随时手动触发。Sprint 节奏由 `compass-workflow` skill 的 Sprint Rhythm 规则强制执行。
 
-## 摩擦记录
+## 摩擦记录（并入反思）
 
 任何「AI 行为偏差被用户纠正」的场合（grill-me 分歧、执行方向偏离、意图误解、约束遗漏等），
-都应记录到 `kb/dev/friction.md`：自动检测（用户纠正时提示）或手动 `/friction` 命令。
-与 reflections 区分：friction 记录决策过程中的卡点和纠正；reflections 记录实施后的教训。
+在写事后反思时记录到 `reflections.md` 条目的 **User corrections** 小节
+（自动检测：用户纠正时提示是否记录；随 `/reflect` 一并写入）。
+`friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `reflections.md` 末尾
+"历史摩擦记录"章节。
 
 ## 决策记录
 
@@ -217,8 +218,7 @@ PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），�
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、Dolt 操作、重置 |
-| `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 |
-| `kb/dev/friction.md` | 摩擦记录 — AI 行为偏差与纠正 |
+| `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 + 历史摩擦记录（User corrections） |
 | `kb/user/index.md` | 用户总览 — Compass 是什么、快速开始、前置条件 |
 | `kb/user/gui.md` | 图表应用 — 界面、控件、数据流、股票代码 |
 | `kb/user/cli.md` | 数据管线 — import/import-compass/export/backup、工作流、排障 |

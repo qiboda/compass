@@ -39,6 +39,8 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 
 **What was done**: [1-2 sentences summarizing the change]
 
+**User corrections** (if any): [user corrections during this work — replaces the removed friction.md]
+
 **What went wrong** (if any): [process failures, missed steps, surprises]
 
 **Lessons learned**: [what to do differently next time]
@@ -48,6 +50,9 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 
 各章节规则：
 - **What was done**：事实陈述，1-2 句话。不带主观评价。
+- **User corrections**：仅在用户纠正过 AI 时写（可选章节）——记录"用户纠正了什么"（决策过程）。
+  注意：`friction.md` 机制已移除（2026-08-01），本小节继承其职责。历史摩擦条目见文件末尾
+  "历史摩擦记录"章节。
 - **What went wrong**：仅在确实出了问题时才写。如果没有问题，写 `**What went wrong**: No issues.` 或直接省略该章节。
 - **Lessons learned**：可操作的内容 — 下次具体要做出什么改变。不能泛泛而谈（如"更小心"）。至少一条。
 
@@ -88,6 +93,8 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 ## YYYY-MM-DD — <issue ref> <brief title>
 
 **What was done**: <1-2 sentence summary>
+
+**User corrections** (if any): <user corrections during this work>
 
 **What went wrong**: <specific failures or "No issues.">
 
