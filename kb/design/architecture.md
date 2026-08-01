@@ -325,7 +325,7 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 - 写入单个 `parquet_data/stock_daily.parquet` 文件，包含 `symbol` 列
 - 直接写入完整数据集（无合并模式，无 `--overwrite` 标志）
 - `--since` 支持增量导入较新数据
-- 同时写入 `stock_basic.parquet` 和 `stock_daily.symbols.txt`
+- 同时写入 `stock_daily.symbols.txt`
 
 ### import-compass：Dolt compass_data → Parquet
 - 将我们自己的表（`stock_basic`、`fin_indicators`、`fin_balance_sheet`、

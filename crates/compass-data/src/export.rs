@@ -78,7 +78,6 @@ pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwri
 const TABLES: &[(&str, &str)] = &[
     ("stock_daily", "ORDER BY symbol, trade_date"),
     ("stock_adj_factor", "ORDER BY symbol, trade_date"),
-    ("stock_basic", "ORDER BY symbol"),
     ("stock_limit", "ORDER BY symbol, trade_date"),
 ];
 
@@ -172,7 +171,7 @@ mod tests {
             "stock_daily.parquet should be non-empty"
         );
 
-        for empty_table in &["stock_adj_factor", "stock_basic", "stock_limit"] {
+        for empty_table in &["stock_adj_factor", "stock_limit"] {
             let p = dir.join(format!("{empty_table}.parquet"));
             assert!(!p.exists(), "{empty_table} should be skipped (empty)");
         }

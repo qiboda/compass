@@ -44,7 +44,7 @@ cargo run --bin compass-data -- import [OPTIONS]
 
 ```
 parquet_data/
-├── stock_basic.parquet             # 股票元数据（单个文件）
+├── stock_basic.parquet             # 股票元数据（由 import-compass --table stock_basic 生成）
 ├── stock_daily.parquet             # OHLCV 数据（单文件，含 symbol 列）
 └── stock_daily.symbols.txt         # 股票索引（每行一个）
 ```

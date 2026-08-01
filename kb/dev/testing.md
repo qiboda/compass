@@ -101,7 +101,7 @@ let (count_a, count_b) = {
 }; // lock released
 
 // Now safe to call async db methods
-let info = db.get_stock_basic("SZ000001").await?;
+let range = db.get_stored_range("SZ000001").await?;
 ```
 
 `DuckDbProvider` 的异步方法使用 `spawn_blocking`，它在线程池上尝试锁定 `conn`。

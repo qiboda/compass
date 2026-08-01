@@ -101,17 +101,6 @@ CREATE TABLE IF NOT EXISTS stock_adj_factor (
     PRIMARY KEY (symbol, trade_date)
 );
 
-CREATE TABLE IF NOT EXISTS stock_basic (
-    symbol      VARCHAR PRIMARY KEY,
-    name        VARCHAR,
-    area        VARCHAR,
-    industry    VARCHAR,
-    market      VARCHAR,
-    exchange    VARCHAR,
-    list_date   DATE,
-    delist_date DATE
-);
-
 CREATE TABLE IF NOT EXISTS stock_limit (
     symbol      VARCHAR NOT NULL,
     trade_date  DATE NOT NULL,
@@ -454,89 +443,6 @@ impl DuckDbProvider {
         .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
     }
 
-    /// Upsert a stock_basic record.
-    ///
-    /// When `overwrite` is false, an existing row with the same symbol is skipped.
-    /// When true, the existing row is replaced.
-    pub async fn upsert_stock_basic(
-        &self,
-        info: &StockBasic,
-        overwrite: bool,
-    ) -> Result<(), DataError> {
-        let symbol = info.symbol.clone();
-        let name = info.name.clone();
-        let area = info.area.clone();
-        let industry = info.industry.clone();
-        let market = info.market.clone();
-        let exchange = info.exchange.clone();
-        let list_date_str = info.list_date.map(|d| d.format("%Y-%m-%d").to_string());
-        let delist_date_str = info.delist_date.map(|d| d.format("%Y-%m-%d").to_string());
-
-        let conn = Arc::clone(&self.conn);
-
-        tokio::task::spawn_blocking(move || {
-            let conn = conn
-                .lock()
-                .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
-
-            let verb = if overwrite {
-                "INSERT OR REPLACE"
-            } else {
-                "INSERT OR IGNORE"
-            };
-            let sql = format!(
-                "{verb} INTO stock_basic (symbol, name, area, industry, market, exchange, list_date, delist_date)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            );
-            conn.execute(&sql,
-                params![symbol, name, area, industry, market, exchange, list_date_str, delist_date_str],
-            )
-            .map_err(DataError::Database)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
-    }
-
-    /// Read a single stock_basic record.
-    pub async fn get_stock_basic(&self, symbol: &str) -> Result<Option<StockBasic>, DataError> {
-        let symbol = symbol.to_string();
-        let conn = Arc::clone(&self.conn);
-
-        tokio::task::spawn_blocking(move || {
-            let conn = conn
-                .lock()
-                .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
-            let mut stmt = conn
-                .prepare("SELECT symbol, name, area, industry, market, exchange, CAST(list_date AS VARCHAR), CAST(delist_date AS VARCHAR) FROM stock_basic WHERE symbol = ?")
-                .map_err(DataError::Database)?;
-
-            let result = stmt
-                .query_row(params![symbol], |row| {
-                    Ok(StockBasic {
-                        symbol: row.get(0)?,
-                        name: row.get(1)?,
-                        area: row.get::<_, Option<String>>(2)?,
-                        industry: row.get::<_, Option<String>>(3)?,
-                        market: row.get::<_, Option<String>>(4)?,
-                        exchange: row.get::<_, Option<String>>(5)?,
-                        list_date: row
-                            .get::<_, Option<String>>(6)?
-                            .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-                        delist_date: row
-                            .get::<_, Option<String>>(7)?
-                            .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-                    })
-                })
-                .optional()
-                .map_err(DataError::Database)?;
-
-            Ok(result)
-        })
-        .await
-        .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
-    }
-
     /// Save limit records into `stock_limit`.
     ///
     /// When `overwrite` is false, existing (symbol, trade_date) rows are skipped.
@@ -590,23 +496,6 @@ impl DuckDbProvider {
         .await
         .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
     }
-}
-
-// ---------------------------------------------------------------------------
-// StockBasic — read-back struct for stock_basic table
-// ---------------------------------------------------------------------------
-
-/// Read-back struct for the `stock_basic` table.
-#[derive(Debug, Clone)]
-pub struct StockBasic {
-    pub symbol: String,
-    pub name: String,
-    pub area: Option<String>,
-    pub industry: Option<String>,
-    pub market: Option<String>,
-    pub exchange: Option<String>,
-    pub list_date: Option<NaiveDate>,
-    pub delist_date: Option<NaiveDate>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1322,53 +1211,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // stock_basic tests
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn upsert_and_get_stock_basic() {
-        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-
-        let info = StockBasic {
-            symbol: "000001".into(),
-            name: "平安银行".into(),
-            area: Some("深圳".into()),
-            industry: Some("银行".into()),
-            market: Some("主板".into()),
-            exchange: Some("SZ".into()),
-            list_date: NaiveDate::from_ymd_opt(1991, 4, 3),
-            delist_date: None,
-        };
-
-        provider
-            .upsert_stock_basic(&info, true)
-            .await
-            .expect("upsert_stock_basic failed");
-
-        let fetched = provider
-            .get_stock_basic("000001")
-            .await
-            .expect("get_stock_basic failed")
-            .expect("should have data");
-
-        assert_eq!(fetched.symbol, "000001");
-        assert_eq!(fetched.name, "平安银行");
-        assert_eq!(fetched.area.as_deref(), Some("深圳"));
-        assert_eq!(fetched.industry.as_deref(), Some("银行"));
-        assert_eq!(fetched.list_date, info.list_date);
-    }
-
-    #[tokio::test]
-    async fn get_stock_basic_returns_none_for_unknown() {
-        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-        let info = provider
-            .get_stock_basic("999999")
-            .await
-            .expect("get_stock_basic failed");
-        assert!(info.is_none());
-    }
-
-    // -----------------------------------------------------------------------
     // stock_limit tests
     // -----------------------------------------------------------------------
 
@@ -1940,53 +1782,6 @@ mod tests {
             (factor2 - 3.0).abs() < 0.001,
             "d2 adj_factor should be 3.0 (new)"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // upsert_stock_basic: overwrite=false
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn upsert_stock_basic_skips_existing_when_overwrite_false() {
-        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
-
-        let original = StockBasic {
-            symbol: "000001".into(),
-            name: "OldName".into(),
-            area: Some("Area1".into()),
-            industry: Some("Industry1".into()),
-            market: Some("Market1".into()),
-            exchange: Some("EX1".into()),
-            list_date: NaiveDate::from_ymd_opt(2020, 1, 1),
-            delist_date: None,
-        };
-        let updated = StockBasic {
-            symbol: "000001".into(),
-            name: "NewName".into(),
-            area: Some("Area2".into()),
-            industry: Some("Industry2".into()),
-            market: Some("Market2".into()),
-            exchange: Some("EX2".into()),
-            list_date: NaiveDate::from_ymd_opt(2021, 1, 1),
-            delist_date: None,
-        };
-
-        provider
-            .upsert_stock_basic(&original, true)
-            .await
-            .expect("first upsert");
-        provider
-            .upsert_stock_basic(&updated, false)
-            .await
-            .expect("second upsert with skip");
-
-        let fetched = provider
-            .get_stock_basic("000001")
-            .await
-            .expect("get_stock_basic failed")
-            .expect("should exist");
-        assert_eq!(fetched.name, "OldName");
-        assert_eq!(fetched.area.as_deref(), Some("Area1"));
     }
 
     // -----------------------------------------------------------------------
