@@ -10,8 +10,8 @@ FAIL=0
 
 # Mirrors the hook's detection greps. grep exits 1 on no match — coerce to 0
 # so the counting works under set -euo pipefail.
-count_all()    { printf '%s\n' "$1" | grep -ciE '(^|[^[:alnum:]_-])ref[[:space:]]+' || true; }
-count_valid()  { printf '%s\n' "$1" | grep -ciE '(^|[^[:alnum:]_-])ref[[:space:]]+#[0-9]+' || true; }
+count_all()    { printf '%s\n' "$1" | grep -ciE '(^|[[:space:](])ref[[:space:]]+' || true; }
+count_valid()  { printf '%s\n' "$1" | grep -ciE '(^|[[:space:](])ref[[:space:]]+#[0-9]+' || true; }
 
 check() {
     local name="$1" msg="$2" expect_all="$3" expect_valid="$4"
@@ -53,6 +53,10 @@ check "ref #N in parentheses" \
 # 6. 'refactored' / 'references' / 'refactor' — word fragment, must NOT count
 check "refactored not counted" \
     "refactored the references in refactor mode" 0 0
+
+# 6b. Regex/code fragment \<ref\> in prose — backslash prefix must NOT count
+check "backslash-escaped ref fragment ignored" \
+    "The check used \\<ref\\> word boundaries" 0 0
 
 # 7. bare 'ref' at line end (no trailing space): neither regex counts it —
 #    grep strips the newline, so [[:space:]]+ requires an inline space.

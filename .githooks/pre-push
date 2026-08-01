@@ -117,10 +117,11 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     excl_origin="--not origin/master"
 
     # Detect malformed ref references: standalone "ref" not followed by #N.
-    # Word boundary: ref must be preceded by line start or a non-alnum/- char
-    # so technical terms like --abbrev-ref are NOT matched (ref #97).
-    all_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '(^|[^[:alnum:]_-])ref[[:space:]]+')
-    valid_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '(^|[^[:alnum:]_-])ref[[:space:]]+#[0-9]+')
+    # ref must be preceded by line start, whitespace, or '(' — legal refs only
+    # appear there. This excludes code/term fragments like --abbrev-ref,
+    # \<ref\>, or refactored (ref #97).
+    all_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '(^|[[:space:](])ref[[:space:]]+')
+    valid_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '(^|[[:space:](])ref[[:space:]]+#[0-9]+')
 
     if [ "$all_refs" -gt "$valid_refs" ]; then
         echo ""
@@ -135,7 +136,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
 
     # Extract issue references from all commits in the range
     issues=$(git log "$range" $excl_origin --format="%B" 2>/dev/null \
-        | grep -ioE '(^|[^[:alnum:]_-])ref[[:space:]]+#[0-9]+' \
+        | grep -ioE '(^|[[:space:](])ref[[:space:]]+#[0-9]+' \
         | grep -oE '#[0-9]+' \
         | sort -u \
         | tr -d '#' \
