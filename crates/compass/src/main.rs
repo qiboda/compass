@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
-use compass_core::model::AppConfig;
+use compass_core::model::{AppConfig, WatchlistConfig};
 use compass_types::ScreenerQuery;
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
 use compass_ui::widgets::dropdown::Dropdown;
@@ -51,6 +51,7 @@ fn main() -> eframe::Result {
         &config.app.app.default_symbol,
         &config.app.app.default_timeframe,
     ));
+    shared_state.watchlist.set(config.watchlist.symbols.clone());
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW_INNER_SIZE),
@@ -158,6 +159,8 @@ fn main() -> eframe::Result {
                 sidebar_search: String::new(),
                 status_clock: String::new(),
                 symbol_input_id: None,
+                pending_delete: None,
+                delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
             }))
         }),
     )
@@ -204,14 +207,17 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 // ---------------------------------------------------------------------------
 
 /// Top-level config file contents: the legacy `AppConfig` sections plus the
-/// screener condition section. Flattening keeps existing TOML keys mapping to
-/// `AppConfig` while `[screener]` parses into `ScreenerQuery`.
+/// screener condition section and the watchlist section. Flattening keeps
+/// existing TOML keys mapping to `AppConfig` while `[screener]` parses into
+/// `ScreenerQuery` and `[watchlist]` into `WatchlistConfig`.
 #[derive(Deserialize)]
 struct FullConfig {
     #[serde(flatten)]
     app: AppConfig,
     #[serde(default)]
     screener: ScreenerQuery,
+    #[serde(default)]
+    watchlist: WatchlistConfig,
 }
 
 /// Reads `~/.config/compass/config.toml`. Falls back to `AppConfig::default()`
@@ -232,6 +238,7 @@ fn load_config() -> FullConfig {
                 FullConfig {
                     app: AppConfig::default(),
                     screener: ScreenerQuery::default(),
+                    watchlist: WatchlistConfig::default(),
                 }
             }
         },
@@ -240,6 +247,7 @@ fn load_config() -> FullConfig {
             FullConfig {
                 app: AppConfig::default(),
                 screener: ScreenerQuery::default(),
+                watchlist: WatchlistConfig::default(),
             }
         }
     }
@@ -269,6 +277,41 @@ fn save_screener_config(query: &ScreenerQuery) -> Result<(), String> {
     doc.as_table_mut()
         .expect("value is a table")
         .insert("screener".to_string(), screener_value);
+
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&config_path, serialized)
+        .map_err(|e| format!("failed to write config.toml: {e}"))
+}
+
+/// Persist the watchlist symbols to the `[watchlist]` section of
+/// `~/.config/compass/config.toml`.
+///
+/// Mirrors [`save_screener_config`]: reads the existing file as a
+/// `toml::Value`, replaces the `watchlist` table, and writes it back.
+/// Creates the file (with only `[watchlist]`) when it does not exist.
+fn save_watchlist_config(symbols: &[String]) -> Result<(), String> {
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    let mut doc = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents
+            .parse::<toml::Value>()
+            .map_err(|e| format!("failed to parse config.toml: {e}"))?,
+        Err(_) => toml::Value::Table(Default::default()),
+    };
+
+    let watchlist_value = toml::Value::try_from(WatchlistConfig {
+        symbols: symbols.to_vec(),
+    })
+    .map_err(|e| format!("failed to serialize watchlist config: {e}"))?;
+    doc.as_table_mut()
+        .expect("value is a table")
+        .insert("watchlist".to_string(), watchlist_value);
 
     let serialized =
         toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
@@ -346,6 +389,11 @@ struct CompassApp {
     status_clock: String,
     /// Widget id of the toolbar symbol input (for the `/` shortcut).
     symbol_input_id: Option<egui::Id>,
+    /// Symbol whose watchlist removal is awaiting modal confirmation.
+    pending_delete: Option<String>,
+    /// Shared flag flipped by the delete-confirm modal callback; read back
+    /// after [`Modal::show`] each frame to complete the removal.
+    delete_confirmed: std::rc::Rc<std::cell::RefCell<bool>>,
 }
 
 impl eframe::App for CompassApp {
@@ -397,6 +445,23 @@ impl eframe::App for CompassApp {
             self.toast.render(ui.ctx());
             self.modal.show(ui.ctx());
             self.file_dialog.update(ui.ctx());
+
+            // Complete a pending watchlist removal once the confirm modal
+            // fires (the callback only flips the shared flag above).
+            if *self.delete_confirmed.borrow()
+                && let Some(symbol) = self.pending_delete.take()
+            {
+                self.remove_from_watchlist(&symbol);
+                *self.delete_confirmed.borrow_mut() = false;
+            }
+            // A stale pending delete (modal dismissed via Cancel/Esc) is
+            // cleared once the closing fade completes.
+            if !self.modal.is_open()
+                && self.pending_delete.is_some()
+                && !*self.delete_confirmed.borrow()
+            {
+                self.pending_delete = None;
+            }
 
             // Push screener error toast only on None→Some transition.
             let current_screener_err = self.shared_state.screener_error.get();
@@ -537,30 +602,33 @@ impl CompassApp {
         self.stock_picker.selected_exchange.clear();
     }
 
-    /// Left watchlist sidebar: search row + a "自选" group seeded with the
-    /// current symbol (real watchlist groups arrive in S8).
+    /// Left watchlist sidebar: search row + the "自选" group backed by
+    /// `SharedState.watchlist` (design §6.2). Add inserts the current symbol;
+    /// delete requests open a danger confirm modal before removal.
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
         let tokens = *self.theme.tokens();
         let sidebar = Sidebar::new(&tokens);
-        let symbol = self.shared_state.symbol.get();
+        let current_symbol = self.shared_state.symbol.get();
+        let watchlist = self.shared_state.watchlist.get();
         let query = self.sidebar_search.trim().to_lowercase();
 
         let mut items = Vec::new();
-        for stock in &self.stock_list {
-            if stock.symbol != symbol {
-                continue;
-            }
+        for symbol in &watchlist {
+            let stock = self.stock_list.iter().find(|s| &s.symbol == symbol);
+            let name = stock
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| symbol.clone());
+            let exchange = stock.and_then(|s| s.exchange.clone()).unwrap_or_default();
             let matches = query.is_empty()
-                || stock.symbol.to_lowercase().contains(&query)
-                || stock.name.to_lowercase().contains(&query);
+                || symbol.to_lowercase().contains(&query)
+                || name.to_lowercase().contains(&query);
             if matches {
                 items.push(SidebarItem {
-                    symbol: stock.symbol.clone(),
-                    name: stock.name.clone(),
-                    exchange: stock.exchange.clone().unwrap_or_default(),
-                    selected: true,
+                    symbol: symbol.clone(),
+                    name,
+                    exchange,
+                    selected: symbol == &current_symbol,
                 });
-                break;
             }
         }
         let groups = [SidebarGroup {
@@ -579,9 +647,64 @@ impl CompassApp {
             match event {
                 SidebarEvent::Select { symbol } => self.fetch_symbol(&symbol),
                 SidebarEvent::Search(_) => {}
-                SidebarEvent::Add | SidebarEvent::DeleteRequest { .. } => {}
+                SidebarEvent::Add => self.add_to_watchlist(&current_symbol),
+                SidebarEvent::DeleteRequest { symbol } => self.request_watchlist_removal(&symbol),
             }
         }
+    }
+
+    /// Add `symbol` to the watchlist (dedup + sort) and persist it.
+    fn add_to_watchlist(&mut self, symbol: &str) {
+        let mut watchlist = self.shared_state.watchlist.get();
+        if watchlist.iter().any(|s| s == symbol) {
+            return;
+        }
+        watchlist.push(symbol.to_string());
+        watchlist.sort();
+        self.shared_state.watchlist.set(watchlist.clone());
+        if let Err(e) = save_watchlist_config(&watchlist) {
+            tracing::warn!(error = %e, "failed to save watchlist config");
+        }
+        self.toast
+            .push(ToastLevel::Success, format!("已添加 {symbol} 到自选"));
+    }
+
+    /// Remove `symbol` from the watchlist and persist it.
+    fn remove_from_watchlist(&mut self, symbol: &str) {
+        let mut watchlist = self.shared_state.watchlist.get();
+        let before = watchlist.len();
+        watchlist.retain(|s| s != symbol);
+        if watchlist.len() == before {
+            return;
+        }
+        self.shared_state.watchlist.set(watchlist.clone());
+        if let Err(e) = save_watchlist_config(&watchlist) {
+            tracing::warn!(error = %e, "failed to save watchlist config");
+        }
+        self.toast
+            .push(ToastLevel::Success, format!("已从自选移除 {symbol}"));
+    }
+
+    /// Open the danger confirm modal for removing `symbol` from the watchlist
+    /// (design §6.5 scenario 3). The confirm callback only flips a shared
+    /// flag; the actual removal runs after [`Modal::show`] in `ui()`.
+    fn request_watchlist_removal(&mut self, symbol: &str) {
+        if self.pending_delete.as_deref() == Some(symbol) && self.modal.is_open() {
+            return;
+        }
+        self.pending_delete = Some(symbol.to_string());
+        *self.delete_confirmed.borrow_mut() = false;
+        self.modal.set_title("移除自选");
+        self.modal
+            .set_body(format!("确定要从自选中移除 {symbol} 吗？"));
+        self.modal.set_danger(true);
+        self.modal.set_confirm_text("移除");
+        self.modal.set_cancel_text("保留");
+        let confirmed = self.delete_confirmed.clone();
+        self.modal.set_on_confirm(move || {
+            *confirmed.borrow_mut() = true;
+        });
+        self.modal.open();
     }
 
     /// Bottom status bar: stock summary, loading/error state, data source
@@ -871,6 +994,8 @@ mod tests {
             sidebar_search: String::new(),
             status_clock: String::new(),
             symbol_input_id: None,
+            pending_delete: None,
+            delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
         }
     }
 
@@ -1286,6 +1411,7 @@ default_timeframe = "1w"
         }];
         let app = build_compass_app_with_stocks(egui::Context::default(), stocks);
         app.shared_state.symbol.set("600519".to_string());
+        app.shared_state.watchlist.set(vec!["600519".to_string()]);
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
@@ -1301,6 +1427,247 @@ default_timeframe = "1w"
             harness.state().stock_picker.selected_symbol,
             "600519",
             "sidebar select must sync the picker"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // S8 watchlist wiring (design §6.2 / §6.5 scenario 3)
+    // ------------------------------------------------------------------
+
+    fn stock_basic(symbol: &str, name: &str, exchange: &str) -> StockBasic {
+        StockBasic {
+            symbol: symbol.to_string(),
+            name: name.to_string(),
+            area: None,
+            industry: None,
+            market: None,
+            board: None,
+            full_name: None,
+            total_share: None,
+            exchange: Some(exchange.to_string()),
+            list_date: None,
+            delist_date: None,
+        }
+    }
+
+    #[test]
+    fn sidebar_add_button_adds_current_symbol_to_watchlist_and_persists() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("000001", "平安银行", "SZ")],
+        );
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        harness.get_by_label("\u{e3d4}").click(); // ＋ add button
+        harness.step();
+
+        assert_eq!(
+            harness.state().shared_state.watchlist.get(),
+            vec!["000001".to_string()],
+            "add must insert the current symbol"
+        );
+        let contents =
+            std::fs::read_to_string(config_dir.join("config.toml")).expect("config written");
+        assert!(
+            contents.contains("[watchlist]"),
+            "watchlist section must be persisted, got: {contents}"
+        );
+        assert!(contents.contains("\"000001\""));
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn add_to_watchlist_deduplicates_and_sorts() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+
+        app.add_to_watchlist("600519"); // already present → no-op
+        assert_eq!(
+            app.shared_state.watchlist.get(),
+            vec!["600519".to_string()],
+            "duplicate add must be rejected"
+        );
+
+        app.add_to_watchlist("000001");
+        assert_eq!(
+            app.shared_state.watchlist.get(),
+            vec!["000001".to_string(), "600519".to_string()],
+            "watchlist must stay sorted after insert"
+        );
+        let contents =
+            std::fs::read_to_string(config_dir.join("config.toml")).expect("config written");
+        assert!(contents.contains("000001"), "insert must be persisted");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_delete_opens_danger_modal_and_removes_on_confirm() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[watchlist]\nsymbols = [\"600519\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("600519", "贵州茅台", "SH")],
+        );
+        app.shared_state.symbol.set("600519".to_string());
+        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // The selected row reveals its × button without hovering.
+        let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
+        assert!(
+            !delete_buttons.is_empty(),
+            "selected row must show the delete button"
+        );
+        delete_buttons.remove(0).click();
+        harness.step();
+
+        // Danger confirm modal (design §6.5 scenario 3). The entry scale
+        // animation breaks hit-testing while running, so complete it first.
+        harness.state_mut().modal.open_started =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        harness.step();
+        let _ = harness.get_by_label("移除自选");
+        assert!(harness.state().modal.is_open());
+        harness.get_by_label("移除").click();
+        harness.step();
+        harness.step();
+
+        assert!(
+            harness.state().shared_state.watchlist.get().is_empty(),
+            "confirm must remove the symbol from the watchlist"
+        );
+        let contents =
+            std::fs::read_to_string(config_dir.join("config.toml")).expect("config written");
+        assert!(
+            !contents.contains("600519"),
+            "persisted watchlist must drop the removed symbol, got: {contents}"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_delete_modal_cancel_keeps_watchlist() {
+        let app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("600519", "贵州茅台", "SH")],
+        );
+        app.shared_state.symbol.set("600519".to_string());
+        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
+        delete_buttons.remove(0).click();
+        harness.step();
+        harness.state_mut().modal.open_started =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        harness.step();
+        harness.get_by_label("保留").click();
+        harness.step();
+
+        assert_eq!(
+            harness.state().shared_state.watchlist.get(),
+            vec!["600519".to_string()],
+            "cancel must keep the watchlist intact"
+        );
+        assert!(
+            harness.state().modal.closing,
+            "cancel must start the modal closing animation"
+        );
+        // Complete the fade: the pending delete is cleared without confirm.
+        harness.state_mut().modal.close_started =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        harness.step();
+        assert!(!harness.state().modal.is_open());
+        assert!(
+            harness.state().pending_delete.is_none(),
+            "dismissed modal must clear the pending delete"
+        );
+    }
+
+    #[test]
+    fn sidebar_watchlist_restores_from_config() {
+        let app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![
+                stock_basic("000001", "平安银行", "SZ"),
+                stock_basic("600519", "贵州茅台", "SH"),
+            ],
+        );
+        app.shared_state
+            .watchlist
+            .set(vec!["000001".to_string(), "600519".to_string()]);
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let _ = harness.get_by_label("平安银行");
+        let _ = harness.get_by_label("贵州茅台");
+        assert_eq!(
+            harness.state().shared_state.watchlist.get().len(),
+            2,
+            "both watchlist symbols render as sidebar rows"
         );
     }
 
@@ -1584,6 +1951,152 @@ default_timeframe = "1w"
         }
 
         assert_eq!(config.screener, ScreenerQuery::default());
+        assert_eq!(config.app.app.default_symbol, "000001");
+    }
+
+    // ------------------------------------------------------------------
+    // Watchlist persistence (S8)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn save_watchlist_config_roundtrips() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"600519\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let symbols = vec!["000001".to_string(), "600519".to_string()];
+        let save_result = crate::save_watchlist_config(&symbols);
+        let loaded: FullConfig =
+            toml::from_str(&std::fs::read_to_string(config_dir.join("config.toml")).unwrap())
+                .unwrap();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(save_result.is_ok(), "save should succeed");
+        assert_eq!(
+            loaded.app.app.default_symbol, "600519",
+            "existing sections preserved"
+        );
+        assert_eq!(loaded.watchlist.symbols, symbols);
+    }
+
+    #[test]
+    fn save_watchlist_config_creates_file_when_missing() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let result = crate::save_watchlist_config(&["600519".to_string()]);
+        let contents =
+            std::fs::read_to_string(config_dir.join("config.toml")).expect("file created");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(result.is_ok());
+        assert!(
+            contents.contains("[watchlist]"),
+            "created file has [watchlist] section"
+        );
+    }
+
+    #[test]
+    fn load_config_parses_watchlist_section() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[watchlist]\nsymbols = [\"600519\", \"000001\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.watchlist.symbols,
+            vec!["600519".to_string(), "000001".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_config_missing_watchlist_section_uses_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"000001\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(config.watchlist.symbols.is_empty());
         assert_eq!(config.app.app.default_symbol, "000001");
     }
 }
