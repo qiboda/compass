@@ -128,6 +128,25 @@ pub struct StockBasic {
     pub delist_date: Option<chrono::NaiveDate>,
 }
 
+/// A single cross-section row: one trading day of one symbol.
+///
+/// Returned by [`crate::data::parquet::ParquetReader::fetch_cross_section`]
+/// for whole-market scans. Unlike a chart `Bar`, it carries the `symbol` and
+/// `adjclose` fields that technical screening conditions require.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossSectionBar {
+    /// 6-digit stock code (bare, without exchange prefix).
+    pub symbol: String,
+    /// Trading date.
+    pub trade_date: chrono::NaiveDate,
+    /// Forward-adjusted (前复权) close price.
+    pub adjclose: f64,
+    /// Raw (unadjusted) close price.
+    pub close: f64,
+    /// Trading volume (shares).
+    pub volume: f64,
+}
+
 /// Adjustment factor record from Baostock (per-day multiplier for price adjustment).
 ///
 /// `adj_factor` is the cumulative adjustment factor for a given date. To compute

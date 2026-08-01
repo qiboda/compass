@@ -13,7 +13,7 @@ use duckdb::{Connection, OptionalExt, params};
 use egui_charts::model::Bar;
 
 use crate::data::provider::{DataError, DataProvider};
-use crate::model::{StockBasic, SymbolInfo};
+use crate::model::{CrossSectionBar, StockBasic, SymbolInfo};
 
 /// Validate symbol for use in DuckDB parameter bindings.
 ///
@@ -357,6 +357,75 @@ impl ParquetReader {
 
         Ok(rows)
     }
+
+    /// Load all daily bars for every symbol in `stock_daily.parquet` within
+    /// `[range_start, range_end]` (inclusive).
+    ///
+    /// This is the cross-section primitive used by whole-market scans
+    /// (e.g. the screener). Unlike `fetch_bars_blocking` it filters by date
+    /// only — no `WHERE symbol = ?` — so a single query returns bars for all
+    /// symbols. If `stock_daily.parquet` doesn't exist, returns an empty vec.
+    ///
+    /// Dates are bound as `YYYY-MM-DD` strings, matching `fetch_bars_blocking`.
+    /// The parquet `tradedate` column is `TIMESTAMP` (or `DATE`); `CAST AS
+    /// VARCHAR` yields `"1991-04-04"` or `"1991-04-04 00:00:00"`, both parsed
+    /// by `date_str_to_utc`.
+    pub fn fetch_cross_section(
+        &self,
+        range_start: NaiveDate,
+        range_end: NaiveDate,
+    ) -> Result<Vec<CrossSectionBar>, DataError> {
+        if !self.daily_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let path_str = self.daily_path.to_string_lossy();
+        let escaped = escape_sql_path(&path_str);
+        let start_str = range_start.format("%Y-%m-%d").to_string();
+        let end_str = range_end.format("%Y-%m-%d").to_string();
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT symbol, CAST(tradedate AS VARCHAR) AS tradedate, adjclose, close, volume
+             FROM read_parquet('{escaped}')
+             WHERE tradedate >= ? AND tradedate <= ?
+             ORDER BY symbol, tradedate ASC"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<(String, String, f64, f64, f64)> = stmt
+            .query_map(params![start_str, end_str], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+
+        let bars: Vec<CrossSectionBar> = rows
+            .into_iter()
+            .filter_map(|(symbol, date_str, adjclose, close, volume)| {
+                let trade_date = date_str_to_utc(&date_str)?.date_naive();
+                Some(CrossSectionBar {
+                    symbol,
+                    trade_date,
+                    adjclose,
+                    close,
+                    volume,
+                })
+            })
+            .collect();
+
+        Ok(bars)
+    }
 }
 
 fn date_str_to_utc(date_str: &str) -> Option<DateTime<Utc>> {
@@ -536,6 +605,119 @@ mod tests {
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0].code, "SH600519");
         assert_eq!(symbols[1].code, "SZ000001");
+    }
+
+    #[test]
+    fn fetch_cross_section_returns_all_market_rows() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[
+                ("000001", &[("2024-01-02", 10.0), ("2024-01-03", 10.5)]),
+                ("600519", &[("2024-01-02", 1500.0), ("2024-01-03", 1520.0)]),
+                ("920992", &[("2024-01-02", 8.0)]),
+            ],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let bars = reader
+            .fetch_cross_section(
+                NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"),
+                NaiveDate::from_ymd_opt(2030, 1, 1).expect("date"),
+            )
+            .expect("fetch cross section");
+
+        assert_eq!(bars.len(), 5, "all market rows within range");
+        // Ordered by symbol, then trade_date.
+        assert_eq!(bars[0].symbol, "000001");
+        assert_eq!(
+            bars[0].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
+        );
+        assert_eq!(bars[0].adjclose, 10.0);
+        assert_eq!(bars[0].close, 10.0);
+        assert_eq!(bars[0].volume, 1000.0);
+        assert_eq!(
+            bars[1].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 3).expect("date")
+        );
+        assert_eq!(bars[1].adjclose, 10.5);
+        assert_eq!(bars[4].symbol, "920992");
+        assert_eq!(bars[4].adjclose, 8.0);
+    }
+
+    #[test]
+    fn fetch_cross_section_filters_by_date_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[(
+                "000001",
+                &[
+                    ("2024-01-02", 10.0),
+                    ("2024-01-03", 10.5),
+                    ("2024-01-04", 11.0),
+                ],
+            )],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let bars = reader
+            .fetch_cross_section(
+                NaiveDate::from_ymd_opt(2024, 1, 3).expect("date"),
+                NaiveDate::from_ymd_opt(2024, 1, 3).expect("date"),
+            )
+            .expect("fetch cross section");
+
+        assert_eq!(bars.len(), 1, "only in-range rows, boundaries inclusive");
+        assert_eq!(
+            bars[0].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 3).expect("date")
+        );
+    }
+
+    #[test]
+    fn fetch_cross_section_returns_empty_when_file_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let bars = reader
+            .fetch_cross_section(
+                NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"),
+                NaiveDate::from_ymd_opt(2030, 1, 1).expect("date"),
+            )
+            .expect("empty vec, not error");
+        assert!(bars.is_empty());
+    }
+
+    #[test]
+    fn fetch_cross_section_parses_timestamp_tradedate() {
+        // Regression guard: real stock_daily.parquet stores tradedate as
+        // TIMESTAMP; CAST AS VARCHAR yields "2024-01-02 00:00:00" with a time
+        // component. Parsing must handle it (date_str_to_utc does).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t (symbol VARCHAR, tradedate TIMESTAMP, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);
+             INSERT INTO t VALUES ('000001', TIMESTAMP '2024-01-02 00:00:00', 9.0, 11.0, 9.5, 10.0, 10.0, 1000.0, 0.0);",
+        )
+        .expect("create");
+        let path = tmp.path().join("stock_daily.parquet");
+        conn.execute_batch(&format!("COPY t TO '{}' (FORMAT PARQUET)", path.display()))
+            .expect("copy");
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let bars = reader
+            .fetch_cross_section(
+                NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"),
+                NaiveDate::from_ymd_opt(2030, 1, 1).expect("date"),
+            )
+            .expect("fetch cross section");
+        assert_eq!(bars.len(), 1);
+        assert_eq!(
+            bars[0].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
+        );
+        assert_eq!(bars[0].adjclose, 10.0);
     }
 
     #[test]
