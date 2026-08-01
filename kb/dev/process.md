@@ -183,6 +183,14 @@ git commit                    # uses .gitmessage template
 git push origin main          # triggers CI
 ```
 
+### `.omo/plans/` 必须提交（git 跟踪规则）
+
+`.gitignore` 排除 `.omo/*` 但**例外保留 `!.omo/plans/`**——计划文件目录由 git
+跟踪。每个 epic/feature 的计划文件（`.omo/plans/<name>.md`）**必须随实现
+提交**（docs 类 commit），作为计划-执行-交付的权威跟踪记录。不要因 `??`
+状态误判为"gitignored 工作产物"——`??` 仅表示未 add，需查 `.gitignore`
+规则区分"待提交"与"被忽略"。
+
 ## 快速开始
 
 ```sh
