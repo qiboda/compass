@@ -596,6 +596,13 @@ mod tests {
             .push(ToastLevel::Success, "fresh-toast");
 
         let mut harness = harness_for_toasts(&manager);
+        // The harness constructor already ran one frame, where the expired
+        // toast started closing (`close_started` stamped at that frame's
+        // wall-clock time). On a slow CI runner the real-time gap to run()
+        // can exceed CLOSE_DURATION (100 ms), which would remove the toast
+        // before the assertions below. Reset the stamp so the closing
+        // animation is deterministic: freshly started, progress ≈ 0.
+        manager.borrow_mut().toasts[0].close_started = Some(Instant::now());
         harness.run();
 
         // Expired toast must have entered the closing animation, not be
