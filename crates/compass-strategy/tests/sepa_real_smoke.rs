@@ -18,9 +18,8 @@ use compass_types::SepaQuery;
 #[test]
 #[ignore]
 fn run_sepa_over_real_parquet() {
-    let dir = std::env::var("SEPA_PARQUET_DIR").unwrap_or_else(|_| {
-        "/data/compass-data/parquet_data".to_string()
-    });
+    let dir = std::env::var("SEPA_PARQUET_DIR")
+        .unwrap_or_else(|_| "/data/compass-data/parquet_data".to_string());
     let reader = ParquetReader::new(&dir).expect("open real parquet dir");
     // Latest real trading day in the data (capital_main_flow smoke import used
     // 2026-07-31); run_sepa uses its own 550-day window.
@@ -51,11 +50,24 @@ fn run_sepa_over_real_parquet() {
             "row score out of range: {}",
             row.total_score
         );
-        assert!((-3.75..=0.0).contains(&row.risk), "risk out of range: {}", row.risk);
+        assert!(
+            (-3.75..=0.0).contains(&row.risk),
+            "risk out of range: {}",
+            row.risk
+        );
         println!(
             "#{:>2} {} {} score={:5.2} t={:4.1} th={:4.1} c={:4.1} p={:4.1} r={:5.2} price={:.2} chg={:+.2}%",
-            row.rank, row.symbol, row.name, row.total_score, row.trend, row.theme, row.capital,
-            row.pattern, row.risk, row.latest_price, row.change_pct
+            row.rank,
+            row.symbol,
+            row.name,
+            row.total_score,
+            row.trend,
+            row.theme,
+            row.capital,
+            row.pattern,
+            row.risk,
+            row.latest_price,
+            row.change_pct
         );
     }
 
