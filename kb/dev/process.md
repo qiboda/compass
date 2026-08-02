@@ -48,6 +48,11 @@ User raises requirement
 
 1. 使用 `.github/ISSUE_TEMPLATE/bug_report.md` 模板创建 issue
 2. 回读确认（`gh issue view <N>`）issue 已存在
+
+**PR 内的 bug 不建独立 issue。** PR 未合并前，属于该 PR 内容范围的问题
+（实现缺陷、冒烟测试发现的问题）直接在 PR 内修复，commit 引用 PR 对应的
+epic/issue（`ref #<N>`），不创建新 issue；issue 收尾时在完成 comment 中
+一并记录。仅当问题独立于 PR 范围、或 PR 已合并后才走上述正常 issue 流程。
 3. 修复 — 带 `ref #N` 提交
 
 ### 提交 → Issue 关联

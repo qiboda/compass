@@ -188,6 +188,11 @@ Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 **HARD BLOCK: 只在 push 后关闭 issue。** issue 只有在修复到达
 `origin/master` 后才算 "done"。commit 后不要关闭 —— 等 push 成功。
 
+**PR 内的 bug 不建独立 issue。** PR 未合并前，属于该 PR 内容范围的问题
+（实现缺陷、冒烟测试发现的问题）直接在 PR 内修复，commit 引用 PR 对应的
+epic/issue（`ref #<N>`），不创建新 issue；issue 收尾时在完成 comment 中
+一并记录。仅当问题独立于 PR 范围、或 PR 已合并后才走正常 issue 流程。
+
 **push 成功后的强制收尾（勿忘，勿等用户提醒）**：追加完成 comment
 （`gh issue comment <N>`——实现摘要 + 验收状态 + commit 列表 + 方案偏差及原因，
 遵守 comments.md"永远追加"规范），然后关闭 issue。push 成功 ≠ 任务完成
