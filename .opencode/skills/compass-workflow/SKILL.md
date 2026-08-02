@@ -27,6 +27,14 @@ reached"。如果尚未调用 `/grill-me`，请返回并先完成。
    已达成 shared understanding
    → [必须确认]
 
+☐ 第 0.5 步 — WORKTREE（grill 共识后立即判断，ref #138）
+   需求是否需要 worktree？（feature/epic、2+ 模块、将产出 .omo/plans/*.md
+   或 .omo/designs/*.md）
+   → 需要则**立即创建并切换**（/worktree）：grill 共识达成后、产出任何 .omo
+     文件之前。plan/design 直接在 worktree 内创建，随实现 PR 提交。
+   → 不需要（单文件修复/纯 docs）→ 跳过，继续 master 工作区。
+   → [必须展示 worktree 名称与 handoff 已写入]
+
 ☐ 第 1 步 — DESIGN（仅界面相关变更强制）
    涉及界面布局/视觉风格/交互效果的工作，先委派 ui-designer
    产出 .omo/designs/<feature>.md 设计方案，并经用户确认；

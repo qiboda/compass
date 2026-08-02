@@ -168,6 +168,13 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 **临时 PR 工作空间**，为单个 PR 或 epic 创建，合并后清理。
 分支命名：`feat/<short-description>` 或 `fix/<short-description>`。
 
+**创建时机（强制，ref #138）**：需求经 grill-me 确认需要 worktree 时（feature/epic、
+2+ 模块、将产出 `.omo/plans/*.md` 或 `.omo/designs/*.md`），**grill 共识达成后立即
+创建并切换**——plan/design 等 .omo 产出文件直接在 worktree 内创建，随实现 PR 提交。
+**禁止**在 master 工作区先产出 plan/design 再迁移：git worktree 是独立 checkout，
+master 工作区的 untracked 文件不会出现在 worktree 中（SEPA 教训：全程在 master 规划
+导致 plan/design 成 untracked、需手动迁移）。
+
 **加载 `/worktree` skill 获取完整流程**（创建、post-creation MANDATORY 步骤、
 handoff 移交、自动启动区域、`--close` 退出清理、合并后清理）。
 主 session 创建 worktree 后仅需写 handoff（用途 + issue URL + 已锁定决策），

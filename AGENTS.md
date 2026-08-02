@@ -261,7 +261,15 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 ## Worktrees
 
 PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），每个 worktree 对应
-一个 PR/epic，合并后清理。**主 session 的职责仅为确定用途 + 命名**：将用途简述、
+一个 PR/epic，合并后清理。**创建时机（强制）**：需求经 grill-me 确认是需要 worktree 的
+工作（feature/epic、2+ 模块、将产出 `.omo/plans/*.md` 或 `.omo/designs/*.md`）时，
+**grill 共识达成后立即创建并切换**——后续的 design/issue/plan/review/实现全部在
+worktree 内进行，**plan/design 等 .omo 产出文件直接在 worktree 内创建**，随实现 PR
+一并提交。**禁止**在 master 工作区先产出 plan/design 再等开 worktree 迁移——git
+worktree 是独立 checkout，master 工作区的 untracked 文件不会出现在 worktree 中
+（ref #138 教训：SEPA 曾全程在 master 规划、plan/design 成 untracked，最后需手动迁移）。
+
+**主 session 的职责仅为确定用途 + 命名**：将用途简述、
 对应 issue URL 与已锁定决策写入 `.worktrees/<name>/.omo/handoff.md`，然后运行
 `scripts/open-worktrees.sh <name>` 自动启动工作树区域（探测默认终端 + setsid
 脱离进程组，无需手动解绑当前 session）。剩余工作（设计/计划/实现/commit/PR）

@@ -23,6 +23,19 @@ Git 工作树为 PR 开发提供隔离的工作目录。
 | `.worktrees/<name>` | 临时 PR 工作空间——每个 PR 一个 |
 | `.worktrees/<name>` | 短期存在：PR 创建时建立，合并后删除 |
 
+## 创建时机（MANDATORY）
+
+**需求经 grill-me 确认是需要 worktree 的工作（feature/epic、2+ 模块、将产出
+`.omo/plans/*.md` 或 `.omo/designs/*.md`）时，grill 共识达成后立即创建并切换。**
+后续的 design/issue/plan/review/实现全部在 worktree 内进行，plan/design 等 .omo
+产出文件**直接在 worktree 内创建**，随实现 PR 一并提交。
+
+**禁止**在 master 工作区先产出 plan/design 再等开 worktree 迁移——git worktree 是
+独立 checkout，master 工作区的 **untracked 文件不会出现在 worktree 中**（ref #138
+教训：SEPA 曾全程在 master 规划，plan/design 成 untracked，最后需手动迁移）。
+
+判断口诀：**一旦确定"这次要产出 .omo 文件"→ 先开 worktree 再写文件**。
+
 ## 命令
 
 ### 创建
@@ -63,6 +76,9 @@ git worktree add -b fix/<name> .worktrees/<name> <target-branch>
    - 后续的 grill-me 延续、设计（ui-designer）、计划（ulw-plan）、实现、
      commit、PR 全部由 worktree 内的 agent 自主完成
    - worktree agent 从 handoff 文件读取用途/决策/issue 上下文后自行推进
+   - **所有 .omo 产出（`.omo/plans/*.md`、`.omo/designs/*.md`）直接在 worktree
+     内创建**——master 工作区不产出这些文件（untracked 文件不会跨 checkout 迁移，
+     ref #138）
    - 主 session 创建后即结束该任务的参与，不做实现、不跟进
 
 4. **当前 session 留在 master 中**——不要在当前 session 中 `cd` 进入工作树。
