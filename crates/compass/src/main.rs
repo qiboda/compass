@@ -632,27 +632,22 @@ impl CompassApp {
         );
     }
 
-    /// Fetch the current toolbar selection (exchange-prefixed when an
-    /// exchange is selected in the picker).
+    /// Fetch the current toolbar selection.
+    ///
+    /// Parquet/DuckDB store bare 6-digit codes; the picker's exchange field
+    /// is display-only, so the prefixed form ("sz.000001") must NOT be sent
+    /// or the lookup finds no data.
     fn fetch_bars(&mut self) {
-        let symbol = if self.stock_picker.selected_exchange.is_empty() {
-            self.stock_picker.selected_symbol.clone()
-        } else {
-            format!(
-                "{}.{}",
-                self.stock_picker.selected_exchange.to_lowercase(),
-                self.stock_picker.selected_symbol
-            )
-        };
+        let symbol = self.stock_picker.selected_symbol.clone();
         info!(symbol = %symbol, timeframe = %timeframe_value(self.timeframe_index), "fetch requested");
         self.fetch_symbol(&symbol);
     }
 
     /// Reflect `shared_state.symbol` changes back into the StockPicker.
     ///
-    /// Only bare 6-digit codes are synced — the toolbar writes prefixed
-    /// symbols ("sz.000001") when an exchange is selected, and copying those
-    /// back would corrupt the picker. The marker field tracks the last seen
+    /// Only bare 6-digit codes are synced — prefixed symbols ("sz.000001")
+    /// come from external sources (watchlist config) and copying those back
+    /// would corrupt the picker. The marker field tracks the last seen
     /// symbol so per-frame checks fire only on actual changes.
     fn sync_picker_from_symbol(&mut self) {
         let symbol = self.shared_state.symbol.get();
@@ -2138,6 +2133,36 @@ default_timeframe = "1w"
         app.sync_picker_from_symbol();
         assert_eq!(app.stock_picker.selected_symbol, "000001");
         assert_eq!(app.last_screener_synced_symbol, "000001");
+    }
+
+    // ------------------------------------------------------------------
+    // Toolbar fetch (regression: prefixed symbol breaks the parquet lookup)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn fetch_bars_sends_bare_symbol_even_when_exchange_selected() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.stock_picker.selected_symbol = "000001".to_string();
+        app.stock_picker.selected_exchange = "SZ".to_string();
+
+        app.fetch_bars();
+
+        assert_eq!(
+            app.shared_state.symbol.get(),
+            "000001",
+            "parquet stores bare codes; prefixed 'sz.000001' would find no data"
+        );
+    }
+
+    #[test]
+    fn fetch_bars_sends_bare_symbol_when_no_exchange_selected() {
+        let mut app = build_compass_app(egui::Context::default());
+        app.stock_picker.selected_symbol = "600519".to_string();
+        app.stock_picker.selected_exchange.clear();
+
+        app.fetch_bars();
+
+        assert_eq!(app.shared_state.symbol.get(), "600519");
     }
 
     // ------------------------------------------------------------------
