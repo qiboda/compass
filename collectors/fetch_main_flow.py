@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""A-share main capital flow collector (主力资金流).
+
+Independent module — uses common.py for shared infrastructure.
+
+Source: EastMoney push2 ``clist/get`` (per-day full-market snapshot, field
+f62 = main net inflow). The datacenter report ``RPT_MAIN_MONEY_FLOW`` does
+not exist (code 9501, verified 2026-08-02), so this collector fetches the
+latest trading day's snapshot instead of historical paginated reports.
+
+Incremental mode (epic decision 22): only the latest trading day is stored.
+``data_updates.last_report_date`` is compared twice — against today before
+fetching (short-circuit) and against the trade date derived from the
+response after fetching (idempotent re-runs, e.g. weekend re-runs).
+"""
+
+import asyncio
+import random
+import sys
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+from common import (
+    AsyncSession,
+    Throttle,
+    dolt_sql,
+    dolt_sql_csv,
+    dolt_table_import,
+    last_report_date,
+    write_csv,
+)
+
+REPORT_NAME = "RPT_MAIN_MONEY_FLOW"
+DOLT_TABLE = "capital_main_flow"
+SOURCE = "EastMoney push2 clist f62"
+
+# push2 main domain is rate-limited in practice; push2delay is more stable.
+# Both are tried in order on empty/failed responses.
+PUSH2_DELAY = "https://push2delay.eastmoney.com/api/qt/clist/get"
+PUSH2_MAIN = "https://push2.eastmoney.com/api/qt/clist/get"
+PUSH2_URLS = (PUSH2_DELAY, PUSH2_MAIN)
+
+PUSH2_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Referer": "https://quote.eastmoney.com/",
+}
+
+# push2 field → DDL column. Empirical (2026-08-02, 20-sample check):
+# f62 == f66 + f72 exactly, so f72 is the large-order flow and f78 the
+# medium-order flow (f184 == f69 + f75 likewise).
+_FIELD_MAP = {
+    "f62": "main_net_inflow",
+    "f184": "main_net_inflow_rate",
+    "f66": "super_large_net",
+    "f72": "large_net",
+    "f78": "medium_net",
+    "f84": "small_net",
+}
+
+DDL = """\
+CREATE TABLE capital_main_flow (
+    symbol              VARCHAR(20) NOT NULL,
+    trade_date          DATE NOT NULL,
+    main_net_inflow     DOUBLE,
+    main_net_inflow_rate DOUBLE,
+    super_large_net     DOUBLE,
+    large_net           DOUBLE,
+    medium_net          DOUBLE,
+    small_net           DOUBLE,
+    update_date         DATE,
+    PRIMARY KEY (symbol, trade_date)
+)"""
+
+COLS = (
+    "main_net_inflow, main_net_inflow_rate, "
+    "super_large_net, large_net, medium_net, small_net, update_date"
+)
+
+
+def _today() -> date:
+    """Today's local date — module-level so tests can pin it."""
+    return date.today()
+
+
+def _exchange_prefix(code: str) -> str:
+    """Infer exchange prefix from a bare code (kb/design/symbols.md rules)."""
+    if code.startswith("6"):
+        return "SH"
+    if code.startswith("8"):
+        return "BJ"
+    return "SZ"
+
+
+def _num(value: object) -> str | float:
+    """Normalize a push2 cell: '-'/None → '' (CSV empty → Dolt NULL), else float."""
+    if value is None or value == "-":
+        return ""
+    if isinstance(value, (int, float, str)):
+        return float(value)
+    return ""
+
+
+def _trade_date_from_quotes(diff: list[dict]) -> date:
+    """Trade date from the latest f124 quote timestamp (Beijing epoch seconds).
+
+    f124 is the per-symbol last quote timestamp; its max lands on the most
+    recent trading day (e.g. Friday's close during a weekend). Falls back to
+    today when no usable timestamp is present (documented limitation).
+    """
+    latest = 0
+    for item in diff:
+        ts = item.get("f124")
+        if isinstance(ts, (int, float)) and ts > 0:
+            latest = max(latest, int(ts))
+    if latest > 0:
+        # EastMoney stores Beijing-time epoch seconds; China has no DST.
+        bj = datetime.fromtimestamp(latest, tz=UTC) + timedelta(hours=8)
+        return bj.date()
+    return _today()
+
+
+def _build_records(diff: list[dict], trade_date: date) -> list[dict]:
+    """Map push2 diff items to CSV-ready records with SH600519-style symbols."""
+    records: list[dict] = []
+    today = _today().isoformat()
+    for item in diff:
+        code = item.get("f12")
+        if not isinstance(code, str) or not code:
+            continue
+        prefix = _exchange_prefix(code)
+        if not prefix:
+            continue
+        record: dict[str, object] = {
+            "symbol": f"{prefix}{code}",
+            "trade_date": trade_date.isoformat(),
+        }
+        for fld, col in _FIELD_MAP.items():
+            record[col] = _num(item.get(fld))
+        record["update_date"] = today
+        records.append(record)
+    return records
+
+
+async def _fetch_page(
+    session, throttle: Throttle, page_number: int, page_size: int
+) -> tuple[list[dict], int]:
+    """Fetch one snapshot page; returns (diff items, reported total)."""
+    params = {
+        "fid": "f62",
+        "po": 1,
+        "pz": page_size,
+        "pn": page_number,
+        "np": 1,
+        "fltt": 2,
+        "invt": 2,
+        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+        "fields": "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205,f124",
+    }
+    for base in PUSH2_URLS:
+        for attempt in range(4):
+            try:
+                await throttle.acquire()
+                resp = await session.get(base, params=params, headers=PUSH2_HEADERS)
+                if resp.status_code == 429:
+                    wait = 15 + random.uniform(0, 5)
+                    print(f"    429, waiting {wait:.0f}s...", file=sys.stderr)
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                data = resp.json().get("data") or {}
+                diff = data.get("diff") or []
+                if diff:
+                    return diff, data.get("total", 0)
+                print(f"    empty response from {base}", file=sys.stderr)
+                break  # try the next domain
+            except Exception as e:
+                wait = min(2**attempt, 30) + random.uniform(0, 3)
+                if attempt < 3:
+                    print(
+                        f"    retry {attempt + 1}/4 in {wait:.0f}s: {e}",
+                        file=sys.stderr,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    print(f"    FAILED {base}: {e}", file=sys.stderr)
+    return [], 0
+
+
+async def _fetch_snapshot(session, throttle: Throttle, page_size: int) -> list[dict]:
+    """Fetch the full-market snapshot, paginating over pn until total is met."""
+    all_items: list[dict] = []
+    total = 0
+    page = 1
+    while True:
+        items, data_total = await _fetch_page(session, throttle, page, page_size)
+        if not items:
+            break
+        all_items.extend(items)
+        if data_total:
+            total = data_total
+        if len(all_items) >= total:
+            break
+        page += 1
+    return all_items
+
+
+async def run(page_size: int = 1000) -> Path:
+    """Fetch the latest-day full-market main capital flow snapshot.
+
+    Short-circuits before fetching when ``data_updates.last_report_date`` is
+    already today, and after fetching when the response's trade date matches
+    the stored one (idempotent re-runs never grow row counts).
+    """
+    output_path = Path(f"{REPORT_NAME}.csv")
+
+    last = last_report_date(DOLT_TABLE)
+    if last == _today().isoformat():
+        print(f"Data up to date ({last}); skipping fetch", file=sys.stderr)
+        return output_path
+
+    print(f"Report: {REPORT_NAME} ({SOURCE})", file=sys.stderr)
+    print(f"Output: {output_path.resolve()}", file=sys.stderr)
+
+    throttle = Throttle()
+    async with AsyncSession(impersonate="chrome142") as session:
+        diff = await _fetch_snapshot(session, throttle, page_size)
+
+    if not diff:
+        print("No data from push2 (rate-limited or empty)", file=sys.stderr)
+        return output_path
+
+    trade_date = _trade_date_from_quotes(diff)
+    print(f"Snapshot: {len(diff)} items, trade_date={trade_date}", file=sys.stderr)
+
+    if last == trade_date.isoformat():
+        print(f"Trade date {trade_date} already imported; skipping", file=sys.stderr)
+        return output_path
+
+    records = _build_records(diff, trade_date)
+    write_csv(records, output_path)
+    print(f"\nDone: {len(records)} records → {output_path.resolve()}", file=sys.stderr)
+    return output_path
+
+
+def import_to_dolt(csv_path: Path | None = None) -> int:
+    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    print("[import main flow]", file=sys.stderr)
+
+    if not csv_path.exists():
+        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
+        return 0
+
+    tmp_table = "_tmp_mf"
+    if not dolt_table_import(tmp_table, csv_path):
+        print("  Import failed", file=sys.stderr)
+        return 0
+
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
+    exists = (
+        dolt_sql_csv(
+            f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{DOLT_TABLE}'"
+        )
+        .strip()
+        .split("\n")[-1]
+        .strip()
+    )
+    if exists == "1":
+        dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
+    dolt_sql(DDL)
+
+    # symbol is already SH600519-formatted in the CSV (built at fetch time)
+    sql = f"""
+        INSERT INTO {DOLT_TABLE} (symbol, trade_date, {COLS})
+        SELECT symbol, trade_date, {COLS}
+        FROM {tmp_table}
+        WHERE symbol IN (SELECT symbol FROM stock_basic)
+    """
+    result = dolt_sql(sql, timeout=600)
+    if result.returncode != 0:
+        print(f"  SQL error: {result.stderr}", file=sys.stderr)
+        dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
+        old_exists = (
+            dolt_sql_csv(
+                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{tmp_table}_old'"
+            )
+            .strip()
+            .split("\n")[-1]
+            .strip()
+        )
+        if old_exists == "1":
+            dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
+            print("  Rolled back to previous data", file=sys.stderr)
+        dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
+        return 0
+
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
+
+    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {DOLT_TABLE}")
+    lines = stdout.strip().split("\n")
+    total = int(lines[-1]) if len(lines) > 1 else 0
+    last_td = (
+        dolt_sql_csv(f"SELECT MAX(trade_date) FROM {DOLT_TABLE}").strip().split("\n")[-1].strip()
+    )
+    last_td_val = "NULL" if (not last_td or last_td == "NULL") else f"'{last_td}'"
+
+    dolt_sql(
+        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
+        f"VALUES ('{DOLT_TABLE}', CURDATE(), '{SOURCE}', {total}, {last_td_val}) "
+        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
+        f"last_report_date=VALUES(last_report_date)"
+    )
+    print(f"  Done: {total} rows", file=sys.stderr)
+    return total
+
+
+if __name__ == "__main__":
+    import argparse
+
+    async def _main() -> None:
+        p = argparse.ArgumentParser(description="Fetch A-share main capital flow")
+        p.add_argument("--page-size", type=int, default=1000)
+        args = p.parse_args()
+        await run(page_size=args.page_size)
+
+    asyncio.run(_main())
