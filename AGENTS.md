@@ -94,7 +94,13 @@ Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败�
 每次 feature/bugfix 完成后，调用 `/reflect`（reflect skill）写事后反思，
 追加到 `kb/dev/reflections.md`。
 
-这是强制要求 —— 与实现一起提交或紧随其后。
+**反思时机（强制）**：在**用户确认 push 之后、执行 push 之前**编写并提交
+反思 commit——反思随当前 PR 一起推送合并，天然落在 master 上。不要在
+push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已关闭 issue
+的 `ref #N`），且反思 commit 只能脱离 PR 单独直推（ref #119 教训：
+合并后反思被迫 reopen issue + 摘 patch 移 master）。
+
+这是强制要求 —— 反思 commit 与实现代码同批 push。
 
 ---
 
@@ -182,6 +188,8 @@ Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 **Follow the user's exact words.** "commit" 只表示 commit；"push" 只表示 push。
 
 **Push 前必须 rebase base 分支**：push 前先 `git fetch origin <base>`，若分支落后 base（`git log HEAD..origin/<base>` 非空），先 `git rebase origin/<base>` 解决冲突后再 push。禁止携带过期 base 的提交直接 push——rebase 冲突在 push 后更难收拾（force-push 需小心、远端已带缺陷 commit）。
+
+**Push 前必须提交反思**：用户确认 push 后，先调用 `/reflect` 写反思并提交（ref #119），再执行 push——反思 commit 与实现同批推送，随 PR 合并落在 master（见「实现后：Reflection Record」）。
 
 完整 push gate 清单见 `kb/dev/process.md`。
 

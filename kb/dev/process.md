@@ -16,9 +16,12 @@ User raises requirement
   →  cargo nextest (tests must pass)
   →  commit with ref #<sub-N> (epic) or ref #N (single issue)
   →  ai-review (/review-work) — per sub-issue + pre-PR
-  →  push master (one PR with all sub-issue commits)
+  →  user confirms push → /reflect (write reflection commit) → push master (one PR with all commits)
   →  CI passes  →  batch close sub-issues + epic with gh issue close
 ```
+
+> 反思 commit 在用户确认 push 后、执行 push 前提交（ref #119 教训：合并后
+> 再写反思会撞上已关闭 issue 的 commit-msg hook 限制，只能摘 patch 直推）。
 
 文档、lint 修复和错别字跳过 grill-me + issue 环节 — 直接实施。
 

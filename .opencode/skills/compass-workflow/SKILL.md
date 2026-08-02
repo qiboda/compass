@@ -270,8 +270,11 @@ ref #N"
 
 ### 第 5 步：完成
 
-- 所有范围内问题已解决 → 继续提交（或推送）
-- → 调用 /reflect 编写实现后反思
+- 所有范围内问题已解决 → 提交，等待用户 push 指令
+- **用户确认 push 后、执行 push 前**：调用 `/reflect` 编写实现后反思，
+  反思 commit（含 `ref #N`）与实现代码**同批 push**，随 PR 合并落在 master
+  ——不要在 push/合并后才写反思（ref #119 教训：合并后 issue 已关闭，
+  commit-msg hook 拒绝 `ref #N`，反思 commit 只能摘 patch 单独直推）
 
 ### 第 6 步：Push 后关闭 issue（强制，勿忘）
 
@@ -300,6 +303,9 @@ ref #N"
 编写实现后反思并追加到 `kb/dev/reflections.md`。
 这替代了之前的手工反思要求——reflect skill 负责
 编写、格式和趋势分析。
+
+**时机（强制）**：用户确认 push 后、执行 push 前——反思 commit 与实现
+同批 push 随 PR 合并落在 master；不要在 push/合并后才写（ref #119 教训）。
 
 完整反思工作流见 `.opencode/skills/reflect/SKILL.md`。
 
