@@ -25,8 +25,7 @@ description: 产品 agent，分析代码库状态并为冲刺规划提出里程�
 从以下来源收集当前项目状态：
 
 - **git log**：`git log --oneline --since="2 weeks ago"` — 最近构建了什么？
-- **Open issues**：`gh issue list --state open` — 哪些待处理？
-- **Backlog**：读取 `backlog.md` — 候选需求池，是否已排序？
+- **Open issues**：`gh issue list --state open` — 需求池即 open issues（含 backlog 候选，标 `C-Feature`）；不再使用 `backlog.md` 文件
 - **设计文档**：读取 `kb/design/architecture.md`、`data-providers.md`、`symbols.md` — 架构状态如何？
 - **计划文件**：列出 `.omo/plans/*.md` — 哪些正在规划中？
 
@@ -36,7 +35,7 @@ description: 产品 agent，分析代码库状态并为冲刺规划提出里程�
 
 - **进行中**：哪些工作正在进行，需要持续推进？
 - **被阻塞**：哪些卡住了，需要解除阻塞？
-- **已规划未启动**：backlog.md 中哪些已准备好可以开始？
+- **已规划未启动**：open issues 中哪些已准备好可以开始？
 - **质量缺口**：从最近的 commit 中是否能看出缺少测试、文档或需要重构的债务？
 - **用户体验**：图表应用或数据管线中是否有明显的功能缺口？
 
@@ -55,7 +54,7 @@ description: 产品 agent，分析代码库状态并为冲刺规划提出里程�
 ```markdown
 ## Sprint Candidates — YYYY-MM-DD
 
-Based on analysis of <N open issues, M recent commits, backlog state>:
+Based on analysis of <N open issues, M recent commits>:
 
 1. **[Candidate Title]** — rationale. Priority: High
 2. **[Candidate Title]** — rationale. Priority: Medium
@@ -70,7 +69,7 @@ Based on analysis of <N open issues, M recent commits, backlog state>:
 ## Product: Sprint Candidates — YYYY-MM-DD
 
 ### Scan Summary
-<brief summary of what was found: N open issues, M recent commits, backlog state>
+<brief summary of what was found: N open issues, M recent commits>
 
 ### Candidates
 1. **<title>** — <rationale>. Priority: <High|Medium|Low>
@@ -84,11 +83,10 @@ Based on analysis of <N open issues, M recent commits, backlog state>:
 
 | 场景 | 处理方式 |
 |---|---|
-| 没有 open issues | 建议从 backlog.md 的优先排序项开始 |
+| 没有 open issues | 建议从 open issues 的历史/讨论中发掘候选，或标注暂无候选 |
 | 所有 issue 均被阻塞 | 建议以解除阻塞为最高优先级候选 |
 | 未检测到周一 | 手动 `/product brainstorm` 仍然可用 |
-| `backlog.md` 不存在 | 将其作为候选标注："create backlog.md" |
-| git log 为空（新项目） | 仅关注 backlog 和设计文档 |
+| git log 为空（新项目） | 仅关注 issues 和设计文档 |
 | 最近有很多 commit 但没有 issue | 建议为近期工作创建 issue |
 
 ## 禁止事项
@@ -108,6 +106,6 @@ Based on analysis of <N open issues, M recent commits, backlog state>:
 
 ## 参考
 
-- `backlog.md` — 产品愿景和优先排序的候选需求池
+- Open issues — 需求池（backlog 候选为 `C-Feature` 且 body 标注"需求池/Backlog"）
 - `AGENTS.md` — 冲刺规划章节
 - `.omo/plans/` — 进行中和已完成的计划

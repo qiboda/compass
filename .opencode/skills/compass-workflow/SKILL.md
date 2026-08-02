@@ -190,7 +190,7 @@ feat/xxx      ●──●──●──┘   (worktree 分支，通过 PR 合�
 
 使用 GitHub Milestones 进行每周 sprint 管理。周一（规划）→ 周日（回顾）。
 
-- **周一**：规划 sprint —— 查看 open issues，阅读 `backlog.md`，调用 `/product brainstorm` 获取 milestone 候选
+- **周一**：规划 sprint —— 查看 open issues（需求池即 open issues，不再有 `backlog.md`），调用 `/product brainstorm` 获取 milestone 候选
 - **周日**：回顾已完成工作，所有 issues 完成后关闭 milestone，调用 `/reflect`
 - 手动触发：随时调用 `/product brainstorm` 获取新的候选
 
