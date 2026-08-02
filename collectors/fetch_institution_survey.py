@@ -118,10 +118,10 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
 
     # One stock can receive multiple institutions on the same survey date
     # (verified: duplicate (code, receive_start_date, receive_object) rows
-    # exist upstream). GROUP BY on the composite PK (symbol, survey_date,
-    # org_name) trips a Dolt bug on utf8mb4 Chinese grouping keys, so the
-    # key is HEX(org_name) (ASCII-safe) and the columns are re-derived with
-    # MAX() — grouping on the full org value keeps the PK granularity exact.
+    # exist upstream). Dedup groups on the FULL composite key (symbol,
+    # survey_date, org_name): the group key is the ASCII-safe
+    # HEX(RECEIVE_OBJECT) joined with the already-derived s/d columns, so
+    # distinct events of the same org (different symbol/date) each survive.
     # The temp table is created with an explicit wide schema: dolt's CSV type
     # inference caps strings at varchar(200) and truncates longer UTF-8
     # values mid-character (org_name up to ~800 bytes), so the inferred width
@@ -145,7 +145,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
                       IN (SELECT symbol FROM stock_basic)
                   AND RECEIVE_START_DATE IS NOT NULL
             ) t
-            GROUP BY gk
+            GROUP BY s, d, gk
         """,
         create_sql=(
             "CREATE TABLE _tmp_svy ("

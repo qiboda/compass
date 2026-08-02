@@ -164,6 +164,36 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "1"
 
+    def test_same_org_different_events_not_collapsed(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Same org surveying DIFFERENT symbols on DIFFERENT dates in ONE CSV
+        are distinct events and must each produce a row. F3 regression: the
+        HEX(org_name) GROUP BY collapsed them into one row via MAX() (e.g.
+        长信基金 484 events -> 1 row)."""
+        import fetch_institution_survey  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "survey.csv"
+        self._write_csv(
+            csv_path,
+            [
+                _make_row(secucode="000001.SZ", receive_start="2026-01-05 00:00:00",
+                          receive_object="长信基金", receive_way="电话会议"),
+                _make_row(secucode="000001.SZ", receive_start="2026-02-20 00:00:00",
+                          receive_object="长信基金", receive_way="现场调研"),
+            ],
+        )
+
+        rows = fetch_institution_survey.import_to_dolt(csv_path)
+        # Each (symbol, survey_date, org) is a distinct event -> 2 rows.
+        assert rows == 2, f"same-org different events collapsed: rows={rows}"
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "2"
+        # Both dates survive with their own ways.
+        out = dolt_sql_csv("SELECT survey_date, survey_type FROM institution_survey ORDER BY survey_date")
+        assert "2026-01-05" in out and "电话会议" in out
+        assert "2026-02-20" in out and "现场调研" in out
+
     def test_empty_receive_start_date_row_filtered_out(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
