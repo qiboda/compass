@@ -8,7 +8,7 @@ use egui_mobius::signals::Signal;
 
 use crate::messages::{AppMessage, FetchRequest};
 use crate::state::SharedState;
-use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
+use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
 
 /// Holds the `CitizenState` handles returned during registration.
 ///
@@ -18,6 +18,7 @@ pub struct RegisteredCitizens {
     pub chart: CitizenState,
     pub logger: CitizenState,
     pub screener: CitizenState,
+    pub sepa: CitizenState,
 }
 
 /// Register the core citizens with the dispatcher and activate the
@@ -29,6 +30,7 @@ pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
     let chart = dispatcher.register(CitizenId::new(CHART_ID));
     let logger = dispatcher.register(CitizenId::new(LOGGER_ID));
     let screener = dispatcher.register(CitizenId::new(SCREENER_ID));
+    let sepa = dispatcher.register(CitizenId::new(SEPA_ID));
 
     dispatcher.activate(&CitizenId::new(CHART_ID));
 
@@ -36,6 +38,7 @@ pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
         chart,
         logger,
         screener,
+        sepa,
     }
 }
 
@@ -86,6 +89,19 @@ pub fn handle(
     }
 }
 
+/// Core row-click linkage shared by the screener and SEPA panels: set the
+/// shared symbol, then dispatch a `FetchBars` request with the current
+/// timeframe so the chart switches to the clicked stock.
+pub fn dispatch_symbol_fetch(
+    shared_state: &SharedState,
+    work_signal: &Signal<FetchRequest>,
+    symbol: &str,
+) {
+    shared_state.symbol.set(symbol.to_string());
+    let timeframe = shared_state.timeframe.get();
+    handle(AppMessage::FetchBars, shared_state, work_signal, timeframe);
+}
+
 // ===========================================================================
 // Tests — ref #79
 // ===========================================================================
@@ -117,6 +133,9 @@ mod tests {
         let screener_state = dispatcher
             .get(&CitizenId::new(SCREENER_ID))
             .expect("screener citizen should be registered");
+        let sepa_state = dispatcher
+            .get(&CitizenId::new(SEPA_ID))
+            .expect("sepa citizen should be registered");
 
         // Chart is active (one-hot), logger is inactive.
         assert!(chart_state.active.get(), "chart should be active");
@@ -128,6 +147,10 @@ mod tests {
             !screener_state.active.get(),
             "screener should be inactive after register_citizens"
         );
+        assert!(
+            !sepa_state.active.get(),
+            "sepa should be inactive after register_citizens"
+        );
 
         // The returned handles share the same reactive state.
         assert_eq!(registered.chart.active.get(), chart_state.active.get());
@@ -136,6 +159,7 @@ mod tests {
             registered.screener.active.get(),
             screener_state.active.get()
         );
+        assert_eq!(registered.sepa.active.get(), sepa_state.active.get());
     }
 
     // ------------------------------------------------------------------
@@ -222,6 +246,24 @@ mod tests {
         assert!(
             log_count > 0,
             "log should contain the send-failure error message (got {log_count})"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // dispatch_symbol_fetch — shared row-click linkage (SEPA + screener)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn dispatch_symbol_fetch_sets_symbol_and_triggers_fetch() {
+        let state = SharedState::new("000001", "1d");
+        let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
+
+        dispatch_symbol_fetch(&state, &work_signal, "600519");
+
+        assert_eq!(state.symbol.get(), "600519");
+        assert!(
+            state.loading.get(),
+            "symbol fetch must dispatch a FetchBars request"
         );
     }
 }

@@ -25,8 +25,8 @@ const HEADER_HEIGHT: f32 = 22.0;
 /// One data cell of a table row.
 ///
 /// The variant determines both the rendered widget and the sort semantics:
-/// [`Self::Text`] sorts lexicographically, [`Self::Price`] and [`Self::Count`]
-/// numerically.
+/// [`Self::Text`] sorts lexicographically, [`Self::Price`], [`Self::Count`],
+/// [`Self::Score`] and [`Self::Rank`] numerically.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataCell {
     /// Plain text (left-aligned, lexicographic sort).
@@ -41,6 +41,21 @@ pub enum DataCell {
     },
     /// Count (numeric sort).
     Count(usize),
+    /// Color-scale score value (SEPA panel): mono value colored via
+    /// [`score_color`]; numeric sort on the value. With `inverted = true`
+    /// (risk columns) the cell shows the signed deduction `-x.x` and the
+    /// scale norm becomes `1 - |value|/max` — 0 deduction green, full
+    /// deduction red.
+    Score {
+        /// The score value (also used for numeric sorting).
+        value: f32,
+        /// Maximum achievable value for the color-scale normalization.
+        max: f32,
+        /// Whether the color scale is inverted (risk semantics).
+        inverted: bool,
+    },
+    /// Rank (SEPA panel): numeric sort; ranks 1–3 emphasized in warning.
+    Rank(usize),
 }
 
 /// Column specification: header text + numeric alignment.
@@ -66,6 +81,9 @@ pub struct DataTable {
     sort_column: usize,
     sort_descending: bool,
     descending_defaults: std::collections::BTreeSet<usize>,
+    /// Original row index highlighted with the selection color (details
+    /// panel linkage); `None` highlights nothing.
+    selected: Option<usize>,
 }
 
 impl DataTable {
@@ -78,12 +96,19 @@ impl DataTable {
             sort_column: 0,
             sort_descending: false,
             descending_defaults: std::collections::BTreeSet::new(),
+            selected: None,
         }
     }
 
     /// Replace the rows to display (call each frame with fresh data).
     pub fn set_rows(&mut self, rows: Vec<Vec<DataCell>>) {
         self.rows = rows;
+    }
+
+    /// Highlight the row with the given original index (details-panel
+    /// linkage); `None` clears the highlight.
+    pub fn set_selected(&mut self, selected: Option<usize>) {
+        self.selected = selected;
     }
 
     /// Update the theme tokens after a theme switch without resetting the
@@ -186,11 +211,12 @@ impl DataTable {
             })
             .body(|mut body| {
                 for orig_index in sorted {
+                    let is_selected = self.selected == Some(orig_index);
                     body.row(tokens.spacing.table_row_h, |mut row| {
                         let cells = &self.rows[orig_index];
                         for cell in cells {
                             row.col(|ui| {
-                                render_cell(ui, &tokens, cell);
+                                render_cell(ui, &tokens, cell, is_selected);
                             });
                         }
                         if row.response().clicked() {
@@ -240,14 +266,25 @@ fn compare_cells(a: &DataCell, b: &DataCell) -> Ordering {
         (DataCell::Text(a), DataCell::Text(b)) => a.cmp(b),
         (DataCell::Price { value: a, .. }, DataCell::Price { value: b, .. }) => a.total_cmp(b),
         (DataCell::Count(a), DataCell::Count(b)) => a.cmp(b),
+        (DataCell::Score { value: a, .. }, DataCell::Score { value: b, .. }) => a.total_cmp(b),
+        (DataCell::Rank(a), DataCell::Rank(b)) => a.cmp(b),
         // Mixed types in one column are a caller error; keep the stable order.
         _ => Ordering::Equal,
     }
 }
 
 /// Render one cell with the widget matching its variant.
-fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell) {
+///
+/// `selected` paints the cell background with the selection color (gapless,
+/// matching the internal stripe technique of `egui_extras`) so the row keeps
+/// its per-cell semantic colors (score scale, price up/down) under highlight.
+fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell, selected: bool) {
     let c = &tokens.color;
+    if selected {
+        let rect = ui.max_rect().expand2(0.5 * ui.spacing().item_spacing);
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, c.selection_bg);
+    }
     match cell {
         DataCell::Text(text) => {
             ui.label(
@@ -270,6 +307,54 @@ fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell) {
                     .color(c.text_primary),
             );
         }
+        DataCell::Score {
+            value,
+            max,
+            inverted,
+        } => {
+            let norm = if *inverted {
+                1.0 - value.abs() / max.max(f32::EPSILON)
+            } else {
+                *value / max.max(f32::EPSILON)
+            };
+            ui.label(
+                RichText::new(format!("{value:.1}"))
+                    .monospace()
+                    .size(tokens.typography.mono)
+                    .color(score_color(tokens, norm)),
+            );
+        }
+        DataCell::Rank(rank) => {
+            let color = if *rank <= 3 {
+                c.warning
+            } else {
+                c.text_primary
+            };
+            ui.label(
+                RichText::new(rank.to_string())
+                    .monospace()
+                    .size(tokens.typography.mono)
+                    .color(color),
+            );
+        }
+    }
+}
+
+/// The color of a color-scale score for the normalized value `norm` in 0..=1
+/// (SEPA design §6.1): `norm ≥ 0.8` is success, `0.5–0.8` lerps
+/// warning→success, `0.25–0.5` lerps error→warning and `< 0.25` is error.
+/// The input is clamped into 0..=1 so callers may pass unnormalized data.
+pub fn score_color(tokens: &ThemeTokens, norm: f32) -> Color32 {
+    let c = &tokens.color;
+    let norm = norm.clamp(0.0, 1.0);
+    if norm >= 0.8 {
+        c.success
+    } else if norm >= 0.5 {
+        c.warning.lerp_to_gamma(c.success, (norm - 0.5) / 0.3)
+    } else if norm >= 0.25 {
+        c.error.lerp_to_gamma(c.warning, (norm - 0.25) / 0.25)
+    } else {
+        c.error
     }
 }
 
@@ -657,5 +742,247 @@ mod tests {
             table.tokens, dark,
             "the table must no longer use the dark palette"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // SEPA Score / Rank cells (sub-issue #152)
+    // ------------------------------------------------------------------
+
+    fn score_rows() -> Vec<Vec<DataCell>> {
+        vec![
+            vec![
+                DataCell::Text("a".into()),
+                DataCell::Score {
+                    value: 88.5,
+                    max: 100.0,
+                    inverted: false,
+                },
+            ],
+            vec![
+                DataCell::Text("b".into()),
+                DataCell::Score {
+                    value: 72.0,
+                    max: 100.0,
+                    inverted: false,
+                },
+            ],
+            vec![
+                DataCell::Text("c".into()),
+                DataCell::Score {
+                    value: 95.0,
+                    max: 100.0,
+                    inverted: false,
+                },
+            ],
+        ]
+    }
+
+    #[test]
+    fn score_column_sorts_numerically() {
+        let rows = score_rows();
+        let idx = sort_rows(&rows, 1, false);
+        let values: Vec<f32> = idx
+            .iter()
+            .map(|&i| match &rows[i][1] {
+                DataCell::Score { value, .. } => *value,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(values, [72.0, 88.5, 95.0]);
+    }
+
+    #[test]
+    fn score_column_sorts_numerically_descending() {
+        let rows = score_rows();
+        let idx = sort_rows(&rows, 1, true);
+        let values: Vec<f32> = idx
+            .iter()
+            .map(|&i| match &rows[i][1] {
+                DataCell::Score { value, .. } => *value,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(values, [95.0, 88.5, 72.0]);
+    }
+
+    #[test]
+    fn rank_column_sorts_numerically() {
+        let rows = vec![
+            vec![DataCell::Text("x".into()), DataCell::Rank(3)],
+            vec![DataCell::Text("y".into()), DataCell::Rank(1)],
+            vec![DataCell::Text("z".into()), DataCell::Rank(2)],
+        ];
+        let idx = sort_rows(&rows, 1, false);
+        let ranks: Vec<usize> = idx
+            .iter()
+            .map(|&i| match &rows[i][1] {
+                DataCell::Rank(r) => *r,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(ranks, [1, 2, 3]);
+    }
+
+    #[test]
+    fn score_cells_render_one_decimal_and_signed_inverted() {
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(
+            &tokens,
+            vec![
+                ColumnSpec {
+                    header: "排名",
+                    numeric: true,
+                },
+                ColumnSpec {
+                    header: "总分",
+                    numeric: true,
+                },
+                ColumnSpec {
+                    header: "风险",
+                    numeric: true,
+                },
+            ],
+        );
+        table.set_rows(vec![vec![
+            DataCell::Rank(1),
+            DataCell::Score {
+                value: 88.5,
+                max: 100.0,
+                inverted: false,
+            },
+            DataCell::Score {
+                value: -3.2,
+                max: 3.75,
+                inverted: true,
+            },
+        ]]);
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            table.show(ui);
+        });
+        harness.fit_contents();
+        harness.step();
+        let _ = harness.get_by_label("88.5");
+        let _ = harness.get_by_label("-3.2");
+        let _ = harness.get_by_label("1");
+    }
+
+    // ------------------------------------------------------------------
+    // score_color scale (SEPA design §6.1)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn score_color_endpoints_follow_design() {
+        let tokens = ThemeTokens::dark();
+        let c = &tokens.color;
+        assert_eq!(score_color(&tokens, 1.0), c.success);
+        assert_eq!(score_color(&tokens, 0.8), c.success, "0.8 is success");
+        assert_eq!(
+            score_color(&tokens, 0.79),
+            c.warning.lerp_to_gamma(c.success, 0.29 / 0.3)
+        );
+        assert_eq!(
+            score_color(&tokens, 0.5),
+            c.warning,
+            "0.5 is the warning end"
+        );
+        assert_eq!(score_color(&tokens, 0.25), c.error, "0.25 is the error end");
+        assert_eq!(score_color(&tokens, 0.0), c.error);
+        assert_eq!(
+            score_color(&tokens, -1.0),
+            c.error,
+            "below 0 clamps to error"
+        );
+        assert_eq!(
+            score_color(&tokens, 2.0),
+            c.success,
+            "above 1 clamps to success"
+        );
+    }
+
+    #[test]
+    fn score_color_midpoints_lerp_between_buckets() {
+        let tokens = ThemeTokens::dark();
+        let c = &tokens.color;
+        // 0.65 is the exact midpoint of the 0.5–0.8 warning→success band.
+        assert_eq!(
+            score_color(&tokens, 0.65),
+            c.warning.lerp_to_gamma(c.success, 0.5)
+        );
+        // 0.375 is the exact midpoint of the 0.25–0.5 error→warning band.
+        assert_eq!(
+            score_color(&tokens, 0.375),
+            c.error.lerp_to_gamma(c.warning, 0.5)
+        );
+    }
+
+    #[test]
+    fn score_color_is_monotonically_increasing() {
+        let tokens = ThemeTokens::dark();
+        let mut prev = score_color(&tokens, 0.0);
+        for i in 1..=100 {
+            let norm = i as f32 / 100.0;
+            let cur = score_color(&tokens, norm);
+            assert!(
+                cur.r() >= prev.r() || cur.g() >= prev.g(),
+                "color must not regress at norm={norm}"
+            );
+            prev = cur;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Row selection highlight (details-panel linkage)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn set_selected_highlights_row_with_selection_color() {
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(&tokens, columns());
+        table.set_rows(price_rows());
+        table.set_selected(Some(1));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 120.0))
+            .build_ui(move |ui| {
+                table.show(ui);
+            });
+        harness.run();
+
+        let selection_bg = tokens.color.selection_bg;
+        let highlighted = harness
+            .output()
+            .shapes
+            .iter()
+            .any(|clipped| shapes_contain_fill(&clipped.shape, selection_bg));
+        assert!(highlighted, "selected row must paint the selection_bg fill");
+    }
+
+    #[test]
+    fn set_selected_none_paints_no_selection() {
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(&tokens, columns());
+        table.set_rows(price_rows());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 120.0))
+            .build_ui(move |ui| {
+                table.show(ui);
+            });
+        harness.run();
+
+        let selection_bg = tokens.color.selection_bg;
+        let highlighted = harness
+            .output()
+            .shapes
+            .iter()
+            .any(|clipped| shapes_contain_fill(&clipped.shape, selection_bg));
+        assert!(!highlighted, "no selection must not paint selection_bg");
+    }
+
+    /// Recursively scan emitted shapes for a rect filled with `color`.
+    fn shapes_contain_fill(shape: &egui::Shape, color: egui::Color32) -> bool {
+        match shape {
+            egui::Shape::Vec(inner) => inner.iter().any(|s| shapes_contain_fill(s, color)),
+            egui::Shape::Rect(rect) => rect.fill == color,
+            _ => false,
+        }
     }
 }

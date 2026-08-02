@@ -1,0 +1,858 @@
+//! SEPA panel citizen — daily TOP-N multi-factor scoring report (epic #139,
+//! sub-issue #152).
+//!
+//! Report-type panel (read-only ranking), in contrast to the query-type
+//! screener: a market thermometer bar, a sortable 12-column ranking table
+//! and a per-row score detail panel, all fed by the third
+//! `AsyncDispatcher` channel (`RunSepaRequest` → `SepaData`). TOP-N
+//! switching is pure GUI truncation of a local render copy — the backend
+//! always returns the full list and the shared state is never written back.
+
+use egui::RichText;
+use egui_citizen::{Citizen, CitizenId, CitizenState};
+use egui_mobius::signals::Signal;
+
+use compass_types::{MarketThermometer, SepaIndicator, SepaRow};
+use compass_ui::tokens::ThemeTokens;
+use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
+use compass_ui::widgets::card::{Card, CardPadding};
+use compass_ui::widgets::data_table::{ColumnSpec, DataCell, DataTable, score_color};
+use compass_ui::widgets::empty_state::EmptyState;
+use compass_ui::widgets::segmented::Segmented;
+use compass_ui::widgets::tag::{Tag, TagVariant, tint};
+
+use crate::messages::{FetchRequest, RunSepaRequest};
+use crate::state::SharedState;
+
+/// Risk module max deduction (engine contract: 75 × 0.05 = 3.75, risk ∈
+/// [-3.75, 0]). Used for the inverted color-scale normalization.
+const RISK_MAX: f32 = 3.75;
+
+/// Ranking table columns (design §2: 12 columns, default sort = rank asc,
+/// descending business default for the score columns).
+const COLUMNS: [ColumnSpec; 12] = [
+    ColumnSpec {
+        header: "排名",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "代码",
+        numeric: false,
+    },
+    ColumnSpec {
+        header: "名称",
+        numeric: false,
+    },
+    ColumnSpec {
+        header: "总分",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "趋势",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "题材",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "资金",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "形态",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "风险",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "行业",
+        numeric: false,
+    },
+    ColumnSpec {
+        header: "最新价",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "涨跌幅",
+        numeric: true,
+    },
+];
+
+/// SEPA panel citizen.
+///
+/// Renders the thermometer bar, the toolbar (count label / TOP-N switch /
+/// refresh) and the ranking table next to the per-row detail panel.
+pub struct SepaPanel {
+    pub citizen_id: CitizenId,
+    pub citizen_state: CitizenState,
+    /// Theme tokens copied at construction (component styling).
+    tokens: ThemeTokens,
+    /// Ranking table — owns its sort state across frames.
+    table: DataTable,
+    /// GUI-side TOP-N cap (50/30); truncation applies to a local render
+    /// copy only and never writes the shared state back.
+    top_n: usize,
+    /// Original row index shown in the detail panel and highlighted.
+    selected: Option<usize>,
+}
+
+impl Citizen for SepaPanel {
+    fn id(&self) -> &CitizenId {
+        &self.citizen_id
+    }
+
+    fn citizen_state(&self) -> &CitizenState {
+        &self.citizen_state
+    }
+
+    fn citizen_state_mut(&mut self) -> &mut CitizenState {
+        &mut self.citizen_state
+    }
+}
+
+impl SepaPanel {
+    /// Create a SEPA panel with the given citizen identity/state.
+    pub fn new(citizen_id: CitizenId, citizen_state: CitizenState, tokens: &ThemeTokens) -> Self {
+        let mut table = DataTable::new(tokens, COLUMNS.to_vec());
+        table.set_sort(0, false); // rank ascending = official order
+        for col in 3..=8 {
+            table.set_descending_default(col, true); // score columns: best first
+        }
+        Self {
+            citizen_id,
+            citizen_state,
+            tokens: *tokens,
+            table,
+            top_n: 50,
+            selected: None,
+        }
+    }
+
+    /// Render the panel: thermometer bar + toolbar + results area.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        shared_state: &SharedState,
+        sepa_signal: &Signal<RunSepaRequest>,
+        work_signal: &Signal<FetchRequest>,
+    ) {
+        let data = shared_state.sepa_data.get();
+        ui.vertical(|ui| {
+            self.thermometer_bar(ui, data.as_ref().map(|d| &d.thermometer));
+
+            ui.add_space(self.tokens.spacing.sm);
+            self.toolbar(ui, shared_state, sepa_signal);
+
+            ui.add_space(self.tokens.spacing.md);
+            self.results_area(ui, shared_state, sepa_signal, work_signal, data.as_ref());
+        });
+    }
+
+    /// Market thermometer strip (design §4): icon + score + position tag +
+    /// the five indicator chips. Renders a muted placeholder without data.
+    fn thermometer_bar(&mut self, ui: &mut egui::Ui, thermometer: Option<&MarketThermometer>) {
+        let tokens = self.tokens;
+        let c = &tokens.color;
+        Card::new(&tokens).padding(CardPadding::Md).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(egui_phosphor::regular::THERMOMETER)
+                        .size(tokens.typography.body)
+                        .color(c.accent),
+                );
+                ui.label(
+                    RichText::new("市场温度")
+                        .size(tokens.typography.caption)
+                        .color(c.text_secondary),
+                );
+                if let Some(t) = thermometer {
+                    ui.label(
+                        RichText::new(format!("{:.1}", t.score))
+                            .monospace()
+                            .size(tokens.typography.display)
+                            .color(score_color(&tokens, t.score as f32 / 100.0)),
+                    );
+                    ui.add_space(tokens.spacing.md);
+                    let pos_color = score_color(&tokens, t.position_pct as f32 / 100.0);
+                    Tag::new(&tokens, &t.position)
+                        .variant(TagVariant::Custom)
+                        .color(pos_color)
+                        .show(ui);
+                } else {
+                    ui.label(
+                        RichText::new("--")
+                            .monospace()
+                            .size(tokens.typography.display)
+                            .color(c.text_secondary),
+                    );
+                }
+            });
+            if let Some(t) = thermometer {
+                ui.add_space(tokens.spacing.sm);
+                ui.add(egui::Separator::default().horizontal());
+                ui.add_space(tokens.spacing.sm);
+                ui.horizontal_wrapped(|ui| {
+                    for indicator in &t.indicators {
+                        Self::indicator_chip(ui, &tokens, indicator);
+                        ui.add_space(tokens.spacing.sm);
+                    }
+                });
+            }
+        });
+    }
+
+    /// One thermometer indicator chip: label + mono value + A-share-colored
+    /// delta arrow; the pill tint follows the heat color scale while the
+    /// arrow follows the red-up/green-down convention (two semantics, one
+    /// chip — design §4).
+    fn indicator_chip(ui: &mut egui::Ui, tokens: &ThemeTokens, ind: &SepaIndicator) {
+        let c = &tokens.color;
+        let heat = score_color(tokens, ind.heat as f32);
+        egui::Frame::new()
+            .fill(tint(heat, 0.18))
+            .corner_radius(tokens.radius.pill)
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&ind.label)
+                            .size(tokens.typography.caption)
+                            .color(c.text_secondary),
+                    );
+                    ui.label(
+                        RichText::new(&ind.value_text)
+                            .monospace()
+                            .size(tokens.typography.mono)
+                            .color(heat),
+                    );
+                    if let Some(delta) = ind.delta_pct {
+                        let (arrow, color) = if delta >= 0.0 {
+                            ("▲", c.up)
+                        } else {
+                            ("▼", c.down)
+                        };
+                        ui.label(
+                            RichText::new(format!("{arrow} {:.1}%", delta.abs()))
+                                .size(tokens.typography.caption)
+                                .color(color),
+                        );
+                    }
+                });
+            });
+    }
+
+    /// Toolbar: count label + TOP-N segmented + refresh button (design §5).
+    fn toolbar(
+        &mut self,
+        ui: &mut egui::Ui,
+        shared_state: &SharedState,
+        sepa_signal: &Signal<RunSepaRequest>,
+    ) {
+        let tokens = self.tokens;
+        let c = &tokens.color;
+        let loading = shared_state.sepa_loading.get();
+        let count_text = match shared_state.sepa_data.get() {
+            Some(data) => {
+                let shown = data.rows.len().min(self.top_n);
+                format!("共 {shown} 行 · {} 评分", data.date)
+            }
+            None => "暂无评分数据".to_string(),
+        };
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(count_text)
+                    .size(tokens.typography.caption)
+                    .color(c.text_secondary),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if Button::new(&tokens, if loading { "计算中…" } else { "刷新" })
+                    .variant(ButtonVariant::Primary)
+                    .size(ButtonSize::Md)
+                    .icon(egui_phosphor::regular::ARROW_CLOCKWISE)
+                    .loading(loading)
+                    .show(ui)
+                    .clicked()
+                {
+                    self.trigger_refresh(shared_state, sepa_signal);
+                }
+                ui.add_space(tokens.spacing.md);
+                if let Some(idx) = Segmented::new(&tokens, ["TOP 50", "TOP 30"])
+                    .selected(if self.top_n == 30 { 1 } else { 0 })
+                    .show(ui)
+                {
+                    self.top_n = if idx == 1 { 30 } else { 50 };
+                }
+            });
+        });
+    }
+
+    /// Set loading, clear the error and dispatch a `RunSepaRequest`; on a
+    /// failed send reset the loading flag and surface the error.
+    fn trigger_refresh(&self, shared_state: &SharedState, sepa_signal: &Signal<RunSepaRequest>) {
+        shared_state.sepa_loading.set(true);
+        shared_state.sepa_error.set(None);
+        if let Err(e) = sepa_signal.send(RunSepaRequest {}) {
+            shared_state.sepa_loading.set(false);
+            shared_state
+                .sepa_error
+                .set(Some(format!("failed to run sepa: {e}")));
+        }
+    }
+
+    /// Loading / error / data / empty-state branches (design §6.3), then the
+    /// ranking table next to the detail panel.
+    fn results_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        shared_state: &SharedState,
+        sepa_signal: &Signal<RunSepaRequest>,
+        work_signal: &Signal<FetchRequest>,
+        data: Option<&compass_types::SepaData>,
+    ) {
+        if shared_state.sepa_loading.get() {
+            ui.spinner();
+            ui.label("SEPA 评分计算中…（全市场）");
+        } else if let Some(err) = shared_state.sepa_error.get() {
+            ui.colored_label(ui.visuals().error_fg_color, err);
+        } else if let Some(data) = data {
+            // TOP-N truncation applies to a local render copy only — never
+            // written back to shared state, so switching 50↔30 loses nothing.
+            let mut rows = data.rows.clone();
+            rows.truncate(self.top_n);
+            self.table
+                .set_rows(rows.iter().map(Self::row_cells).collect());
+            ui.horizontal(|ui| {
+                if let Some(idx) = self.table.show(ui) {
+                    self.selected = Some(idx);
+                    if let Some(row) = rows.get(idx) {
+                        crate::dispatcher::dispatch_symbol_fetch(
+                            shared_state,
+                            work_signal,
+                            &row.symbol,
+                        );
+                    }
+                }
+                ui.add_space(self.tokens.spacing.md);
+                let selected_row = self.selected.and_then(|i| rows.get(i));
+                self.detail_panel(ui, selected_row);
+            });
+        } else {
+            let tokens = self.tokens;
+            let clicked = EmptyState::new(
+                &tokens,
+                egui_phosphor::regular::CHART_SCATTER,
+                "暂无 SEPA 评分数据",
+            )
+            .description("点击刷新计算全市场 TOP50 评分")
+            .action(
+                Button::new(&tokens, "刷新")
+                    .variant(ButtonVariant::Primary)
+                    .size(ButtonSize::Md)
+                    .icon(egui_phosphor::regular::ARROW_CLOCKWISE),
+            )
+            .show(ui);
+            if clicked.is_some_and(|r| r.clicked()) {
+                self.trigger_refresh(shared_state, sepa_signal);
+            }
+        }
+    }
+
+    /// Map one `SepaRow` into the table's cell model (design §2).
+    fn row_cells(row: &SepaRow) -> Vec<DataCell> {
+        let mut industry = row.industry.clone();
+        for theme in row.themes.iter().take(2) {
+            industry.push_str(" · ");
+            industry.push_str(theme);
+        }
+        vec![
+            DataCell::Rank(row.rank),
+            DataCell::Text(row.symbol.clone()),
+            DataCell::Text(row.name.clone()),
+            DataCell::Score {
+                value: row.total_score as f32,
+                max: 100.0,
+                inverted: false,
+            },
+            DataCell::Score {
+                value: row.trend as f32,
+                max: 30.0,
+                inverted: false,
+            },
+            DataCell::Score {
+                value: row.theme as f32,
+                max: 25.0,
+                inverted: false,
+            },
+            DataCell::Score {
+                value: row.capital as f32,
+                max: 20.0,
+                inverted: false,
+            },
+            DataCell::Score {
+                value: row.pattern as f32,
+                max: 20.0,
+                inverted: false,
+            },
+            DataCell::Score {
+                value: row.risk as f32,
+                max: RISK_MAX,
+                inverted: true,
+            },
+            DataCell::Text(industry),
+            DataCell::Price {
+                value: row.latest_price as f32,
+                change: None,
+            },
+            DataCell::Price {
+                value: row.change_pct as f32,
+                change: Some(row.change_pct as f32),
+            },
+        ]
+    }
+
+    /// Right-side detail panel (~300 px): header + total score + five module
+    /// rows with per-factor sub-items + theme tags (design §3).
+    fn detail_panel(&mut self, ui: &mut egui::Ui, row: Option<&SepaRow>) {
+        let tokens = self.tokens;
+        let c = &tokens.color;
+        egui::Frame::new()
+            .fill(c.bg_panel)
+            .corner_radius(tokens.radius.md)
+            .inner_margin(egui::Margin::symmetric(12, 12))
+            .show(ui, |ui| {
+                ui.set_width(280.0);
+                let Some(row) = row else {
+                    ui.label(
+                        RichText::new("点击排名行查看评分详情")
+                            .size(tokens.typography.caption)
+                            .color(c.text_secondary),
+                    );
+                    return;
+                };
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&row.name)
+                            .size(tokens.typography.heading)
+                            .color(c.text_primary),
+                    );
+                    ui.label(
+                        RichText::new(&row.symbol)
+                            .monospace()
+                            .size(tokens.typography.mono)
+                            .color(c.text_secondary),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let rank_color = if row.rank <= 3 {
+                            c.warning
+                        } else {
+                            c.text_secondary
+                        };
+                        Tag::new(&tokens, &format!("#{}", row.rank))
+                            .variant(TagVariant::Custom)
+                            .color(rank_color)
+                            .show(ui);
+                    });
+                });
+
+                ui.add_space(tokens.spacing.sm);
+                ui.label(
+                    RichText::new(format!("总分 {:.1}", row.total_score))
+                        .monospace()
+                        .size(tokens.typography.display)
+                        .color(score_color(&tokens, row.total_score as f32 / 100.0)),
+                );
+
+                ui.add_space(tokens.spacing.sm);
+                ui.add(egui::Separator::default().horizontal());
+                ui.add_space(tokens.spacing.sm);
+
+                let theme_norm = row.theme as f32 / 25.0;
+                for (label, score, max, factors, inverted) in [
+                    ("趋势", row.trend, 30.0, &row.details.trend, false),
+                    ("题材", row.theme, 25.0, &row.details.theme, false),
+                    ("资金", row.capital, 20.0, &row.details.capital, false),
+                    ("形态", row.pattern, 20.0, &row.details.pattern, false),
+                    ("风险", row.risk, RISK_MAX as f64, &row.details.risk, true),
+                ] {
+                    self.module_row(ui, label, score, max, factors, inverted);
+                    ui.add_space(tokens.spacing.sm);
+                }
+
+                if !row.themes.is_empty() {
+                    ui.add_space(tokens.spacing.sm);
+                    ui.horizontal_wrapped(|ui| {
+                        for theme in &row.themes {
+                            Tag::new(&tokens, theme)
+                                .variant(TagVariant::Custom)
+                                .color(score_color(&tokens, theme_norm))
+                                .show(ui);
+                        }
+                    });
+                }
+            });
+    }
+
+    /// One module row: label + `score/max` (color-scaled) + a `ProgressBar`
+    /// (fill = scale color) + the per-factor sub-items. The risk module is
+    /// inverted: the bar shows the deduction fraction and the color scale
+    /// runs 0 deduction green → full deduction red.
+    fn module_row(
+        &self,
+        ui: &mut egui::Ui,
+        label: &str,
+        score: f64,
+        max: f64,
+        factors: &[compass_types::SepaFactor],
+        inverted: bool,
+    ) {
+        let tokens = self.tokens;
+        let c = &tokens.color;
+        let norm = if inverted {
+            1.0 - score.abs() as f32 / max.max(1e-9) as f32
+        } else {
+            score as f32 / max.max(1e-9) as f32
+        };
+        let color = score_color(&tokens, norm);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(label)
+                    .size(tokens.typography.body)
+                    .color(c.text_primary),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("{score:.1}/{max:.1}"))
+                        .monospace()
+                        .size(tokens.typography.mono)
+                        .color(color),
+                );
+            });
+        });
+        let frac = if inverted {
+            score.abs() as f32 / max.max(1e-9) as f32
+        } else {
+            score as f32 / max.max(1e-9) as f32
+        };
+        ui.add(
+            egui::ProgressBar::new(frac.clamp(0.0, 1.0))
+                .fill(color)
+                .desired_height(6.0),
+        );
+        for factor in factors {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(&factor.label)
+                        .size(tokens.typography.caption)
+                        .color(c.text_secondary),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(note) = &factor.note {
+                        ui.label(
+                            RichText::new(note)
+                                .size(tokens.typography.caption)
+                                .color(c.text_secondary),
+                        );
+                    }
+                    let factor_norm = if inverted {
+                        1.0 - factor.score.abs() as f32 / factor.max.max(1e-9) as f32
+                    } else {
+                        factor.score as f32 / factor.max.max(1e-9) as f32
+                    };
+                    ui.label(
+                        RichText::new(format!("{:.1}/{:.0}", factor.score, factor.max))
+                            .monospace()
+                            .size(tokens.typography.mono)
+                            .color(score_color(&tokens, factor_norm)),
+                    );
+                });
+            });
+        }
+    }
+
+    /// Update the theme tokens after a theme switch so the table restyles
+    /// without losing sort/selection state.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+        self.table.set_tokens(tokens);
+    }
+
+    /// Drop the selected row index after a refresh — the old index points
+    /// at stale data (design §7).
+    pub fn reset_selection(&mut self) {
+        self.selected = None;
+        self.table.set_selected(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compass_types::{SepaData, SepaDetails, SepaFactor, SepaIndicator};
+    use egui_citizen::CitizenState;
+    use egui_kittest::kittest::Queryable;
+
+    fn panel() -> (SepaPanel, SharedState) {
+        let id = CitizenId::new("sepa");
+        let state = CitizenState::new();
+        let tokens = ThemeTokens::dark();
+        let panel = SepaPanel::new(id, state, &tokens);
+        (panel, SharedState::new("000001", "1d"))
+    }
+
+    fn signals() -> (
+        egui_mobius::signals::Signal<RunSepaRequest>,
+        egui_mobius::signals::Signal<FetchRequest>,
+    ) {
+        let (sepa_signal, _sepa_slot) =
+            egui_mobius::factory::create_signal_slot::<RunSepaRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        (sepa_signal, work_signal)
+    }
+
+    fn sample_row(rank: usize, symbol: &str, name: &str) -> SepaRow {
+        SepaRow {
+            symbol: symbol.to_string(),
+            name: name.to_string(),
+            rank,
+            total_score: 80.0 - rank as f64,
+            trend: 20.0,
+            theme: 18.0,
+            capital: 15.0,
+            pattern: 15.0,
+            risk: 0.0,
+            industry: "白酒".to_string(),
+            themes: vec!["茅指数".to_string()],
+            latest_price: 1500.0,
+            change_pct: 2.5,
+            details: SepaDetails {
+                trend: vec![SepaFactor {
+                    label: "VCP质量分".into(),
+                    score: 9.2,
+                    max: 10.0,
+                    note: Some("+1.2亿".into()),
+                }],
+                theme: vec![],
+                capital: vec![],
+                pattern: vec![],
+                risk: vec![SepaFactor {
+                    label: "高位放量".into(),
+                    score: 0.0,
+                    max: 2.0,
+                    note: None,
+                }],
+            },
+        }
+    }
+
+    fn sample_data() -> SepaData {
+        SepaData {
+            rows: vec![
+                sample_row(1, "600519", "贵州茅台"),
+                sample_row(2, "300750", "宁德时代"),
+                sample_row(3, "000001", "平安银行"),
+            ],
+            thermometer: MarketThermometer {
+                score: 72.0,
+                position: "半仓 50%".to_string(),
+                position_pct: 50.0,
+                indicators: vec![
+                    SepaIndicator {
+                        label: "上涨占比".into(),
+                        value_text: "62%".into(),
+                        delta_pct: Some(2.0),
+                        heat: 0.8,
+                    },
+                    SepaIndicator {
+                        label: "涨停家数".into(),
+                        value_text: "45".into(),
+                        delta_pct: Some(-3.0),
+                        heat: 0.6,
+                    },
+                ],
+            },
+            date: "2026-08-02".to_string(),
+        }
+    }
+
+    #[test]
+    fn new_creates_panel_with_correct_id() {
+        let (panel, _) = panel();
+        assert_eq!(panel.id(), &CitizenId::new("sepa"));
+        assert_eq!(panel.top_n, 50, "default TOP-N is 50");
+        assert!(panel.selected.is_none());
+    }
+
+    #[test]
+    fn show_renders_empty_state_without_data() {
+        let (mut panel, shared) = panel();
+        let (sepa_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+        let _ = harness.get_by_label("暂无 SEPA 评分数据");
+        let _ = harness.get_by_label_contains("点击刷新计算全市场 TOP50 评分");
+    }
+
+    #[test]
+    fn refresh_button_click_sets_loading() {
+        let (mut panel, shared) = panel();
+        // The sepa slot must stay alive so the signal send succeeds.
+        let (sepa_signal, _sepa_slot) =
+            egui_mobius::factory::create_signal_slot::<RunSepaRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        // "刷新" appears both in the toolbar and in the empty-state action;
+        // the toolbar renders first — click that one.
+        let btn = harness
+            .query_all_by_label_contains("刷新")
+            .next()
+            .expect("refresh button rendered");
+        btn.click();
+        harness.step();
+
+        assert!(
+            shared.sepa_loading.get(),
+            "sepa_loading should be set after refresh click"
+        );
+    }
+
+    #[test]
+    fn results_renders_rows_thermometer_and_detail() {
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(sample_data()));
+        shared.sepa_loading.set(false);
+        let (sepa_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        let _ = harness.get_by_label_contains("共 3 行 · 2026-08-02 评分");
+        let _ = harness.get_by_label("市场温度");
+        let _ = harness.get_by_label("72.0");
+        let _ = harness.get_by_label_contains("上涨占比");
+        let _ = harness.get_by_label_contains("点击排名行查看评分详情");
+    }
+
+    #[test]
+    fn top_n_truncates_local_copy_only() {
+        let (mut panel, shared) = panel();
+        let full = sample_data();
+        shared.sepa_data.set(Some(full.clone()));
+        panel.top_n = 2;
+        let (sepa_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        // The date suffix makes the toolbar label unique — the table renders
+        // its own "共 2 行" counter too.
+        let _ = harness.get_by_label_contains("共 2 行 · 2026-08-02 评分");
+        assert_eq!(
+            shared.sepa_data.get().unwrap().rows.len(),
+            3,
+            "the full list must stay in shared state"
+        );
+    }
+
+    #[test]
+    fn detail_panel_shows_selected_row_content() {
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(sample_data()));
+        panel.selected = Some(0);
+        panel.table.set_selected(Some(0));
+        let (sepa_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        // Name/symbol also render as table cells — assert the detail-only
+        // content instead.
+        let _ = harness.get_by_label_contains("总分 79.0");
+        let _ = harness.get_by_label("#1");
+        let _ = harness.get_by_label_contains("VCP质量分");
+        let _ = harness.get_by_label("茅指数");
+    }
+
+    #[test]
+    fn row_click_sets_selected_and_dispatches_fetch() {
+        let (mut panel, shared) = panel();
+        let data = sample_data();
+        shared.sepa_data.set(Some(data));
+        let (_sepa_signal, _sepa_slot) =
+            egui_mobius::factory::create_signal_slot::<RunSepaRequest>();
+        // The work slot must stay alive so the signal send succeeds.
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+
+        // The click path through TableBuilder cannot be simulated by kittest
+        // (same limitation as the screener); exercise the handler directly —
+        // the show() wiring is a one-line call into the same code.
+        let rows = shared.sepa_data.get().unwrap().rows.clone();
+        panel.selected = Some(0);
+        if let Some(row) = rows.first() {
+            crate::dispatcher::dispatch_symbol_fetch(&shared, &work_signal, &row.symbol);
+        }
+
+        assert_eq!(shared.symbol.get(), "600519");
+        assert!(
+            shared.loading.get(),
+            "row click must dispatch a FetchBars request"
+        );
+        assert_eq!(panel.selected, Some(0));
+    }
+
+    #[test]
+    fn row_cells_map_sepa_row_to_twelve_cells() {
+        let cells = SepaPanel::row_cells(&sample_row(1, "600519", "贵州茅台"));
+        assert_eq!(cells.len(), 12);
+        assert_eq!(cells[0], DataCell::Rank(1));
+        assert_eq!(
+            cells[8],
+            DataCell::Score {
+                value: 0.0,
+                max: RISK_MAX,
+                inverted: true
+            }
+        );
+        assert_eq!(
+            cells[9],
+            DataCell::Text("白酒 · 茅指数".to_string()),
+            "industry joins up to two themes"
+        );
+    }
+
+    #[test]
+    fn set_tokens_updates_table_theme() {
+        let (mut panel, _) = panel();
+        let light = ThemeTokens::light();
+        panel.set_tokens(light);
+        assert_eq!(panel.tokens, light);
+    }
+
+    #[test]
+    fn reset_selection_clears_selected() {
+        let (mut panel, _) = panel();
+        panel.selected = Some(2);
+        panel.reset_selection();
+        assert!(panel.selected.is_none());
+    }
+}

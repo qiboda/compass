@@ -20,20 +20,31 @@ use egui_mobius::signals::Signal;
 use compass_core::data::{duckdb::DuckDbProvider, provider::DataProvider};
 use compass_core::model::AppConfig;
 use compass_strategy::run_screener;
+use compass_strategy::sepa::run_sepa;
+use compass_types::SepaQuery;
 
-use crate::messages::{FetchRequest, FetchResponse, RunScreenerRequest, RunScreenerResponse};
+use crate::messages::{
+    FetchRequest, FetchResponse, RunScreenerRequest, RunScreenerResponse, RunSepaRequest,
+    RunSepaResponse,
+};
 use crate::state::SharedState;
+
+/// SEPA backend result cap — the engine always returns the full TOP-N list;
+/// the panel truncates further (TOP 50/30) as pure GUI state.
+const DEFAULT_SEPA_TOP_N: usize = 50;
 
 /// Owns the `AsyncDispatcher`s so the Tokio runtimes stay alive for the
 /// program duration. Dropping this shuts down the runtimes.
 pub struct BackendHandle {
     _dispatcher: AsyncDispatcher<FetchRequest, FetchResponse>,
     _screener_dispatcher: AsyncDispatcher<RunScreenerRequest, RunScreenerResponse>,
+    _sepa_dispatcher: AsyncDispatcher<RunSepaRequest, RunSepaResponse>,
 }
 
 /// Build the async work pipeline. Returns:
 /// - `Signal<FetchRequest>` — UI thread submits bar fetches via `.send(req)`
 /// - `Signal<RunScreenerRequest>` — UI thread submits screener runs
+/// - `Signal<RunSepaRequest>` — UI thread submits SEPA scoring runs
 /// - `BackendHandle` — keep alive on the App struct
 ///
 /// The result slots are started internally — they write response values
@@ -45,6 +56,7 @@ pub fn wire_backend(
 ) -> (
     Signal<FetchRequest>,
     Signal<RunScreenerRequest>,
+    Signal<RunSepaRequest>,
     BackendHandle,
 ) {
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
@@ -53,6 +65,10 @@ pub fn wire_backend(
     let (screener_signal, screener_slot) = factory::create_signal_slot::<RunScreenerRequest>();
     let (screener_result_signal, mut screener_result_slot) =
         factory::create_signal_slot::<RunScreenerResponse>();
+
+    let (sepa_signal, sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
+    let (sepa_result_signal, mut sepa_result_slot) =
+        factory::create_signal_slot::<RunSepaResponse>();
 
     let parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
 
@@ -167,12 +183,87 @@ pub fn wire_backend(
         screener_repaint_ctx.request_repaint();
     });
 
+    let sepa_parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
+    let sepa_dispatcher = AsyncDispatcher::<RunSepaRequest, RunSepaResponse>::new();
+    sepa_dispatcher.attach_async(
+        sepa_slot,
+        sepa_result_signal,
+        move |_req: RunSepaRequest| {
+            let parquet_dir = sepa_parquet_dir.clone();
+            async move {
+                let reader = match ParquetReader::new(&parquet_dir) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return RunSepaResponse {
+                            data: compass_types::SepaData {
+                                rows: vec![],
+                                thermometer: compass_types::MarketThermometer {
+                                    score: 0.0,
+                                    position: String::new(),
+                                    position_pct: 0.0,
+                                    indicators: vec![],
+                                },
+                                date: String::new(),
+                            },
+                            error: Some(format!("failed to open parquet: {e}")),
+                        };
+                    }
+                };
+                match run_sepa(
+                    &SepaQuery {
+                        top_n: DEFAULT_SEPA_TOP_N,
+                    },
+                    &reader,
+                    Utc::now().date_naive(),
+                ) {
+                    Ok(data) => RunSepaResponse { data, error: None },
+                    Err(e) => RunSepaResponse {
+                        data: compass_types::SepaData {
+                            rows: vec![],
+                            thermometer: compass_types::MarketThermometer {
+                                score: 0.0,
+                                position: String::new(),
+                                position_pct: 0.0,
+                                indicators: vec![],
+                            },
+                            date: String::new(),
+                        },
+                        error: Some(format!("{e}")),
+                    },
+                }
+            }
+        },
+    );
+
+    let sepa_data_dyn = state.sepa_data.clone();
+    let sepa_loading = state.sepa_loading.clone();
+    let sepa_error = state.sepa_error.clone();
+    let sepa_log_dyn = state.log.clone();
+    let sepa_repaint_ctx = egui_ctx.clone();
+
+    sepa_result_slot.start(move |resp: RunSepaResponse| {
+        let logger = ReactiveEventLogger::new(&sepa_log_dyn);
+        let row_count = resp.data.rows.len();
+        sepa_data_dyn.set(Some(resp.data));
+        sepa_loading.set(false);
+        if let Some(ref err) = resp.error {
+            sepa_error.set(Some(err.clone()));
+            logger.log_error(&format!("sepa failed: {err}"));
+        } else {
+            sepa_error.set(None);
+            logger.log_info(&format!("sepa completed: {} ranked", row_count));
+        }
+        sepa_repaint_ctx.request_repaint();
+    });
+
     (
         work_signal,
         screener_signal,
+        sepa_signal,
         BackendHandle {
             _dispatcher: dispatcher,
             _screener_dispatcher: screener_dispatcher,
+            _sepa_dispatcher: sepa_dispatcher,
         },
     )
 }
@@ -279,7 +370,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _backend) =
+        let (work_signal, _screener_signal, _sepa_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         // Signal that work is in flight so wait_for_response can detect
@@ -324,7 +415,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _backend) =
+        let (work_signal, _screener_signal, _sepa_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
         state.loading.set(true);
         work_signal
@@ -361,7 +452,7 @@ mod tests {
         let state = Arc::new(SharedState::new("999999", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _backend) =
+        let (work_signal, _screener_signal, _sepa_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
         state.loading.set(true);
         work_signal
@@ -470,7 +561,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _backend) =
+        let (_work_signal, screener_signal, _sepa_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         state.screener_loading.set(true);
@@ -512,7 +603,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _backend) =
+        let (_work_signal, screener_signal, _sepa_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         state.screener_loading.set(true);
@@ -528,5 +619,61 @@ mod tests {
 
         assert_eq!(state.screener_total.get(), 1);
         assert_eq!(state.screener_result.get()[0].symbol, "600519");
+    }
+
+    // ------------------------------------------------------------------
+    // Test 5: SEPA path — full third-channel roundtrip
+    // ------------------------------------------------------------------
+
+    /// Poll `state.sepa_loading` until it flips false (or timeout).
+    fn wait_for_sepa_response(state: &SharedState) {
+        for _ in 0..100 {
+            if !state.sepa_loading.get() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("timeout waiting for sepa backend response");
+    }
+
+    /// Full SEPA channel: request → `run_sepa` → SharedState + display log.
+    ///
+    /// Reuses the screener fixture (stock_daily + stock_basic only): the five
+    /// SEPA tables are absent, which the engine degrades to empty vecs — the
+    /// modules score 0 and the hard-filter survivors still rank.
+    #[test]
+    fn sepa_path_returns_ranked_rows_and_logs() {
+        let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
+        write_screener_parquet(temp_dir.path());
+
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work_signal, _screener_signal, sepa_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx);
+
+        state.sepa_loading.set(true);
+        sepa_signal
+            .send(RunSepaRequest {})
+            .expect("failed to send sepa request");
+
+        wait_for_sepa_response(&state);
+
+        assert!(!state.sepa_loading.get());
+        assert!(
+            state.sepa_error.get().is_none(),
+            "valid parquet must not produce a sepa error"
+        );
+        let data = state.sepa_data.get().expect("sepa data written back");
+        assert!(
+            !data.rows.is_empty(),
+            "600519 passes the hard filters and must be ranked"
+        );
+        assert_eq!(data.rows[0].rank, 1, "rows carry 1-based official ranks");
+        assert!(
+            state.log.get().log_count() > 0,
+            "result slot must write a display log entry"
+        );
     }
 }

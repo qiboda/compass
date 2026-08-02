@@ -468,6 +468,7 @@ impl ScreenerPanel {
 }
 
 /// Row-click linkage: fetch bars for the clicked result row (design §6.6).
+/// Thin wrapper over the shared [`crate::dispatcher::dispatch_symbol_fetch`].
 fn dispatch_row_fetch(
     shared_state: &SharedState,
     work_signal: &Signal<FetchRequest>,
@@ -475,14 +476,7 @@ fn dispatch_row_fetch(
     idx: usize,
 ) {
     if let Some(row) = rows.get(idx) {
-        shared_state.symbol.set(row.symbol.clone());
-        let timeframe = shared_state.timeframe.get();
-        crate::dispatcher::handle(
-            crate::messages::AppMessage::FetchBars,
-            shared_state,
-            work_signal,
-            timeframe,
-        );
+        crate::dispatcher::dispatch_symbol_fetch(shared_state, work_signal, &row.symbol);
     }
 }
 

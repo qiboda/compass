@@ -27,7 +27,8 @@ use egui_mobius::signals::Signal;
 use crate::citizens::chart::ChartCitizen;
 use crate::citizens::logger::LoggerPanel;
 use crate::citizens::screener::ScreenerPanel;
-use crate::messages::{FetchRequest, RunScreenerRequest};
+use crate::citizens::sepa::SepaPanel;
+use crate::messages::{FetchRequest, RunScreenerRequest, RunSepaRequest};
 use crate::state::SharedState;
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,7 @@ use crate::state::SharedState;
 pub const CHART_ID: &str = "chart";
 pub const LOGGER_ID: &str = "logger";
 pub const SCREENER_ID: &str = "screener";
+pub const SEPA_ID: &str = "sepa";
 
 // ---------------------------------------------------------------------------
 // TabKind — enum of dockable panel types
@@ -51,6 +53,7 @@ pub enum TabKind {
     Chart,
     Logger,
     Screener,
+    Sepa,
 }
 
 impl TabKind {
@@ -59,6 +62,7 @@ impl TabKind {
             Self::Chart => "图表",
             Self::Logger => "日志",
             Self::Screener => "选股器",
+            Self::Sepa => "东方SEPA",
         }
     }
 
@@ -68,6 +72,7 @@ impl TabKind {
             Self::Chart => egui_phosphor::regular::CHART_LINE,
             Self::Logger => egui_phosphor::regular::TERMINAL,
             Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
+            Self::Sepa => egui_phosphor::regular::GAUGE,
         }
     }
 
@@ -76,6 +81,7 @@ impl TabKind {
             Self::Chart => CitizenId::new(CHART_ID),
             Self::Logger => CitizenId::new(LOGGER_ID),
             Self::Screener => CitizenId::new(SCREENER_ID),
+            Self::Sepa => CitizenId::new(SEPA_ID),
         }
     }
 }
@@ -125,7 +131,9 @@ pub struct TabViewer<'a> {
     pub chart: &'a mut ChartCitizen,
     pub logger: &'a mut LoggerPanel,
     pub screener: &'a mut ScreenerPanel,
+    pub sepa: &'a mut SepaPanel,
     pub run_screener_signal: &'a Signal<RunScreenerRequest>,
+    pub sepa_signal: &'a Signal<RunSepaRequest>,
     pub work_signal: &'a Signal<FetchRequest>,
     pub screener_industries: &'a [String],
     pub screener_boards: &'a [String],
@@ -157,6 +165,10 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                 self.screener_industries,
                 self.screener_boards,
             ),
+            TabKind::Sepa => {
+                self.sepa
+                    .show(ui, self.shared_state, self.sepa_signal, self.work_signal);
+            }
         }
     }
 
@@ -195,6 +207,11 @@ mod tests {
     }
 
     #[test]
+    fn tab_kind_sepa_title() {
+        assert_eq!(TabKind::Sepa.title(), "东方SEPA");
+    }
+
+    #[test]
     fn tab_kind_icons_are_phosphor_glyphs() {
         assert_eq!(TabKind::Chart.icon(), egui_phosphor::regular::CHART_LINE);
         assert_eq!(TabKind::Logger.icon(), egui_phosphor::regular::TERMINAL);
@@ -202,6 +219,7 @@ mod tests {
             TabKind::Screener.icon(),
             egui_phosphor::regular::FUNNEL_SIMPLE
         );
+        assert_eq!(TabKind::Sepa.icon(), egui_phosphor::regular::GAUGE);
     }
 
     // ------------------------------------------------------------------
@@ -221,6 +239,11 @@ mod tests {
     #[test]
     fn tab_kind_screener_citizen_id() {
         assert_eq!(TabKind::Screener.citizen_id(), CitizenId::new(SCREENER_ID));
+    }
+
+    #[test]
+    fn tab_kind_sepa_citizen_id() {
+        assert_eq!(TabKind::Sepa.citizen_id(), CitizenId::new(SEPA_ID));
     }
 
     // ------------------------------------------------------------------
@@ -249,12 +272,21 @@ mod tests {
     }
 
     #[test]
+    fn tab_new_sepa_delegates_to_tab_kind() {
+        let tab = Tab::new(TabKind::Sepa);
+        assert_eq!(tab.title(), "东方SEPA");
+        assert_eq!(tab.citizen_id(), CitizenId::new(SEPA_ID));
+    }
+
+    #[test]
     fn tab_same_kind_are_equal() {
         assert_eq!(Tab::new(TabKind::Chart), Tab::new(TabKind::Chart));
         assert_eq!(Tab::new(TabKind::Logger), Tab::new(TabKind::Logger));
         assert_eq!(Tab::new(TabKind::Screener), Tab::new(TabKind::Screener));
+        assert_eq!(Tab::new(TabKind::Sepa), Tab::new(TabKind::Sepa));
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Logger));
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Screener));
+        assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa));
     }
 
     // ------------------------------------------------------------------
@@ -288,7 +320,13 @@ mod tests {
             Box::new(|_| {}),
             &compass_ui::tokens::ThemeTokens::dark(),
         );
+        let mut sepa = SepaPanel::new(
+            CitizenId::new(SEPA_ID),
+            registered.sepa,
+            &compass_ui::tokens::ThemeTokens::dark(),
+        );
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
+        let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
         let shared = SharedState::new("000001", "1d");
         let theme = CompassTheme::compass_dark();
@@ -299,7 +337,9 @@ mod tests {
             chart: &mut chart,
             logger: &mut logger,
             screener: &mut screener,
+            sepa: &mut sepa,
             run_screener_signal: &run_signal,
+            sepa_signal: &sepa_signal,
             work_signal: &work_signal,
             screener_industries: &[],
             screener_boards: &[],
@@ -312,6 +352,7 @@ mod tests {
             (TabKind::Chart, "图表"),
             (TabKind::Logger, "日志"),
             (TabKind::Screener, "选股器"),
+            (TabKind::Sepa, "东方SEPA"),
         ] {
             let mut tab = Tab::new(kind);
             let text = viewer.title(&mut tab).text().to_string();
