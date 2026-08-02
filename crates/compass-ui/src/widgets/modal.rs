@@ -113,6 +113,12 @@ impl Modal {
         self.is_open
     }
 
+    /// Update the theme tokens (e.g. after a theme switch) so the panel
+    /// restyles without being recreated.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+    }
+
     /// Open the modal and start the entry animation (resets any closing state).
     pub fn open(&mut self) {
         let now = Instant::now();
@@ -698,5 +704,22 @@ mod tests {
         harness.run();
 
         assert!(called.get(), "danger confirm must fire the callback");
+    }
+
+    #[test]
+    fn set_tokens_updates_theme_after_switch() {
+        let dark = ThemeTokens::dark();
+        let light = ThemeTokens::light();
+        let mut modal = Modal::new(dark);
+        modal.set_tokens(light);
+
+        assert_eq!(
+            modal.tokens, light,
+            "after set_tokens the modal must use the light palette"
+        );
+        assert_ne!(
+            modal.tokens, dark,
+            "the modal must no longer use the dark palette"
+        );
     }
 }

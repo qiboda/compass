@@ -58,6 +58,12 @@ impl MultiSelect {
         self
     }
 
+    /// Update the theme tokens after a theme switch without losing the
+    /// current selection.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+    }
+
     /// Set an id salt so multiple instances can coexist in one `Ui`.
     pub fn id_salt(mut self, id_salt: impl Into<String>) -> Self {
         self.id_salt = id_salt.into();
@@ -318,6 +324,19 @@ mod tests {
         assert!(
             harness.query_by_label("白酒").is_none(),
             "non-matching options must be hidden"
+        );
+    }
+
+    #[test]
+    fn set_tokens_updates_theme_after_switch() {
+        let dark = ThemeTokens::dark();
+        let light = ThemeTokens::light();
+        let mut ms = MultiSelect::new(&dark, ["SH", "SZ"]);
+        ms.set_tokens(light);
+
+        assert_eq!(
+            ms.tokens, light,
+            "after set_tokens the multi-select must use the light palette"
         );
     }
 }

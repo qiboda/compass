@@ -86,6 +86,12 @@ impl DataTable {
         self.rows = rows;
     }
 
+    /// Update the theme tokens after a theme switch without resetting the
+    /// current sort state or rows.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+    }
+
     /// Set the initial sort column and direction (e.g. a business default such as
     /// "market cap descending" for the screener).
     pub fn set_sort(&mut self, column: usize, descending: bool) {
@@ -634,5 +640,22 @@ mod tests {
         harness.fit_contents();
         harness.step();
         let _ = harness.get_by_label_contains("共 3 行");
+    }
+
+    #[test]
+    fn set_tokens_updates_theme_after_switch() {
+        let dark = ThemeTokens::dark();
+        let light = ThemeTokens::light();
+        let mut table = DataTable::new(&dark, columns());
+        table.set_tokens(light);
+
+        assert_eq!(
+            table.tokens, light,
+            "after set_tokens the table must use the light palette"
+        );
+        assert_ne!(
+            table.tokens, dark,
+            "the table must no longer use the dark palette"
+        );
     }
 }

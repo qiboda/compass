@@ -137,6 +137,12 @@ impl<T> SearchableDropdown<T> {
         }
     }
 
+    /// Update the theme tokens after a theme switch so the popup restyles
+    /// without losing the selection state.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+    }
+
     /// Render the input and (when open) the option popup; returns the input response.
     pub fn show(&mut self, ui: &mut egui::Ui, stock_list: &[T]) -> egui::Response {
         let tokens = self.tokens;
@@ -786,5 +792,22 @@ mod tests {
         harness.run();
 
         let _ = harness.get_by_label("无匹配结果");
+    }
+
+    #[test]
+    fn set_tokens_updates_theme_after_switch() {
+        let dark = ThemeTokens::dark();
+        let light = ThemeTokens::light();
+        let mut picker = SearchableDropdown::new(dark, "000001", StockProjection::new(
+            |s: &TestStock| &s.symbol,
+            |s: &TestStock| &s.name,
+            |s: &TestStock| s.exchange.as_deref(),
+        ));
+        picker.set_tokens(light);
+
+        assert_eq!(
+            picker.tokens, light,
+            "after set_tokens the picker must use the light palette"
+        );
     }
 }

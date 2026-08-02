@@ -897,7 +897,14 @@ impl CompassApp {
                     let name = CompassTheme::all_names()[idx];
                     if name != self.theme.name() {
                         self.theme = CompassTheme::from_config(name);
-                        self.dock_style = compass_ui::dock_style::dock_style(self.theme.tokens());
+                        let tokens = *self.theme.tokens();
+                        self.dock_style = compass_ui::dock_style::dock_style(&tokens);
+                        // Stored stateful widgets copy tokens at construction;
+                        // refresh them so the theme switch applies everywhere.
+                        self.stock_picker.set_tokens(tokens);
+                        self.toast.set_tokens(tokens);
+                        self.modal.set_tokens(tokens);
+                        self.screener.set_tokens(tokens);
                         self.toast.push(ToastLevel::Info, "主题已切换");
                     }
                 }

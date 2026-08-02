@@ -148,6 +148,12 @@ impl ToastManager {
         }
     }
 
+    /// Update the theme tokens after a theme switch so new toasts use the
+    /// new palette.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+    }
+
     /// Number of pending toasts.
     pub fn len(&self) -> usize {
         self.toasts.len()
@@ -640,5 +646,24 @@ mod tests {
         manager.borrow_mut().toasts[0].close_started = Some(now - Duration::from_millis(200));
         harness.run();
         assert!(manager.borrow().is_empty());
+    }
+
+    #[test]
+    fn set_tokens_updates_theme_after_switch() {
+        let dark = ThemeTokens::dark();
+        let light = ThemeTokens::light();
+        let mut manager = ToastManager::new(dark);
+        manager.set_tokens(light);
+
+        assert_eq!(
+            ToastLevel::Success.color(&manager.tokens.color),
+            ToastLevel::Success.color(&light.color),
+            "after set_tokens the manager must use the light palette"
+        );
+        assert_ne!(
+            ToastLevel::Success.color(&manager.tokens.color),
+            ToastLevel::Success.color(&dark.color),
+            "the manager must no longer use the dark palette"
+        );
     }
 }

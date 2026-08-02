@@ -455,6 +455,16 @@ impl ScreenerPanel {
     fn form_tokens(&self) -> ThemeTokens {
         self.tokens
     }
+
+    /// Update the theme tokens after a theme switch so the condition cards
+    /// and results table restyle without losing the query state.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+        self.ms_industry.set_tokens(tokens);
+        self.ms_exchange.set_tokens(tokens);
+        self.ms_board.set_tokens(tokens);
+        self.table.set_tokens(tokens);
+    }
 }
 
 /// Row-click linkage: fetch bars for the clicked result row (design §6.6).
