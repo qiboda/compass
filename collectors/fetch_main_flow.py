@@ -23,9 +23,7 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Throttle,
-    dolt_sql,
-    dolt_sql_csv,
-    dolt_table_import,
+    import_replace_table,
     last_report_date,
     write_csv,
 )
@@ -75,7 +73,8 @@ CREATE TABLE capital_main_flow (
     PRIMARY KEY (symbol, trade_date)
 )"""
 
-COLS = (
+# Imported columns (symbol/trade_date handled in the INSERT).
+INSERT_COLS = (
     "main_net_inflow, main_net_inflow_rate, "
     "super_large_net, large_net, medium_net, small_net, update_date"
 )
@@ -230,8 +229,11 @@ async def run(page_size: int = 1000) -> Path:
         diff = await _fetch_snapshot(session, throttle, page_size)
 
     if not diff:
-        print("No data from push2 (rate-limited or empty)", file=sys.stderr)
-        return output_path
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            "No data from push2 (rate-limited or empty) — aborting, "
+            "no CSV written"
+        )
 
     trade_date = _trade_date_from_quotes(diff)
     print(f"Snapshot: {len(diff)} items, trade_date={trade_date}", file=sys.stderr)
@@ -250,72 +252,20 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
     print("[import main flow]", file=sys.stderr)
 
-    if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
-        return 0
-
-    tmp_table = "_tmp_mf"
-    if not dolt_table_import(tmp_table, csv_path):
-        print("  Import failed", file=sys.stderr)
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-    exists = (
-        dolt_sql_csv(
-            f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{DOLT_TABLE}'"
-        )
-        .strip()
-        .split("\n")[-1]
-        .strip()
+    return import_replace_table(
+        csv_path=csv_path,
+        tmp_name="_tmp_mf",
+        ddl=DDL,
+        insert_sql=f"""
+            INSERT INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS})
+            SELECT symbol, trade_date, {INSERT_COLS}
+            FROM _tmp_mf
+            WHERE symbol IN (SELECT symbol FROM stock_basic)
+        """,
+        dolt_table=DOLT_TABLE,
+        source_label=SOURCE,
+        last_report_expr="MAX(trade_date)",
     )
-    if exists == "1":
-        dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
-    dolt_sql(DDL)
-
-    # symbol is already SH600519-formatted in the CSV (built at fetch time)
-    sql = f"""
-        INSERT INTO {DOLT_TABLE} (symbol, trade_date, {COLS})
-        SELECT symbol, trade_date, {COLS}
-        FROM {tmp_table}
-        WHERE symbol IN (SELECT symbol FROM stock_basic)
-    """
-    result = dolt_sql(sql, timeout=600)
-    if result.returncode != 0:
-        print(f"  SQL error: {result.stderr}", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
-        old_exists = (
-            dolt_sql_csv(
-                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{tmp_table}_old'"
-            )
-            .strip()
-            .split("\n")[-1]
-            .strip()
-        )
-        if old_exists == "1":
-            dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
-            print("  Rolled back to previous data", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-
-    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {DOLT_TABLE}")
-    lines = stdout.strip().split("\n")
-    total = int(lines[-1]) if len(lines) > 1 else 0
-    last_td = (
-        dolt_sql_csv(f"SELECT MAX(trade_date) FROM {DOLT_TABLE}").strip().split("\n")[-1].strip()
-    )
-    last_td_val = "NULL" if (not last_td or last_td == "NULL") else f"'{last_td}'"
-
-    dolt_sql(
-        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
-        f"VALUES ('{DOLT_TABLE}', CURDATE(), '{SOURCE}', {total}, {last_td_val}) "
-        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
-        f"last_report_date=VALUES(last_report_date)"
-    )
-    print(f"  Done: {total} rows", file=sys.stderr)
-    return total
 
 
 if __name__ == "__main__":

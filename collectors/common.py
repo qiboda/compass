@@ -29,6 +29,7 @@ __all__ = [
     "dolt_table_import",
     "fetch_paginated",
     "flatten_record",
+    "import_replace_table",
     "last_report_date",
     "write_csv",
 ]
@@ -134,6 +135,81 @@ def last_report_date(dolt_table: str) -> str:
     if last and last != "NULL":
         return last
     return ""
+
+
+def _table_exists(table_name: str) -> str:
+    """Count rows for a table in information_schema (last CSV cell, '0'/'1')."""
+    stdout = dolt_sql_csv(
+        f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{table_name}'"
+    )
+    lines = stdout.strip().split("\n")
+    return lines[-1].strip() if len(lines) > 1 else "0"
+
+
+def import_replace_table(
+    csv_path: Path,
+    tmp_name: str,
+    ddl: str,
+    insert_sql: str,
+    dolt_table: str,
+    source_label: str,
+    last_report_expr: str,
+) -> int:
+    """Atomically replace ``dolt_table`` with the CSV content.
+
+    Flow: CSV → temp table import → old table renamed aside → DDL creates the
+    fresh table → INSERT SELECT fills it → on any failure the fresh table is
+    dropped and the old one renamed back → on success both temp tables are
+    dropped → data_updates gets a 5-column upsert (last_report_date from
+    ``last_report_expr``). Returns the imported row count, or 0 when the CSV
+    is missing or the import fails (previous table contents are preserved).
+    """
+    if not csv_path.exists():
+        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
+        return 0
+
+    if not dolt_table_import(tmp_name, csv_path):
+        print("  Import failed", file=sys.stderr)
+        return 0
+
+    old_name = f"{tmp_name}_old"
+    dolt_sql(f"DROP TABLE IF EXISTS {old_name}")
+    if _table_exists(dolt_table) == "1":
+        dolt_sql(f"RENAME TABLE {dolt_table} TO {old_name}")
+
+    created = dolt_sql(ddl).returncode == 0
+    result = dolt_sql(insert_sql, timeout=600) if created else None
+    if result is None or result.returncode != 0:
+        if created:
+            dolt_sql(f"DROP TABLE IF EXISTS {dolt_table}")
+        if _table_exists(old_name) == "1":
+            dolt_sql(f"RENAME TABLE {old_name} TO {dolt_table}")
+            print("  Rolled back to previous data", file=sys.stderr)
+        dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+        return 0
+
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+    dolt_sql(f"DROP TABLE IF EXISTS {old_name}")
+
+    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {dolt_table}")
+    lines = stdout.strip().split("\n")
+    total = int(lines[-1]) if len(lines) > 1 else 0
+    last_val = (
+        dolt_sql_csv(f"SELECT {last_report_expr} FROM {dolt_table}")
+        .strip()
+        .split("\n")[-1]
+        .strip()
+    )
+    last_val = "NULL" if (not last_val or last_val == "NULL") else f"'{last_val}'"
+
+    dolt_sql(
+        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
+        f"VALUES ('{dolt_table}', CURDATE(), '{source_label}', {total}, {last_val}) "
+        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
+        f"last_report_date=VALUES(last_report_date)"
+    )
+    print(f"  Done: {total} rows", file=sys.stderr)
+    return total
 
 
 # ── Data fetching ───────────────────────────────────────────────

@@ -7,6 +7,7 @@ Version-tracking semantics: each run fully replaces the previous version
 
 import asyncio
 import csv
+import io
 import subprocess
 import sys
 from collections.abc import Callable
@@ -38,6 +39,29 @@ def _make_row(
 def _last(stdout: str) -> str:
     lines = stdout.strip().split("\n")
     return lines[-1] if lines else ""
+
+
+def _rows(stdout: str) -> list[dict[str, str]]:
+    return list(csv.DictReader(io.StringIO(stdout)))
+
+
+def _board_list_json(boards: list[tuple[str, str]]) -> dict:
+    """Board-list response (push2 clist format: f12 code / f14 name)."""
+    return {
+        "rc": 0,
+        "data": {
+            "total": len(boards),
+            "diff": [{"f12": code, "f14": name} for code, name in boards],
+        },
+    }
+
+
+def _member_json(members: list[dict]) -> dict:
+    """Member response (datacenter format)."""
+    return {
+        "success": True,
+        "result": {"count": len(members), "pages": 1, "data": members},
+    }
 
 
 # ── import_to_dolt tests ──
@@ -102,71 +126,75 @@ class TestImportToDolt:
         assert rows == 3
         assert _last(dolt_sql_csv("SELECT COUNT(*) FROM concept_member")) == "3"
 
-        # symbol 拼接为 SH600880 前缀格式（同其他 collector）
-        symbols = dolt_sql_csv("SELECT symbol FROM concept_member ORDER BY symbol")
-        assert "SH600880" in symbols and "SZ300624" in symbols and "SH603999" in symbols
+        # symbols are prefixed SH600880-style (same convention as other collectors)
+        symbols = [
+            r["symbol"]
+            for r in _rows(dolt_sql_csv("SELECT symbol FROM concept_member ORDER BY symbol"))
+        ]
+        assert symbols == ["SH600880", "SH603999", "SZ300624"]
 
-        # concept_code / concept_name 落库
-        board = dolt_sql_csv(
+        # concept_code / concept_name land in the table
+        board = _last(dolt_sql_csv(
             "SELECT concept_name FROM concept_member WHERE concept_code='BK1169' LIMIT 1"
-        ).strip()
-        assert "Kimi概念" in board
+        ))
+        assert board == "Kimi概念"
 
-        # update_date 为当前日期（版本日期）
+        # update_date is the current date (version date)
         upd = _last(dolt_sql_csv("SELECT MAX(update_date) FROM concept_member"))
         assert upd == date.today().isoformat()
 
-        # data_updates 5 列 upsert
-        du = dolt_sql_csv(
+        # data_updates 5-column upsert
+        du = _last(dolt_sql_csv(
             "SELECT row_count, last_report_date FROM data_updates "
             "WHERE table_name='concept_member'"
-        ).strip()
-        assert "3" in du and date.today().isoformat() in du
+        ))
+        assert du == f"3,{date.today().isoformat()}"
 
     def test_rerun_replaces_version_without_stale_members(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """版本更新幂等：50 成分 → 45 成分重跑，被移除 5 只不复存在（删除传播）。"""
+        """Version update idempotency: 50 members → 45 member rerun removes the
+        dropped 5 (deletion propagates into the current version)."""
         from fetch_concept_member import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "cm.csv"
 
-        # 第一版：50 只成分（BK1169 Kimi概念，SZ 代码 600001..600050）
+        # Version 1: 50 members (BK1169 Kimi概念, SZ codes 600001..600050)
         rows_50 = [_make_row(f"6000{i:02d}.SZ", "BK1169", "Kimi概念") for i in range(1, 51)]
         self._write_csv(csv_path, rows_50)
         assert import_to_dolt(csv_path) == 50
         assert _last(dolt_sql_csv("SELECT COUNT(*) FROM concept_member")) == "50"
 
-        # 第二版：45 只成分（移除末尾 5 只 600046..600050）
+        # Version 2: 45 members (last 5 removed: 600046..600050)
         rows_45 = rows_50[:45]
         self._write_csv(csv_path, rows_45)
         assert import_to_dolt(csv_path) == 45
         assert _last(dolt_sql_csv("SELECT COUNT(*) FROM concept_member")) == "45"
 
-        # 被移除的 5 只不复存在（删除传播到当前版本）
+        # Removed members no longer exist (deletion propagates to current version)
         removed = ",".join(f"'SZ6000{i:02d}'" for i in range(46, 51))
         gone = _last(dolt_sql_csv(
             f"SELECT COUNT(*) FROM concept_member WHERE symbol IN ({removed})"
         ))
         assert gone == "0"
 
-        # 剩余成分仍存在
+        # Remaining members still exist
         kept = _last(dolt_sql_csv(
             "SELECT COUNT(*) FROM concept_member WHERE symbol IN ('SZ600001','SZ600045')"
         ))
         assert kept == "2"
 
-        # data_updates row_count 随版本更新
-        du = dolt_sql_csv(
+        # data_updates row_count tracks the new version
+        du = _last(dolt_sql_csv(
             "SELECT row_count FROM data_updates WHERE table_name='concept_member'"
-        ).strip()
-        assert "45" in du
+        ))
+        assert du == "45"
 
     def test_rerun_same_version_idempotent(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """重跑相同版本：行数不变、无重复（PK 唯一）。"""
+        """Rerunning the same version: row count unchanged, no duplicates (PK unique)."""
         from fetch_concept_member import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -181,7 +209,7 @@ class TestImportToDolt:
     def test_insert_failure_rolls_back_previous_version(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """重跑时 INSERT 失败 → 恢复旧版本数据。"""
+        """Rerun with failing INSERT restores the previous version's data."""
         from fetch_concept_member import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -189,7 +217,7 @@ class TestImportToDolt:
         self._write_csv(csv_path, [_make_row("600880.SH", "BK1169", "Kimi概念")])
         assert import_to_dolt(csv_path) == 1
 
-        # 破坏性 CSV：NEW_BOARD_CODE 空 → concept_code NULL，违反 NOT NULL → INSERT 失败
+        # Destructive CSV: empty NEW_BOARD_CODE → NULL concept_code violates NOT NULL
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(_HEADER)
@@ -200,50 +228,77 @@ class TestImportToDolt:
     def test_csv_not_found_returns_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """CSV 不存在时 import_to_dolt 返回 0。"""
+        """import_to_dolt returns 0 when the CSV does not exist."""
         from fetch_concept_member import import_to_dolt  # noqa: E402
 
         monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
         result = import_to_dolt(tmp_path / "nonexistent.csv")
         assert result == 0
 
+    async def test_failed_run_does_not_publish_new_version(
+        self,
+        dolt_env: tuple[Path, Callable[[str], str]],
+        tmp_path: Path,
+        make_stub_session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Board fetch failure → run() aborts → import refuses (0) → old version kept."""
+        from fetch_concept_member import import_to_dolt, run  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "cm.csv"
+        self._write_csv(csv_path, [_make_row("600880.SH", "BK1169", "Kimi概念")])
+        assert import_to_dolt(csv_path) == 1
+        assert _last(dolt_sql_csv("SELECT COUNT(*) FROM concept_member")) == "1"
+
+        monkeypatch.chdir(tmp_path)
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        # Stale CSV from a previous run must be removed by the failed run
+        stale = tmp_path / "RPT_F10_CORETHEME_BOARDTYPE.csv"
+        stale.write_text("stale\n", encoding="utf-8")
+
+        boards = [("BK1169", "Kimi概念"), ("BK1170", "光刻胶")]
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            if BOARD_LIST_URL in url:
+                return StubResponse(json_data=_board_list_json(boards))
+            flt = (params or {}).get("filter", "")
+            code = flt.split('"')[1] if '"' in flt else ""
+            if code == "BK1170":
+                raise RuntimeError("simulated fetch error")
+            return StubResponse(json_data=_member_json([]))
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_concept_member.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
+
+        # No new CSV to import → old version stays in Dolt, watermark untouched
+        assert not stale.exists()
+        assert import_to_dolt() == 0
+        assert _last(dolt_sql_csv("SELECT COUNT(*) FROM concept_member")) == "1"
+
 
 # ── run() tests ──
 
 
 class TestRun:
-    def _board_list_json(
-        self, boards: list[tuple[str, str]]
-    ) -> dict:
-        """板块列表响应（push2 clist 格式：f12 板块代码 / f14 板块名称）。"""
-        return {
-            "rc": 0,
-            "data": {
-                "total": len(boards),
-                "diff": [{"f12": code, "f14": name} for code, name in boards],
-            },
-        }
-
-    def _member_json(self, members: list[dict]) -> dict:
-        """成分股响应（datacenter 格式）。"""
-        return {
-            "success": True,
-            "result": {"count": len(members), "pages": 1, "data": members},
-        }
-
     def _make_get(
         self,
         boards: list[tuple[str, str]],
         members: dict[str, list[dict]],
     ) -> Callable:
-        """自定义 stub.get：板块列表 URL → 板块列表；其余 → 按 filter 取成分。"""
+        """Custom stub.get: board-list URL → board list; otherwise per-filter members."""
 
         async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
             if BOARD_LIST_URL in url:
-                return StubResponse(json_data=self._board_list_json(boards))
+                return StubResponse(json_data=_board_list_json(boards))
             flt = (params or {}).get("filter", "")
             code = flt.split('"')[1] if '"' in flt else ""
-            return StubResponse(json_data=self._member_json(members.get(code, [])))
+            return StubResponse(json_data=_member_json(members.get(code, [])))
 
         return _get
 
@@ -285,10 +340,10 @@ class TestRun:
         assert {r["SECUCODE"] for r in rows} == {"600880.SH", "300624.SZ", "603999.SH"}
         assert {r["NEW_BOARD_CODE"] for r in rows} == {"BK1169", "BK1170"}
 
-    async def test_run_member_fetch_exception_continues(
+    async def test_run_member_fetch_exception_aborts_without_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """单个板块成分拉取失败 → 捕获并继续，不中断整体。"""
+        """One board failing to fetch aborts the whole run: raises, no CSV."""
         from fetch_concept_member import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -305,31 +360,46 @@ class TestRun:
 
         async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
             if BOARD_LIST_URL in url:
-                return StubResponse(json_data=self._board_list_json(boards))
+                return StubResponse(json_data=_board_list_json(boards))
             flt = (params or {}).get("filter", "")
             code = flt.split('"')[1] if '"' in flt else ""
             if code == "BK1170":
                 raise RuntimeError("simulated fetch error")
-            return StubResponse(json_data=self._member_json(members.get(code, [])))
+            return StubResponse(json_data=_member_json(members.get(code, [])))
 
         stub = make_stub_session()
         stub.get = _get  # type: ignore[method-assign]
 
-        with patch("fetch_concept_member.AsyncSession", return_value=stub):
-            result = await run()
+        with patch("fetch_concept_member.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
 
-        assert result.name == "RPT_F10_CORETHEME_BOARDTYPE.csv"
-        csv_path = tmp_path / result.name
-        assert csv_path.exists()
-        with open(csv_path, newline="", encoding="utf-8-sig") as f:
-            rows = list(csv.DictReader(f))
-        assert len(rows) == 1
-        assert rows[0]["SECUCODE"] == "600880.SH"
+        assert not (tmp_path / "RPT_F10_CORETHEME_BOARDTYPE.csv").exists()
 
-    async def test_run_empty_board_list_writes_no_csv(
+    async def test_run_board_list_fetch_exception_aborts(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """板块列表为空 → 直接返回（无 CSV 写入）。"""
+        """Board-list fetch failure aborts: raises, no CSV."""
+        from fetch_concept_member import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            raise RuntimeError("simulated fetch error")
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_concept_member.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
+
+        assert not (tmp_path / "RPT_F10_CORETHEME_BOARDTYPE.csv").exists()
+
+    async def test_run_empty_board_list_aborts(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Empty board list means no version can be produced: run() raises."""
         from fetch_concept_member import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -339,8 +409,7 @@ class TestRun:
         stub = make_stub_session()
         stub.get = self._make_get([], {})  # type: ignore[method-assign]
 
-        with patch("fetch_concept_member.AsyncSession", return_value=stub):
-            result = await run()
+        with patch("fetch_concept_member.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
 
-        assert result.name == "RPT_F10_CORETHEME_BOARDTYPE.csv"
-        assert not (tmp_path / result.name).exists()
+        assert not (tmp_path / "RPT_F10_CORETHEME_BOARDTYPE.csv").exists()

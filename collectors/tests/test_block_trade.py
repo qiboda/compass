@@ -5,6 +5,7 @@ import csv
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -101,34 +102,46 @@ class TestImportToDolt:
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade")) == "1"
 
         # symbol gets exchange prefix (SZ000001), price/volume/buyer mapped
-        row = dolt_sql_csv(
-            "SELECT symbol, trade_date, price, volume, buyer "
-            "FROM block_trade"
-        ).strip().split("\n")[-1]
-        assert "SZ000001" in row
-        assert "2024-12-31" in row
-        assert "12.5" in row and "240000" in row
-        assert "华泰证券南京止马营营业部" in row
+        row = self._last(
+            dolt_sql_csv("SELECT symbol, trade_date, price, volume, buyer FROM block_trade")
+        )
+        assert row == "SZ000001,2024-12-31,12.5,240000,华泰证券南京止马营营业部"
         # DOUBLEs print in scientific/full precision in Dolt CSV output; check via CAST
-        amount = dolt_sql_csv(
-            "SELECT CAST(amount AS DECIMAL(20,2)) FROM block_trade"
-        ).strip().split("\n")[-1]
-        assert "3000000.00" in amount
-        premium = dolt_sql_csv(
-            "SELECT CAST(premium_rate AS DECIMAL(10,6)) FROM block_trade"
-        ).strip().split("\n")[-1]
-        assert "0.068376" in premium
+        amount = self._last(
+            dolt_sql_csv("SELECT CAST(amount AS DECIMAL(20,2)) FROM block_trade")
+        )
+        assert amount == "3000000.00"
+        premium = self._last(
+            dolt_sql_csv("SELECT CAST(premium_rate AS DECIMAL(10,6)) FROM block_trade")
+        )
+        assert premium == "0.068376"
 
         # data_updates 5-column upsert: table_name/last_updated/source/row_count/last_report_date
-        up = dolt_sql_csv(
+        up = self._last(dolt_sql_csv(
             "SELECT table_name, last_updated, source, row_count, last_report_date "
             "FROM data_updates WHERE table_name='block_trade'"
-        ).strip().split("\n")[-1]
-        assert "block_trade" in up
-        assert "EastMoney datacenter RPT_DATA_BLOCKTRADE" in up
-        assert "1" in up
-        assert "2024-12-31" in up
-        assert len(up.split(",")) == 5
+        ))
+        assert up == (
+            f"block_trade,{date.today().isoformat()},"
+            "EastMoney datacenter RPT_DATA_BLOCKTRADE,1,2024-12-31"
+        )
+
+    def test_empty_deal_price_row_filtered_out(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """CSV rows with empty DEAL_PRICE (NULL in tmp table) are skipped by the
+        WHERE guard — without it the NOT NULL price PK would fail the INSERT."""
+        from fetch_block_trade import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "bt.csv"
+        self._write_csv(csv_path, [_make_row(price=""), _make_row()])
+
+        rows = import_to_dolt(csv_path)
+        assert rows == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade")) == "1"
+        price = self._last(dolt_sql_csv("SELECT price FROM block_trade"))
+        assert price == "12.5"
 
     def test_rerun_replaces_table_without_duplicates(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -255,10 +268,36 @@ class TestRun:
         assert result.name == "RPT_DATA_BLOCKTRADE.csv"
         assert calls[0] == 0
 
-    async def test_run_fetch_exception_continues(
+    async def test_run_incremental_since_excludes_watermark_day(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """When fetch_paginated raises, run() catches and continues."""
+        """Exclusive boundary: dates <= last_report_date are not re-fetched."""
+        from fetch_block_trade import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+        monkeypatch.setattr("fetch_block_trade.last_report_date", lambda _tbl: "2024-12-31")
+
+        calls = [0]
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            calls[0] += 1
+            return StubResponse(json_data={"success": True, "result": {"data": [], "pages": 1}})
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_block_trade.AsyncSession", return_value=stub):
+            result = await run(years=[2024])
+
+        assert result.name == "RPT_DATA_BLOCKTRADE.csv"
+        assert calls[0] == 0
+
+    async def test_run_fetch_exception_aborts_without_csv(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When fetch_paginated raises, run() aborts: raises and writes no CSV."""
         from fetch_block_trade import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -282,7 +321,32 @@ class TestRun:
         stub = make_stub_session()
         stub.get = _get  # type: ignore[method-assign]
 
-        with patch("fetch_block_trade.AsyncSession", return_value=stub):
-            result = await run(years=[2024], page_size=100)
+        with patch("fetch_block_trade.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run(years=[2024], page_size=100)
 
-        assert result.name == "RPT_DATA_BLOCKTRADE.csv"
+        assert not (tmp_path / "RPT_DATA_BLOCKTRADE.csv").exists()
+
+    async def test_run_fetch_exception_deletes_stale_csv(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A failed run removes any stale CSV so import cannot publish old data."""
+        from fetch_block_trade import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stale = tmp_path / "RPT_DATA_BLOCKTRADE.csv"
+        stale.write_text("stale\n", encoding="utf-8")
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("simulated fetch error")
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_block_trade.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run(years=[2024], page_size=100)
+
+        assert not stale.exists()

@@ -176,11 +176,13 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM capital_main_flow")) == "1"
 
-        row = dolt_sql_csv(
-            "SELECT row_count, last_report_date, source FROM data_updates "
-            "WHERE table_name='capital_main_flow'"
-        ).strip()
-        assert "1" in row and _TRADE_DATE in row and "EastMoney push2 clist f62" in row
+        row = self._last(
+            dolt_sql_csv(
+                "SELECT row_count, last_report_date, source FROM data_updates "
+                "WHERE table_name='capital_main_flow'"
+            )
+        )
+        assert row == f"1,{_TRADE_DATE},EastMoney push2 clist f62"
 
     def test_symbol_passes_through_and_stock_basic_filters(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -391,10 +393,10 @@ class TestRun:
         assert counter[0] >= 1  # snapshot was fetched
         assert not (tmp_path / "RPT_MAIN_MONEY_FLOW.csv").exists()
 
-    async def test_run_fetch_exception_produces_no_csv(
+    async def test_run_fetch_exception_aborts_without_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """All retries exhausted on every domain → run() returns without CSV."""
+        """All retries exhausted on every domain → run() raises, no CSV written."""
         from fetch_main_flow import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -404,11 +406,31 @@ class TestRun:
 
         stub = self._stub(make_stub_session, exc=RuntimeError("simulated fetch error"))
 
-        with patch("fetch_main_flow.AsyncSession", return_value=stub):
-            result = await run()
+        with patch("fetch_main_flow.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
 
-        assert result.name == "RPT_MAIN_MONEY_FLOW.csv"
         assert not (tmp_path / "RPT_MAIN_MONEY_FLOW.csv").exists()
+
+    async def test_run_fetch_exception_deletes_stale_csv(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A failed run removes any stale CSV so import cannot publish old data."""
+        from fetch_main_flow import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stale = tmp_path / "RPT_MAIN_MONEY_FLOW.csv"
+        stale.write_text("stale\n", encoding="utf-8")
+
+        stub = self._stub(make_stub_session, exc=RuntimeError("simulated fetch error"))
+
+        with patch("fetch_main_flow.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
+
+        assert not stale.exists()
 
     async def test_run_domain_fallback_on_empty_first_response(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

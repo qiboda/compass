@@ -7,11 +7,21 @@ Usage:
     uv run python main.py fetch balance_sheet [--years 2024,2025]
     uv run python main.py fetch income [--years 2024,2025]
     uv run python main.py fetch cash_flow [--years 2024,2025]
+    uv run python main.py fetch dragon
+    uv run python main.py fetch block_trade
+    uv run python main.py fetch institution_survey
+    uv run python main.py fetch concept_member
+    uv run python main.py fetch main_flow
     uv run python main.py import stock_basic
     uv run python main.py import fin_indicators
     uv run python main.py import balance_sheet
     uv run python main.py import income
     uv run python main.py import cash_flow
+    uv run python main.py import dragon
+    uv run python main.py import block_trade
+    uv run python main.py import institution_survey
+    uv run python main.py import concept_member
+    uv run python main.py import main_flow
     uv run python main.py sync              # fetch all + import all
     uv run python main.py sync-investment   # sync investment_data from upstream
 """
@@ -190,7 +200,9 @@ def dispatch_fetch(
     """Fetch data for the given target table.
 
     Args:
-        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow.
+        target: One of stock_basic, fin_indicators, balance_sheet, income,
+            cash_flow, main_flow, dragon, block_trade, institution_survey,
+            concept_member.
         years: Years to fetch (financial tables only; defaults to sub-module default).
     """
     if target == "stock_basic":
@@ -242,7 +254,9 @@ def dispatch_import(target: str) -> None:
     """Import CSV data into Dolt for the given target table.
 
     Args:
-        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow, dragon.
+        target: One of stock_basic, fin_indicators, balance_sheet, income,
+            cash_flow, main_flow, dragon, block_trade, institution_survey,
+            concept_member.
     """
     if target == "stock_basic":
         _import_stock_basic()
@@ -275,7 +289,7 @@ def dispatch_import(target: str) -> None:
 
 
 def do_sync(restart: bool = False) -> None:
-    """Fetch all 5 tables from EastMoney, import into Dolt, and update data_updates.
+    """Fetch all tables from EastMoney, import into Dolt, and update data_updates.
 
     Args:
         restart: Reserved for future use; does not change sync behavior.

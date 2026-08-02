@@ -5,6 +5,7 @@ import csv
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -94,20 +95,17 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "1"
 
-        row = dolt_sql_csv(
+        row = self._last(dolt_sql_csv(
             "SELECT symbol, survey_date, org_name, survey_type, update_date "
             "FROM institution_survey"
-        ).strip()
-        assert "SZ000001" in row
-        assert "2025-08-28" in row
-        assert "长信基金" in row
-        assert "电话会议" in row
+        ))
+        assert row == f"SZ000001,2025-08-28,长信基金,电话会议,{date.today().isoformat()}"
 
-        upd = dolt_sql_csv(
+        upd = self._last(dolt_sql_csv(
             "SELECT row_count, last_report_date FROM data_updates "
             "WHERE table_name='institution_survey'"
-        ).strip()
-        assert "1" in upd and "2025-08-28" in upd
+        ))
+        assert upd == "1,2025-08-28"
 
     def test_rerun_replaces_table_without_duplicates(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -143,6 +141,74 @@ class TestImportToDolt:
         rows = import_to_dolt(csv_path)
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "1"
+
+    def test_empty_receive_start_date_row_filtered_out(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """CSV rows with empty RECEIVE_START_DATE (NULL in tmp table) are skipped
+        by the WHERE guard — without it the NOT NULL survey_date PK fails."""
+        from fetch_institution_survey import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "survey.csv"
+        self._write_csv(csv_path, [_make_row(receive_start=""), _make_row()])
+
+        rows = import_to_dolt(csv_path)
+        assert rows == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "1"
+        org = self._last(dolt_sql_csv("SELECT org_name FROM institution_survey"))
+        assert org == "长信基金"
+
+    def test_ddl_survey_type_width_50(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """survey_type column is VARCHAR(50) to fit long method descriptions."""
+        import fetch_institution_survey  # noqa: E402
+
+        assert "survey_type VARCHAR(50)" in fetch_institution_survey.DDL
+
+    async def test_run_to_import_round_trip(
+        self,
+        dolt_env: tuple[Path, Callable[[str], str]],
+        tmp_path: Path,
+        make_stub_session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """run() output CSV feeds import_to_dolt: real Dolt table gets the rows."""
+        from fetch_institution_survey import import_to_dolt, run  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        monkeypatch.chdir(tmp_path)
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(
+            json_data={
+                "success": True,
+                "result": {
+                    "data": [{
+                        "SECUCODE": "000001.SZ",
+                        "SECURITY_CODE": "000001",
+                        "RECEIVE_START_DATE": "2025-08-28 00:00:00",
+                        "RECEIVE_OBJECT": "长信基金",
+                        "RECEIVE_WAY_EXPLAIN": "电话会议",
+                    }],
+                    "pages": 1,
+                },
+            }
+        )
+
+        with patch("fetch_institution_survey.AsyncSession", return_value=stub):
+            result = await run(start_date="2025-08-28", page_size=100)
+
+        csv_path = tmp_path / result.name
+        assert csv_path.exists()
+
+        rows = import_to_dolt(csv_path)
+        assert rows == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "1"
+        symbol = self._last(dolt_sql_csv("SELECT symbol FROM institution_survey"))
+        assert symbol == "SZ000001"
 
     def test_first_run_insert_failure_leaves_no_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -210,7 +276,8 @@ class TestRun:
                 "success": True,
                 "result": {
                     "data": [{
-                        "code": "000001",
+                        "SECUCODE": "000001.SZ",
+                        "SECURITY_CODE": "000001",
                         "RECEIVE_START_DATE": "2025-08-28 00:00:00",
                         "RECEIVE_OBJECT": "长信基金",
                         "RECEIVE_WAY_EXPLAIN": "电话会议",
@@ -226,6 +293,12 @@ class TestRun:
         assert result.name == "RPT_ORG_SURVEYNEW.csv"
         csv_path = tmp_path / "RPT_ORG_SURVEYNEW.csv"
         assert csv_path.exists()
+
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            row = next(csv.DictReader(f))
+        assert row["SECUCODE"] == "000001.SZ"
+        assert row["SECURITY_CODE"] == "000001"
+        assert row["RECEIVE_START_DATE"].startswith("2025-08-28")
 
     async def test_run_default_start_date(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -266,10 +339,10 @@ class TestRun:
         result = await run()
         assert result.name == "RPT_ORG_SURVEYNEW.csv"
 
-    async def test_run_fetch_exception_continues(
+    async def test_run_fetch_exception_aborts_without_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """When fetch_paginated raises, run() catches and continues."""
+        """When fetch_paginated raises, run() aborts: raises and writes no CSV."""
         from fetch_institution_survey import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -293,7 +366,7 @@ class TestRun:
         stub = make_stub_session()
         stub.get = _get  # type: ignore[method-assign]
 
-        with patch("fetch_institution_survey.AsyncSession", return_value=stub):
-            result = await run(start_date="2025-08-28", page_size=100)
+        with patch("fetch_institution_survey.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run(start_date="2025-08-28", page_size=100)
 
-        assert result.name == "RPT_ORG_SURVEYNEW.csv"
+        assert not (tmp_path / "RPT_ORG_SURVEYNEW.csv").exists()

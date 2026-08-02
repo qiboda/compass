@@ -29,10 +29,8 @@ from common import (
     EM_MAX_RETRIES,
     AsyncSession,
     Throttle,
-    dolt_sql,
-    dolt_sql_csv,
-    dolt_table_import,
     flatten_record,
+    import_replace_table,
     write_csv,
 )
 
@@ -56,7 +54,7 @@ CREATE TABLE concept_member (
 
 # CSV columns written by run() — raw EastMoney fields; symbol/update_date
 # are derived in import_to_dolt.
-COLS = "SECUCODE, SECURITY_CODE, NEW_BOARD_CODE, BOARD_NAME"
+INSERT_COLS = "SECUCODE, SECURITY_CODE, NEW_BOARD_CODE, BOARD_NAME"
 
 
 async def fetch_board_list(
@@ -214,20 +212,21 @@ async def run(page_size: int = 100) -> Path:
     print(file=sys.stderr)
 
     throttle = Throttle()
-    total_records = 0
+    all_records: list[dict] = []
+    failed_boards: list[str] = []
 
     async with AsyncSession(impersonate="chrome142") as session:
         try:
             boards = await fetch_board_list(session, throttle)
         except Exception as e:
-            print(f"Board list fetch FAILED: {e}", file=sys.stderr)
-            return output_path
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Board list fetch failed: {e} — no CSV written") from e
+
         if not boards:
-            print("No concept boards returned", file=sys.stderr)
-            return output_path
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError("No concept boards returned — no version produced")
 
         print(f"Boards: {len(boards)}", file=sys.stderr)
-        all_records: list[dict] = []
 
         for i, (board_code, board_name) in enumerate(boards):
             print(
@@ -237,6 +236,7 @@ async def run(page_size: int = 100) -> Path:
             try:
                 records = await fetch_board_members(session, throttle, board_code, page_size)
             except Exception as e:
+                failed_boards.append(board_code)
                 print(f"FAILED: {e}", file=sys.stderr)
                 continue
 
@@ -245,11 +245,17 @@ async def run(page_size: int = 100) -> Path:
                 print(f"{len(records)} records", file=sys.stderr)
             else:
                 print("empty", file=sys.stderr)
-            total_records += len(records)
 
-        write_csv(all_records, output_path)
+    if failed_boards:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"{len(failed_boards)} board(s) failed ({', '.join(failed_boards)}) — "
+            "no CSV written, previous version kept"
+        )
 
-    print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
+    write_csv(all_records, output_path)
+
+    print(f"\nDone: {len(all_records)} records → {output_path.resolve()}", file=sys.stderr)
     return output_path
 
 
@@ -264,62 +270,23 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
     print("[import concept_member]", file=sys.stderr)
 
-    if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
-        return 0
-
-    tmp_table = "_tmp_cm"
-    if not dolt_table_import(tmp_table, csv_path):
-        print("  Import failed", file=sys.stderr)
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-    exists = dolt_sql_csv(
-        f"SELECT COUNT(*) FROM information_schema.tables "
-        f"WHERE table_name='{DOLT_TABLE}'"
-    ).strip().split("\n")[-1].strip()
-    if exists == "1":
-        dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
-    dolt_sql(DDL)
-
-    sql = f"""
-        INSERT INTO {DOLT_TABLE} (concept_code, symbol, concept_name, update_date)
-        SELECT
-            NEW_BOARD_CODE,
-            CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-            BOARD_NAME,
-            CURDATE()
-        FROM {tmp_table}
-    """
-    result = dolt_sql(sql, timeout=600)
-    if result.returncode != 0:
-        print(f"  SQL error: {result.stderr}", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
-        old_exists = dolt_sql_csv(
-            f"SELECT COUNT(*) FROM information_schema.tables "
-            f"WHERE table_name='{tmp_table}_old'"
-        ).strip().split("\n")[-1].strip()
-        if old_exists == "1":
-            dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
-            print("  Rolled back to previous data", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-
-    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {DOLT_TABLE}")
-    lines = stdout.strip().split("\n")
-    total = int(lines[-1]) if len(lines) > 1 else 0
-
-    dolt_sql(
-        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
-        f"VALUES ('{DOLT_TABLE}', CURDATE(), 'EastMoney datacenter {REPORT_NAME}', {total}, CURDATE()) "
-        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
-        f"last_report_date=VALUES(last_report_date)"
+    return import_replace_table(
+        csv_path=csv_path,
+        tmp_name="_tmp_cm",
+        ddl=DDL,
+        insert_sql=f"""
+            INSERT INTO {DOLT_TABLE} (concept_code, symbol, concept_name, update_date)
+            SELECT
+                NEW_BOARD_CODE,
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
+                BOARD_NAME,
+                CURDATE()
+            FROM _tmp_cm
+        """,
+        dolt_table=DOLT_TABLE,
+        source_label=f"EastMoney datacenter {REPORT_NAME}",
+        last_report_expr="CURDATE()",
     )
-    print(f"  Done: {total} rows", file=sys.stderr)
-    return total
 
 
 if __name__ == "__main__":

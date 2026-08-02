@@ -22,10 +22,8 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Throttle,
-    dolt_sql,
-    dolt_sql_csv,
-    dolt_table_import,
     fetch_paginated,
+    import_replace_table,
     last_report_date,
     write_csv,
 )
@@ -53,7 +51,7 @@ CREATE TABLE dragon_list (
 )"""
 
 # Imported columns (symbol/trade_date/update_date handled in the INSERT).
-COLS = "SEAT_TYPE, BUY_AMOUNT, SELL_AMOUNT, NET_AMOUNT, INSTITUTION_FLAG"
+INSERT_COLS = "SEAT_TYPE, BUY_AMOUNT, SELL_AMOUNT, NET_AMOUNT, INSTITUTION_FLAG"
 
 
 def _next_day(date_str: str) -> str:
@@ -175,14 +173,13 @@ async def run(
     print(file=sys.stderr)
 
     throttle = Throttle()
-    total_records = 0
-    first_write = True
+    all_records: list[dict[str, str | int | float]] = []
     day = start_date
+    failure: str | None = None
 
     async with AsyncSession(impersonate="chrome142") as session:
         while day <= end_date:
             print(f"[{day}] ...", file=sys.stderr, end=" ", flush=True)
-            records: list[dict[str, str | int | float]] = []
             try:
                 buy = await fetch_paginated(
                     session,
@@ -202,18 +199,23 @@ async def run(
                 )
                 records = _merge_seats(buy + sell)
             except Exception as e:
+                failure = f"{day}: {e}"
                 print(f"FAILED: {e}", file=sys.stderr)
+                break
 
-            if records:
-                write_csv(records, output_path, append=not first_write)
-                first_write = False
-                print(f"{len(records)} records", file=sys.stderr)
-            else:
-                print("empty", file=sys.stderr)
-            total_records += len(records)
+            all_records.extend(records)
+            print(f"{len(records)} records" if records else "empty", file=sys.stderr)
             day = _next_day(day)
 
-    print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
+    if failure is not None:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
+
+    write_csv(all_records, output_path)
+    print(
+        f"\nDone: {len(all_records)} records → {output_path.resolve()}",
+        file=sys.stderr,
+    )
     return output_path
 
 
@@ -227,74 +229,23 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
     print("[import dragon_list]", file=sys.stderr)
 
-    if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
-        return 0
-
-    tmp_table = "_tmp_dr"
-    if not dolt_table_import(tmp_table, csv_path):
-        print("  Import failed", file=sys.stderr)
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-    exists = (
-        dolt_sql_csv(
-            f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{DOLT_TABLE}'"
-        )
-        .strip()
-        .split("\n")[-1]
-        .strip()
+    return import_replace_table(
+        csv_path=csv_path,
+        tmp_name="_tmp_dr",
+        ddl=DDL,
+        insert_sql=f"""
+            INSERT INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS}, update_date)
+            SELECT
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
+                TRADE_DATE, {INSERT_COLS}, CURDATE()
+            FROM _tmp_dr
+            WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
+                  IN (SELECT symbol FROM stock_basic)
+        """,
+        dolt_table=DOLT_TABLE,
+        source_label=f"EastMoney datacenter {REPORT_NAME}",
+        last_report_expr="MAX(trade_date)",
     )
-    if exists == "1":
-        dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
-    dolt_sql(DDL)
-
-    sql = f"""
-        INSERT INTO {DOLT_TABLE} (symbol, trade_date, {COLS}, update_date)
-        SELECT
-            CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-            TRADE_DATE, {COLS}, CURDATE()
-        FROM {tmp_table}
-        WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
-              IN (SELECT symbol FROM stock_basic)
-    """
-    result = dolt_sql(sql, timeout=600)
-    if result.returncode != 0:
-        print(f"  SQL error: {result.stderr}", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
-        old_exists = (
-            dolt_sql_csv(
-                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{tmp_table}_old'"
-            )
-            .strip()
-            .split("\n")[-1]
-            .strip()
-        )
-        if old_exists == "1":
-            dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
-            print("  Rolled back to previous data", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-
-    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {DOLT_TABLE}")
-    lines = stdout.strip().split("\n")
-    total = int(lines[-1]) if len(lines) > 1 else 0
-    last_rpt = (
-        dolt_sql_csv(f"SELECT MAX(trade_date) FROM {DOLT_TABLE}").strip().split("\n")[-1].strip()
-    )
-    last_rpt_val = "NULL" if (not last_rpt or last_rpt == "NULL") else f"'{last_rpt}'"
-
-    dolt_sql(
-        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
-        f"VALUES ('{DOLT_TABLE}', CURDATE(), 'EastMoney datacenter {REPORT_NAME}', {total}, {last_rpt_val}) "
-        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
-        f"last_report_date=VALUES(last_report_date)"
-    )
-    print(f"  Done: {total} rows", file=sys.stderr)
-    return total
 
 
 if __name__ == "__main__":

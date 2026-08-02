@@ -114,16 +114,19 @@ class TestImportToDolt:
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM dragon_list")) == "1"
 
         # symbol prefix SH600519 format + seat_type/institution mapping
-        seat = dolt_sql_csv("SELECT symbol, seat_type, institution_flag FROM dragon_list").strip()
-        assert "SZ000001" in seat and "机构专用" in seat and ",1" in seat
+        seat = self._last(
+            dolt_sql_csv("SELECT symbol, seat_type, institution_flag FROM dragon_list")
+        )
+        assert seat == "SZ000001,机构专用,1"
 
         # data_updates 5 columns: row_count, last_report_date, source
-        up = dolt_sql_csv(
-            "SELECT row_count, last_report_date, source FROM data_updates "
-            "WHERE table_name='dragon_list'"
-        ).strip()
-        assert "1" in up and "2024-12-31" in up
-        assert "RPT_DAILYBILLBOARD_DETAILSNEW" in up
+        up = self._last(
+            dolt_sql_csv(
+                "SELECT row_count, last_report_date, source FROM data_updates "
+                "WHERE table_name='dragon_list'"
+            )
+        )
+        assert up == "1,2024-12-31,EastMoney datacenter RPT_DAILYBILLBOARD_DETAILSNEW"
 
     def test_broker_seat_maps_to_branch_type(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -137,8 +140,8 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 1
-        seat = dolt_sql_csv("SELECT seat_type, institution_flag FROM dragon_list").strip()
-        assert "营业部" in seat and ",0" in seat
+        seat = self._last(dolt_sql_csv("SELECT seat_type, institution_flag FROM dragon_list"))
+        assert seat == "营业部,0"
 
     def test_rerun_replaces_table_without_duplicates(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -358,10 +361,10 @@ class TestRun:
         assert result.name == "RPT_DAILYBILLBOARD_DETAILSNEW.csv"
         assert not (tmp_path / "RPT_DAILYBILLBOARD_DETAILSNEW.csv").exists()
 
-    async def test_run_fetch_exception_continues(
+    async def test_run_fetch_exception_aborts_without_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """When fetch_paginated raises, run() catches and continues."""
+        """When fetch_paginated raises, run() aborts: raises and writes no CSV."""
         from fetch_dragon import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -385,7 +388,32 @@ class TestRun:
         stub = make_stub_session()
         stub.get = _get  # type: ignore[method-assign]
 
-        with patch("fetch_dragon.AsyncSession", return_value=stub):
-            result = await run(start_date="2024-12-30", end_date="2024-12-31")
+        with patch("fetch_dragon.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run(start_date="2024-12-30", end_date="2024-12-31")
 
-        assert result.name == "RPT_DAILYBILLBOARD_DETAILSNEW.csv"
+        assert not (tmp_path / "RPT_DAILYBILLBOARD_DETAILSNEW.csv").exists()
+
+    async def test_run_fetch_exception_deletes_stale_csv(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A failed run removes any stale CSV so import cannot publish old data."""
+        from fetch_dragon import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stale = tmp_path / "RPT_DAILYBILLBOARD_DETAILSNEW.csv"
+        stale.write_text("stale\n", encoding="utf-8")
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("simulated fetch error")
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_dragon.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run(start_date="2024-12-30", end_date="2024-12-30")
+
+        assert not stale.exists()

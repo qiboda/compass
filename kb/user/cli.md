@@ -151,7 +151,7 @@ cargo run --bin compass-data -- backup [OPTIONS]
 
 ## Python 采集器（数据源 → Dolt）
 
-`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并存入 CSV，再导入 Dolt `compass_data`。财务表仍来自东方财富；`stock_basic` 已切换到三大交易所官网：
+`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并存入 CSV，再导入 Dolt `compass_data`。财务表与 SEPA 资金/题材表来自东方财富；`stock_basic` 已切换到三大交易所官网：
 
 ```sh
 cd collectors/
@@ -159,6 +159,11 @@ uv sync                                # 首次：安装依赖
 
 uv run python main.py fetch stock_basic   # 上交所/深交所/北交所官网
 uv run python main.py fetch fin_indicators
+uv run python main.py fetch main_flow     # SEPA: 主力资金流（push2 当日截面）
+uv run python main.py fetch dragon        # SEPA: 龙虎榜席位
+uv run python main.py fetch block_trade   # SEPA: 大宗交易
+uv run python main.py fetch institution_survey  # SEPA: 机构调研
+uv run python main.py fetch concept_member      # SEPA: 概念板块成分
 uv run python main.py sync             # 获取 + 导入全部
 uv run python main.py sync-investment --restart
 ```
@@ -166,7 +171,14 @@ uv run python main.py sync-investment --restart
 关键概念：
 - **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt
-- **`.state.json`** 文件跟踪上次获取时间，用于增量更新
+- **增量机制**：既有财务采集器用 `.state.json` 跟踪上次获取时间；SEPA 采集器（main_flow/dragon/block_trade/institution_survey/concept_member）改用 Dolt `data_updates.last_report_date` 增量，且任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全），避免增量 CSV 覆盖完整历史
+
+SEPA 采集器说明：
+- `main_flow`：东财 push2 当日全市场主力资金流截面（f62/f184/f66/f72/f78/f84），只存最新交易日
+- `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
+- `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
+- `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
+- `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照）
 
 `fetch stock_basic` 现在运行 `fetch_stock_basic_official.py`，从三大交易所官网
 （SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`。旧的东财采集器
