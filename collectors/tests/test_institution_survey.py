@@ -113,13 +113,35 @@ class TestImportToDolt:
         from fetch_institution_survey import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
-        csv_path = tmp_path / "survey.csv"
+        csv_path = tmp_path / "svy.csv"
         self._write_csv(csv_path, [_make_row()])
 
         assert import_to_dolt(csv_path) == 1
-        rows = import_to_dolt(csv_path)
-        assert rows == 1
+        assert import_to_dolt(csv_path) == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "1"
+
+    def test_incremental_window_merge_preserves_history(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Incremental-window CSVs (dates after the watermark) must MERGE
+        into the existing table, not replace it: an import of a later-window
+        CSV must keep earlier rows (F3 regression: replace semantics clobbered
+        history when the fetch window shrank to only-new dates)."""
+        import fetch_institution_survey  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "svy.csv"
+        # First import: one row dated 2025-08-28.
+        self._write_csv(csv_path, [_make_row()])
+        assert fetch_institution_survey.import_to_dolt(csv_path) == 1
+
+        # Second import: a NEWER row only (the incremental window).
+        self._write_csv(csv_path, [_make_row(receive_start="2025-09-10 00:00:00")])
+        # merge returns the table's TOTAL row count (both rows now present).
+        assert fetch_institution_survey.import_to_dolt(csv_path) == 2
+
+        # Both rows survive: the second import merged, not replaced.
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey")) == "2"
 
     def test_duplicate_pk_rows_deduped(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -170,6 +192,26 @@ class TestImportToDolt:
         assert "survey_type VARCHAR(300)" in fetch_institution_survey.DDL
         assert "VARCHAR(1000)" in fetch_institution_survey.DDL
 
+    def test_long_utf8_org_name_round_trips_full_length(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """F3 regression: dolt's CSV type inference caps string columns at
+        varchar(200) and truncates longer UTF-8 values mid-character; the
+        widened final DDL must store the FULL value (not a truncated one)."""
+        import fetch_institution_survey  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "svy.csv"
+        long_object = "机构" + "名" * 300  # ~900 bytes, far beyond varchar(200)
+        self._write_csv(csv_path, [_make_row(receive_object=long_object)])
+
+        rows = fetch_institution_survey.import_to_dolt(csv_path)
+        assert rows == 1
+        stored = self._last(
+            dolt_sql_csv("SELECT org_name FROM institution_survey")
+        )
+        assert stored == long_object, f"org_name truncated: {len(stored)} chars"
+
     async def test_run_to_import_round_trip(
         self,
         dolt_env: tuple[Path, Callable[[str], str]],
@@ -213,10 +255,12 @@ class TestImportToDolt:
         symbol = self._last(dolt_sql_csv("SELECT symbol FROM institution_survey"))
         assert symbol == "SZ000001"
 
-    def test_first_run_insert_failure_leaves_no_table(
+    def test_first_run_insert_failure_leaves_no_data(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """First-run INSERT failure drops the table cleanly."""
+        """First-run INSERT failure leaves the table present but empty
+        (merge semantics: CREATE TABLE IF NOT EXISTS has run, so a failed
+        INSERT must not leave partial data and a retry can succeed)."""
         from fetch_institution_survey import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -226,10 +270,7 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 0
-        cnt = self._last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_name='institution_survey'"
-        ))
+        cnt = self._last(dolt_sql_csv("SELECT COUNT(*) FROM institution_survey"))
         assert cnt == "0"
 
     def test_rerun_insert_failure_rolls_back(

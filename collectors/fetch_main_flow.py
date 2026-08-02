@@ -60,7 +60,7 @@ _FIELD_MAP = {
 }
 
 DDL = """\
-CREATE TABLE capital_main_flow (
+CREATE TABLE IF NOT EXISTS capital_main_flow (
     symbol              VARCHAR(20) NOT NULL,
     trade_date          DATE NOT NULL,
     main_net_inflow     DOUBLE,
@@ -257,11 +257,12 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         tmp_name="_tmp_mf",
         ddl=DDL,
         insert_sql=f"""
-            INSERT INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS})
+            INSERT IGNORE INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS})
             SELECT symbol, trade_date, {INSERT_COLS}
             FROM _tmp_mf
             WHERE symbol IN (SELECT symbol FROM stock_basic)
         """,
+        merge=True,
         dolt_table=DOLT_TABLE,
         source_label=SOURCE,
         last_report_expr="MAX(trade_date)",

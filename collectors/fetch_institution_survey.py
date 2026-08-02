@@ -30,7 +30,7 @@ DOLT_TABLE = "institution_survey"
 START_DATE = "2025-08-01"
 
 DDL = """\
-CREATE TABLE institution_survey (
+CREATE TABLE IF NOT EXISTS institution_survey (
     symbol      VARCHAR(20) NOT NULL,
     survey_date DATE NOT NULL,
     org_name    VARCHAR(1000) NOT NULL,
@@ -118,32 +118,42 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
 
     # One stock can receive multiple institutions on the same survey date
     # (verified: duplicate (code, receive_start_date, receive_object) rows
-    # exist upstream), so dedupe via INSERT IGNORE on the composite PK.
-    # The temp table columns are widened first: dolt's CSV type inference
-    # sizes long UTF-8 strings (org_name up to ~800 bytes) too small, which
-    # silently truncates mid-character and breaks the utf8mb4 insert.
+    # exist upstream). GROUP BY on the composite PK (symbol, survey_date,
+    # org_name) trips a Dolt bug on utf8mb4 Chinese grouping keys, so the
+    # key is HEX(org_name) (ASCII-safe) and the columns are re-derived with
+    # MAX() — grouping on the full org value keeps the PK granularity exact.
+    # The temp table is created with an explicit wide schema: dolt's CSV type
+    # inference caps strings at varchar(200) and truncates longer UTF-8
+    # values mid-character (org_name up to ~800 bytes), so the inferred width
+    # silently corrupts the data before any post-import ALTER could widen it.
     return import_replace_table(
         csv_path=csv_path,
         tmp_name="_tmp_svy",
         ddl=DDL,
         insert_sql=f"""
             INSERT IGNORE INTO {DOLT_TABLE} (symbol, survey_date, {INSERT_COLS}, update_date)
-            SELECT
-                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-                RECEIVE_START_DATE,
-                RECEIVE_OBJECT,
-                RECEIVE_WAY_EXPLAIN,
-                CURDATE()
-            FROM _tmp_svy
-            WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
-                  IN (SELECT symbol FROM stock_basic)
-              AND RECEIVE_START_DATE IS NOT NULL
+            SELECT MAX(s), MAX(d), MAX(o), MAX(st), MAX(u) FROM (
+                SELECT
+                    CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS s,
+                    DATE(RECEIVE_START_DATE) AS d,
+                    RECEIVE_OBJECT AS o,
+                    RECEIVE_WAY_EXPLAIN AS st,
+                    CURDATE() AS u,
+                    HEX(RECEIVE_OBJECT) AS gk
+                FROM _tmp_svy
+                WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
+                      IN (SELECT symbol FROM stock_basic)
+                  AND RECEIVE_START_DATE IS NOT NULL
+            ) t
+            GROUP BY gk
         """,
-        alter_sql=(
-            "ALTER TABLE _tmp_svy MODIFY COLUMN RECEIVE_OBJECT VARCHAR(1000); "
-            "ALTER TABLE _tmp_svy MODIFY COLUMN RECEIVE_WAY_EXPLAIN VARCHAR(500); "
-            "ALTER TABLE _tmp_svy MODIFY COLUMN SECUCODE VARCHAR(20)"
+        create_sql=(
+            "CREATE TABLE _tmp_svy ("
+            "SECUCODE VARCHAR(20), SECURITY_CODE VARCHAR(20), "
+            "RECEIVE_START_DATE DATETIME, RECEIVE_OBJECT VARCHAR(1000), "
+            "RECEIVE_WAY_EXPLAIN VARCHAR(500))"
         ),
+        merge=True,
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(survey_date)",

@@ -34,7 +34,7 @@ DOLT_TABLE = "block_trade"
 START_YEAR = 2024
 
 DDL = """\
-CREATE TABLE block_trade (
+CREATE TABLE IF NOT EXISTS block_trade (
     symbol VARCHAR(20) NOT NULL,
     trade_date DATE NOT NULL,
     price DOUBLE NOT NULL,
@@ -140,7 +140,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         tmp_name="_tmp_bt",
         ddl=DDL,
         insert_sql=f"""
-            INSERT INTO {DOLT_TABLE} ({INSERT_COLS})
+            INSERT IGNORE INTO {DOLT_TABLE} ({INSERT_COLS})
             SELECT DISTINCT
                 {symbol_expr}, DATE(TRADE_DATE), DEAL_PRICE, DEAL_VOLUME, DEAL_AMT,
                 BUYER_NAME, SELLER_NAME, PREMIUM_RATIO, CURDATE()
@@ -148,6 +148,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
             WHERE {symbol_expr} IN (SELECT symbol FROM stock_basic)
               AND DEAL_PRICE IS NOT NULL
         """,
+        merge=True,
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(trade_date)",

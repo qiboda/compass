@@ -38,7 +38,7 @@ DOLT_TABLE = "dragon_list"
 START_DATE = "2020-01-01"
 
 DDL = """\
-CREATE TABLE dragon_list (
+CREATE TABLE IF NOT EXISTS dragon_list (
     symbol              VARCHAR(20) NOT NULL,
     trade_date          DATE NOT NULL,
     seat_type           VARCHAR(10) NOT NULL,
@@ -234,7 +234,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         tmp_name="_tmp_dr",
         ddl=DDL,
         insert_sql=f"""
-            INSERT INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS}, update_date)
+            INSERT IGNORE INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS}, update_date)
             SELECT
                 CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
                 TRADE_DATE, {INSERT_COLS}, CURDATE()
@@ -242,6 +242,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
             WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                   IN (SELECT symbol FROM stock_basic)
         """,
+        merge=True,
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(trade_date)",

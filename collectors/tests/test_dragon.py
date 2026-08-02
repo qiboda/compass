@@ -160,7 +160,8 @@ class TestImportToDolt:
     def test_first_run_insert_failure_leaves_no_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """First-run INSERT failure drops the table cleanly."""
+        """First-run INSERT failure leaves the table present but empty
+        (merge semantics: CREATE TABLE IF NOT EXISTS ran, a retry can succeed)."""
         from fetch_dragon import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -171,9 +172,8 @@ class TestImportToDolt:
         rows = import_to_dolt(csv_path)
         assert rows == 0
         cnt = self._last(
-            dolt_sql_csv(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='dragon_list'"
-            )
+            dolt_sql_csv("SELECT COUNT(*) FROM dragon_list")
+
         )
         assert cnt == "0"
 
