@@ -17,6 +17,8 @@ Python collectors 抓取数据写入 Dolt（财务数据来自 EastMoney；stock
 - 代码不行就重构，不要留着凑合
 - 设计不对就推翻，不要叠加补丁
 - 流程有漏洞就堵，不要绕过去
+- **禁止依赖视觉表现来 debug**：UI 问题必须用客观证据定位（代码逻辑、测试断言、日志、像素采样），不靠"看起来对不对"猜
+- **agent 可自行完善项目书**：发现重复摩擦或可预防的失误时，agent 有权在 AGENTS.md / `kb/` 中添加或修订规则以改善自身行为——规则变更随当次 commit 提交并在 commit message 中说明理由（ref #N）
 
 ---
 
@@ -188,6 +190,11 @@ Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 **HARD BLOCK: 只在 push 后关闭 issue。** issue 只有在修复到达
 `origin/master` 后才算 "done"。commit 后不要关闭 —— 等 push 成功。
 
+**PR 内的 bug 不建独立 issue。** PR 未合并前，属于该 PR 内容范围的问题
+（实现缺陷、冒烟测试发现的问题）直接在 PR 内修复，commit 引用 PR 对应的
+epic/issue（`ref #<N>`），不创建新 issue；issue 收尾时在完成 comment 中
+一并记录。仅当问题独立于 PR 范围、或 PR 已合并后才走正常 issue 流程。
+
 **push 成功后的强制收尾（勿忘，勿等用户提醒）**：追加完成 comment
 （`gh issue comment <N>`——实现摘要 + 验收状态 + commit 列表 + 方案偏差及原因，
 遵守 comments.md"永远追加"规范），然后关闭 issue。push 成功 ≠ 任务完成
@@ -345,7 +352,7 @@ dolt push origin main
 
 见 `kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
-**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 + 每 crate（compass-core / compass-data / compass / compass-strategy / compass-types）各自行覆盖率 ≥80%（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 校验）；Python collectors `--cov=.` 全量计入 ≥80%（`--cov-fail-under=80`）。GUI 用 egui_kittest 无头集成测试，Python 用 stub AsyncSession 模拟网络。详见 `kb/dev/testing.md` 覆盖率章节。
+**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 + 每 crate（compass-core / compass-data / compass / compass-strategy / compass-types / compass-ui）各自行覆盖率 ≥80%（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 校验）；Python collectors `--cov=.` 全量计入 ≥80%（`--cov-fail-under=80`）。GUI 用 egui_kittest 无头集成测试，Python 用 stub AsyncSession 模拟网络。详见 `kb/dev/testing.md` 覆盖率章节。
 
 ## API reference
 

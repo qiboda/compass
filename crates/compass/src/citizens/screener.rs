@@ -1,12 +1,19 @@
 //! Screener panel citizen — condition input + results table.
 
-use egui::RichText;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 use egui_mobius::signals::Signal;
 
 use compass_types::{
     BreakoutCondition, MaCondition, MomentumCondition, ScreenerQuery, VolumeCondition,
 };
+use compass_ui::tokens::ThemeTokens;
+use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
+use compass_ui::widgets::card::Card;
+use compass_ui::widgets::checkbox::Checkbox;
+use compass_ui::widgets::data_table::{ColumnSpec, DataCell, DataTable};
+use compass_ui::widgets::dropdown::Dropdown;
+use compass_ui::widgets::multi_select::MultiSelect;
+use compass_ui::widgets::section_title::SectionTitle;
 
 use crate::messages::{FetchRequest, RunScreenerRequest};
 use crate::state::SharedState;
@@ -14,9 +21,6 @@ use crate::state::SharedState;
 /// Mutable UI state for the condition form.
 #[derive(Default)]
 struct ConditionForm {
-    industries: Vec<String>,
-    exchanges: Vec<String>,
-    boards: Vec<String>,
     list_years: Option<u32>,
     market_cap_min: Option<f64>,
     market_cap_max: Option<f64>,
@@ -43,91 +47,68 @@ enum MaKind {
     BullishAlign,
 }
 
-impl ConditionForm {
-    /// Build a query from the form state.
-    fn to_query(&self) -> ScreenerQuery {
-        ScreenerQuery {
-            industries: self.industries.clone(),
-            exchanges: self.exchanges.clone(),
-            boards: self.boards.clone(),
-            list_years: self.list_years,
-            market_cap_min: self.market_cap_min,
-            market_cap_max: self.market_cap_max,
-            exclude_delisted: self.exclude_delisted,
-            ma: self.ma_enabled.then_some(match self.ma_kind {
-                MaKind::AboveMa20 => MaCondition::AboveMa20,
-                MaKind::AboveMa60 => MaCondition::AboveMa60,
-                MaKind::BullishAlign => MaCondition::BullishAlign,
-            }),
-            breakout: self
-                .breakout_enabled
-                .then(|| BreakoutCondition::new(self.breakout_days)),
-            momentum: self.momentum_enabled.then(|| {
-                MomentumCondition::new(
-                    self.momentum_days,
-                    self.momentum_min_pct,
-                    self.momentum_max_pct,
-                )
-            }),
-            volume: self
-                .volume_enabled
-                .then(|| VolumeCondition::new(self.volume_days, self.volume_times)),
+impl MaKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AboveMa20 => "站上 MA20",
+            Self::AboveMa60 => "站上 MA60",
+            Self::BullishAlign => "多头排列 MA5>MA20>MA60",
         }
     }
 }
 
-/// Which multi-select popup is currently open (mutually exclusive).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PopupKind {
-    Industry,
-    Exchange,
-    Board,
-}
+/// Results table column specs (design §6.6).
+const COLUMNS: [ColumnSpec; 6] = [
+    ColumnSpec {
+        header: "代码",
+        numeric: false,
+    },
+    ColumnSpec {
+        header: "名称",
+        numeric: false,
+    },
+    ColumnSpec {
+        header: "最新价",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "20日涨跌幅",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "市值(亿)",
+        numeric: true,
+    },
+    ColumnSpec {
+        header: "行业",
+        numeric: false,
+    },
+];
+
+/// Index of the market-cap column — the screener's default sort target
+/// (descending, biggest first), matching the pre-componentization behavior.
+const MARKET_CAP_COLUMN: usize = 4;
 
 /// Screener panel citizen.
 ///
-/// Renders the condition form (left) and results table (right). The heavy
-/// lifting runs on the backend via `run_screener_signal`.
+/// Renders the condition form (two card sections) and the results table.
+/// The heavy lifting runs on the backend via `run_screener_signal`.
 pub struct ScreenerPanel {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
     form: ConditionForm,
-    /// Sort column index into `ScreenerRow` fields (0-5).
-    sort_column: usize,
-    /// `true` = descending (default for market cap).
-    sort_descending: bool,
-    /// Currently open multi-select popup; at most one at a time.
-    active_popup: Option<PopupKind>,
+    /// Theme tokens copied at construction (component styling).
+    tokens: ThemeTokens,
+    /// Industry multi-select (options refreshed each frame).
+    ms_industry: MultiSelect,
+    /// Exchange multi-select (fixed SH/SZ/BJ).
+    ms_exchange: MultiSelect,
+    /// Board multi-select (options refreshed each frame).
+    ms_board: MultiSelect,
+    /// Results table — owns its sort state across frames.
+    table: DataTable,
     /// Persists the current query whenever a filter run is triggered.
     on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
-}
-
-/// Column keys for the results table.
-const COLUMNS: [&str; 6] = ["代码", "名称", "最新价", "20日涨跌幅", "市值(亿)", "行业"];
-
-/// Sort rows by the given column (0-5) and direction.
-///
-/// Column 4 (market cap) defaults to descending in the UI; the caller
-/// controls both parameters. Ties are broken by symbol for determinism.
-fn sort_rows(
-    rows: &[compass_types::ScreenerRow],
-    column: usize,
-    descending: bool,
-) -> Vec<compass_types::ScreenerRow> {
-    let mut sorted = rows.to_vec();
-    sorted.sort_by(|a, b| {
-        let ord = match column {
-            0 => a.symbol.cmp(&b.symbol),
-            1 => a.name.cmp(&b.name),
-            2 => a.latest_price.total_cmp(&b.latest_price),
-            3 => a.change_20d.total_cmp(&b.change_20d),
-            4 => a.market_cap.total_cmp(&b.market_cap),
-            _ => a.industry.cmp(&b.industry),
-        };
-        let ord = if descending { ord.reverse() } else { ord };
-        ord.then_with(|| a.symbol.cmp(&b.symbol))
-    });
-    sorted
 }
 
 impl Citizen for ScreenerPanel {
@@ -154,6 +135,7 @@ impl ScreenerPanel {
         citizen_state: CitizenState,
         restore: Option<&ScreenerQuery>,
         on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
+        tokens: &ThemeTokens,
     ) -> Self {
         let mut form = ConditionForm {
             exclude_delisted: true,
@@ -165,10 +147,10 @@ impl ScreenerPanel {
             volume_times: VolumeCondition::default().times,
             ..ConditionForm::default()
         };
+        let mut ms_industry = MultiSelect::new(tokens, std::iter::empty::<&str>());
+        let mut ms_exchange = MultiSelect::new(tokens, ["SH", "SZ", "BJ"]);
+        let mut ms_board = MultiSelect::new(tokens, std::iter::empty::<&str>());
         if let Some(q) = restore {
-            form.industries = q.industries.clone();
-            form.exchanges = q.exchanges.clone();
-            form.boards = q.boards.clone();
             form.list_years = q.list_years;
             form.market_cap_min = q.market_cap_min;
             form.market_cap_max = q.market_cap_max;
@@ -194,15 +176,56 @@ impl ScreenerPanel {
                 form.volume_days = v.days;
                 form.volume_times = v.times;
             }
+            ms_industry = ms_industry.selected(q.industries.iter().cloned());
+            ms_exchange = ms_exchange.selected(q.exchanges.iter().cloned());
+            ms_board = ms_board.selected(q.boards.iter().cloned());
         }
+        let mut table = DataTable::new(tokens, COLUMNS.to_vec());
+        table.set_sort(MARKET_CAP_COLUMN, true);
+        table.set_descending_default(MARKET_CAP_COLUMN, true);
         Self {
             citizen_id,
             citizen_state,
             form,
-            sort_column: 4, // market cap
-            sort_descending: true,
-            active_popup: None,
+            tokens: *tokens,
+            ms_industry,
+            ms_exchange,
+            ms_board,
+            table,
             on_save,
+        }
+    }
+
+    /// Build the query from the form state plus the multi-select selections.
+    fn build_query(&self) -> ScreenerQuery {
+        ScreenerQuery {
+            industries: self.ms_industry.selected.clone(),
+            exchanges: self.ms_exchange.selected.clone(),
+            boards: self.ms_board.selected.clone(),
+            list_years: self.form.list_years,
+            market_cap_min: self.form.market_cap_min,
+            market_cap_max: self.form.market_cap_max,
+            exclude_delisted: self.form.exclude_delisted,
+            ma: self.form.ma_enabled.then_some(match self.form.ma_kind {
+                MaKind::AboveMa20 => MaCondition::AboveMa20,
+                MaKind::AboveMa60 => MaCondition::AboveMa60,
+                MaKind::BullishAlign => MaCondition::BullishAlign,
+            }),
+            breakout: self
+                .form
+                .breakout_enabled
+                .then(|| BreakoutCondition::new(self.form.breakout_days)),
+            momentum: self.form.momentum_enabled.then(|| {
+                MomentumCondition::new(
+                    self.form.momentum_days,
+                    self.form.momentum_min_pct,
+                    self.form.momentum_max_pct,
+                )
+            }),
+            volume: self
+                .form
+                .volume_enabled
+                .then(|| VolumeCondition::new(self.form.volume_days, self.form.volume_times)),
         }
     }
 
@@ -217,57 +240,40 @@ impl ScreenerPanel {
         boards: &[String],
     ) {
         ui.vertical(|ui| {
-            // Conditions on one wrapped row, results below.
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                self.condition_form(ui, industries, boards);
-                ui.separator();
-                if ui.button("筛选").clicked() {
-                    let query = self.form.to_query();
-                    (self.on_save)(&query);
-                    shared_state.screener_loading.set(true);
-                    shared_state.screener_error.set(None);
-                    if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
-                        shared_state.screener_loading.set(false);
-                        shared_state
-                            .screener_error
-                            .set(Some(format!("failed to run screener: {e}")));
-                    }
+            self.condition_form(ui, industries, boards);
+
+            ui.add_space(self.form_tokens().spacing.sm);
+            if Button::new(&self.form_tokens(), "筛选")
+                .variant(ButtonVariant::Primary)
+                .size(ButtonSize::Md)
+                .show(ui)
+                .clicked()
+            {
+                let query = self.build_query();
+                (self.on_save)(&query);
+                shared_state.screener_loading.set(true);
+                shared_state.screener_error.set(None);
+                if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
+                    shared_state.screener_loading.set(false);
+                    shared_state
+                        .screener_error
+                        .set(Some(format!("failed to run screener: {e}")));
                 }
-            });
+            }
 
-            ui.add_space(4.0);
+            ui.add_space(self.form_tokens().spacing.md);
 
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.set_min_height(ui.available_height());
-                self.results_area(ui, shared_state, work_signal);
-            });
+            self.results_area(ui, shared_state, work_signal);
         });
     }
 
-    /// Toggle sort state for a header column click.
-    ///
-    /// Clicking the active column flips direction; clicking a new column
-    /// selects it with the market-cap default (descending).
-    fn toggle_sort(&mut self, column: usize) {
-        if self.sort_column == column {
-            self.sort_descending = !self.sort_descending;
-        } else {
-            self.sort_column = column;
-            self.sort_descending = column == 4;
-        }
-    }
-
-    /// Results table with sortable headers, count label and row-click
-    /// chart linkage.
+    /// Results table with sortable headers and row-click chart linkage.
     fn results_area(
         &mut self,
         ui: &mut egui::Ui,
         shared_state: &SharedState,
         work_signal: &Signal<FetchRequest>,
     ) {
-        let total = shared_state.screener_total.get();
         let rows = shared_state.screener_result.get();
 
         if shared_state.screener_loading.get() {
@@ -275,152 +281,95 @@ impl ScreenerPanel {
             ui.label("筛选进行中…");
         } else if let Some(err) = shared_state.screener_error.get() {
             ui.colored_label(ui.visuals().error_fg_color, err);
-        } else if rows.is_empty() {
-            ui.label(RichText::new("无符合条件的股票").weak());
         } else {
-            if total > 100 {
-                ui.label(format!("共 {total} 只，已显示前 100"));
-            } else {
-                ui.label(format!("共 {total} 只"));
+            self.table
+                .set_rows(rows.iter().map(Self::row_cells).collect());
+            if let Some(idx) = self.table.show(ui) {
+                dispatch_row_fetch(shared_state, work_signal, &rows, idx);
             }
-
-            let sorted = sort_rows(&rows, self.sort_column, self.sort_descending);
-
-            use egui_extras::{Column, TableBuilder};
-
-            TableBuilder::new(ui)
-                .striped(true)
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::remainder())
-                .header(22.0, |mut header| {
-                    for (idx, col) in COLUMNS.iter().enumerate() {
-                        let mut text = (*col).to_string();
-                        if idx == self.sort_column {
-                            text.push_str(if self.sort_descending { " ↓" } else { " ↑" });
-                        }
-                        header.col(|ui| {
-                            if ui
-                                .selectable_label(
-                                    self.sort_column == idx,
-                                    RichText::new(text).strong(),
-                                )
-                                .clicked()
-                            {
-                                self.toggle_sort(idx);
-                            }
-                        });
-                    }
-                })
-                .body(|mut body| {
-                    for result_row in &sorted {
-                        body.row(18.0, |mut row| {
-                            row.col(|ui| {
-                                if ui
-                                    .selectable_label(false, &result_row.symbol)
-                                    .on_hover_text(&result_row.name)
-                                    .clicked()
-                                {
-                                    // Chart linkage: bare 6-digit code + FetchBars.
-                                    shared_state.symbol.set(result_row.symbol.clone());
-                                    let timeframe = shared_state.timeframe.get();
-                                    crate::dispatcher::handle(
-                                        crate::messages::AppMessage::FetchBars,
-                                        shared_state,
-                                        work_signal,
-                                        timeframe,
-                                    );
-                                }
-                            });
-                            row.col(|ui| {
-                                ui.label(&result_row.name);
-                            });
-                            row.col(|ui| {
-                                ui.label(format!("{:.2}", result_row.latest_price));
-                            });
-                            row.col(|ui| {
-                                ui.label(format!("{:.2}%", result_row.change_20d));
-                            });
-                            row.col(|ui| {
-                                if result_row.market_cap == 0.0 {
-                                    ui.label("—");
-                                } else {
-                                    ui.label(format!("{:.1}", result_row.market_cap));
-                                }
-                            });
-                            row.col(|ui| {
-                                ui.label(&result_row.industry);
-                            });
-                        });
-                    }
-                });
         }
     }
 
-    /// Condition form: all conditions on one wrapped row.
+    /// Map one `ScreenerRow` into the table's cell model (design §6.6):
+    /// code/name text, latest price + 20-day change as price cells (red-up /
+    /// green-down), market cap as a count, industry text.
+    fn row_cells(row: &compass_types::ScreenerRow) -> Vec<DataCell> {
+        vec![
+            DataCell::Text(row.symbol.clone()),
+            DataCell::Text(row.name.clone()),
+            DataCell::Price {
+                value: row.latest_price as f32,
+                change: None,
+            },
+            DataCell::Price {
+                value: row.change_20d as f32,
+                change: Some(row.change_20d as f32),
+            },
+            DataCell::Count(row.market_cap.round() as usize),
+            DataCell::Text(row.industry.clone()),
+        ]
+    }
+
+    /// Condition form split into two card sections (design §6.6): 基础条件
+    /// (filters) and 技术面条件 (indicator toggles).
     fn condition_form(&mut self, ui: &mut egui::Ui, industries: &[String], boards: &[String]) {
+        self.ms_industry.options = industries.to_vec();
+        self.ms_board.options = boards.to_vec();
+        let tokens = self.form_tokens();
+
+        ui.vertical(|ui| {
+            Card::new(&tokens)
+                .title("基础条件")
+                .padding(compass_ui::widgets::card::CardPadding::Md)
+                .show(ui, |ui| {
+                    self.basic_conditions(ui);
+                });
+            ui.add_space(tokens.spacing.sm);
+            Card::new(&tokens)
+                .title("技术面条件")
+                .padding(compass_ui::widgets::card::CardPadding::Md)
+                .show(ui, |ui| {
+                    self.technical_conditions(ui);
+                });
+        });
+    }
+
+    /// 基础条件 card: industry/exchange/board multi-selects, listing years,
+    /// market-cap range and the delisted-exclusion checkbox.
+    fn basic_conditions(&mut self, ui: &mut egui::Ui) {
+        let tokens = self.form_tokens();
+
         ui.horizontal_wrapped(|ui| {
-            ui.label("行业");
-            Self::multi_select_popup(
-                ui,
-                PopupKind::Industry,
-                "industry_popup",
-                &mut self.active_popup,
-                industries,
-                &mut self.form.industries,
-            );
-            ui.separator();
+            SectionTitle::new(&tokens, "行业").show(ui);
+            self.ms_industry.show(ui);
+            ui.add_space(tokens.spacing.md);
 
-            ui.label("交易所");
-            const EXCHANGES: [&str; 3] = ["SH", "SZ", "BJ"];
-            let exchanges: Vec<String> = EXCHANGES.iter().map(|s| s.to_string()).collect();
-            Self::multi_select_popup(
-                ui,
-                PopupKind::Exchange,
-                "exchange_popup",
-                &mut self.active_popup,
-                &exchanges,
-                &mut self.form.exchanges,
-            );
-            ui.separator();
+            SectionTitle::new(&tokens, "交易所").show(ui);
+            self.ms_exchange.show(ui);
+            ui.add_space(tokens.spacing.md);
 
-            ui.label("板块");
-            Self::multi_select_popup(
-                ui,
-                PopupKind::Board,
-                "board_popup",
-                &mut self.active_popup,
-                boards,
-                &mut self.form.boards,
-            );
-            ui.separator();
+            SectionTitle::new(&tokens, "板块").show(ui);
+            self.ms_board.show(ui);
+            ui.add_space(tokens.spacing.md);
 
-            ui.label("上市时长");
-            let options: [(&str, Option<u32>); 4] = [
-                ("不限", None),
-                ("≥1年", Some(1)),
-                ("≥3年", Some(3)),
-                ("≥5年", Some(5)),
-            ];
-            let mut current_idx = options
+            SectionTitle::new(&tokens, "上市时长").show(ui);
+            let options = ["不限", "≥1年", "≥3年", "≥5年"];
+            let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
+            let current = options
                 .iter()
+                .zip(values.iter())
                 .position(|(_, v)| *v == self.form.list_years)
                 .unwrap_or(0);
-            egui::ComboBox::from_id_salt("list_years_combo")
-                .selected_text(options[current_idx].0)
-                .show_ui(ui, |ui| {
-                    for (idx, (label, val)) in options.iter().enumerate() {
-                        if ui.selectable_value(&mut current_idx, idx, *label).clicked() {
-                            self.form.list_years = *val;
-                        }
-                    }
-                });
-            ui.separator();
+            if let Some(idx) = Dropdown::new(&tokens, options)
+                .selected(current)
+                .width(100.0)
+                .show(ui)
+            {
+                self.form.list_years = values[idx];
+            }
+            ui.add_space(tokens.spacing.md);
 
-            ui.label("市值(亿)");
+            SectionTitle::new(&tokens, "市值(亿)").show(ui);
             let mut min = self.form.market_cap_min.unwrap_or(0.0);
             if ui
                 .add(egui::DragValue::new(&mut min).speed(1.0).prefix("min "))
@@ -435,45 +384,53 @@ impl ScreenerPanel {
             {
                 self.form.market_cap_max = (max > 0.0).then_some(max);
             }
-            ui.separator();
+            ui.add_space(tokens.spacing.md);
 
-            let mut ma_enabled = self.form.ma_enabled;
-            ui.checkbox(&mut ma_enabled, "均线");
-            self.form.ma_enabled = ma_enabled;
+            Checkbox::new(&tokens, &mut self.form.exclude_delisted, "排除退市").show(ui);
+        });
+    }
+
+    /// 技术面条件 card: MA / breakout / momentum / volume toggles.
+    fn technical_conditions(&mut self, ui: &mut egui::Ui) {
+        let tokens = self.form_tokens();
+
+        ui.horizontal_wrapped(|ui| {
+            Checkbox::new(&tokens, &mut self.form.ma_enabled, "均线").show(ui);
             if self.form.ma_enabled {
-                let mut kind = self.form.ma_kind;
-                let label = match kind {
-                    MaKind::AboveMa20 => "站上 MA20",
-                    MaKind::AboveMa60 => "站上 MA60",
-                    MaKind::BullishAlign => "多头排列 MA5>MA20>MA60",
+                let current = match self.form.ma_kind {
+                    MaKind::AboveMa20 => 0,
+                    MaKind::AboveMa60 => 1,
+                    MaKind::BullishAlign => 2,
                 };
-                egui::ComboBox::from_id_salt("ma_combo")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut kind, MaKind::AboveMa20, "站上 MA20");
-                        ui.selectable_value(&mut kind, MaKind::AboveMa60, "站上 MA60");
-                        ui.selectable_value(
-                            &mut kind,
-                            MaKind::BullishAlign,
-                            "多头排列 MA5>MA20>MA60",
-                        );
-                    });
-                self.form.ma_kind = kind;
+                if let Some(idx) = Dropdown::new(
+                    &tokens,
+                    [
+                        MaKind::AboveMa20.label(),
+                        MaKind::AboveMa60.label(),
+                        MaKind::BullishAlign.label(),
+                    ],
+                )
+                .selected(current)
+                .width(210.0)
+                .show(ui)
+                {
+                    self.form.ma_kind = match idx {
+                        1 => MaKind::AboveMa60,
+                        2 => MaKind::BullishAlign,
+                        _ => MaKind::AboveMa20,
+                    };
+                }
             }
-            ui.separator();
+            ui.add_space(tokens.spacing.md);
 
-            let mut breakout_enabled = self.form.breakout_enabled;
-            ui.checkbox(&mut breakout_enabled, "突破新高");
-            self.form.breakout_enabled = breakout_enabled;
+            Checkbox::new(&tokens, &mut self.form.breakout_enabled, "突破新高").show(ui);
             if self.form.breakout_enabled {
                 ui.label("N:");
                 ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
             }
-            ui.separator();
+            ui.add_space(tokens.spacing.md);
 
-            let mut momentum_enabled = self.form.momentum_enabled;
-            ui.checkbox(&mut momentum_enabled, "动量");
-            self.form.momentum_enabled = momentum_enabled;
+            Checkbox::new(&tokens, &mut self.form.momentum_enabled, "动量").show(ui);
             if self.form.momentum_enabled {
                 ui.label("N:");
                 ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
@@ -482,108 +439,65 @@ impl ScreenerPanel {
                 ui.label("max%:");
                 ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
             }
-            ui.separator();
+            ui.add_space(tokens.spacing.md);
 
-            let mut volume_enabled = self.form.volume_enabled;
-            ui.checkbox(&mut volume_enabled, "量能");
-            self.form.volume_enabled = volume_enabled;
+            Checkbox::new(&tokens, &mut self.form.volume_enabled, "量能").show(ui);
             if self.form.volume_enabled {
                 ui.label("N:");
                 ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
                 ui.label("倍数:");
                 ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
             }
-            ui.separator();
-
-            ui.checkbox(&mut self.form.exclude_delisted, "排除退市");
         });
     }
 
-    /// Multi-select dropdown popup: a summary button that opens a searchable
-    /// checkbox list. Selections accumulate without closing the popup.
-    ///
-    /// Shared by industry / exchange / board filters. An associated function
-    /// so the caller can pass independent `&mut` state without self-borrows.
-    /// `active` is a single shared slot — opening one popup closes any other.
-    fn multi_select_popup(
-        ui: &mut egui::Ui,
-        kind: PopupKind,
-        id: &str,
-        active: &mut Option<PopupKind>,
-        options: &[String],
-        selected: &mut Vec<String>,
-    ) {
-        let summary = if selected.is_empty() {
-            "全部".to_string()
-        } else if selected.len() <= 2 {
-            selected.join("、")
-        } else {
-            format!("已选 {} 个", selected.len())
-        };
-        let response = ui.button(format!("{summary} ▾"));
-        if response.clicked() {
-            *active = if *active == Some(kind) {
-                None
-            } else {
-                Some(kind)
-            };
-        }
+    /// The panel's theme tokens (copied at construction).
+    fn form_tokens(&self) -> ThemeTokens {
+        self.tokens
+    }
 
-        if *active == Some(kind) {
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                *active = None;
-            } else {
-                egui::Area::new(egui::Id::new(id))
-                    .order(egui::Order::Foreground)
-                    .fixed_pos(response.rect.left_bottom())
-                    .constrain(true)
-                    .show(ui.ctx(), |ui| {
-                        ui.set_min_width(220.0);
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            // Filter state is local to the popup: it resets
-                            // each time the dropdown reopens.
-                            let mut filter = String::new();
-                            ui.text_edit_singleline(&mut filter);
-                            let lower = filter.to_lowercase();
+    /// Update the theme tokens after a theme switch so the condition cards
+    /// and results table restyle without losing the query state.
+    pub fn set_tokens(&mut self, tokens: ThemeTokens) {
+        self.tokens = tokens;
+        self.ms_industry.set_tokens(tokens);
+        self.ms_exchange.set_tokens(tokens);
+        self.ms_board.set_tokens(tokens);
+        self.table.set_tokens(tokens);
+    }
+}
 
-                            egui::ScrollArea::vertical()
-                                .max_height(180.0)
-                                .show(ui, |ui| {
-                                    for opt in options {
-                                        if !lower.is_empty() && !opt.to_lowercase().contains(&lower)
-                                        {
-                                            continue;
-                                        }
-                                        let mut is_selected = selected.contains(opt);
-                                        if ui.checkbox(&mut is_selected, opt).changed() {
-                                            if is_selected {
-                                                selected.push(opt.clone());
-                                            } else {
-                                                selected.retain(|s| s != opt);
-                                            }
-                                        }
-                                    }
-                                });
-                            if ui.button("完成").clicked() {
-                                *active = None;
-                            }
-                        });
-                    });
-            }
-        }
+/// Row-click linkage: fetch bars for the clicked result row (design §6.6).
+fn dispatch_row_fetch(
+    shared_state: &SharedState,
+    work_signal: &Signal<FetchRequest>,
+    rows: &[compass_types::ScreenerRow],
+    idx: usize,
+) {
+    if let Some(row) = rows.get(idx) {
+        shared_state.symbol.set(row.symbol.clone());
+        let timeframe = shared_state.timeframe.get();
+        crate::dispatcher::handle(
+            crate::messages::AppMessage::FetchBars,
+            shared_state,
+            work_signal,
+            timeframe,
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use compass_ui::tokens::ThemeTokens;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
 
     fn panel_with_form() -> (ScreenerPanel, SharedState) {
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
-        let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}));
+        let tokens = ThemeTokens::dark();
+        let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens);
         (panel, SharedState::new("000001", "1d"))
     }
 
@@ -596,7 +510,7 @@ mod tests {
     #[test]
     fn new_form_defaults_match_query_contract() {
         let (panel, _) = panel_with_form();
-        let q = panel.form.to_query();
+        let q = panel.build_query();
         assert!(q.exclude_delisted, "exclude_delisted defaults true");
         assert_eq!(q.breakout, None);
         assert_eq!(q.momentum, None);
@@ -606,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn to_query_reflects_conditions() {
+    fn build_query_reflects_conditions() {
         let (mut panel, _) = panel_with_form();
         panel.form.ma_enabled = true;
         panel.form.ma_kind = MaKind::BullishAlign;
@@ -615,13 +529,48 @@ mod tests {
         panel.form.momentum_enabled = true;
         panel.form.volume_enabled = true;
         panel.form.market_cap_min = Some(100.0);
+        panel.ms_industry.toggle("白酒");
 
-        let q = panel.form.to_query();
+        let q = panel.build_query();
         assert_eq!(q.ma, Some(MaCondition::BullishAlign));
         assert_eq!(q.breakout, Some(BreakoutCondition::new(120)));
         assert_eq!(q.momentum, Some(MomentumCondition::default()));
         assert_eq!(q.volume, Some(VolumeCondition::default()));
         assert_eq!(q.market_cap_min, Some(100.0));
+        assert_eq!(q.industries, vec!["白酒".to_string()]);
+    }
+
+    #[test]
+    fn restore_seeds_form_and_multi_selects() {
+        let id = CitizenId::new("screener");
+        let state = CitizenState::new();
+        let tokens = ThemeTokens::dark();
+        let query = ScreenerQuery {
+            industries: vec!["银行".to_string()],
+            ma: Some(MaCondition::BullishAlign),
+            ..ScreenerQuery::default()
+        };
+        let panel = ScreenerPanel::new(id, state, Some(&query), Box::new(|_| {}), &tokens);
+
+        let q = panel.build_query();
+        assert_eq!(q.industries, vec!["银行".to_string()]);
+        assert_eq!(q.ma, Some(MaCondition::BullishAlign));
+    }
+
+    #[test]
+    fn multi_selects_are_independent() {
+        let (mut panel, _) = panel_with_form();
+        panel.ms_industry.toggle("银行");
+        panel.ms_exchange.toggle("SH");
+
+        assert!(
+            panel.ms_board.selected.is_empty(),
+            "board selection must stay untouched"
+        );
+        let q = panel.build_query();
+        assert_eq!(q.industries, vec!["银行".to_string()]);
+        assert_eq!(q.exchanges, vec!["SH".to_string()]);
+        assert!(q.boards.is_empty());
     }
 
     #[test]
@@ -637,7 +586,11 @@ mod tests {
             panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
         });
         harness.run();
+        let _ = harness.get_by_label("基础条件");
+        let _ = harness.get_by_label("技术面条件");
+        let _ = harness.get_by_label("排除退市");
     }
+
     #[test]
     fn filter_button_click_sets_loading() {
         let (mut panel, shared) = panel_with_form();
@@ -661,66 +614,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn industry_dropdown_toggles_selection_via_popup_state() {
-        // Pure-logic coverage: the popup checkbox toggling mutates the form's
-        // industry list; UI rendering is covered by show_renders_no_panic.
-        // (AccessKit does not expose button labels inside the form reliably —
-        // see kb/dev/testing.md.)
-        let (mut panel, _shared) = panel_with_form();
-        let industries = ["银行".to_string(), "白酒".to_string(), "医药".to_string()];
-
-        // Simulate the checkbox handler: toggle 银行 on.
-        let ind = &industries[0];
-        let mut selected = panel.form.industries.contains(ind);
-        selected = !selected;
-        if selected {
-            panel.form.industries.push(ind.clone());
-        } else {
-            panel.form.industries.retain(|i| i != ind);
-        }
-
-        assert_eq!(
-            panel.form.industries,
-            vec!["银行".to_string()],
-            "checkbox toggle adds industry"
-        );
-        assert!(
-            !panel.form.industries.is_empty(),
-            "selection non-empty after toggle"
-        );
-    }
-
-    #[test]
-    fn popup_kind_is_mutually_exclusive() {
-        // Opening a second popup must close the first (no overlap).
-        let (panel, _shared) = panel_with_form();
-        assert_eq!(panel.active_popup, None);
-
-        // Simulate the toggle logic from multi_select_popup.
-        let click = |active: &mut Option<PopupKind>, kind: PopupKind| {
-            *active = if *active == Some(kind) {
-                None
-            } else {
-                Some(kind)
-            };
-        };
-
-        let mut active = panel.active_popup;
-        click(&mut active, PopupKind::Industry);
-        assert_eq!(active, Some(PopupKind::Industry));
-        click(&mut active, PopupKind::Exchange);
-        assert_eq!(
-            active,
-            Some(PopupKind::Exchange),
-            "opening exchange closes industry"
-        );
-        click(&mut active, PopupKind::Exchange);
-        assert_eq!(active, None, "clicking active kind closes it");
-    }
-
     // ------------------------------------------------------------------
-    // Results table (Todo 6)
+    // Results table (S8 DataTable migration)
     // ------------------------------------------------------------------
 
     fn sample_row(symbol: &str, name: &str, cap: f64) -> compass_types::ScreenerRow {
@@ -734,6 +629,16 @@ mod tests {
         }
     }
 
+    fn signals() -> (
+        egui_mobius::signals::Signal<RunScreenerRequest>,
+        egui_mobius::signals::Signal<FetchRequest>,
+    ) {
+        let (run_signal, _run_slot) =
+            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        (run_signal, work_signal)
+    }
+
     #[test]
     fn results_table_renders_rows_and_count() {
         let (mut panel, shared) = panel_with_form();
@@ -743,49 +648,7 @@ mod tests {
             sample_row("600519", "贵州茅台", 200.0),
             sample_row("000002", "万科A", 50.0),
         ]);
-        let (run_signal, _run_slot) =
-            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
-        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
-        let industries: Vec<String> = Vec::new();
-        let boards: Vec<String> = Vec::new();
-
-        let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
-        });
-        harness.step();
-        // Rendering with results must not panic. (Grid labels are not
-        // queryable via AccessKit in egui_kittest — see kb/dev/testing.md.)
-    }
-
-    #[test]
-    fn results_table_shows_cap_placeholder_for_zero_market_cap() {
-        let (mut panel, shared) = panel_with_form();
-        shared.screener_total.set(1);
-        shared
-            .screener_result
-            .set(vec![sample_row("000001", "平安银行", 0.0)]);
-        let (run_signal, _run_slot) =
-            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
-        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
-        let industries: Vec<String> = Vec::new();
-        let boards: Vec<String> = Vec::new();
-
-        let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
-        });
-        harness.step();
-    }
-
-    #[test]
-    fn row_click_sets_symbol_and_triggers_fetch() {
-        let (mut panel, shared) = panel_with_form();
-        shared.screener_total.set(1);
-        shared
-            .screener_result
-            .set(vec![sample_row("600519", "贵州茅台", 200.0)]);
-        let (run_signal, _run_slot) =
-            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
-        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let (run_signal, work_signal) = signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -794,56 +657,91 @@ mod tests {
         });
         harness.fit_contents();
         harness.step();
-        // Table cells are not queryable via AccessKit (same limitation as
-        // Grid — see kb/dev/testing.md); rendering must not panic and the
-        // row-click linkage is covered by row_click_linkage_sets_symbol below.
+        let _ = harness.get_by_label_contains("共 3 行");
     }
 
     #[test]
-    fn row_click_linkage_sets_symbol() {
-        // Pure-logic coverage of the row-click handler: clicking a result
-        // row writes the bare code into shared state and dispatches FetchBars.
-        let (panel, shared) = panel_with_form();
+    fn results_table_shows_empty_state_without_rows() {
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+        });
+        harness.run();
+        let _ = harness.get_by_label("无符合条件");
+    }
+
+    #[test]
+    fn results_table_zero_market_cap_renders_without_panic() {
+        let (mut panel, shared) = panel_with_form();
         shared.screener_total.set(1);
         shared
             .screener_result
-            .set(vec![sample_row("600519", "贵州茅台", 200.0)]);
+            .set(vec![sample_row("000001", "平安银行", 0.0)]);
+        let (run_signal, work_signal) = signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
 
-        // Simulate the handler body.
-        let clicked = "600519".to_string();
-        shared.symbol.set(clicked.clone());
-        assert_eq!(shared.symbol.get(), "600519");
-        assert!(panel.sort_descending, "panel state intact after handler");
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+        });
+        harness.step();
     }
 
     #[test]
-    fn toggle_sort_flips_direction_on_active_column() {
-        let (mut panel, _) = panel_with_form();
-        // Default: market cap (4), descending.
-        assert_eq!(panel.sort_column, 4);
-        assert!(panel.sort_descending);
-        panel.toggle_sort(4);
-        assert!(
-            !panel.sort_descending,
-            "active column click toggles to ascending"
+    fn row_cells_map_screener_row_to_data_cells() {
+        let cells = ScreenerPanel::row_cells(&sample_row("600519", "贵州茅台", 200.0));
+        assert_eq!(cells.len(), 6);
+        assert_eq!(cells[0], DataCell::Text("600519".to_string()));
+        assert_eq!(
+            cells[2],
+            DataCell::Price {
+                value: 10.0,
+                change: None
+            }
         );
-        panel.toggle_sort(4);
-        assert!(panel.sort_descending, "second click toggles back");
+        assert_eq!(
+            cells[3],
+            DataCell::Price {
+                value: 5.0,
+                change: Some(5.0)
+            },
+            "20-day change renders as a signed price cell (red-up/green-down)"
+        );
+        assert_eq!(cells[4], DataCell::Count(200));
     }
 
     #[test]
-    fn toggle_sort_selects_new_column_with_cap_default() {
-        let (mut panel, _) = panel_with_form();
-        panel.toggle_sort(0); // code column
-        assert_eq!(panel.sort_column, 0);
-        assert!(!panel.sort_descending, "non-cap column defaults ascending");
-        panel.toggle_sort(2); // latest price
-        assert_eq!(panel.sort_column, 2);
-        assert!(!panel.sort_descending);
-        panel.toggle_sort(4); // back to market cap
+    fn dispatch_row_fetch_sets_symbol_and_triggers_fetch() {
+        let shared = SharedState::new("000001", "1d");
+        // The work slot must stay alive so the signal send succeeds.
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let rows = vec![sample_row("600519", "贵州茅台", 200.0)];
+
+        dispatch_row_fetch(&shared, &work_signal, &rows, 0);
+
+        assert_eq!(shared.symbol.get(), "600519");
         assert!(
-            panel.sort_descending,
-            "market cap column defaults descending"
+            shared.loading.get(),
+            "row click must dispatch a FetchBars request"
+        );
+    }
+
+    #[test]
+    fn dispatch_row_fetch_ignores_out_of_range_index() {
+        let shared = SharedState::new("000001", "1d");
+        let (_, work_signal) = signals();
+        let rows = vec![sample_row("600519", "贵州茅台", 200.0)];
+
+        dispatch_row_fetch(&shared, &work_signal, &rows, 5);
+
+        assert_eq!(
+            shared.symbol.get(),
+            "000001",
+            "out-of-range index is a no-op"
         );
     }
 }

@@ -56,9 +56,18 @@ pub enum TabKind {
 impl TabKind {
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Chart => "Chart",
-            Self::Logger => "Logger",
-            Self::Screener => "Screener",
+            Self::Chart => "图表",
+            Self::Logger => "日志",
+            Self::Screener => "选股器",
+        }
+    }
+
+    /// Phosphor icon glyph shown next to the tab title (design doc §Q2).
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Chart => egui_phosphor::regular::CHART_LINE,
+            Self::Logger => egui_phosphor::regular::TERMINAL,
+            Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
         }
     }
 
@@ -122,19 +131,24 @@ pub struct TabViewer<'a> {
     pub screener_boards: &'a [String],
     pub shared_state: &'a SharedState,
     pub theme: &'a CompassTheme,
+    /// Out-param: set to `true` when the logger export button was clicked.
+    pub logger_export_clicked: &'a mut bool,
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
     type Tab = Tab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.title().into()
+        format!("{} {}", tab.kind.icon(), tab.title()).into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.kind {
             TabKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
-            TabKind::Logger => self.logger.show(ui, self.shared_state),
+            TabKind::Logger => {
+                *self.logger_export_clicked =
+                    self.logger.show(ui, self.shared_state, self.theme.tokens());
+            }
             TabKind::Screener => self.screener.show(
                 ui,
                 self.shared_state,
@@ -167,17 +181,27 @@ mod tests {
 
     #[test]
     fn tab_kind_chart_title() {
-        assert_eq!(TabKind::Chart.title(), "Chart");
+        assert_eq!(TabKind::Chart.title(), "图表");
     }
 
     #[test]
     fn tab_kind_logger_title() {
-        assert_eq!(TabKind::Logger.title(), "Logger");
+        assert_eq!(TabKind::Logger.title(), "日志");
     }
 
     #[test]
     fn tab_kind_screener_title() {
-        assert_eq!(TabKind::Screener.title(), "Screener");
+        assert_eq!(TabKind::Screener.title(), "选股器");
+    }
+
+    #[test]
+    fn tab_kind_icons_are_phosphor_glyphs() {
+        assert_eq!(TabKind::Chart.icon(), egui_phosphor::regular::CHART_LINE);
+        assert_eq!(TabKind::Logger.icon(), egui_phosphor::regular::TERMINAL);
+        assert_eq!(
+            TabKind::Screener.icon(),
+            egui_phosphor::regular::FUNNEL_SIMPLE
+        );
     }
 
     // ------------------------------------------------------------------
@@ -206,21 +230,21 @@ mod tests {
     #[test]
     fn tab_new_chart_delegates_to_tab_kind() {
         let tab = Tab::new(TabKind::Chart);
-        assert_eq!(tab.title(), "Chart");
+        assert_eq!(tab.title(), "图表");
         assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
     }
 
     #[test]
     fn tab_new_logger_delegates_to_tab_kind() {
         let tab = Tab::new(TabKind::Logger);
-        assert_eq!(tab.title(), "Logger");
+        assert_eq!(tab.title(), "日志");
         assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
     }
 
     #[test]
     fn tab_new_screener_delegates_to_tab_kind() {
         let tab = Tab::new(TabKind::Screener);
-        assert_eq!(tab.title(), "Screener");
+        assert_eq!(tab.title(), "选股器");
         assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
     }
 
@@ -231,5 +255,74 @@ mod tests {
         assert_eq!(Tab::new(TabKind::Screener), Tab::new(TabKind::Screener));
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Logger));
         assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Screener));
+    }
+
+    // ------------------------------------------------------------------
+    // TabViewer::title — icon + Chinese title (design §Q2)
+    // ------------------------------------------------------------------
+    //
+    // egui_dock 0.20 paints tab buttons with `ui.interact` + painter, so the
+    // labels are invisible to the accesskit tree — the rendered title is
+    // asserted at this unit level instead of via kittest queries.
+
+    #[test]
+    fn tab_viewer_title_combines_icon_and_chinese_title() {
+        use crate::citizens::chart::ChartCitizen;
+        use crate::citizens::logger::LoggerPanel;
+        use crate::citizens::screener::ScreenerPanel;
+        use crate::dispatcher::register_citizens;
+        use crate::messages::{FetchRequest, RunScreenerRequest};
+        use crate::state::SharedState;
+        use crate::theme::CompassTheme;
+        use egui_dock::TabViewer as _;
+        use egui_mobius::factory;
+
+        let mut dispatcher = Dispatcher::new();
+        let registered = register_citizens(&mut dispatcher);
+        let mut chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let mut logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let mut screener = ScreenerPanel::new(
+            CitizenId::new(SCREENER_ID),
+            registered.screener,
+            None,
+            Box::new(|_| {}),
+            &compass_ui::tokens::ThemeTokens::dark(),
+        );
+        let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
+        let shared = SharedState::new("000001", "1d");
+        let theme = CompassTheme::compass_dark();
+
+        let mut logger_export_clicked = false;
+        let mut viewer = TabViewer {
+            dispatcher: &mut dispatcher,
+            chart: &mut chart,
+            logger: &mut logger,
+            screener: &mut screener,
+            run_screener_signal: &run_signal,
+            work_signal: &work_signal,
+            screener_industries: &[],
+            screener_boards: &[],
+            shared_state: &shared,
+            theme: &theme,
+            logger_export_clicked: &mut logger_export_clicked,
+        };
+
+        for (kind, title) in [
+            (TabKind::Chart, "图表"),
+            (TabKind::Logger, "日志"),
+            (TabKind::Screener, "选股器"),
+        ] {
+            let mut tab = Tab::new(kind);
+            let text = viewer.title(&mut tab).text().to_string();
+            assert!(
+                text.contains(title),
+                "tab title must contain {title}, got {text}"
+            );
+            assert!(
+                text.contains(kind.icon()),
+                "tab title must carry the icon glyph, got {text}"
+            );
+        }
     }
 }

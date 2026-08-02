@@ -28,13 +28,17 @@ compass (GUI binary)
   ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring (2 channels)
   ├── dispatcher.rs  ─ register_citizens, lifecycle draining, message routing
   ├── citizens/
-  │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart
-  │   ├── logger.rs  ─ LoggerPanel: scrollable log viewer
-  │   └── screener.rs ─ ScreenerPanel: condition form + results table (stock screener)
-  ├── widgets/
-  │   ├── searchable_dropdown.rs ─ StockPicker widget, filter_stocks()
-  │   ├── toast.rs     ─ ToastManager: 状态通知
-  │   └── modal.rs     ─ Modal: 预留的对话框组件（未启用）
+  │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart (空态 EmptyState)
+  │   ├── logger.rs  ─ LoggerPanel: scrollable log viewer + 导出按钮
+  │   └── screener.rs ─ ScreenerPanel: condition form (Card 分区) + DataTable
+  │
+  ├── compass-ui (library — 通用 GUI 组件库，零业务依赖)
+  │     ├── tokens/      ─ design token 六类（color/spacing/typography/radius/shadow/motion）
+  │     ├── theme/       ─ CompassTheme: token → egui::Visuals/Style 直构 + chart 薄封装
+  │     ├── fonts.rs     ─ 思源黑体 + JetBrains Mono 全内嵌注册
+  │     ├── dock_style.rs ─ egui_dock 0.20 Style 深度定制
+  │     └── widgets/     ─ atoms + molecules（Button/Modal/Toast/Sidebar/StatusBar/
+  │                        DataTable/MultiSelect/SearchableDropdown/... 16+8）
   │
   ├── compass-core (library)
   │     ├── model.rs      ─ shared types: AppConfig, Exchange, StockBasic, CrossSectionBar, Bar
@@ -58,7 +62,8 @@ compass (GUI binary)
 `compass-core` 不包含任何 UI 代码。它提供用于获取、存储和查询股票数据的 trait
 和实现。GUI 和 CLI 是薄编排层，负责连接 provider 并派发工作。
 
-依赖方向：`compass → compass-strategy → compass-core`，`compass-strategy → compass-types`，
+依赖方向：`compass → compass-ui`（UI 组件库，compass-ui 零业务依赖）、
+`compass → compass-strategy → compass-core`，`compass-strategy → compass-types`，
 `compass → compass-types`；`compass-core` 不依赖 `compass-types`（无循环）。
 
 GUI 二进制（`compass`）使用 **egui-mobius citizen 模式**——一种响应式架构，其中

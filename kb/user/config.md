@@ -21,6 +21,11 @@ mkdir -p ~/.config/compass
 # 默认值："compass_dark"
 theme = "compass_dark"
 
+[watchlist]
+# 自选股（Sidebar 左侧栏）。裸 6 位代码列表。
+# 由 GUI 在添加/移除自选时自动写回，重启后恢复。
+# symbols = ["600519", "000001"]
+
 [screener]
 # 选股器条件（Screener tab）。全部可选——缺省键用默认值。
 # 由 GUI 在每次点击"筛选"时自动写回，重启后恢复。
@@ -67,6 +72,7 @@ default_timeframe = "1d"
 | 节 | 键 | 默认值 |
 |---|---|---|
 | （顶层） | `theme` | `compass_dark` |
+| `watchlist` | `symbols` | `[]`（空自选） |
 | `parquet` | `dir` | `/data/compass-data/parquet_data` |
 | `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
@@ -97,6 +103,16 @@ theme = "compass_light"
 ```
 
 从两种内置视觉主题中选择：`compass_dark`（默认）或 `compass_light`。
+
+### 自选股（watchlist）
+
+```toml
+[watchlist]
+symbols = ["600519", "000001"]
+```
+
+左侧自选栏的股票列表，按代码升序。GUI 在侧边栏点 ＋ 添加、点 × 并确认移除时
+自动写回；也可手动编辑。缺失该节 = 空自选。
 
 ### 自定义数据目录
 

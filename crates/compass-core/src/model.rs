@@ -285,6 +285,23 @@ fn default_theme() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Watchlist config ([watchlist] section)
+// ---------------------------------------------------------------------------
+
+/// Watchlist (自选股) configuration persisted to the `[watchlist]` section
+/// of `~/.config/compass/config.toml`.
+///
+/// The GUI writes this section whenever the sidebar watchlist changes
+/// (add/remove) and restores it on startup — same pattern as the `[screener]`
+/// section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WatchlistConfig {
+    /// Bare 6-digit symbols in display order (sorted ascending on save).
+    #[serde(default)]
+    pub symbols: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Shared application state (UI + worker both access via Arc<Mutex<>>)
 // ---------------------------------------------------------------------------
 
@@ -536,5 +553,39 @@ compass_data_dir = "/custom/compass"
         .unwrap();
         assert_eq!(config.dolt.investment_data_dir, "/custom/investment");
         assert_eq!(config.dolt.compass_data_dir, "/custom/compass");
+    }
+
+    #[test]
+    fn watchlist_config_defaults_to_empty_symbols() {
+        let watchlist = WatchlistConfig::default();
+        assert!(watchlist.symbols.is_empty());
+    }
+
+    #[test]
+    fn watchlist_config_parses_from_toml() {
+        let watchlist: WatchlistConfig =
+            toml::from_str("symbols = [\"000001\", \"600519\"]").unwrap();
+        assert_eq!(
+            watchlist.symbols,
+            vec!["000001".to_string(), "600519".to_string()]
+        );
+    }
+
+    #[test]
+    fn watchlist_config_missing_symbols_key_defaults_empty() {
+        let watchlist: WatchlistConfig = toml::from_str("").unwrap();
+        assert!(watchlist.symbols.is_empty());
+    }
+
+    #[test]
+    fn watchlist_config_serializes_to_toml() {
+        let watchlist = WatchlistConfig {
+            symbols: vec!["600519".to_string()],
+        };
+        let serialized = toml::to_string(&watchlist).unwrap();
+        assert!(serialized.contains("symbols"), "serialized: {serialized}");
+        assert!(serialized.contains("600519"));
+        let parsed: WatchlistConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.symbols, watchlist.symbols);
     }
 }

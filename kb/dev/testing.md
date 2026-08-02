@@ -222,7 +222,7 @@ Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可
 CI coverage job 强制以下行覆盖率门槛，低于阈值退出码 1（CI 失败）：
 
 ```sh
-# Rust：单次 llvm-cov --json 采集，脚本校验 workspace 总 + 每 crate（4 门槛 1 次运行）
+# Rust：单次 llvm-cov --json 采集，脚本校验 workspace 总 + 每 crate（7 门槛 1 次运行）
 cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
 bash scripts/check-coverage.sh 80 target/llvm-cov/coverage.json
 
@@ -231,14 +231,18 @@ cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=80
 ```
 
 - Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
-- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，检查 workspace 总 + 每 crate（compass-core / compass-data / compass / compass-strategy / compass-types）各自 ≥80%；任一低于阈值或未测到文件即退出码 1。单次运行而非每条 `-p` 命令，避免 6 次全量测试（约 6x 加速）。
+- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，检查 workspace 总 + 每 crate（compass-core / compass-data / compass / compass-strategy / compass-types / compass-ui）各自 ≥80%；任一低于阈值或未测到文件即退出码 1。单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
 - Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`（`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计。
 - coverage job 会执行完整测试套件（llvm-cov 插桩运行），因此是 `nextest` 之外的隐式第二次测试。
 - 本地测量：`cargo llvm-cov --json --summary-only > cov.json && bash scripts/check-coverage.sh 80 cov.json`。
 
 ### GUI 无头集成测试（egui_kittest）
 
-`compass` crate 的 UI 测试用官方 `egui_kittest`（dev-dependency，`features = ["eframe"]`）：
+`compass` crate 的 UI 测试用官方 `egui_kittest`（dev-dependency，`features = ["eframe"]`）；
+`compass-ui` 同样以 egui_kittest 为 dev-dependency（组件/widget 测试，S4+ 落地）。
+注意：egui_kittest 的 `eframe` feature 以 `default-features = false` 引入 eframe，
+而 `eframe::run_native_ext` 被 cfg 门控在默认 `wgpu` feature 链之后——因此
+compass-ui 的 dev-dependencies 必须同时包含 `eframe`（默认 features）才能编译 kittest。
 
 - `Harness::new_ui(|ui| ...)` 直接驱动 `Fn(&mut egui::Ui)` —— 纯 CPU，**无需显示服务器**，CI 无头环境可跑。
 - `Harness::new_eframe` + `eframe::Frame::_new_kittest()` 驱动完整 `eframe::App::ui`（CompassApp）。

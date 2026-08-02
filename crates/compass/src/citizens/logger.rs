@@ -1,3 +1,6 @@
+use compass_ui::tokens::ThemeTokens;
+use compass_ui::widgets::icon_button::IconButton;
+use compass_ui::widgets::section_title::SectionTitle;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 use egui_lens::ReactiveEventLogger;
 
@@ -35,9 +38,21 @@ impl LoggerPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState) {
+    /// Show the panel: a title row (heading + entry count + export button)
+    /// above the egui_lens log viewer. Returns `true` when the export
+    /// button was clicked (the caller opens the save-file dialog).
+    pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, tokens: &ThemeTokens) -> bool {
+        let count = state.log.get().log_count();
+        let export = IconButton::new(tokens, egui_phosphor::regular::EXPORT).tooltip("导出日志");
+        let export_clicked = SectionTitle::new(tokens, "日志")
+            .count(count)
+            .action(export)
+            .show(ui)
+            .unwrap_or(false);
+        ui.add_space(tokens.spacing.sm);
         let logger = ReactiveEventLogger::new(&state.log);
         logger.show(ui);
+        export_clicked
     }
 }
 
@@ -45,6 +60,7 @@ impl LoggerPanel {
 mod tests {
     use super::*;
     use egui_citizen::CitizenState;
+    use egui_kittest::kittest::Queryable;
 
     #[test]
     fn new_creates_panel_with_correct_id() {
@@ -72,10 +88,29 @@ mod tests {
         let mut panel = LoggerPanel::new(id, state);
 
         let shared = SharedState::new("000001", "1d");
+        let tokens = ThemeTokens::dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared);
+            panel.show(ui, &shared, &tokens);
         });
         harness.run();
+    }
+
+    #[test]
+    fn show_renders_title_row_with_count_and_export_button() {
+        let id = CitizenId::new("logger");
+        let state = CitizenState::new();
+        let mut panel = LoggerPanel::new(id, state);
+
+        let shared = SharedState::new("000001", "1d");
+        let tokens = ThemeTokens::dark();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &tokens);
+        });
+        harness.run();
+        let _ = harness.get_by_label("日志");
+        let _ = harness.get_by_label("0");
+        let _ = harness.get_by_label(egui_phosphor::regular::EXPORT);
     }
 }

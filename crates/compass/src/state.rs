@@ -29,6 +29,8 @@ pub struct SharedState {
     pub screener_loading: Dynamic<bool>,
     /// Last screener error message, if any.
     pub screener_error: Dynamic<Option<String>>,
+    /// Watchlist (自选股) — bare 6-digit symbols in display order.
+    pub watchlist: Dynamic<Vec<String>>,
 }
 
 impl SharedState {
@@ -48,6 +50,7 @@ impl SharedState {
             screener_total: Dynamic::new(0),
             screener_loading: Dynamic::new(false),
             screener_error: Dynamic::new(None),
+            watchlist: Dynamic::new(Vec::new()),
         }
     }
 }

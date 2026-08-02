@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Enforce line-coverage thresholds from a `cargo llvm-cov --json` report.
 #
-# Checks the workspace total and each crate (compass-core / compass-data /
-# compass) against a minimum line-coverage percentage. Exits 1 if any
-# target is below the threshold or has no measured files.
+# Checks the workspace total and each workspace crate (compass-core /
+# compass-data / compass / compass-strategy / compass-types / compass-ui)
+# against a minimum line-coverage percentage. Exits 1 if any target is
+# below the threshold or has no measured files.
 #
 # Usage:
 #   scripts/check-coverage.sh [threshold] [cov.json]
@@ -63,5 +64,6 @@ check "compass-data" "select(.filename | contains(\"/crates/compass-data/\"))"
 check "compass" "select(.filename | contains(\"/crates/compass/\"))"
 check "compass-strategy" "select(.filename | contains(\"/crates/compass-strategy/\"))"
 check "compass-types" "select(.filename | contains(\"/crates/compass-types/\"))"
+check "compass-ui" "select(.filename | contains(\"/crates/compass-ui/\"))"
 
 exit "$fail"
