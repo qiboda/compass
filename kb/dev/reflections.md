@@ -530,3 +530,25 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"收尾声明与事实不符"模式**（ref #117 agent 遗漏收尾、本次过度声称 #121/#122）：issue 收尾是 agent 流程薄弱点——本轮已把"核实后收尾"直接写入 AGENTS.md 强制规则
 - **hook/工具边界反复踩坑**（本次 pre-push ref 误判 + gh merge --delete-branch、ref #104 pgrep 自匹配）：工具链边界知识（hook 正则语义、gh 在 worktree 的行为）应沉淀到 kb/dev/process.md 而非靠试错
 - **dock/UI 状态语义误解需源码级定位**（本次 focused vs active、ref #131 kittest 动画命中）：egui_dock 等库的状态语义必须读源码确认，测试断言到渲染输出层（shapes 颜色）才有客观性
+
+## 2026-08-02 — ref #155 flaky toast 测试修复（kittest 构造帧时序竞态）
+
+**What was done**: 修复 `test_render_expired_toast_closes_then_is_removed` 的 CI 偶发失败（run 30729581256）。根因：`Harness::new_ui` 构造时立即跑初始帧，toast 动画用真实墙钟 `Instant::now()` 且 CLOSE_DURATION 仅 100ms——慢 CI 上构造帧→run() 帧间隔超过动画时长，toast 在断言前已被移除。修复：run() 前重置 `close_started = Some(Instant::now())`（产品代码零改动），`kb/dev/testing.md` 追加 kittest 时间敏感陷阱说明。
+
+**User corrections**: 无纠正型消息——用户消息均为任务报告、方案选择（"A"）、门禁确认（"好。"）、push 指令（"push"）。
+
+**What went wrong**:
+1. 文档中库 API 名凭记忆写成 `Harness::build_ui`（实为 `HarnessBuilder` 的方法，构造器是 `Harness::new_ui`），review 抓出后修正——引用库 API 前应先查 vendored 源码。
+2. 诊断阶段已读 kittest 源码但未在 grill 阶段展示完整证据链（`_try_run` 的 break 逻辑、构造帧行为），由 review 阶段 goal verifier 补全推演——诊断结论提交给用户时应附带源码级证据。
+
+**Lessons learned**:
+1. kittest 测试断言"动画进行中"的跨帧状态前，必须考虑 harness 构造帧已执行一次 UI 闭包 + 真实墙钟流逝——重置动画起始时间戳使其确定（ref #131 同源：动画对 kittest 测试面的影响）
+2. 本地 N 次通过 ≠ 非 flaky——诊断 CI 偶发失败必须读依赖源码确认时序语义（run()/step()/构造帧），并用慢 CI 模拟（sleep 后断言）确定性复现后再修
+3. 文档/代码引用库 API 名称前先 grep vendored 源码确认存在性与拼写，不要凭记忆
+
+**Process improvements**: `kb/dev/testing.md` GUI 无头集成测试章节已新增「时间敏感陷阱」条目（本 commit 内直接落实，含 ref #155 引用与修复模式）。
+
+### Trends (last 10)
+- **kittest 时序/动画测试坑第二次出现**（ref #131 动画命中测试、本次构造帧时序竞态）：kittest 帧推进与真实墙钟的交互是反复踩坑区——本次已把「时间敏感陷阱」写入 testing.md 固化，与 ref #131 的动画命中纪律同章节
+- **库 API 凭记忆引用导致返工**（本次 `build_ui` vs `new_ui`、ref #105 控件形态凭想象）：引用外部库 API/行为前先查 vendored 源码或文档，review 阶段被抓出就是返工
+- **review 冲突以源码级验证为准**（本次 code-quality 对兄弟测试的 MINOR 被 context-mining 的 kittest 源码分析推翻）：oracle 无法读文件时对库行为的推测可能出错，跨 agent 冲突时应以能读源码的分析为准
