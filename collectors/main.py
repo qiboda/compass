@@ -217,12 +217,16 @@ def dispatch_fetch(
         import fetch_cash_flow
         asyncio.run(fetch_cash_flow.run(years=years))
 
+    elif target == "dragon":
+        import fetch_dragon
+        asyncio.run(fetch_dragon.run())
+
 
 def dispatch_import(target: str) -> None:
     """Import CSV data into Dolt for the given target table.
 
     Args:
-        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow.
+        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow, dragon.
     """
     if target == "stock_basic":
         _import_stock_basic()
@@ -237,6 +241,9 @@ def dispatch_import(target: str) -> None:
     elif target == "cash_flow":
         import fetch_cash_flow
         fetch_cash_flow.import_to_dolt()
+    elif target == "dragon":
+        import fetch_dragon
+        fetch_dragon.import_to_dolt()
 
 
 def do_sync(restart: bool = False) -> None:
@@ -281,6 +288,12 @@ def do_sync(restart: bool = False) -> None:
     asyncio.run(fetch_cash_flow.run())
     fetch_cash_flow.import_to_dolt()
 
+    # 6. dragon_list (龙虎榜席位)
+    print("\n[sync] Fetching dragon_list...", file=sys.stderr)
+    import fetch_dragon
+    asyncio.run(fetch_dragon.run())
+    fetch_dragon.import_to_dolt()
+
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)
     for tbl in [
@@ -305,14 +318,14 @@ def main() -> None:
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
     fetch.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon"],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon"],
     )
 
     sub.add_parser("sync", help="Fetch all + import all")
