@@ -8,11 +8,11 @@
 ### Batch 1 — 采集层（Python collectors）
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | #140 | collector: 主力资金流采集 (capital_main_flow) | — |
-| pending | #141 | collector: 龙虎榜采集 (dragon_list) | — |
-| pending | #142 | collector: 大宗交易采集 (block_trade) | — |
-| pending | #143 | collector: 机构调研采集 (institution_survey) | — |
-| pending | #144 | collector: 概念板块成分采集 (concept_member；板块行情由引擎本地聚合，不采集) | — |
+| done | #140 | collector: 主力资金流采集 (capital_main_flow) — push2 快照（RPT_MAIN_MONEY_FLOW 不存在，已获批改 push2） | — |
+| done | #141 | collector: 龙虎榜采集 (dragon_list) — BUY/SELL 席位报表（股票级报表无席位，已获批） | — |
+| done | #142 | collector: 大宗交易采集 (block_trade) — RPT_DATA_BLOCKTRADE（计划名不存在，已获批） | — |
+| done | #143 | collector: 机构调研采集 (institution_survey) — RECEIVE_* 映射（SURVEY_DATE 不存在，已获批） | — |
+| done | #144 | collector: 概念板块成分采集 (concept_member) — push2 板块列表（无 datacenter 报表，已获批） | — |
 
 ### Batch 2 — 数据层
 | Status | Issue | Task | Depends On |
@@ -49,3 +49,9 @@
 - 完成当前批次所有子 issue 后：更新状态 → 向用户报告 → 等确认 → 下一批次
 - 每个 commit 引用对应子 issue（`ref #<sub-N>`）；每个子 issue 一个 commit
 - 一个 epic = 一个 PR = 一个 worktree
+
+## 批次进度
+
+- **Batch 1 完成（2026-08-02）**：5 个 collector 已提交（00cb0b6/4af9938/23ceae1/2e8f6fe/bc10a54 + 重构 e1bfed8）；东财接口实测修正 5 处（用户批准）；F3 真实冒烟通过（capital_main_flow 5536 行已 dolt commit+push）
+- **Batch 2 进行中**：#145 CrossSectionBar 扩展、#146 import-compass 新表
+- 前置风险：#138（flaky run_screener_emits_completion_log）master 已修 toast 测试但该测试未见修复——todo 6 验收时需验证；另发现既有 collector 数据丢失缺陷（fin_balance_sheet=1 行，CRITICAL review 发现，新 collector 已修、范本未修——建议独立 issue 跟踪）
