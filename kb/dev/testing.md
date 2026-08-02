@@ -247,7 +247,7 @@ compass-ui 的 dev-dependencies 必须同时包含 `eframe`（默认 features）
 - `Harness::new_ui(|ui| ...)` 直接驱动 `Fn(&mut egui::Ui)` —— 纯 CPU，**无需显示服务器**，CI 无头环境可跑。
 - `Harness::new_eframe` + `eframe::Frame::_new_kittest()` 驱动完整 `eframe::App::ui`（CompassApp）。
 - `get_by_label` / `Node::click` / `type_text` / `harness.run()` 模拟交互，基于 AccessKit 树查询。
-- **时间敏感陷阱**：`Harness::build_ui` 在**构造时立即跑一帧**（"The ui closure will
+- **时间敏感陷阱**：`Harness::new_ui` 在**构造时立即跑一帧**（"The ui closure will
   immediately be called once to create the initial ui"），且 `Instant::now()` 是真实墙钟。
   若测试依赖「构造帧之后、`run()` 帧之前」的时序（如 toast 的 100ms close 动画），
   慢 CI 上两帧间隔超过动画时长会导致状态提前推进、测试偶发失败（ref #155）。
