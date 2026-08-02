@@ -23,9 +23,9 @@
 ### Batch 3 — 引擎
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | #147 | engine: SEPA 契约类型 + 指标库 (MA/ATR/RS/VCP 纯函数) | #145 |
-| pending | #148 | engine: concept_daily 聚合 + 市场温度计 | #145, #146, #147 |
-| pending | #149 | engine: 五模块评分引擎 + 过滤规则 | #146, #147, #148 |
+| done | #147 | engine: SEPA 契约类型 + 指标库 (MA/ATR/RS/VCP 纯函数) | #145 |
+| done | #148 | engine: concept_daily 聚合 + 市场温度计 | #145, #146, #147 |
+| done | #149 | engine: 五模块评分引擎 + 过滤规则 | #146, #147, #148 |
 
 ### Batch 4 — CLI + 脚本
 | Status | Issue | Task | Depends On |
@@ -53,5 +53,5 @@
 ## 批次进度
 
 - **Batch 1 完成（2026-08-02）**：5 个 collector 已提交（00cb0b6/4af9938/23ceae1/2e8f6fe/bc10a54 + 重构 e1bfed8）；东财接口实测修正 5 处（用户批准）；F3 真实冒烟通过（capital_main_flow 5536 行已 dolt commit+push）
-- **Batch 2 进行中**：#145 CrossSectionBar 扩展、#146 import-compass 新表
-- 前置风险：#138（flaky run_screener_emits_completion_log）master 已修 toast 测试但该测试未见修复——todo 6 验收时需验证；另发现既有 collector 数据丢失缺陷（fin_balance_sheet=1 行，CRITICAL review 发现，新 collector 已修、范本未修——建议独立 issue 跟踪）
+- **Batch 2 完成（2026-08-02）**：#145 CrossSectionBar 9 字段 + 5 读取原语（4993364）、#146 import-compass 5 新表（31743a5）；#138 flaky 根治（6b842c3，set_global_default）
+- **Batch 3 完成（2026-08-02）**：#147 契约类型+指标库（ef681e5）、#148 聚合+温度计（5b89f2f）、#149 五模块评分引擎（b479f66）+ 真实数据冒烟（fef1067）；F3 冒烟：温度计 38.1、87 涨停、TOP 分数 17.9-35.6；**数据维护事项**：stock_daily.parquet amount 列为 0（成交额分失真，需核对 Dolt 导入）
