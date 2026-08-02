@@ -81,8 +81,10 @@ async def run(
     since = last_report_date(DOLT_TABLE)
     if since:
         print(f"Last trade date in Dolt: {since}, fetching only newer dates", file=sys.stderr)
-        # Exclusive boundary: dates at or before the watermark are not re-fetched.
-        all_dates = [d for d in all_dates if d > since]
+        # Exclusive boundary: dates at or before the watermark are not
+        # re-fetched; dates after today are never requested (the API returns
+        # empty for future dates, which would scan half a year pointlessly).
+        all_dates = [d for d in all_dates if since < d <= datetime.now().date().isoformat()]
         if not all_dates:
             print("No new trade dates to fetch.", file=sys.stderr)
             return output_path
