@@ -33,8 +33,8 @@ DDL = """\
 CREATE TABLE institution_survey (
     symbol      VARCHAR(20) NOT NULL,
     survey_date DATE NOT NULL,
-    org_name    VARCHAR(100) NOT NULL,
-    survey_type VARCHAR(50),
+    org_name    VARCHAR(1000) NOT NULL,
+    survey_type VARCHAR(300),
     update_date DATE,
     PRIMARY KEY (symbol, survey_date, org_name)
 )"""
@@ -118,25 +118,32 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
 
     # One stock can receive multiple institutions on the same survey date
     # (verified: duplicate (code, receive_start_date, receive_object) rows
-    # exist upstream), so dedupe via GROUP BY on the composite PK.
+    # exist upstream), so dedupe via INSERT IGNORE on the composite PK.
+    # The temp table columns are widened first: dolt's CSV type inference
+    # sizes long UTF-8 strings (org_name up to ~800 bytes) too small, which
+    # silently truncates mid-character and breaks the utf8mb4 insert.
     return import_replace_table(
         csv_path=csv_path,
         tmp_name="_tmp_svy",
         ddl=DDL,
         insert_sql=f"""
-            INSERT INTO {DOLT_TABLE} (symbol, survey_date, {INSERT_COLS}, update_date)
+            INSERT IGNORE INTO {DOLT_TABLE} (symbol, survey_date, {INSERT_COLS}, update_date)
             SELECT
                 CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
                 RECEIVE_START_DATE,
                 RECEIVE_OBJECT,
-                MAX(RECEIVE_WAY_EXPLAIN),
-                MAX(CURDATE())
+                RECEIVE_WAY_EXPLAIN,
+                CURDATE()
             FROM _tmp_svy
             WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                   IN (SELECT symbol FROM stock_basic)
               AND RECEIVE_START_DATE IS NOT NULL
-            GROUP BY 1, 2, 3
         """,
+        alter_sql=(
+            "ALTER TABLE _tmp_svy MODIFY COLUMN RECEIVE_OBJECT VARCHAR(1000); "
+            "ALTER TABLE _tmp_svy MODIFY COLUMN RECEIVE_WAY_EXPLAIN VARCHAR(500); "
+            "ALTER TABLE _tmp_svy MODIFY COLUMN SECUCODE VARCHAR(20)"
+        ),
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(survey_date)",

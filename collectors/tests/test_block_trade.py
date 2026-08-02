@@ -157,6 +157,31 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade")) == "1"
 
+    def test_same_price_multi_vol_buyer_all_preserved(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Same (symbol, date, price) with different volume/buyer are distinct
+        trades: the PK spans (symbol, date, price, volume, amount, buyer,
+        seller) so none are dropped (F3 real-data regression: EastMoney ranks
+        the same block trade multiple times)."""
+        from fetch_block_trade import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "bt.csv"
+        rows = [
+            _make_row(),  # 000001.SZ 12.5 / 240000 / 华泰
+            _make_row(price="12.5"),  # same price, same default volume/buyer → exact dup
+            ["000001.SZ", "000001", "2024-12-31 00:00:00", "12.5", "50000", "625000",
+             "机构专用", "华泰证券南京止马营营业部", "0.068376"],
+        ]
+        self._write_csv(csv_path, rows)
+
+        n = import_to_dolt(csv_path)
+        # 2 distinct: the exact duplicate collapses, the 机构专用 row survives
+        assert n == 2
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade")) == "2"
+        assert "机构专用" in dolt_sql_csv("SELECT buyer FROM block_trade")
+
     def test_first_run_insert_failure_leaves_no_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:

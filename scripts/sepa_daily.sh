@@ -129,9 +129,13 @@ run_step 1 "import market data (investment_data → Parquet)" "$PROJECT_ROOT" \
 
 # --- 2. Collect: EastMoney data → compass_data Dolt ---
 # Each fetcher short-circuits when data_updates.last_report_date already covers
-# the day, so re-runs add nothing.
+# the day, so re-runs add nothing. main.py fetch accepts ONE target per call
+# (choices list, not nargs="+") — iterate the allowlist.
 run_step 2 "collect EastMoney data (5 sources)" "$PROJECT_ROOT/collectors" \
-    uv run python main.py fetch main_flow dragon block_trade institution_survey concept_member
+    bash -c 'for src in main_flow dragon block_trade institution_survey concept_member; do
+        echo "--- fetch $src ---"
+        uv run python main.py fetch "$src" || exit 1
+    done'
 
 # --- 3. Dolt commit: collector tables ---
 info "Step 3: Dolt commit collector tables"

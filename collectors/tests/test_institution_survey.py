@@ -159,13 +159,16 @@ class TestImportToDolt:
         org = self._last(dolt_sql_csv("SELECT org_name FROM institution_survey"))
         assert org == "长信基金"
 
-    def test_ddl_survey_type_width_50(
+    def test_ddl_survey_type_width_300(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """survey_type column is VARCHAR(50) to fit long method descriptions."""
+        """survey_type is VARCHAR(300): real data has method descriptions up
+        to ~285 bytes (multi-byte UTF-8), the old VARCHAR(50) truncated
+        mid-character and broke the utf8mb4 insert."""
         import fetch_institution_survey  # noqa: E402
 
-        assert "survey_type VARCHAR(50)" in fetch_institution_survey.DDL
+        assert "survey_type VARCHAR(300)" in fetch_institution_survey.DDL
+        assert "VARCHAR(1000)" in fetch_institution_survey.DDL
 
     async def test_run_to_import_round_trip(
         self,

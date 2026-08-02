@@ -154,15 +154,18 @@ def import_replace_table(
     dolt_table: str,
     source_label: str,
     last_report_expr: str,
+    alter_sql: str | None = None,
 ) -> int:
     """Atomically replace ``dolt_table`` with the CSV content.
 
-    Flow: CSV → temp table import → old table renamed aside → DDL creates the
-    fresh table → INSERT SELECT fills it → on any failure the fresh table is
-    dropped and the old one renamed back → on success both temp tables are
-    dropped → data_updates gets a 5-column upsert (last_report_date from
-    ``last_report_expr``). Returns the imported row count, or 0 when the CSV
-    is missing or the import fails (previous table contents are preserved).
+    Flow: CSV → temp table import → (optional ``alter_sql`` widens columns
+    that dolt's type inference under-sized, e.g. long UTF-8 strings) → old
+    table renamed aside → DDL creates the fresh table → INSERT SELECT fills
+    it → on any failure the fresh table is dropped and the old one renamed
+    back → on success both temp tables are dropped → data_updates gets a
+    5-column upsert (last_report_date from ``last_report_expr``). Returns
+    the imported row count, or 0 when the CSV is missing or the import fails
+    (previous table contents are preserved).
     """
     if not csv_path.exists():
         print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
@@ -171,6 +174,9 @@ def import_replace_table(
     if not dolt_table_import(tmp_name, csv_path):
         print("  Import failed", file=sys.stderr)
         return 0
+
+    if alter_sql:
+        dolt_sql(alter_sql)
 
     old_name = f"{tmp_name}_old"
     dolt_sql(f"DROP TABLE IF EXISTS {old_name}")

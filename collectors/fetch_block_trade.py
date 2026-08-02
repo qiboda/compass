@@ -42,7 +42,7 @@ CREATE TABLE block_trade (
     buyer VARCHAR(100), seller VARCHAR(100),
     premium_rate DOUBLE,
     update_date DATE,
-    PRIMARY KEY (symbol, trade_date, price)
+    PRIMARY KEY (symbol, trade_date, price, volume, amount, buyer, seller)
 )"""
 
 # INSERT column list (lowercase DDL names), values mapped from API fields
@@ -141,7 +141,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         ddl=DDL,
         insert_sql=f"""
             INSERT INTO {DOLT_TABLE} ({INSERT_COLS})
-            SELECT
+            SELECT DISTINCT
                 {symbol_expr}, DATE(TRADE_DATE), DEAL_PRICE, DEAL_VOLUME, DEAL_AMT,
                 BUYER_NAME, SELLER_NAME, PREMIUM_RATIO, CURDATE()
             FROM _tmp_bt

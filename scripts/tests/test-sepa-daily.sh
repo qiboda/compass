@@ -157,8 +157,12 @@ run_script "$T1"
 assert_true "exit 0 on happy path" 'test "$(cat "$T1/exit.code")" = 0'
 assert_true "step 1: import market data" \
     'grep -qx "cargo run --bin compass-data -- import" "$T1/calls.log"'
-assert_true "step 2: fetch 5 collector sources in one uv call" \
-    'grep -qx "uv run python main.py fetch main_flow dragon block_trade institution_survey concept_member" "$T1/calls.log"'
+assert_true "step 2: fetch 5 collector sources, one call each" \
+    'grep -qx "uv run python main.py fetch main_flow" "$T1/calls.log" &&
+     grep -qx "uv run python main.py fetch dragon" "$T1/calls.log" &&
+     grep -qx "uv run python main.py fetch block_trade" "$T1/calls.log" &&
+     grep -qx "uv run python main.py fetch institution_survey" "$T1/calls.log" &&
+     grep -qx "uv run python main.py fetch concept_member" "$T1/calls.log"'
 assert_true "step 4: 4 append tables with since anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T1/calls.log" &&
