@@ -200,6 +200,12 @@ epic/issue（`ref #<N>`），不创建新 issue；issue 收尾时在完成 comme
 遵守 comments.md"永远追加"规范），然后关闭 issue。push 成功 ≠ 任务完成
 ——issue 收尾是流程的一部分（ref #117 曾因 agent 遗漏被用户提醒）。
 
+**收尾前必须核实实现存在（禁止过度声称）**：完成 comment 中每一项"已实现/已
+落地"的功能，都必须先用代码证据核实（grep 实现、测试断言、运行验证），不能凭
+记忆或 issue 关联性声称。关联 issue（如从 epic 砍出的独立 issue）若未实现，保持
+OPEN 并注明依赖就绪，绝不随 epic 一并关闭（ref #119 曾过度声称 #121/#122
+已落地，实际未实现，已发布更正）。
+
 **Epic close**: PR 合并到 master 后，先关闭所有 sub-issues，再关闭 epic。
 在 epic 上记录总结 comment 列出所有完成的 sub-issues。
 
