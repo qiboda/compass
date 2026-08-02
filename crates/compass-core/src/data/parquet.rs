@@ -289,6 +289,37 @@ impl ParquetReader {
         }
     }
 
+    /// Latest trade date present in `stock_daily.parquet`, if any.
+    ///
+    /// Used by the SEPA CLI as the default scoring date (decision 22: only
+    /// the latest trading day, never the wall-clock date). Returns `None`
+    /// when the file is missing or empty.
+    pub fn latest_trade_date(&self) -> Result<Option<NaiveDate>, DataError> {
+        if !self.daily_path.exists() {
+            return Ok(None);
+        }
+        let path_str = self.daily_path.to_string_lossy();
+        let escaped = escape_sql_path(&path_str);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+        let sql = format!("SELECT CAST(MAX(tradedate) AS VARCHAR) FROM read_parquet('{escaped}')");
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let max_s: Option<String> = stmt
+            .query_row([], |row| row.get(0))
+            .optional()
+            .map_err(DataError::Database)?;
+        match max_s {
+            Some(s) if !s.is_empty() => {
+                let dt = date_str_to_utc(&s)
+                    .ok_or_else(|| DataError::Parse(format!("invalid date '{s}'")))?;
+                Ok(Some(dt.date_naive()))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Get stock basic info by reading stock_basic.parquet and filtering.
     pub fn get_stock_basic_blocking(&self, symbol: &str) -> Result<Option<StockBasic>, DataError> {
         validate_symbol(symbol)?;
@@ -1414,6 +1445,33 @@ mod tests {
             .expect("some");
         assert_eq!(range.0.to_string(), "2024-06-01");
         assert_eq!(range.1.to_string(), "2024-06-30");
+    }
+
+    #[test]
+    fn latest_trade_date_returns_max() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[(
+                "SH600519",
+                &[
+                    ("2024-06-01", 1500.0),
+                    ("2024-06-15", 1510.0),
+                    ("2024-06-30", 1520.0),
+                ],
+            )],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let date = reader.latest_trade_date().expect("date").expect("some");
+        assert_eq!(date.to_string(), "2024-06-30");
+    }
+
+    #[test]
+    fn latest_trade_date_none_when_file_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        assert!(reader.latest_trade_date().expect("no error").is_none());
     }
 
     #[test]

@@ -14,6 +14,7 @@ use std::process::Command;
 use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
 use compass_strategy::sepa::run_sepa;
+use compass_strategy::sepa::scoring::DEFAULT_TOP_N;
 use compass_types::{MarketThermometer, SepaData, SepaQuery, SepaRow};
 use tracing::info;
 
@@ -75,33 +76,48 @@ const UPDATES_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS data_updates (\
     last_report_date DATE, \
     PRIMARY KEY (table_name))";
 
-/// Run the SEPA scoring engine for `date` (default: today) and write the
-/// results back to the Dolt repo at `dolt_dir`.
+/// Run the SEPA scoring engine for `date` (default: latest trading day in the
+/// data) and write the FULL computed set back to the Dolt repo at `dolt_dir`.
+/// `top` only caps the printed table, never the persisted rows (P0-1
+/// regression: `--top` must not truncate the Dolt write-back).
 pub fn run_score(
     top: usize,
     date: Option<NaiveDate>,
     reader: &ParquetReader,
     dolt_dir: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    let now = date.unwrap_or_else(|| Utc::now().date_naive());
-    let query = SepaQuery { top_n: top };
+    let now = match date {
+        Some(d) => d,
+        None => reader
+            .latest_trade_date()?
+            .unwrap_or_else(|| Utc::now().date_naive()),
+    };
+    // usize::MAX = compute the full market set; `top` only slices the print.
+    let query = SepaQuery { top_n: usize::MAX };
     let started = std::time::Instant::now();
     let data = run_sepa(&query, reader, now)?;
+    let shown = data
+        .rows
+        .len()
+        .min(if top == 0 { DEFAULT_TOP_N } else { top });
     info!(
         matched = data.rows.len(),
-        returned = data.rows.len(),
+        returned = shown,
         elapsed_ms = started.elapsed().as_millis(),
         date = %data.date,
         "sepa score run completed"
     );
-    println!("{}", format_top_table(&data.rows));
-    write_back(dolt_dir, reader, &data)
+    println!("{}", format_top_table(&data.rows[..shown]));
+    write_back(dolt_dir, reader, &data, &COMPUTE_TABLES)
 }
 
 /// Compute the whole-market thermometer and write it back to the Dolt repo
-/// at `dolt_dir`.
+/// at `dolt_dir`. Only `market_temperature` is written (P0-2 regression:
+/// a temperature run must never touch the factor/score tables).
 pub fn run_temperature(reader: &ParquetReader, dolt_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let now = Utc::now().date_naive();
+    let now = reader
+        .latest_trade_date()?
+        .unwrap_or_else(|| Utc::now().date_naive());
     let started = std::time::Instant::now();
     let data = run_sepa(&SepaQuery { top_n: 1 }, reader, now)?;
     let tm = &data.thermometer;
@@ -114,7 +130,7 @@ pub fn run_temperature(reader: &ParquetReader, dolt_dir: &Path) -> Result<(), Bo
         "市场温度: {:.1} | 仓位建议: {} | 日期: {}",
         tm.score, tm.position, data.date
     );
-    write_back(dolt_dir, reader, &data)
+    write_back(dolt_dir, reader, &data, &["market_temperature"])
 }
 
 /// Render the TOP-N table as a mono-spaced, `{:.1}`-aligned text table.
@@ -208,12 +224,15 @@ fn exchange_prefixes(reader: &ParquetReader) -> Result<HashMap<String, String>, 
 }
 
 /// Two-stage write-back (epic #139 decision 15): DELETE the target
-/// trade_date from all five compute tables, then append CSV rows via
-/// `dolt table import -a`. Idempotent by construction.
+/// trade_date from the scoped compute tables, then append CSV rows via
+/// `dolt table import -a`. Idempotent by construction. `tables` limits the
+/// write-back scope (P0-2: `run_temperature` passes only `market_temperature`
+/// so factor/score rows from a prior score run survive untouched).
 fn write_back(
     dolt_dir: &Path,
     reader: &ParquetReader,
     data: &SepaData,
+    tables: &[&str],
 ) -> Result<(), Box<dyn Error>> {
     let date = data
         .date
@@ -230,7 +249,7 @@ fn write_back(
 
     let prefixes = exchange_prefixes(reader)?;
 
-    for table in COMPUTE_TABLES {
+    for table in tables {
         dolt_sql(
             dolt_dir,
             &format!("DELETE FROM {table} WHERE trade_date = '{date}'"),
@@ -366,6 +385,9 @@ fn write_back(
         ("market_temperature", &temp_csv, "market_temperature.csv"),
     ];
     for (table, csv, file) in staged {
+        if !tables.contains(&table) {
+            continue;
+        }
         if csv.lines().count() <= 1 {
             info!(table, date = %data.date, "no rows to write back");
             continue;
@@ -773,6 +795,98 @@ mod tests {
         let fields: Vec<&str> = row.split(',').collect();
         assert!(fields[1].parse::<f64>().is_ok(), "score is numeric: {row}");
         assert!(!fields[2].is_empty(), "position suggestion present: {row}");
+    }
+
+    #[test]
+    fn run_score_with_smaller_top_preserves_all_stored_rows() {
+        // P0-1 regression (epic #139 PR review): `--top` is an output cap
+        // only; the Dolt write-back must persist the full computed set.
+        // Re-running with a smaller top must never delete previously stored
+        // rows for the date.
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+        let date = Some(NaiveDate::from_ymd_opt(2026, 7, 31).expect("date"));
+
+        run_score(50, date, &reader, dolt_tmp.path()).expect("full run");
+        run_score(1, date, &reader, dolt_tmp.path()).expect("top-1 re-run");
+
+        // All 3 fixture stocks must still be present (not truncated to 1).
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-07-31"), 3);
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "technical_factor", "2026-07-31"),
+            3
+        );
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "capital_factor", "2026-07-31"),
+            3
+        );
+    }
+
+    #[test]
+    fn run_temperature_does_not_touch_factor_tables() {
+        // P0-2 regression (epic #139 PR review): `sepa temperature` must only
+        // write market_temperature; the factor/score tables written by a prior
+        // score run must survive untouched.
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+        let date = Some(NaiveDate::from_ymd_opt(2026, 7, 31).expect("date"));
+
+        run_score(50, date, &reader, dolt_tmp.path()).expect("score");
+        run_temperature(&reader, dolt_tmp.path()).expect("temperature");
+
+        // Score rows for the latest trading day must survive the temperature
+        // run, and no score rows may appear for other (wall-clock) dates.
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-07-31"), 3);
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "technical_factor", "2026-07-31"),
+            3
+        );
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "capital_factor", "2026-07-31"),
+            3
+        );
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "final_score", &today),
+            0,
+            "temperature must not add score rows for the wall-clock date"
+        );
+        // Temperature row lands on the latest trading day (decision 22).
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-07-31"),
+            1
+        );
+    }
+
+    #[test]
+    fn run_score_default_date_is_latest_trading_day() {
+        // Decision 22 regression: with no --date, run_score must score the
+        // latest trading day present in the data (fixture max 2026-07-31),
+        // never the wall-clock date (2026-08-02 is a Sunday).
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        run_score(50, None, &reader, dolt_tmp.path()).expect("score default date");
+
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-07-31"), 3);
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "final_score", &today),
+            0,
+            "default date must not be the wall-clock date"
+        );
     }
 
     #[test]

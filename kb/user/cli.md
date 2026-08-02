@@ -228,16 +228,18 @@ cargo run --bin compass-data -- backup --keep-zip # 上传后保留本地 zip
 
 对最新交易日运行 SEPA 五模块评分引擎（趋势/题材/资金/形态/风险），打印 TOP 榜并将计算表写回 Dolt `compass_data`（`technical_factor` / `industry_factor` / `capital_factor` / `final_score` / `market_temperature`，两段式 DELETE + `dolt table import -a`，幂等可重跑）。
 
+**写回范围**：`score` 写回全部 5 张计算表（全量通过过滤的排序结果，非仅 TOP-N）；`temperature` 只写 `market_temperature` 一张表，绝不触碰 factor/score 表。
+
 ```sh
-cargo run --bin compass-data -- sepa score --top 50    # 评分 + TOP50 表格 + 写回
+cargo run --bin compass-data -- sepa score --top 50    # 评分 + TOP50 表格 + 写回全量
 cargo run --bin compass-data -- sepa score --top 30 --date 2026-07-31  # 指定日期
-cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 写回
+cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 只写 market_temperature
 ```
 
 | 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--top` | `50` | 输出条数上限 |
-| `--date` | 今天 | 计算日期（YYYY-MM-DD） |
+| `--top` | `50` | 终端表格输出条数上限（不影响 Dolt 写回内容——写回总是全量计算集） |
+| `--date` | 数据内最新交易日 | 计算日期（YYYY-MM-DD）；不传时取 Parquet 中最大 trade_date，周末/节假日运行不会写出非交易日行 |
 
 每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → 采集 → Dolt commit → Parquet 导入 → 计算 → Dolt commit → TOP50）。
 
