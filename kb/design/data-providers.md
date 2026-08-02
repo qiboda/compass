@@ -206,19 +206,37 @@ ORDER BY tradedate ASC
 **所有标的**的 bar，供选股器等横截面分析使用：
 
 ```sql
-SELECT symbol, CAST(tradedate AS VARCHAR) AS tradedate, adjclose, close, volume
+SELECT symbol, CAST(tradedate AS VARCHAR) AS tradedate, open, high, low, adjclose, close, volume, amount
 FROM read_parquet('parquet_data/stock_daily.parquet')
 WHERE tradedate >= ? AND tradedate <= ?
 ORDER BY symbol, tradedate ASC
 ```
 
-返回 `Vec<CrossSectionBar>`（`symbol`、`trade_date: NaiveDate`、`adjclose`、
-`close`、`volume`）— 这是代码库中**首个把 `adjclose` 带出读取层**的路径
-（`fetch_bars` 的 fallback 查询虽 SELECT 了 adjclose 但映射时丢弃）。
+返回 `Vec<CrossSectionBar>`（`symbol`、`trade_date: NaiveDate`、`open`/`high`/`low`/`adjclose`/`close`/`volume`/`amount`）—
+这是代码库中**首个把 `adjclose` 带出读取层**的路径（`fetch_bars` 的 fallback 查询虽 SELECT 了 adjclose 但映射时丢弃）。
+SEPA 扩展（epic #139）加入 `open`/`high`/`low`/`amount`：形态（VCP）与 ATR 需要 OHLC，成交额因子需要 `amount`。
+列顺序与 `stock_daily.parquet` 实际 9 列布局一致：symbol, tradedate, open, high, low, close, adjclose, volume, amount。
 
 注意：parquet 的 `tradedate` 列实际类型是 **TIMESTAMP**（非 DATE），
 `CAST AS VARCHAR` 产出 `"1991-04-04 00:00:00"` 带时间分量。解析必须用
 `date_str_to_utc`（兼容 DATE 与 TIMESTAMP 两种格式），不能只用 `%F`。
+
+### SEPA 数据表读取原语（epic #139）
+
+5 个只读原语，模式与 `fetch_cross_section` 一致（`read_parquet()` + 内存 DuckDB 查询），
+文件名 = Dolt 表名 + `.parquet`，与 `stock_daily.parquet` 同目录（由 `import-compass --table ...` 生成）：
+
+| 方法 | 文件 | 日期过滤 | 说明 |
+|---|---|---|---|
+| `fetch_concept_member()` | `concept_member.parquet` | 无（全量快照） | 概念成分映射，版本化非每日快照 |
+| `fetch_capital_main_flow(start, end)` | `capital_main_flow.parquet` | `trade_date` | 主力资金流；NULL 金额 COALESCE 为 0.0，`small_net` 保持 Option |
+| `fetch_dragon_list(start, end)` | `dragon_list.parquet` | `trade_date` | 龙虎榜席位；`institution_flag` 为 TINYINT → `Option<i8>` |
+| `fetch_block_trade(start, end)` | `block_trade.parquet` | `trade_date` | 大宗交易；price/volume/amount NULL 时 COALESCE 为 0.0 |
+| `fetch_institution_survey(start, end)` | `institution_survey.parquet` | `survey_date` | 机构调研 |
+
+**缺文件行为（审查修订锁定）**：表未导入时返回**空 Vec**（与 `fetch_cross_section`
+缺 `stock_daily.parquet` 行为一致），**不返回 DataError**——否则 `run_sepa` 的 `?`
+会在 GUI 表未导入时直接失败，无法优雅降级。
 
 ### 标的发现
 
@@ -311,6 +329,8 @@ compass_data_dir = "/data/compass-data/compass_data"
 | stock_basic 元数据存储 | DuckDB 表 + Parquet 双轨 / 仅 Parquet | 仅 Parquet（`import-compass --table stock_basic` 生成，ParquetReader 直读） | duckdb.rs 的旧 stock_basic 路径（8 列旧 schema + upsert/get）零生产调用者；`import` 写 5 列占位文件会覆盖新 10 列 parquet；单一数据源避免双 schema 维护 | DuckDB 双轨徒增第二份 schema 定义与同步成本；`import` 保留导出会持续制造错误列文件（ref #80） |
 | 横截面原语位置 | DataProvider trait 方法 / DuckDbProvider 方法 / ParquetReader 固有方法 | ParquetReader 固有方法 `fetch_cross_section` | 与 `load_all_stock_basics` 同源同模式；避免 trait 三 impl（duckdb/parquet/synthetic）牵连；符合"直读 parquet"契约 | trait 扩展需同时改三处 impl 且 synthetic 为私有 mod；DuckDbProvider 依赖内存表缓存模型，与全表扫描不兼容 |
 | CrossSectionBar 字段集 | 全 OHLCV / 仅 adjclose / adjclose+close+volume | `symbol, trade_date, adjclose, close, volume` | 足以支撑选股器全部条件（均线/动量/突破用 adjclose，量能用 volume，最新价/市值用 close）；DuckDB 列裁剪最小化 I/O | 全字段浪费内存（约 1.6M 行）；仅 adjclose 无法算市值/最新价 |
+| CrossSectionBar 字段集（SEPA 扩展，ref #145） | 保持 5 字段 / 扩展 9 字段 | 9 字段（+`open`/`high`/`low`/`amount`） | SEPA 形态模块（VCP 需 high/low 通道）与 ATR（需 high/low/close）依赖 OHLC，成交额（20 日均额）过滤需要 `amount`；字段追加向后兼容，选股器仍只用原 5 字段，内存代价可接受（全市场单日 ~6000 行） | 保持 5 字段无法支撑形态/ATR/成交额因子；只加 amount 则形态与 ATR 仍缺数据 |
+| SEPA 新表读取原语位置（ref #145） | ParquetReader 固有方法 / DuckDbProvider 方法 / DataProvider trait 扩展 | ParquetReader 固有方法（5 个：concept_member/capital_main_flow/dragon_list/block_trade/institution_survey） | 与 `fetch_cross_section`/`load_all_stock_basics` 同源同模式（`read_parquet()` 直读）；新表只读 parquet 文件，无 DuckDB 表缓存模型；避免 trait 三处 impl（duckdb/parquet/synthetic）牵连 | trait 扩展需同时改三处 impl 且 synthetic 为私有 mod；DuckDbProvider 依赖内存表缓存模型，与全表扫描不兼容 |
 | `tradedate` 列类型解析 | `%F` 严格解析 / `date_str_to_utc` 双格式 | `date_str_to_utc`（兼容 DATE 与 TIMESTAMP） | 真实 parquet 列为 TIMESTAMP，`CAST AS VARCHAR` 带时间分量；`%F` 会静默丢弃全部行（测试 DATE fixture 不暴露） | `%F` 在生产环境静默空结果，是真实数据核验发现的陷阱 |
 | 选股市值计算 | total_share × 最新 adjclose / × 最新 close ÷ 1e8 | `total_share × 最新 close ÷ 1e8`（亿元） | 最新日 adjclose == close（前复权锚点）；市值是现实世界值，用原始价 | adjclose 复权价会失真；单位显式 ÷1e8 与 GUI 亿元输入一致 |
 
