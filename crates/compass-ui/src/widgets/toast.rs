@@ -301,7 +301,11 @@ fn render_toast(
                     .size(tokens.typography.body),
             );
             ui.add_space(4.0);
-            ui.label(&toast.message);
+            ui.label(
+                egui::RichText::new(&toast.message)
+                    .color(c.text_primary)
+                    .size(tokens.typography.body),
+            );
 
             // Close button at the right edge.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
