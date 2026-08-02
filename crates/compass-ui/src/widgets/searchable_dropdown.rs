@@ -798,11 +798,15 @@ mod tests {
     fn set_tokens_updates_theme_after_switch() {
         let dark = ThemeTokens::dark();
         let light = ThemeTokens::light();
-        let mut picker = SearchableDropdown::new(dark, "000001", StockProjection::new(
-            |s: &TestStock| &s.symbol,
-            |s: &TestStock| &s.name,
-            |s: &TestStock| s.exchange.as_deref(),
-        ));
+        let mut picker = SearchableDropdown::new(
+            dark,
+            "000001",
+            StockProjection::new(
+                |s: &TestStock| &s.symbol,
+                |s: &TestStock| &s.name,
+                |s: &TestStock| s.exchange.as_deref(),
+            ),
+        );
         picker.set_tokens(light);
 
         assert_eq!(
