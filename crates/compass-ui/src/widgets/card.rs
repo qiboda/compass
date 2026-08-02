@@ -93,7 +93,11 @@ impl<'a> Card<'a> {
                         let button = egui::Button::new(
                             RichText::new(format!(
                                 "{title} {}",
-                                if open { "\u{F00C8}" } else { "\u{F00C9}" }
+                                if open {
+                                    egui_phosphor::regular::CARET_UP
+                                } else {
+                                    egui_phosphor::regular::CARET_DOWN
+                                }
                             ))
                             .size(tokens.typography.heading)
                             .strong()

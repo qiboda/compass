@@ -96,7 +96,7 @@ mod tests {
         let clicked = Rc::new(Cell::new(false));
         let c = clicked.clone();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
-            let action = IconButton::new(&tokens, "\u{F1150}").tooltip("Add");
+            let action = IconButton::new(&tokens, "\u{E20C}").tooltip("Add");
             if let Some(true) = SectionTitle::new(&tokens, "Watchlist")
                 .action(action)
                 .show(ui)
@@ -105,7 +105,7 @@ mod tests {
             }
         });
         harness.run();
-        harness.get_by_label("\u{F1150}").click();
+        harness.get_by_label("\u{E20C}").click();
         harness.run();
         assert!(clicked.get(), "section-title action must be clickable");
     }

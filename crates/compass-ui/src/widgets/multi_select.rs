@@ -14,7 +14,7 @@ use super::checkbox::Checkbox;
 use super::input::Input;
 
 /// Phosphor caret-down icon used on the summary trigger.
-const CARET_DOWN: &str = "\u{E136}";
+const CARET_DOWN: &str = egui_phosphor::regular::CARET_DOWN;
 /// Popup minimum width (design doc §5.2).
 const POPUP_MIN_WIDTH: f32 = 220.0;
 /// Popup option list max height.

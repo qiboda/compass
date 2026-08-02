@@ -305,7 +305,7 @@ mod tests {
     fn icon_is_rendered_in_label() {
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
-            Button::new(&tokens, "Fetch").icon("\u{F1150}").show(ui);
+            Button::new(&tokens, "Fetch").icon("\u{E20C}").show(ui);
         });
         harness.run();
         let _ = harness.get_by_label_contains("Fetch");

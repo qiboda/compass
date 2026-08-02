@@ -89,7 +89,7 @@ mod tests {
     fn title_and_description_are_queryable() {
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
-            EmptyState::new(&tokens, "\u{F1B2B}", "No data")
+            EmptyState::new(&tokens, "\u{E154}", "No data")
                 .description("Fetch a symbol to see the chart")
                 .show(ui);
         });
@@ -109,7 +109,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             let action =
                 Button::new(&tokens, "Retry").variant(super::super::button::ButtonVariant::Primary);
-            if let Some(resp) = EmptyState::new(&tokens, "\u{F1B2B}", "No data")
+            if let Some(resp) = EmptyState::new(&tokens, "\u{E154}", "No data")
                 .action(action)
                 .show(ui)
                 && resp.clicked()

@@ -69,7 +69,7 @@ impl<'a> Dropdown<'a> {
             .cloned()
             .unwrap_or_else(|| String::from("—"));
         let trigger = egui::Button::new(
-            RichText::new(format!("{label} \u{F17B0}"))
+            RichText::new(format!("{label} {}", egui_phosphor::regular::CARET_DOWN))
                 .color(c.text_primary)
                 .size(tokens.typography.body),
         )

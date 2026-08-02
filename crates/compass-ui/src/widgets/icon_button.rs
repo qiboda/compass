@@ -93,12 +93,12 @@ mod tests {
         let clicked = Rc::new(Cell::new(0u32));
         let c = clicked.clone();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
-            if IconButton::new(&tokens, "\u{F1150}").show(ui) {
+            if IconButton::new(&tokens, "\u{E20C}").show(ui) {
                 c.set(c.get() + 1);
             }
         });
         harness.run();
-        harness.get_by_label("\u{F1150}").click();
+        harness.get_by_label("\u{E20C}").click();
         harness.run();
         assert_eq!(clicked.get(), 1);
     }
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn small_size_uses_control_sm_token() {
         let tokens = ThemeTokens::dark();
-        let big = IconButton::new(&tokens, "\u{F1150}");
+        let big = IconButton::new(&tokens, "\u{E20C}");
         assert_eq!(big.side, 32.0);
         assert_eq!(big.small().side, tokens.spacing.control_sm);
     }
@@ -119,7 +119,7 @@ mod tests {
         let clicked = Rc::new(Cell::new(false));
         let c = clicked.clone();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
-            if IconButton::new(&tokens, "\u{F1150}")
+            if IconButton::new(&tokens, "\u{E20C}")
                 .tooltip("Open")
                 .show(ui)
             {
@@ -127,7 +127,7 @@ mod tests {
             }
         });
         harness.run();
-        harness.get_by_label("\u{F1150}").click();
+        harness.get_by_label("\u{E20C}").click();
         harness.run();
         assert!(clicked.get());
     }
