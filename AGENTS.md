@@ -18,6 +18,7 @@ Python collectors 抓取数据写入 Dolt（财务数据来自 EastMoney；stock
 - 设计不对就推翻，不要叠加补丁
 - 流程有漏洞就堵，不要绕过去
 - **禁止依赖视觉表现来 debug**：UI 问题必须用客观证据定位（代码逻辑、测试断言、日志、像素采样），不靠"看起来对不对"猜
+- **agent 可自行完善项目书**：发现重复摩擦或可预防的失误时，agent 有权在 AGENTS.md / `kb/` 中添加或修订规则以改善自身行为——规则变更随当次 commit 提交并在 commit message 中说明理由（ref #N）
 
 ---
 
