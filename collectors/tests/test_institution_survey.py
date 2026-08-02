@@ -167,7 +167,7 @@ class TestImportToDolt:
     def test_same_org_different_events_not_collapsed(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Same org surveying DIFFERENT symbols on DIFFERENT dates in ONE CSV
+        """Same org surveying the same symbol on DIFFERENT dates in ONE CSV
         are distinct events and must each produce a row. F3 regression: the
         HEX(org_name) GROUP BY collapsed them into one row via MAX() (e.g.
         长信基金 484 events -> 1 row)."""
