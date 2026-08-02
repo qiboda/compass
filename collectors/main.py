@@ -229,6 +229,10 @@ def dispatch_fetch(
         import fetch_institution_survey
         asyncio.run(fetch_institution_survey.run())
 
+    elif target == "concept_member":
+        import fetch_concept_member
+        asyncio.run(fetch_concept_member.run())
+
 
 def dispatch_import(target: str) -> None:
     """Import CSV data into Dolt for the given target table.
@@ -258,6 +262,9 @@ def dispatch_import(target: str) -> None:
     elif target == "institution_survey":
         import fetch_institution_survey
         fetch_institution_survey.import_to_dolt()
+    elif target == "concept_member":
+        import fetch_concept_member
+        fetch_concept_member.import_to_dolt()
 
 
 def do_sync(restart: bool = False) -> None:
@@ -320,6 +327,12 @@ def do_sync(restart: bool = False) -> None:
     asyncio.run(fetch_institution_survey.run())
     fetch_institution_survey.import_to_dolt()
 
+    # 9. concept_member (概念板块成分)
+    print("\n[sync] Fetching concept_member...", file=sys.stderr)
+    import fetch_concept_member
+    asyncio.run(fetch_concept_member.run())
+    fetch_concept_member.import_to_dolt()
+
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)
     for tbl in [
@@ -344,14 +357,14 @@ def main() -> None:
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
     fetch.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member"],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member"],
     )
 
     sub.add_parser("sync", help="Fetch all + import all")
