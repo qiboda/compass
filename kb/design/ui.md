@@ -79,7 +79,8 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
   （名称 + mono 代码 + 交易所标签），行点击切图表、hover 删除（Modal 确认）、
   顶部搜索 + 添加按钮；watchlist 持久化到 `[watchlist]` 配置节（ref #131）
 - **Dock 区**：egui_dock `DockState` + `compass-ui::dock_style()` 深度定制
-  （tab 栏 28px、选中 accent 文字、`hline_below_active_tab_name`、separator 三色），
+  （tab 栏 28px、选中 accent 文字 + accent 描边、未选中 tab 透明描边融入
+  tab 栏、`hline_below_active_tab_name`、separator 三色），
   标签页中文标题 + 图标（ref #130）
 - **StatusBar**：`TopBottomPanel::bottom` 26px 三段式——左段标的摘要
   （mono 价格 + 涨跌幅红涨绿跌）/ 中段状态（StatusDot：loading 脉冲/error 红点）/

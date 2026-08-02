@@ -30,23 +30,32 @@ pub fn dock_style(tokens: &ThemeTokens) -> Style {
 
     // Tab interaction states (design §6.1). All seven egui_dock states are
     // covered so keyboard-focus variants never fall back to the default
-    // black/white palette that clashes with the dark theme. Inactive tabs
-    // blend into the tab bar (bg_panel) so the active tab (bg_panel_alt +
-    // accent title) stands out.
+    // black/white palette that clashes with the dark theme. The active tab
+    // gets an accent outline (TradingView-style) because bg_panel_alt vs
+    // bg_panel contrast alone is below perceptibility (~1.2:1); inactive
+    // tabs drop the default black outline so only the active tab shows a
+    // border ring.
     style.tab.active.bg_fill = c.bg_panel_alt;
     style.tab.active.text_color = c.accent;
+    style.tab.active.outline_color = c.accent;
     style.tab.inactive.bg_fill = c.bg_panel;
     style.tab.inactive.text_color = c.text_secondary;
+    style.tab.inactive.outline_color = egui::Color32::TRANSPARENT;
     style.tab.focused.text_color = c.accent;
     style.tab.focused.bg_fill = c.bg_panel_alt;
+    style.tab.focused.outline_color = c.accent;
     style.tab.hovered.bg_fill = c.bg_hover;
     style.tab.hovered.text_color = c.text_primary;
+    style.tab.hovered.outline_color = egui::Color32::TRANSPARENT;
     style.tab.active_with_kb_focus.text_color = c.accent;
     style.tab.active_with_kb_focus.bg_fill = c.bg_panel_alt;
+    style.tab.active_with_kb_focus.outline_color = c.accent;
     style.tab.inactive_with_kb_focus.bg_fill = c.bg_panel;
     style.tab.inactive_with_kb_focus.text_color = c.text_secondary;
+    style.tab.inactive_with_kb_focus.outline_color = egui::Color32::TRANSPARENT;
     style.tab.focused_with_kb_focus.text_color = c.accent;
     style.tab.focused_with_kb_focus.bg_fill = c.bg_panel_alt;
+    style.tab.focused_with_kb_focus.outline_color = c.accent;
     style.tab.spacing = 2.0;
     style.tab.hline_below_active_tab_name = true;
 
@@ -99,18 +108,28 @@ mod tests {
         let c = ColorTokens::dark();
         assert_eq!(style.tab.active.bg_fill, c.bg_panel_alt);
         assert_eq!(style.tab.active.text_color, c.accent);
+        assert_eq!(style.tab.active.outline_color, c.accent);
         assert_eq!(style.tab.inactive.bg_fill, c.bg_panel);
         assert_eq!(style.tab.inactive.text_color, c.text_secondary);
+        assert_eq!(style.tab.inactive.outline_color, egui::Color32::TRANSPARENT);
         assert_eq!(style.tab.focused.bg_fill, c.bg_panel_alt);
         assert_eq!(style.tab.focused.text_color, c.accent);
+        assert_eq!(style.tab.focused.outline_color, c.accent);
         assert_eq!(style.tab.hovered.bg_fill, c.bg_hover);
         assert_eq!(style.tab.hovered.text_color, c.text_primary);
+        assert_eq!(style.tab.hovered.outline_color, egui::Color32::TRANSPARENT);
         assert_eq!(style.tab.active_with_kb_focus.bg_fill, c.bg_panel_alt);
         assert_eq!(style.tab.active_with_kb_focus.text_color, c.accent);
+        assert_eq!(style.tab.active_with_kb_focus.outline_color, c.accent);
         assert_eq!(style.tab.inactive_with_kb_focus.bg_fill, c.bg_panel);
         assert_eq!(style.tab.inactive_with_kb_focus.text_color, c.text_secondary);
+        assert_eq!(
+            style.tab.inactive_with_kb_focus.outline_color,
+            egui::Color32::TRANSPARENT
+        );
         assert_eq!(style.tab.focused_with_kb_focus.bg_fill, c.bg_panel_alt);
         assert_eq!(style.tab.focused_with_kb_focus.text_color, c.accent);
+        assert_eq!(style.tab.focused_with_kb_focus.outline_color, c.accent);
         assert_eq!(style.tab.spacing, 2.0);
         assert!(style.tab.hline_below_active_tab_name);
     }
