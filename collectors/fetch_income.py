@@ -16,10 +16,8 @@ from common import (
     AsyncSession,
     Throttle,
     build_dates,
-    dolt_sql,
-    dolt_sql_csv,
-    dolt_table_import,
     fetch_paginated,
+    import_replace_table,
     last_report_date,
     write_csv,
 )
@@ -30,7 +28,7 @@ DOLT_TABLE = "fin_income"
 START_YEAR = 2020
 
 DDL = """\
-CREATE TABLE fin_income (
+CREATE TABLE IF NOT EXISTS fin_income (
     symbol              VARCHAR(20) NOT NULL,
     report_date         DATE NOT NULL,
     SECUCODE            VARCHAR(20),
@@ -156,69 +154,33 @@ async def run(
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
+    """Import the fetched CSV into Dolt fin_income (merge semantics).
+
+    Rows are INSERT IGNORE'd into the existing table, deduped by the PK
+    (symbol, report_date), so incremental-window CSVs append to history
+    instead of clobbering it (ref #160).
+    """
     csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
     print("[import income]", file=sys.stderr)
 
-    if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
-        return 0
-
-    tmp_table = "_tmp_inc"
-    if not dolt_table_import(tmp_table, csv_path):
-        print("  Import failed", file=sys.stderr)
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-    exists = dolt_sql_csv(
-        f"SELECT COUNT(*) FROM information_schema.tables "
-        f"WHERE table_name='{DOLT_TABLE}'"
-    ).strip().split("\n")[-1].strip()
-    if exists == "1":
-        dolt_sql(f"RENAME TABLE {DOLT_TABLE} TO {tmp_table}_old")
-    dolt_sql(DDL)
-
-    sql = f"""
-        INSERT INTO {DOLT_TABLE} (symbol, report_date, {COLS})
-        SELECT
-            CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-            REPORT_DATE, {COLS}
-        FROM {tmp_table}
-        WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
-              IN (SELECT symbol FROM stock_basic)
-    """
-    result = dolt_sql(sql, timeout=600)
-    if result.returncode != 0:
-        print(f"  SQL error: {result.stderr}", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {DOLT_TABLE}")
-        old_exists = dolt_sql_csv(
-            f"SELECT COUNT(*) FROM information_schema.tables "
-            f"WHERE table_name='{tmp_table}_old'"
-        ).strip().split("\n")[-1].strip()
-        if old_exists == "1":
-            dolt_sql(f"RENAME TABLE {tmp_table}_old TO {DOLT_TABLE}")
-            print("  Rolled back to previous data", file=sys.stderr)
-        dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-        return 0
-
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}")
-    dolt_sql(f"DROP TABLE IF EXISTS {tmp_table}_old")
-
-    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {DOLT_TABLE}")
-    lines = stdout.strip().split("\n")
-    total = int(lines[-1]) if len(lines) > 1 else 0
-    last_rpt = dolt_sql_csv(
-        f"SELECT MAX(report_date) FROM {DOLT_TABLE}"
-    ).strip().split("\n")[-1].strip()
-    last_rpt_val = "NULL" if (not last_rpt or last_rpt == "NULL") else f"'{last_rpt}'"
-
-    dolt_sql(
-        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
-        f"VALUES ('{DOLT_TABLE}', CURDATE(), 'EastMoney datacenter {REPORT_NAME}', {total}, {last_rpt_val}) "
-        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
-        f"last_report_date=VALUES(last_report_date)"
+    return import_replace_table(
+        csv_path=csv_path,
+        tmp_name="_tmp_inc",
+        ddl=DDL,
+        insert_sql=f"""
+            INSERT IGNORE INTO {DOLT_TABLE} (symbol, report_date, {COLS})
+            SELECT
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
+                REPORT_DATE, {COLS}
+            FROM _tmp_inc
+            WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
+                  IN (SELECT symbol FROM stock_basic)
+        """,
+        dolt_table=DOLT_TABLE,
+        source_label=f"EastMoney datacenter {REPORT_NAME}",
+        last_report_expr="MAX(report_date)",
+        merge=True,
     )
-    print(f"  Done: {total} rows", file=sys.stderr)
-    return total
 
 
 if __name__ == "__main__":

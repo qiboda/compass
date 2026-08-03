@@ -87,23 +87,65 @@ def _import_stock_basic() -> None:
     print(f"  Done: {total} rows", file=sys.stderr)
 
 
-def _import_fin_indicators() -> None:
-    """Import RPT_LICO_FN_CPD.csv into Dolt (legacy logic, unchanged)."""
-    from common import dolt_sql, dolt_sql_csv, dolt_table_import
+FIN_INDICATORS_DDL = """
+CREATE TABLE IF NOT EXISTS fin_indicators (
+    symbol varchar(20) NOT NULL COMMENT '股票代码 (SZ000001)',
+    report_date date NOT NULL COMMENT '报告期',
+    update_date date COMMENT '数据最后更新日期',
+    notice_date date COMMENT '公告日期',
+    data_type varchar(20) COMMENT '报告类型 (2025年 年报)',
+    qdate varchar(8) COMMENT '季度标签 (2025Q4)',
+    eitime datetime COMMENT '精确发布时间',
+    data_year int COMMENT '数据年份',
+    date_label varchar(10) COMMENT '日期标签 (年报/一季报/...)',
+    secucode varchar(20) COMMENT 'ts_code格式 (000001.SZ)',
+    name varchar(100) COMMENT '证券简称',
+    trade_market varchar(20) COMMENT '交易市场',
+    trade_market_code varchar(20) COMMENT '交易市场代码',
+    trade_market_zjg varchar(10) COMMENT '证监会市场代码',
+    security_type varchar(10) COMMENT '证券类型',
+    security_type_code varchar(20) COMMENT '证券类型代码',
+    industry varchar(50) COMMENT '东财行业',
+    board_code varchar(10) COMMENT '板块代码',
+    board_name varchar(50) COMMENT '板块名称',
+    ori_board_code varchar(10) COMMENT '原始板块代码',
+    org_code varchar(20) COMMENT '机构代码',
+    is_new tinyint COMMENT '是否新股',
+    basic_eps double COMMENT '基本每股收益',
+    deduct_basic_eps double COMMENT '扣非每股收益',
+    revenue double COMMENT '营业总收入',
+    net_profit double COMMENT '归母净利润',
+    roe double COMMENT '加权净资产收益率(%)',
+    bps double COMMENT '每股净资产',
+    cash_flow_per_share double COMMENT '每股经营现金流',
+    gross_margin double COMMENT '销售毛利率(%)',
+    revenue_yoy double COMMENT '营收同比(%)',
+    net_profit_yoy double COMMENT '净利同比(%)',
+    operating_profit_yoy double COMMENT '营业利润同比(%)',
+    net_profit_qoq double COMMENT '净利环比(%)',
+    shares_growth double COMMENT '最新股本增长率',
+    dividend_plan text COMMENT '分红方案',
+    dividend_year varchar(10) COMMENT '分红年度',
+    PRIMARY KEY (symbol, report_date)
+)
+"""
 
-    csv_path = COLLECTORS_DIR / "RPT_LICO_FN_CPD.csv"
+
+def _import_fin_indicators() -> int:
+    """Import RPT_LICO_FN_CPD.csv into Dolt (merge semantics, ref #160).
+
+    Rows are INSERT IGNORE'd into the existing fin_indicators table, deduped
+    by the PK (symbol, report_date), so incremental-window CSVs append to
+    history instead of clobbering it.
+    """
+    from common import import_replace_table
+
     print("[import fin_indicators]", file=sys.stderr)
-
-    if not csv_path.exists():
-        print(f"  ERROR: {csv_path} not found.", file=sys.stderr)
-        return
-
-    dolt_sql("DROP TABLE IF EXISTS _tmp_fin")
-    dolt_table_import("_tmp_fin", csv_path)
-
-    dolt_sql("DELETE FROM fin_indicators")
-    sql = """
-        INSERT INTO fin_indicators (
+    return import_replace_table(
+        csv_path=COLLECTORS_DIR / "RPT_LICO_FN_CPD.csv",
+        tmp_name="_tmp_fin",
+        ddl=FIN_INDICATORS_DDL,
+        insert_sql="""INSERT IGNORE INTO fin_indicators (
             symbol, report_date, update_date, notice_date,
             data_type, qdate, eitime, data_year, date_label,
             secucode, name, trade_market, trade_market_code, trade_market_zjg,
@@ -127,26 +169,12 @@ def _import_fin_indicators() -> None:
             ZXGXL, ASSIGNDSCRPT, PAYYEAR
         FROM _tmp_fin
         WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
-              IN (SELECT symbol FROM stock_basic)
-    """
-    dolt_sql(sql, timeout=600)
-    dolt_sql("DROP TABLE IF EXISTS _tmp_fin")
-
-    stdout = dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")
-    lines = stdout.strip().split("\n")
-    total = lines[-1] if len(lines) > 1 else "?"
-    last_rpt = dolt_sql_csv(
-        "SELECT MAX(report_date) FROM fin_indicators"
-    ).strip().split("\n")[-1].strip()
-    last_rpt_val = "NULL" if (not last_rpt or last_rpt == "NULL") else f"'{last_rpt}'"
-    dolt_sql(
-        "INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
-        "VALUES ('fin_indicators', CURDATE(), 'EastMoney datacenter RPT_LICO_FN_CPD', "
-        f"{total if total != '?' else 0}, {last_rpt_val}) "
-        "ON DUPLICATE KEY UPDATE last_updated=CURDATE(), "
-        "row_count=VALUES(row_count), last_report_date=VALUES(last_report_date)"
+              IN (SELECT symbol FROM stock_basic)""",
+        dolt_table="fin_indicators",
+        source_label="EastMoney datacenter RPT_LICO_FN_CPD",
+        last_report_expr="MAX(report_date)",
+        merge=True,
     )
-    print(f"  Done: {total} rows", file=sys.stderr)
 
 
 # ── sync_investment_data ────────────────────────────────────────
