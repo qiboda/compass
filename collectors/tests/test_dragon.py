@@ -417,3 +417,23 @@ class TestRun:
             await run(start_date="2024-12-30", end_date="2024-12-30")
 
         assert not stale.exists()
+
+
+# ── _as_float tests ──
+
+
+class TestAsFloat:
+    def test_string_parsed(self) -> None:
+        from fetch_dragon import _as_float  # noqa: E402
+
+        assert _as_float("123.45") == 123.45
+
+    def test_string_invalid_returns_zero(self) -> None:
+        from fetch_dragon import _as_float  # noqa: E402
+
+        assert _as_float("abc") == 0.0
+
+    def test_none_returns_zero(self) -> None:
+        from fetch_dragon import _as_float  # noqa: E402
+
+        assert _as_float(None) == 0.0

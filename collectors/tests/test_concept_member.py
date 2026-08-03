@@ -413,3 +413,160 @@ class TestRun:
             await run()
 
         assert not (tmp_path / "RPT_F10_CORETHEME_BOARDTYPE.csv").exists()
+
+
+# ── fetch_board_list / fetch_board_members direct tests ──
+
+
+class TestFetchBoardList:
+    async def test_429_retries_then_success(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 429 response is retried once, then the board list is returned."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_list  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        call_count = [0]
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return StubResponse(status_code=429)
+            return StubResponse(json_data=_board_list_json([("BK1169", "Kimi概念")]))
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        boards = await fetch_board_list(stub, Throttle(min_interval=0))
+        assert boards == [("BK1169", "Kimi概念")]
+        assert call_count[0] == 2
+
+    async def test_paginates_multiple_pages(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Boards are fetched page by page until the reported total is reached."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_list  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        pages = {
+            1: [(f"BK{i}", f"b{i}") for i in range(1, 101)],
+            2: [(f"BK{i}", f"b{i}") for i in range(101, 201)],
+            3: [(f"BK{i}", f"b{i}") for i in range(201, 251)],
+        }
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            pn = (params or {}).get("pn", 1)
+            page = pages.get(pn, [])
+            return StubResponse(json_data={
+                "rc": 0,
+                "data": {"total": 250, "diff": [{"f12": c, "f14": n} for c, n in page]},
+            })
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        boards = await fetch_board_list(stub, Throttle(min_interval=0))
+        assert len(boards) == 250
+
+    async def test_429_always_leaves_no_data(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Persistent 429s exhaust all retries and yield an empty board list."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_list  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            return StubResponse(status_code=429)
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        boards = await fetch_board_list(stub, Throttle(min_interval=0))
+        assert boards == []
+
+
+class TestFetchBoardMembers:
+    async def test_429_retries_then_success(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 429 is retried, then the members are flattened and returned."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_members  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        call_count = [0]
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return StubResponse(status_code=429)
+            return StubResponse(json_data=_member_json([
+                {"SECUCODE": "600880.SH", "SECURITY_CODE": "600880",
+                 "NEW_BOARD_CODE": "BK1169", "BOARD_NAME": "Kimi概念"},
+            ]))
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        records = await fetch_board_members(stub, Throttle(min_interval=0), "BK1169", 100)
+        assert len(records) == 1
+
+    async def test_429_always_leaves_data_none(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Persistent 429s keep data None → 'No data returned' break."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_members  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        async def _get(url: str, params: dict | None = None, headers: dict | None = None):  # noqa: ANN001, ANN002, ANN003
+            return StubResponse(status_code=429)
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        records = await fetch_board_members(stub, Throttle(min_interval=0), "BK1169", 100)
+        assert records == []
+
+    async def test_success_false_breaks(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """success=False → API error printed, records stay empty."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_members  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(json_data={"success": False, "message": "API down"})
+
+        records = await fetch_board_members(stub, Throttle(min_interval=0), "BK1169", 100)
+        assert records == []
+
+    async def test_result_none_breaks(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """result=None → break, records stay empty."""
+        from common import Throttle  # noqa: E402
+        from fetch_concept_member import fetch_board_members  # noqa: E402
+
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(json_data={"success": True, "result": None})
+
+        records = await fetch_board_members(stub, Throttle(min_interval=0), "BK1169", 100)
+        assert records == []
