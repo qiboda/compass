@@ -582,3 +582,36 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"端到端/收尾声称与事实不符"模式第三次出现**（ref #119 过度声称 #121/#122 已落地、ref #117 agent 遗漏收尾、本次 F3 声称已验证但脚本未打通数据路径）：验证类声称必须以客观数据/代码证据为准，不能凭命令执行或 mock 通过——本次已在反思条目 #119 落实"核实后收尾"AGENTS.md 规则，本次进一步要求"数据终态证据"（建议未来在 testing.md 固化"端到端验证必须有真实数据断言"）
 - **"库行为凭假设/记忆导致返工"模式反复**（ref #131/#155 kittest 时序凭假设、ref #105 控件形态凭想象、本次 dolt `-c` 推断与 utf8mb4 bug 凭假设）：外部库行为（含 dolt/DuckDB/kittest）必须先实测或读源码确认再设计，review 抓出即返工
 - **review 驱动的缺陷发现密度高但前置验证不足**（本次 6 commit 均由 review 驱动，每轮都抓出真实数据缺陷）：提交前用真实数据 + 判别性测试前置验证，可减少 review 轮次；判别性测试（RED first）是防止"测试通过但语义错误"的关键
+
+## 2026-08-03 — ref #159 MCP 401 根因 + 问题处理闭环机制 + import --since 数据覆盖事故
+
+**What was done**: 修复 MCP github server 401（根因：server-github v0.6.2 只读 `GITHUB_PERSONAL_ACCESS_TOKEN`，配置用了 `GITHUB_TOKEN`，Authorization header 从未注入）；新增「问题处理闭环」机制（AGENTS.md 品质准则 + compass-workflow skill 规则 #1 + 新建 `kb/dev/toolchain.md` 问题排查卡）；执行 investment_data 同步时 `import --since` 覆盖了 stock_daily.parquet（18M 行→5534 行），已全量重建恢复 + 修正 4 处误导文档。
+
+**User corrections**（逐字引用对话记录）:
+1. "MCP 工具未认证，改用 gh CLI：这个还是没有解决mcp的问题。导致工作流程不丝滑啊。" —— 我把 gh CLI fallback 当作解决，用户指出 MCP 根因未除
+2. "你仍然局限了，是任何问题，不是这个问题，是你在执行过程遇到的任何问题。" —— 我把机制局限在 MCP 单一问题上，用户要求普适的"执行中任何异常"闭环
+3. "我要的是出现问题了，要能自身反应过来，并处理，并记录。" —— 用户要的是 agent 主动感知/处理/记录的机制，不是被动文档
+4. "更重要的是为什么你之前没有发现这些问题？ 记录的话，这些确实会变成类似流水账的内容？？？ 先记在 2 吧。" —— 用户追问根因分析而非事件流水账，并选择 toolchain.md 作为沉淀位置
+
+**What went wrong**:
+1. **MCP 401 后直接 fallback 到 gh CLI 成功，把绕行当解决**——违反 AGENTS.md 已有的"流程有漏洞就堵"精神，掩盖根因 20+ 天（配置 7-20 创建）。直到用户追问"还是没有解决"才回头诊断。
+2. **`import --since 20260801` 覆盖了 stock_daily.parquet**（689MB/1829 万行 → 237KB/5534 行）：我把文档标注的"增量"当成了追加，实际 `import_dolt.rs` 无 merge 逻辑——`--since` 只是 SQL WHERE 过滤后原子覆盖全文件。数据从 Dolt 源重建恢复（18293598 行），但 GUI 停机 + 惊险一次。
+3. **误导性文档是我照抄扩写的**：AGENTS.md 原有注释"import --since 增量"就有问题，我在 database.md 同步流程里又写了 `import --since <最近一次 import 日期>`——文档是我写的，事故路径有我一份。
+
+**Lessons learned**:
+1. 工具失败时"改用替代工具"不是解决——必须先走问题处理闭环（感知→诊断→处理→记录），fallback 只在根因确认无法修复时允许。绕行本身是违规。
+2. **破坏性命令（覆盖/删除/重置）执行前先读源码确认 merge/覆盖行为**，不要信文档"增量/追加"注释——文档语义与实现可能背离（import vs import-compass 的 --since 语义就不同）。
+3. 自己写文档时要对命令语义负责——写"增量"前先验证实现是否真增量；本次如果 database.md 写前读了 import_dolt.rs，事故可避免。
+4. 环境变量类配置坑的排查路径（/proc/<pid>/environ + stdio 直测 + curl 对比）值得沉淀为可复用排查卡——这正是 toolchain.md 的价值。
+
+**Process improvements**:
+- AGENTS.md 品质准则新增「问题处理闭环（强制）」规则——禁止静默绕过/降级，必须感知→诊断→处理→记录（本 commit 落实）
+- compass-workflow skill 新增最高优先级规则 #1（同一闭环），原规则顺延 2-12（本 commit 落实）
+- `kb/dev/toolchain.md` 新建——问题排查卡格式（症状/根因/排查路径/修复/验证），首条 MCP 案例（本 commit 落实）
+- 修正 4 处误导文档：AGENTS.md、kb/dev/database.md、kb/user/cli.md、kb/dev/process.md 中 `import --since` 描述改为"过滤子集直写覆盖全文件，非增量追加"（commit 3165630）
+- toolchain.md 新增第二条排查卡：`import --since` 覆盖陷阱（含诊断路径与教训）
+
+### Trends (last 10)
+- **"增量语义误读导致数据丢失"第二次出现**（ref #139 增量窗口+整表替换覆盖历史、本次 `import --since` 过滤覆盖全文件）：数据管线"增量"二字多次误导——ref #139 已在 cli.md 固化 merge 语义，本次再暴露 import 与 import-compass 的 --since 语义分歧。建议：在 import_dolt.rs 的 `--since` 处加文档注释警示"覆盖全文件"，或在 CLI 帮助文本直接标注非追加（proposed）
+- **"fallback 掩盖根因"与"文档与实现背离"共同导致事故**（本次 MCP 401 绕行 + import --since 文档误导）：两条都指向"以源码/实测为准，不信注释与记忆"——AGENTS.md 问题处理闭环规则已固化感知→诊断→处理→记录，toolchain.md 提供排查路径
+- **数据事故均无永久损失但本可避免**（ref #139 Dolt 数据污染需重抓、本次 parquet 覆盖需全量重建）：Dolt 是权威源可重建是安全网，但 GUI 停机即损失——破坏性命令执行前读源码确认语义应成为习惯（本次已写入排查卡教训）
