@@ -171,7 +171,7 @@ uv run python main.py sync-investment --restart
 关键概念：
 - **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt
-- **增量机制**：既有财务采集器用 `.state.json` 跟踪上次获取时间；SEPA 采集器（main_flow/dragon/block_trade/institution_survey/concept_member）改用 Dolt `data_updates.last_report_date` 增量，且任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。4 个时间序列表（main_flow/dragon/block_trade/institution_survey）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史；concept_member 是全量重写（版本快照）。长文本表（institution_survey org_name 可达 ~800 字节）用显式宽 schema 建临时表导入（`dolt table import -u`），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8。
+- **增量机制**：财务四表（fin_balance_sheet/fin_income/fin_cash_flow/fin_indicators）与 SEPA 采集器（main_flow/dragon/block_trade/institution_survey/concept_member）改用 Dolt `data_updates.last_report_date` 锚点，只抓 `>= 最新已抓报告期` 的窗口（最新报告期会重抓以捕获期内新披露公司）；任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。财务四表 + 4 个时间序列表（main_flow/dragon/block_trade/institution_survey）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史；concept_member 是全量重写（版本快照）。长文本表（institution_survey org_name 可达 ~800 字节）用显式宽 schema 建临时表导入（`dolt table import -u`），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8。
 
 SEPA 采集器说明：
 - `main_flow`：东财 push2 当日全市场主力资金流截面（f62/f184/f66/f72/f78/f84）；按 (symbol, trade_date) 累积每日截面（merge 导入）

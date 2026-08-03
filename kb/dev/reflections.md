@@ -583,6 +583,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"库行为凭假设/记忆导致返工"模式反复**（ref #131/#155 kittest 时序凭假设、ref #105 控件形态凭想象、本次 dolt `-c` 推断与 utf8mb4 bug 凭假设）：外部库行为（含 dolt/DuckDB/kittest）必须先实测或读源码确认再设计，review 抓出即返工
 - **review 驱动的缺陷发现密度高但前置验证不足**（本次 6 commit 均由 review 驱动，每轮都抓出真实数据缺陷）：提交前用真实数据 + 判别性测试前置验证，可减少 review 轮次；判别性测试（RED first）是防止"测试通过但语义错误"的关键
 
+
 ## 2026-08-03 — ref #159 MCP 401 根因 + 问题处理闭环机制 + import --since 数据覆盖事故
 
 **What was done**: 修复 MCP github server 401（根因：server-github v0.6.2 只读 `GITHUB_PERSONAL_ACCESS_TOKEN`，配置用了 `GITHUB_TOKEN`，Authorization header 从未注入）；新增「问题处理闭环」机制（AGENTS.md 品质准则 + compass-workflow skill 规则 #1 + 新建 `kb/dev/toolchain.md` 问题排查卡）；执行 investment_data 同步时 `import --since` 覆盖了 stock_daily.parquet（18M 行→5534 行），已全量重建恢复 + 修正 4 处误导文档。
@@ -615,3 +616,35 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"增量语义误读导致数据丢失"第二次出现**（ref #139 增量窗口+整表替换覆盖历史、本次 `import --since` 过滤覆盖全文件）：数据管线"增量"二字多次误导——ref #139 已在 cli.md 固化 merge 语义，本次再暴露 import 与 import-compass 的 --since 语义分歧。建议：在 import_dolt.rs 的 `--since` 处加文档注释警示"覆盖全文件"，或在 CLI 帮助文本直接标注非追加（proposed）
 - **"fallback 掩盖根因"与"文档与实现背离"共同导致事故**（本次 MCP 401 绕行 + import --since 文档误导）：两条都指向"以源码/实测为准，不信注释与记忆"——AGENTS.md 问题处理闭环规则已固化感知→诊断→处理→记录，toolchain.md 提供排查路径
 - **数据事故均无永久损失但本可避免**（ref #139 Dolt 数据污染需重抓、本次 parquet 覆盖需全量重建）：Dolt 是权威源可重建是安全网，但 GUI 停机即损失——破坏性命令执行前读源码确认语义应成为习惯（本次已写入排查卡教训）
+
+## 2026-08-03 — ref #160 财务采集器 merge 增量改造 + fin_balance_sheet 数据丢失修复
+
+**What was done**: 修复 #160：财务四表（fin_balance_sheet/fin_income/fin_cash_flow/fin_indicators）导入从整表替换/DELETE+INSERT 改为 `common.import_replace_table(merge=True)`（INSERT IGNORE + PK (symbol, report_date) 去重），消除"增量窗口 + 整表替换 = 历史丢失"根因（fin_balance_sheet 130927 行曾被覆盖成 1 行测试样例行）。完成 fin_balance_sheet 全量重建（130817 行、26 报告期、垃圾行被真实值替换）、三表 06-30 增量补采、fin_* parquet 重生成（行数==Dolt）、sepa 补跑 08-03；Dolt D1/D2 已 push remote，GitHub 4 commit 待批准推送。
+
+**User corrections**（逐字引用对话记录）:
+1. "增量获取数据，过往的历史数据从哪里来呢？csv怎么处理，有没有测试csv是否会被覆盖的问题" —— 追问 merge 架构下历史来源与 CSV 覆盖测试缺口，促使补 run() 级 `test_run_incremental_overwrites_stale_csv`（B9）
+2. "测试agent 单独plan一下，编写测试用例的规划。" —— 要求测试用例规划由独立 agent 产出（已执行：测试规划 agent → `.omo/plans/fin-incremental-tests.md`）
+3. "接受修复，然后python没有支持logger吗？支持一下。此外，是不是返回其他值更好，返回值也应该反应内部状况。" —— review MAJOR（merge 失败静默吞错）修复决策：接受 + 用 logger 替代裸 print + 返回值应反映内部状况（最终：保持 int 契约 + logger 输出 inserted 计数）
+
+**What went wrong**:
+1. **Wave 4 数据操作未在 review 前完成（Goal review FAIL）**：plan 波次顺序是 Wave 4（数据操作）→ Wave 5（review/push），但我在 Wave 3 commit 后直接进入 review，Goal agent 核实 live Dolt 发现 fin_balance_sheet 仍 1 行垃圾、三表未补采、parquet 未重生成、sepa 未补跑——验收项全部未执行。执行顺序偏差导致 review 一轮 FAIL。
+2. **重构丢失既有错误诊断（Quality MAJOR）**：旧 bespoke `import_to_dolt()` 在 INSERT 失败时 `print(f"  SQL error: {result.stderr}")`，重构为 `import_replace_table(merge=True)` 薄包装后，common.py merge 分支失败静默 `return 0` 且 main.py 忽略返回值——导入失败完全不可见（违反 AGENTS.md 禁止静默降级）。review 抓出后已修复（c5800c8：logger.error + inserted 计数，test-first caplog 断言）。
+3. **logger 与 pytest capsys 的坑**：`logging.basicConfig` 在模块 import 时绑定 stderr，pytest capsys 事后替换 sys.stderr 捕获不到 logger 输出——首个测试用 capsys 断言失败，改用 caplog 后才绿。这是测试侧的时间/绑定顺序陷阱。
+4. **验收标准依赖上游 stock_basic 快照**：T11 目标"06-30 ≥102 家"实际 Dolt 100/99/99——2 只 BSE IPO（920107 恒兴股份过会未上市、920258 聚仁新材今日上市）不在 08-01 stock_basic 快照白名单，被设计内 `IN (SELECT symbol FROM stock_basic)` 过滤；fin_indicators raw 234 含 135 只新三板非 A 股同样被过滤。系统性上限（balance_sheet 同为 100），非回归，stock_basic 刷新后 merge 幂等补入。
+
+**Lessons learned**:
+1. **review 前必须完整走完 plan 波次**：数据操作（Wave 4）是验收项实体，必须在 review（Wave 5）前完成——顺序偏差让 review 抓"没做的活"而非"做错的活"，浪费一轮。plan 波次依赖需严格遵循。
+2. **重构必须保留既有错误诊断**：把自实现逻辑换成共享 primitive 时，先对照旧代码的失败路径输出（print SQL error → logger.error），丢失诊断 = 静默降级。test-first 应覆盖失败路径断言（caplog 断言 error 记录出现），不止断言返回值。
+3. **测试断言 logger 输出用 caplog，不用 capsys**：logging handler 在 import 时绑定 stderr，capsys 事后替换捕获不到——caplog 是 pytest 原生 logging 捕获，语义正确。
+4. **验收标准依赖上游快照时应预见白名单约束**：用 `stock_basic` 白名单过滤的导入，验收目标应基于"API 可获取上限 − 白名单缺失标的"或明确标注"待 stock_basic 刷新后幂等补入"——避免验收数字与实际系统性上限脱节。
+
+**Process improvements**:
+- `collectors/common.py` merge 失败路径 `logger.error("  SQL error: %s", ...)` + 成功 `logger.info("  Done: %s rows (inserted N this run)")`（本 commit c5800c8 落实，含模块级 logger + stderr fallback）
+- `collectors/tests/test_common.py` 新增 2 个 caplog 测试：`test_merge_insert_failure_logs_sql_error` / `test_merge_success_logs_inserted_row_count`（RED→GREEN，防静默回归）
+- `kb/design/data-providers.md` 决策记录新增 ref #160 行 + 修正 ref #139 行的错误排除原因；`kb/user/cli.md` 增量机制更新（data_updates 锚点 + 财务四表 merge）
+- `.omo/plans/fin-incremental-merge.md` + `fin-incremental-tests.md` 归档（plan/测试规划随实现提交）
+
+### Trends (last 10)
+- **"review 抓出本可前置验证的问题"模式第三次出现**（ref #139 声称端到端已验证但数据路径未打通、ref #159 破坏性命令未读源码、本次 Wave 4 未执行 + 重构丢诊断）：review 的价值密度高但前置验证不足是反复模式——plan 波次顺序严格执行 + 重构前后行为对照（尤其失败路径）应成为习惯；本次已用 caplog 失败路径测试固化
+- **"端到端/收尾声称与事实不符"延续正确实践**（ref #119/#117/#139 教训后）：本次 T10/T11 均以真实数据终态验证（Dolt 行数、parquet 对比、API probe、watermark 核查），未重蹈"命令执行过=验证过"覆辙——数据终态证据纪律在延续
+- **数据管线"白名单/锚点"约束反复影响验收**（ref #139 增量窗口、ref #159 --since 语义、本次 stock_basic 白名单）：导入语义（merge/替换）与过滤条件（白名单/锚点）必须写进决策记录并明确其对验收数字的影响，防验收与实际系统性上限脱节

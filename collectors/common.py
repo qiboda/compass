@@ -6,6 +6,7 @@ and state-file management — used by all collector modules.
 
 import asyncio
 import csv
+import logging
 import os
 import random
 import subprocess
@@ -18,6 +19,12 @@ from curl_cffi.requests import AsyncSession
 
 # curl_cffi AsyncSession is generic over response type; pin to Any
 CFFI_SESSION: TypeAlias = AsyncSession[Any]
+
+# Module logger: diagnostics (SQL errors, insert counts) go through logging so
+# callers can route them; unconfigured roots fall back to stderr (basicConfig).
+logger = logging.getLogger("compass_collectors")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 __all__ = [
     "AsyncSession",
@@ -195,9 +202,14 @@ def import_replace_table(
     → DDL creates fresh table → INSERT SELECT fills → failure rolls back →
     data_updates upsert. Flow (merge): optional wide temp create → DDL
     CREATE IF NOT EXISTS → INSERT IGNORE SELECT → data_updates upsert.
-    Returns the imported row count, or 0 when the CSV is missing or the
-    import fails (previous table contents are preserved).
+
+    Returns the final full-table row count after import, or 0 when the CSV is
+    missing or the import fails (previous table contents are preserved).
+    In merge mode the number of rows actually inserted this run (INSERT IGNORE
+    dedupes overlapping PKs) is logged via ``logger.info``; failures log the
+    SQL error via ``logger.error`` (never silently swallowed).
     """
+    before_total = 0
     if not csv_path.exists():
         print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
         return 0
@@ -207,9 +219,16 @@ def import_replace_table(
         return 0
 
     if merge:
+        before_total = int(
+            dolt_sql_csv(f"SELECT COUNT(*) FROM {dolt_table}")
+            .strip().split("\n")[-1]
+            if _table_exists(dolt_table) == "1" else 0
+        )
         created = dolt_sql(ddl).returncode == 0
         result = dolt_sql(insert_sql, timeout=600) if created else None
         if result is None or result.returncode != 0:
+            if result is not None and result.stderr:
+                logger.error("  SQL error: %s", result.stderr.strip())
             dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
             return 0
         dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
@@ -250,7 +269,11 @@ def import_replace_table(
         f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
         f"last_report_date=VALUES(last_report_date)"
     )
-    print(f"  Done: {total} rows", file=sys.stderr)
+    if merge:
+        inserted = max(total - before_total, 0)
+        logger.info("  Done: %s rows (inserted %d this run)", dolt_table, inserted)
+    else:
+        print(f"  Done: {total} rows", file=sys.stderr)
     return total
 
 

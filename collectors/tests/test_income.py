@@ -31,12 +31,17 @@ _HEADER = [
 ]
 
 
-def _make_row(secucode: str = "000001.SZ") -> list[str]:
+def _make_row(
+    secucode: str = "000001.SZ",
+    report_date: str = "2024-12-31",
+    parent_netprofit: str = "1000",
+) -> list[str]:
+    """Build a full 46-col row with minimal data populated."""
     row = [""] * len(_HEADER)
     row[_HEADER.index("SECUCODE")] = secucode
     row[_HEADER.index("SECURITY_CODE")] = secucode.split(".")[0]
-    row[_HEADER.index("REPORT_DATE")] = "2024-12-31"
-    row[_HEADER.index("PARENT_NETPROFIT")] = "1000"
+    row[_HEADER.index("REPORT_DATE")] = report_date
+    row[_HEADER.index("PARENT_NETPROFIT")] = parent_netprofit
     return row
 
 
@@ -70,7 +75,7 @@ class TestImportToDolt:
 
         dolt_sql_csv(
             "CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY); "
-            "INSERT INTO stock_basic VALUES ('SZ000001')"
+            "INSERT INTO stock_basic VALUES ('SZ000001'), ('SZ000002')"
         )
         dolt_sql_csv(
             "CREATE TABLE data_updates (table_name VARCHAR(50) PRIMARY KEY, "
@@ -110,9 +115,95 @@ class TestImportToDolt:
         ).strip()
         assert "1" in row and "2024-12-31" in row
 
-    def test_rerun_replaces_table_without_duplicates(
+    def test_incremental_merge_appends_preserving_history(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
+        """CSV B (same row + new symbol + older period) appends to existing history."""
+        from fetch_income import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "inc.csv"
+        self._write_csv(csv_path, [_make_row()])
+        assert import_to_dolt(csv_path) == 1
+
+        self._write_csv(
+            csv_path,
+            [
+                _make_row(),
+                _make_row(secucode="000002.SZ"),
+                _make_row(report_date="2023-12-31"),
+            ],
+        )
+        rows = import_to_dolt(csv_path)
+        assert rows == 3
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "3"
+        assert self._last(dolt_sql_csv(
+            "SELECT PARENT_NETPROFIT FROM fin_income "
+            "WHERE symbol='SZ000001' AND report_date='2024-12-31'"
+        )) == "1000"
+        assert self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM fin_income WHERE symbol='SZ000002'"
+        )) == "1"
+        assert self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM fin_income WHERE report_date='2023-12-31'"
+        )) == "1"
+        row = dolt_sql_csv(
+            "SELECT row_count, last_report_date FROM data_updates "
+            "WHERE table_name='fin_income'"
+        ).strip()
+        assert "3" in row and "2024-12-31" in row
+
+    def test_incremental_window_preserves_older_history(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Incremental-window CSV B must not erase periods older than the window."""
+        from fetch_income import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "inc.csv"
+        self._write_csv(csv_path, [_make_row(), _make_row(report_date="2023-12-31")])
+        assert import_to_dolt(csv_path) == 2
+
+        self._write_csv(csv_path, [_make_row(), _make_row(secucode="000002.SZ")])
+        rows = import_to_dolt(csv_path)
+        assert rows == 3
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "3"
+        assert self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM fin_income "
+            "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
+        )) == "1"
+        row = dolt_sql_csv(
+            "SELECT row_count FROM data_updates WHERE table_name='fin_income'"
+        ).strip()
+        assert "3" in row
+
+    def test_restated_overlap_value_ignored_on_merge(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """A restated value for an existing (symbol, report_date) is ignored on merge."""
+        from fetch_income import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "inc.csv"
+        self._write_csv(csv_path, [_make_row()])
+        assert import_to_dolt(csv_path) == 1
+
+        self._write_csv(
+            csv_path,
+            [_make_row(parent_netprofit="200"), _make_row(secucode="000002.SZ")],
+        )
+        rows = import_to_dolt(csv_path)
+        assert rows == 2
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "2"
+        assert self._last(dolt_sql_csv(
+            "SELECT PARENT_NETPROFIT FROM fin_income "
+            "WHERE symbol='SZ000001' AND report_date='2024-12-31'"
+        )) == "1000"
+
+    def test_same_report_refetch_idempotent(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Re-importing the same CSV twice yields a single row (PK dedup)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -124,10 +215,30 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "1"
 
-    def test_first_run_insert_failure_leaves_no_table(
+    def test_merge_watermark_full_total_and_max_date(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """First-run INSERT failure drops the table cleanly."""
+        """Watermark row_count is the full-table count, not just this CSV's rows."""
+        from fetch_income import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "inc.csv"
+        self._write_csv(csv_path, [_make_row(report_date="2023-12-31")])
+        assert import_to_dolt(csv_path) == 1
+
+        self._write_csv(csv_path, [_make_row()])
+        rows = import_to_dolt(csv_path)
+        assert rows == 2
+        row = dolt_sql_csv(
+            "SELECT row_count, last_report_date FROM data_updates "
+            "WHERE table_name='fin_income'"
+        ).strip()
+        assert "2" in row and "2024-12-31" in row
+
+    def test_first_run_insert_failure_leaves_empty_table(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """First-run INSERT failure leaves the table present but empty (merge semantics)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -137,16 +248,21 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 0
-        cnt = self._last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_name='fin_income'"
-        ))
-        assert cnt == "0"
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "0"
+        for t in ("_tmp_inc", "_tmp_inc_old"):
+            cnt = self._last(dolt_sql_csv(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                f"WHERE table_name='{t}'"
+            ))
+            assert cnt == "0"
+        assert self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM data_updates WHERE table_name='fin_income'"
+        )) == "0"
 
-    def test_rerun_insert_failure_rolls_back(
+    def test_rerun_insert_failure_preserves_prior_rows(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Rerun with failing INSERT restores previous data."""
+        """Rerun with failing INSERT keeps prior rows and the watermark (merge semantics)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -159,6 +275,21 @@ class TestImportToDolt:
         rows = import_to_dolt(csv_path)
         assert rows == 0
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "1"
+        assert self._last(dolt_sql_csv(
+            "SELECT PARENT_NETPROFIT FROM fin_income "
+            "WHERE symbol='SZ000001' AND report_date='2024-12-31'"
+        )) == "1000"
+        for t in ("_tmp_inc", "_tmp_inc_old"):
+            cnt = self._last(dolt_sql_csv(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                f"WHERE table_name='{t}'"
+            ))
+            assert cnt == "0"
+        row = dolt_sql_csv(
+            "SELECT row_count, last_report_date FROM data_updates "
+            "WHERE table_name='fin_income'"
+        ).strip()
+        assert "1" in row and "2024-12-31" in row
 
     def test_csv_not_found_returns_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -270,4 +401,79 @@ class TestRun:
             result = await run(years=[2024], periods="Q1,Q2", page_size=100)
 
         assert result.name == "RPT_DMSK_FN_INCOME.csv"
+
+    async def test_run_incremental_overwrites_stale_csv(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """run() overwrites a stale CSV; history lives in Dolt, not the CSV."""
+        from fetch_income import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+        monkeypatch.setattr("fetch_income.last_report_date", lambda _tbl: "2026-06-30")
+
+        stale = tmp_path / "RPT_DMSK_FN_INCOME.csv"
+        stale.write_text("code,REPORT_DATE\n000001,2024-12-31\n", encoding="utf-8-sig")
+
+        stub = make_stub_session(
+            json_data={
+                "success": True,
+                "result": {
+                    "data": [{"code": "000001", "REPORT_DATE": "2026-06-30"}],
+                    "pages": 1,
+                },
+            }
+        )
+
+        with patch("fetch_income.AsyncSession", return_value=stub):
+            result = await run(years=[2026], periods="Q2", page_size=100)
+
+        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        with open(stale, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        assert rows == [{"code": "000001", "REPORT_DATE": "2026-06-30"}]
+
+    async def test_run_incremental_window_starts_at_watermark(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """run() refetches the watermark period but skips older ones (d >= since)."""
+        from fetch_income import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+        monkeypatch.setattr("fetch_income.last_report_date", lambda _tbl: "2026-06-30")
+
+        calls: list[str] = []
+
+        async def _get(
+            url: str, params: dict[str, str] | None = None, headers: object | None = None
+        ) -> StubResponse:
+            assert params is not None
+            calls.append(params["filter"])
+            return StubResponse(
+                json_data={
+                    "success": True,
+                    "result": {
+                        "data": [{"code": "000001", "REPORT_DATE": "2026-06-30"}],
+                        "pages": 1,
+                    },
+                }
+            )
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_income.AsyncSession", return_value=stub):
+            result = await run(years=[2026], periods="Q1,Q2", page_size=100)
+
+        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        assert len(calls) == 1
+        assert "(REPORT_DATE='2026-06-30')" in calls[0]
+        with open(tmp_path / "RPT_DMSK_FN_INCOME.csv", newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        assert rows == [{"code": "000001", "REPORT_DATE": "2026-06-30"}]
 

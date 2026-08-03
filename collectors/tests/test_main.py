@@ -8,7 +8,10 @@ avoid real network/Dolt calls.
 from __future__ import annotations
 
 import contextlib
+import csv
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -616,6 +619,222 @@ class TestImportFinIndicators:
         assert mock_sql.call_count >= 3
         mock_table_import.assert_called_once()
         assert mock_sql_csv.call_count >= 2
+
+
+# ═══════════════════════════════════════════════════════════════════
+# _import_fin_indicators — merge semantics (temp Dolt + COMPASS_DATA_DIR)
+# E1/E3 RED against current DELETE+INSERT; E2 PIN (idempotent refetch)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestImportFinIndicatorsMerge:
+    """Merge-semantics contract for _import_fin_indicators (E1-E3).
+
+    The current implementation wipes fin_indicators (DELETE FROM ... +
+    INSERT SELECT); the GREEN implementation must append incrementally.
+    E1 and E3 are RED against current code; E2 (same-CSV refetch) is
+    satisfied by both flows and pins idempotency.
+    """
+
+    # Full CSV header — every column referenced by the INSERT SELECT in
+    # _import_fin_indicators (missing columns break _tmp_fin typing).
+    _HEADER = [
+        "SECUCODE", "SECURITY_CODE", "REPORTDATE", "UPDATE_DATE", "NOTICE_DATE",
+        "DATATYPE", "QDATE", "EITIME", "DATAYEAR", "DATEMMDD",
+        "SECURITY_NAME_ABBR", "TRADE_MARKET", "TRADE_MARKET_CODE", "TRADE_MARKET_ZJG",
+        "SECURITY_TYPE", "SECURITY_TYPE_CODE", "PUBLISHNAME", "BOARD_CODE",
+        "BOARD_NAME", "ORI_BOARD_CODE", "ORG_CODE", "ISNEW", "BASIC_EPS",
+        "DEDUCT_BASIC_EPS", "TOTAL_OPERATE_INCOME", "PARENT_NETPROFIT",
+        "WEIGHTAVG_ROE", "BPS", "MGJYXJJE", "XSMLL", "YSTZ", "SJLTZ", "YSHZ",
+        "SJLHZ", "ZXGXL", "ASSIGNDSCRPT", "PAYYEAR",
+    ]
+
+    # Mirrors the real fin_indicators schema; every column nullable except
+    # the PK (empty CSV cells → NULL on import).
+    _FIN_INDICATORS_DDL = """
+        CREATE TABLE fin_indicators (
+            symbol VARCHAR(20) NOT NULL,
+            report_date DATE NOT NULL,
+            update_date DATE, notice_date DATE,
+            data_type VARCHAR(50), qdate DATE, eitime DATE, data_year INT,
+            date_label VARCHAR(20), secucode VARCHAR(20), name VARCHAR(100),
+            trade_market VARCHAR(50), trade_market_code VARCHAR(20),
+            trade_market_zjg VARCHAR(50), security_type VARCHAR(50),
+            security_type_code VARCHAR(20), industry VARCHAR(100),
+            board_code VARCHAR(20), board_name VARCHAR(50), ori_board_code VARCHAR(20),
+            org_code VARCHAR(50), is_new INT,
+            basic_eps DECIMAL(10,4), deduct_basic_eps DECIMAL(10,4),
+            revenue DECIMAL(20,2), net_profit DECIMAL(20,2), roe DECIMAL(10,4),
+            bps DECIMAL(10,4), cash_flow_per_share DECIMAL(10,4),
+            gross_margin DECIMAL(10,4), revenue_yoy DECIMAL(10,4),
+            net_profit_yoy DECIMAL(10,4), operating_profit_yoy DECIMAL(10,4),
+            net_profit_qoq DECIMAL(10,4), shares_growth DECIMAL(10,4),
+            dividend_plan VARCHAR(100), dividend_year INT,
+            PRIMARY KEY (symbol, report_date)
+        )
+    """
+
+    @pytest.fixture
+    def dolt_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, Callable[[str], str]]:
+        """Init temp Dolt, point COMPASS_DATA_DIR + COLLECTORS_DIR at tmp_path.
+
+        Seeds stock_basic (SZ000001/SZ000002), data_updates, and the
+        pre-existing fin_indicators table (the legacy import path DELETEs
+        from and INSERTs into it — it never creates it).
+        Returns (dir, dolt_sql_csv).
+        """
+        import main as main_mod
+
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
+            capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.name", "CI"],
+            capture_output=True, text=True,
+        )
+        init = subprocess.run(
+            ["dolt", "--data-dir", str(tmp_path), "init"],
+            capture_output=True, text=True,
+        )
+        assert init.returncode == 0, init.stderr
+
+        def dolt_sql_csv(sql: str) -> str:
+            return subprocess.run(
+                ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
+                capture_output=True, text=True,
+            ).stdout
+
+        dolt_sql_csv(
+            "CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY); "
+            "INSERT INTO stock_basic VALUES ('SZ000001'), ('SZ000002')"
+        )
+        dolt_sql_csv(
+            "CREATE TABLE data_updates (table_name VARCHAR(50) PRIMARY KEY, "
+            "last_updated DATE, source VARCHAR(200), row_count INT, last_report_date DATE)"
+        )
+        dolt_sql_csv(self._FIN_INDICATORS_DDL)
+
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(main_mod, "COLLECTORS_DIR", tmp_path)
+        return tmp_path, dolt_sql_csv
+
+    @staticmethod
+    def _last(stdout: str) -> str:
+        """Last line of dolt csv output (header row + data rows)."""
+        lines = stdout.strip().split("\n")
+        return lines[-1] if lines else ""
+
+    def _make_row(
+        self, secucode: str = "000001.SZ", report_date: str = "2024-12-31"
+    ) -> list[str]:
+        """Build a full 37-col CSV row with only identity columns populated."""
+        row = [""] * len(self._HEADER)
+        row[self._HEADER.index("SECUCODE")] = secucode
+        row[self._HEADER.index("SECURITY_CODE")] = secucode.split(".")[0]
+        row[self._HEADER.index("REPORTDATE")] = report_date
+        return row
+
+    def _write_csv(self, path: Path, rows: list[list[str]]) -> None:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(self._HEADER)
+            writer.writerows(rows)
+
+    def test_merge_incremental_appends_preserving_history(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: an incremental refetch must append to history, not wipe it.
+
+        CSV A (SZ000001 at 2024-12-31 + 2023-12-31) followed by CSV B
+        (SZ000001 + SZ000002 at 2024-12-31) must yield 3 rows with the
+        2023-12-31 row preserved. Current DELETE+INSERT wipes history on
+        every run → 2 rows, 2023-12-31 gone, watermark row_count=2.
+        """
+        import main as main_mod
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "RPT_LICO_FN_CPD.csv"
+
+        self._write_csv(
+            csv_path, [self._make_row(), self._make_row(report_date="2023-12-31")]
+        )
+        main_mod._import_fin_indicators()
+
+        self._write_csv(
+            csv_path, [self._make_row(), self._make_row(secucode="000002.SZ")]
+        )
+        main_mod._import_fin_indicators()
+
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "3"
+        assert self._last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM fin_indicators "
+                "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
+            )
+        ) == "1"
+        assert self._last(
+            dolt_sql_csv(
+                "SELECT row_count, last_report_date FROM data_updates "
+                "WHERE table_name='fin_indicators'"
+            )
+        ) == "3,2024-12-31"
+
+    def test_merge_same_csv_refetch_idempotent(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """PIN: refetching the same CSV twice must not duplicate rows."""
+        import main as main_mod
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "RPT_LICO_FN_CPD.csv"
+        self._write_csv(csv_path, [self._make_row()])
+
+        main_mod._import_fin_indicators()
+        main_mod._import_fin_indicators()
+
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "1"
+
+    def test_merge_insert_failure_preserves_prior_rows(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: a failed refetch must preserve previously imported rows.
+
+        After 2 rows are imported, dropping stock_basic makes the INSERT
+        SELECT fail. Current DELETE+INSERT has already wiped the table and
+        has no rollback → 0 rows and watermark row_count=0. Merge must keep
+        the 2 prior rows and leave no _tmp_fin behind.
+        """
+        import main as main_mod
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "RPT_LICO_FN_CPD.csv"
+        self._write_csv(
+            csv_path, [self._make_row(), self._make_row(report_date="2023-12-31")]
+        )
+        main_mod._import_fin_indicators()
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "2"
+
+        dolt_sql_csv("DROP TABLE stock_basic")
+
+        self._write_csv(csv_path, [self._make_row()])
+        main_mod._import_fin_indicators()
+
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "2"
+        assert self._last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name='_tmp_fin'"
+            )
+        ) == "0"
+        assert self._last(
+            dolt_sql_csv(
+                "SELECT row_count, last_report_date FROM data_updates "
+                "WHERE table_name='fin_indicators'"
+            )
+        ) == "2,2024-12-31"
 
 
 # ═══════════════════════════════════════════════════════════════════
