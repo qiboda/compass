@@ -82,3 +82,38 @@
 - **教训**: 文档注释"增量"不等于实现语义。执行破坏性命令（覆盖/删除/重置）
   前，先读源码确认 merge/覆盖行为；Dolt 是权威源，parquet 可重建，但
   GUI 不可用期间就是损失——命令执行前应确认不会破坏现有产物
+
+---
+
+## 编辑器工具链（opencode / LSP）
+
+### [编辑] edit 工具按 oldString 匹配误伤文件内重复片段
+
+- **症状**: 用 edit 在 `fetch_stock_basic.py:167` 加 `# pragma: no cover`
+  注释，结果加到了 `:145` 的正常分支 `return []` 上，导致
+  `IndentationError: expected an indented block after 'if' statement on line 144`。
+  另一例：子代理在 `test_concept_member.py` 末尾追加新类，oldString 匹配到
+  `test_run_board_list_fetch_exception_aborts` 的重复结尾片段，新类插入到
+  类中间，使既有测试 `test_run_empty_board_list_aborts` 落进新类作用域
+  （AttributeError: 'TestFetchBoardMembers' object has no attribute '_make_get'）
+- **根因**: edit 是字符串精确匹配，不感知代码结构。文件内重复片段
+  （`return []`、`if __name__ == "__main__":`、断言+文件存在性检查的收尾块）
+  会命中**第一个**出现位置，而非目标位置。LSP 的"could not be resolved"
+  类报错（如 `import pytest`、curl_cffi）是 venv 环境噪音，容易让 agent
+  把真实语法错误也当噪音忽略
+- **排查路径**:
+  1. 目标行在文件中不唯一时（短片段/重复收尾块），先用
+     `grep -n "<片段>" <file>` 确认出现次数与目标行号
+  2. edit 的 oldString 必须带**足够上下文**（前一行 + 目标行 + 后一行）
+     使匹配唯一；或直接引用行号附近的独特文本
+  3. edit 后立即 `python3 -m py_compile <file>`（Python）或 LSP diagnostics
+     验证语法；再用 `grep -n "pragma\|class \|def "` 抽查结构归属
+  4. 子代理完成编辑后，主 agent 应抽查文件结构（类/方法归属），
+     不只信子代理自报
+- **修复**: 撤销误匹配处（改回原文本），在正确位置带上下文重新 edit；
+  结构错位的测试类用 edit 把方法移回原类
+- **验证**: `python3 -m py_compile <file>` 通过；`grep -n` 确认目标行
+  带注释、正常分支无注释；`pytest <file> -q` 全绿（结构错位时
+  AttributeError 消失）
+- **教训**: 编辑重复片段前先 grep 计数；oldString 带足上下文；编辑后
+  立即编译/结构验证——禁止凭"看起来对了"跳过验证

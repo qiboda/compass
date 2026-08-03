@@ -18,12 +18,20 @@ symbol, ts_code, code, name, list_date, delist_date, board, full_name,
 total_share, industry, region, update_date
 """
 
+import io
 import sys
+import zipfile
 from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+from conftest import SyncStubResponse, SyncStubSession  # noqa: E402
+
+import fetch_stock_basic_official as fsbo  # noqa: E402
 from fetch_stock_basic_official import (  # noqa: E402
     COLUMNS,
     infer_exchange,
@@ -36,6 +44,28 @@ from fetch_stock_basic_official import (  # noqa: E402
 )
 
 UPDATE_DATE = "2026-07-31"
+
+
+def _szse_zip_bytes(sheet_xml: str) -> bytes:
+    """Build a real xlsx zip whose sheet1.xml is sheet_xml (fetch_szse_xlsx unzips it)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buf.getvalue()
+
+
+# 深交所退市股 xlsx sheet（表头 + 一条退市股记录）— 与
+# TestParseSzseDelisted.test_delisted_row 的内联 sheet 相同
+_delisted_xml = (
+    '<row><c r="A1" t="inlineStr"><is><t>证券代码</t></is></c>'
+    '<c r="B1" t="inlineStr"><is><t>证券简称</t></is></c>'
+    '<c r="C1" t="inlineStr"><is><t>上市日期</t></is></c>'
+    '<c r="D1" t="inlineStr"><is><t>终止上市日期</t></is></c></row>'
+    '<row><c r="A2" t="inlineStr"><is><t>000003</t></is></c>'
+    '<c r="B2" t="inlineStr"><is><t>PT金田A</t></is></c>'
+    '<c r="C2" t="inlineStr"><is><t>1991-01-14</t></is></c>'
+    '<c r="D2" t="inlineStr"><is><t>2002-06-14</t></is></c></row>'
+)
 
 
 # ── Fixtures: mock API payloads ────────────────────────────────────
@@ -203,6 +233,9 @@ class TestParseSseJson:
     def test_empty_payload(self):
         assert parse_sse_json({"pageHelp": {"data": []}}, UPDATE_DATE) == []
 
+    def test_non_list_data_returns_empty(self):
+        assert parse_sse_json({"pageHelp": {"data": {}}}, UPDATE_DATE) == []
+
 
 # ── SZSE XLSX parsing ─────────────────────────────────────────────
 
@@ -239,6 +272,13 @@ class TestParseSzseXlsx:
     def test_empty_sheet(self):
         assert parse_szse_xlsx("", UPDATE_DATE) == []
 
+    def test_skips_row_without_code(self):
+        row = (
+            '<row><c r="A1" t="inlineStr"><is><t>主板</t></is></c>'
+            '<c r="F1" t="inlineStr"><is><t>无代码</t></is></c></row>'
+        )
+        assert parse_szse_xlsx(_szse_sheet([row]), UPDATE_DATE) == []
+
 
 class TestParseSzseDelisted:
     def test_delisted_row(self):
@@ -264,6 +304,16 @@ class TestParseSzseDelisted:
         assert r["full_name"] == ""
         assert r["total_share"] == ""
         assert r["update_date"] == UPDATE_DATE
+
+    def test_skips_row_without_code(self):
+        sheet = (
+            '<row><c r="A1" t="inlineStr"><is><t>证券代码</t></is></c>'
+            '<c r="B1" t="inlineStr"><is><t>证券简称</t></is></c>'
+            '<c r="C1" t="inlineStr"><is><t>上市日期</t></is></c>'
+            '<c r="D1" t="inlineStr"><is><t>终止上市日期</t></is></c></row>'
+            '<row><c r="B2" t="inlineStr"><is><t>PT金田A</t></is></c></row>'
+        )
+        assert parse_szse_delisted(sheet, UPDATE_DATE) == []
 
 
 # ── BSE JSON parsing ──────────────────────────────────────────────
@@ -298,6 +348,12 @@ class TestParseBseJson:
 
     def test_empty_body(self):
         assert parse_bse_json("null([])", UPDATE_DATE) == []
+
+    def test_unwrapped_body_returns_empty(self):
+        assert parse_bse_json("garbage-not-jsonp", UPDATE_DATE) == []
+
+    def test_non_list_content_returns_empty(self):
+        assert parse_bse_json('null([{"content": "x"}])', UPDATE_DATE) == []
 
 
 # ── Exchange inference ────────────────────────────────────────────
@@ -386,3 +442,193 @@ class TestRowCountSanity:
         # Can't hit network in unit tests; this guards the merge contract
         # rather than actual counts. Real count verified in integration QA.
         assert len(COLUMNS) == 12
+
+
+# ── _fmt_date guard ─────────────────────────────────────────────
+
+class TestFmtDate:
+    def test_invalid_length_returns_empty(self):
+        assert fsbo._fmt_date("2026073") == ""
+
+
+# ── 网络层：重试包装器 ──────────────────────────────────────────
+
+class TestWithRetry:
+    def test_success_returns_value(self):
+        assert fsbo._with_retry(lambda: "ok", desc="") == "ok"
+
+    def test_retries_then_success(self, monkeypatch):
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError("boom")
+            return "ok"
+
+        mock_sleep = Mock()
+        monkeypatch.setattr(fsbo.time, "sleep", mock_sleep)
+        assert fsbo._with_retry(flaky, desc="测试") == "ok"
+        assert mock_sleep.call_count == 2
+
+    def test_exhausts_raises_last(self, monkeypatch):
+        def always_fail():
+            raise RuntimeError("boom")
+
+        mock_sleep = Mock()
+        monkeypatch.setattr(fsbo.time, "sleep", mock_sleep)
+        with pytest.raises(RuntimeError):
+            fsbo._with_retry(always_fail, desc="测试")
+
+
+# ── 网络层：SSE ─────────────────────────────────────────────────
+
+class TestFetchSse:
+    def test_success_returns_json(self):
+        stub = SyncStubSession(json_data={"pageHelp": {"data": []}})
+        assert fsbo.fetch_sse(stub) == {"pageHelp": {"data": []}}
+        assert any(c[0] == "GET" and c[1] == fsbo.SSE_URL for c in stub.calls)
+
+    def test_http_error_raises(self):
+        stub = SyncStubSession(status_code=500)
+        with pytest.raises(Exception, match="HTTP 500"):
+            fsbo.fetch_sse(stub)
+
+
+# ── 网络层：SZSE xlsx ───────────────────────────────────────────
+
+class TestFetchSzseXlsx:
+    def test_returns_sheet_xml(self):
+        sheet = _szse_sheet([_szse_row()])
+        stub = SyncStubSession(content=_szse_zip_bytes(sheet))
+        assert fsbo.fetch_szse_xlsx(stub, "1110", "tab1") == sheet
+
+
+# ── 网络层：BSE ─────────────────────────────────────────────────
+
+class TestFetchBse:
+    def test_paginates_two_pages(self):
+        stub = SyncStubSession(
+            canned_responses={fsbo.BSE_LISTED_URL: SyncStubResponse(status_code=200)}
+        )
+
+        def _post(url, data=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            stub.calls.append(("POST", url, data))
+            if data["page"] == "0":
+                return SyncStubResponse(text=_bse_body([_bse_row()], total_pages=2))
+            return SyncStubResponse(text=_bse_body([_bse_row(code="920001")], total_pages=2))
+
+        stub.post = _post  # type: ignore[method-assign]
+
+        rows = fsbo.fetch_bse(stub)
+        assert len(rows) == 2
+        assert rows[0]["xxzqdm"] == "920000"
+        assert rows[1]["xxzqdm"] == "920001"
+        assert sum(1 for c in stub.calls if c[0] == "POST") == 2
+
+    def test_stops_on_empty_wrapper(self):
+        stub = SyncStubSession()
+
+        def _post(url, data=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            return SyncStubResponse(text="null([])")
+
+        stub.post = _post  # type: ignore[method-assign]
+
+        assert fsbo.fetch_bse(stub) == []
+
+    def test_stops_on_empty_content(self):
+        stub = SyncStubSession()
+
+        def _post(url, data=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            return SyncStubResponse(text='null([{"content": [], "totalPages": 2}])')
+
+        stub.post = _post  # type: ignore[method-assign]
+
+        assert fsbo.fetch_bse(stub) == []
+
+
+# ── main() ──────────────────────────────────────────────────────
+
+class TestMain:
+    def test_full_run_writes_merged_csv(self, tmp_path, monkeypatch):
+        stub = SyncStubSession()
+
+        def _get(url, params=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            stub.calls.append(("GET", url, params))
+            if url == fsbo.SSE_URL:
+                return SyncStubResponse(json_data=_sse_payload([_sse_row()]))
+            if url == fsbo.SZSE_XLSX_URL:
+                catalogid = (params or {}).get("CATALOGID")
+                xml = _szse_sheet([_szse_row()]) if catalogid == "1110" else _delisted_xml
+                return SyncStubResponse(content=_szse_zip_bytes(xml))
+            if url == fsbo.BSE_LISTED_URL:
+                return SyncStubResponse(status_code=200)
+            return SyncStubResponse(status_code=200)
+
+        def _post(url, data=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            stub.calls.append(("POST", url, data))
+            return SyncStubResponse(text=_bse_body([_bse_row()]))
+
+        stub.get = _get  # type: ignore[method-assign]
+        stub.post = _post  # type: ignore[method-assign]
+        monkeypatch.setattr(fsbo.requests, "Session", lambda: stub)
+        monkeypatch.setattr(
+            sys, "argv",
+            ["fetch_stock_basic_official.py", "-o", str(tmp_path / "out.csv"),
+             "--update-date", "2026-07-31"],
+        )
+
+        fsbo.main()
+
+        out = tmp_path / "out.csv"
+        assert out.exists()
+        lines = out.read_text(encoding="utf-8-sig").strip().split("\n")
+        assert lines[0] == ",".join(COLUMNS)
+        # 三大交易所各一条代表记录 + 深交所退市股（SZ000003）
+        assert any(line.startswith("SH600000,") for line in lines)
+        assert any(line.startswith("SZ000001,") for line in lines)
+        assert any(line.startswith("BJ920000,") for line in lines)
+        assert len(lines) == 5  # 表头 + 4 行数据
+
+        methods = [(m, u) for m, u, _ in stub.calls]
+        assert methods.count(("GET", fsbo.SSE_URL)) == 1
+        assert methods.count(("GET", fsbo.SZSE_XLSX_URL)) == 2
+        assert methods.count(("GET", fsbo.BSE_LISTED_URL)) == 1
+        assert methods.count(("POST", fsbo.BSE_API_URL)) == 1
+        assert len(stub.calls) == 5
+
+    def test_invalid_update_date_exits(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["fetch_stock_basic_official.py", "-o", str(tmp_path / "x.csv"),
+             "--update-date", "2026/07/31"],
+        )
+        with pytest.raises(SystemExit):
+            fsbo.main()
+        assert "日期格式无效" in capsys.readouterr().err
+
+    def test_all_exchanges_failed_still_writes_header(self, tmp_path, monkeypatch):
+        stub = SyncStubSession()
+
+        def _get(url, params=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            raise RuntimeError("boom")
+
+        def _post(url, data=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
+            raise RuntimeError("boom")
+
+        stub.get = _get  # type: ignore[method-assign]
+        stub.post = _post  # type: ignore[method-assign]
+        mock_sleep = Mock()
+        monkeypatch.setattr(fsbo.time, "sleep", mock_sleep)
+        monkeypatch.setattr(fsbo.requests, "Session", lambda: stub)
+        monkeypatch.setattr(
+            sys, "argv",
+            ["fetch_stock_basic_official.py", "-o", str(tmp_path / "out.csv"),
+             "--update-date", "2026-07-31"],
+        )
+
+        fsbo.main()
+
+        out = tmp_path / "out.csv"
+        assert out.exists()
+        assert out.read_text(encoding="utf-8-sig").strip() == ",".join(COLUMNS)

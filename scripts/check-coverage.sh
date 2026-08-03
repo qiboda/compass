@@ -3,17 +3,30 @@
 #
 # Checks the workspace total and each workspace crate (compass-core /
 # compass-data / compass / compass-strategy / compass-types / compass-ui)
-# against a minimum line-coverage percentage. Exits 1 if any target is
-# below the threshold or has no measured files.
+# against per-target minimum line-coverage percentages. Exits 1 if any
+# target is below its threshold or has no measured files.
+#
+# Thresholds (2026-08-04, ref #163): compass-data and compass-core are
+# enforced at 95%; all other crates and the workspace total remain at 80%.
 #
 # Usage:
-#   scripts/check-coverage.sh [threshold] [cov.json]
+#   scripts/check-coverage.sh [cov.json]
 #
-# Defaults: threshold=80, cov.json=cov.json (in CWD).
+# Defaults: cov.json=cov.json (in CWD).
 set -euo pipefail
 
-THRESHOLD="${1:-80}"
-COV_JSON="${2:-cov.json}"
+COV_JSON="${1:-cov.json}"
+
+# Per-target minimum line coverage. Keys must match the `check` calls below.
+declare -A THRESHOLDS=(
+    [workspace]=80
+    [compass-core]=95
+    [compass-data]=95
+    [compass]=80
+    [compass-strategy]=80
+    [compass-types]=80
+    [compass-ui]=80
+)
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: jq is required" >&2
@@ -28,9 +41,10 @@ fail=0
 
 check() {
     local label="$1" filter="$2"
+    local threshold="${THRESHOLDS[$label]:-80}"
     local pct
     # ${filter} is injected as jq code (select(...) or .); $t is a jq variable.
-    pct=$(jq -r --argjson t "$THRESHOLD" "
+    pct=$(jq -r --argjson t "$threshold" "
         [.data[0].files[] | ${filter} | .summary.lines] as \$l |
         if (\$l | length) == 0 then
             \"MISSING\"
@@ -45,8 +59,8 @@ check() {
             fail=1
             ;;
         *)
-            if awk -v p="$pct" -v t="$THRESHOLD" 'BEGIN { exit !(p + 0 < t + 0) }'; then
-                echo "FAIL: $label line coverage ${pct}% < ${THRESHOLD}%" >&2
+            if awk -v p="$pct" -v t="$threshold" 'BEGIN { exit !(p + 0 < t + 0) }'; then
+                echo "FAIL: $label line coverage ${pct}% < ${threshold}%" >&2
                 fail=1
             else
                 echo "OK: $label line coverage ${pct}%"

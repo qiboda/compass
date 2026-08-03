@@ -152,8 +152,8 @@ def _with_retry(fn, *args: Any, desc: str = "", **kwargs: Any) -> Any:
             else:
                 raise
     # 理论上不会走到这里（最后一次已在循环中 raise），但 mypy 需要
-    assert last_exc is not None
-    raise last_exc
+    assert last_exc is not None  # pragma: no cover — unreachable mypy-required code (loop always returns or raises)
+    raise last_exc  # pragma: no cover — unreachable mypy-required code (loop always returns or raises)
 
 
 # ── 交易所代码推断 ────────────────────────────────────────────────────────
@@ -624,5 +624,5 @@ def main() -> None:
     print(f"\n✓ 完成 — {len(merged)} 条 → {output_path.resolve()}", file=sys.stderr)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest
     main()

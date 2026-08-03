@@ -648,3 +648,28 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"review 抓出本可前置验证的问题"模式第三次出现**（ref #139 声称端到端已验证但数据路径未打通、ref #159 破坏性命令未读源码、本次 Wave 4 未执行 + 重构丢诊断）：review 的价值密度高但前置验证不足是反复模式——plan 波次顺序严格执行 + 重构前后行为对照（尤其失败路径）应成为习惯；本次已用 caplog 失败路径测试固化
 - **"端到端/收尾声称与事实不符"延续正确实践**（ref #119/#117/#139 教训后）：本次 T10/T11 均以真实数据终态验证（Dolt 行数、parquet 对比、API probe、watermark 核查），未重蹈"命令执行过=验证过"覆辙——数据终态证据纪律在延续
 - **数据管线"白名单/锚点"约束反复影响验收**（ref #139 增量窗口、ref #159 --since 语义、本次 stock_basic 白名单）：导入语义（merge/替换）与过滤条件（白名单/锚点）必须写进决策记录并明确其对验收数字的影响，防验收与实际系统性上限脱节
+
+## 2026-08-04 — ref #163 数据层测试覆盖率提升至 95% 并提高 CI 强制门槛
+
+**What was done**: Python collectors 测试覆盖率从 83.0%（256 tests / 1583 stmts）提升至 95.41%（308 tests，5 目标文件 100%），新增 52 测试 + conftest SyncStubSession；`scripts/check-coverage.sh` 从单一 80 阈值重构为 per-crate 阈值表（compass-data/core 95、其余 80、workspace 80）；ci.yml Python `--cov-fail-under` 80→95；AGENTS.md 与 kb/dev/testing.md 覆盖率门槛段落同步。7 个实现 commit 全部 `ref #163`。
+
+**User corrections**: 无——本次用户消息仅 2 条（handoff 指引 + "这次自行 push，merge pr，关闭issue 和 关闭worktree" 全流程预授权），无纠正型反馈。
+
+**What went wrong**:
+1. **edit 工具误匹配文件内重复片段（两次，同类）**：① 我给 `fetch_stock_basic.py` 加 `# pragma: no cover` 时，oldString `    return []` 命中了 :145 的正常分支而非目标 :167 不可达行，导致 IndentationError；② 子代理在 `test_concept_member.py` 追加新类时 oldString 命中 `test_run_board_list_fetch_exception_aborts` 的重复收尾块，新类插入类中间使既有测试落入错误作用域（AttributeError）。两次均为"文件内重复片段 + 无足上下文匹配"导致，已沉淀 toolchain.md 排查卡。
+2. **LSP 噪音与真实语法错误的区分**：edit 后 LSP 报 `import pytest could not be resolved` 等 venv 环境噪音，一度把真实 IndentationError 也归类为噪音——用 `python3 -m py_compile` 独立验证才暴露。教训：语法验证不能依赖 LSP（venv 解析噪音多），Python 文件用 py_compile。
+3. **Rust 侧门槛值核验依赖 review 发现**：compass-data 的 96.12% 基线来自 issue 描述，未在 plan 阶段实测；Goal review 时在 master 工作区跑 llvm-cov 才确认 data 96.12%/core 97.96% 真实过 95 门槛（好在结果与基线一致，无返工）。plan 阶段应实测而非信任文档基线。
+
+**Lessons learned**:
+1. **编辑重复片段前先 grep 计数**：目标行不唯一时（`return []`、`if __name__ == "__main__":`、重复收尾块），edit 的 oldString 必须带足上下文（前后行）或引用独特文本；编辑后立即 py_compile + grep 抽查结构归属。已固化为 toolchain.md 排查卡。
+2. **子代理编辑产物必须抽查结构**：主 agent 不能只信子代理自报 GREEN——本例结构错位后测试仍"全绿"（新类内方法运行正常），只有 grep 类/方法归属才暴露。大 diff 后用 `grep -n "^class \|def test_"` 验证类边界。
+3. **CI 门槛基线值在 plan 阶段实测**：涉及 Rust 覆盖率门槛的变更，plan 阶段就应在目标分支跑一次 llvm-cov 确认当前值高于新门槛，避免 review 阶段才发现数据不实。
+
+**Process improvements**:
+- `kb/dev/toolchain.md` 新增「编辑器工具链」类别排查卡：edit 工具按 oldString 匹配误伤文件内重复片段（含症状/根因/排查路径/修复/验证，覆盖本 session 两次真实事故）
+- `.omo/plans/data-coverage-95.md` + `data-coverage-95-tests.md` 归档（随实现 commit 956ca26 提交）
+- 覆盖率证据存 `.omo/evidence/task-*.txt`（RED 基线、最终 gate 95.41%、各 todo GREEN）
+
+### Trends (last 10)
+- **"review 阶段才暴露可前置验证的问题"模式持续**（ref #139 声称已验证但数据路径未通、ref #160 Wave 4 未执行、本次 Rust 门槛基线未在 plan 实测）：plan 阶段"实测而非信任文档"应成为硬习惯——本次已因 review 的 llvm-cov 实测闭环，未造成返工
+- **编辑/验证类工具误用可沉淀为排查卡**（本次 edit 误匹配 + LSP 噪音是新类别，toolchain.md 首次新增「编辑器工具链」组）：工具链问题闭环记录机制在持续吸收新教训，符合 AGENTS.md 问题处理闭环的预期

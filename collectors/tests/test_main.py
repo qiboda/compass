@@ -173,6 +173,81 @@ class TestDispatchFetch:
 
         mock_run.assert_called_once()
 
+    def test_dragon_calls_run_via_asyncio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_dragon as fdr
+        import main as main_mod
+
+        mock_run = Mock()
+        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
+        mock_fdr_run = Mock()
+        monkeypatch.setattr(fdr, "run", mock_fdr_run)
+
+        main_mod.dispatch_fetch("dragon")
+
+        mock_run.assert_called_once()
+
+    def test_block_trade_calls_run_via_asyncio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_block_trade as fbt
+        import main as main_mod
+
+        mock_run = Mock()
+        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
+        mock_fbt_run = Mock()
+        monkeypatch.setattr(fbt, "run", mock_fbt_run)
+
+        main_mod.dispatch_fetch("block_trade")
+
+        mock_run.assert_called_once()
+
+    def test_institution_survey_calls_run_via_asyncio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_institution_survey as fis
+        import main as main_mod
+
+        mock_run = Mock()
+        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
+        mock_fis_run = Mock()
+        monkeypatch.setattr(fis, "run", mock_fis_run)
+
+        main_mod.dispatch_fetch("institution_survey")
+
+        mock_run.assert_called_once()
+
+    def test_concept_member_calls_run_via_asyncio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_concept_member as fcm
+        import main as main_mod
+
+        mock_run = Mock()
+        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
+        mock_fcm_run = Mock()
+        monkeypatch.setattr(fcm, "run", mock_fcm_run)
+
+        main_mod.dispatch_fetch("concept_member")
+
+        mock_run.assert_called_once()
+
+    def test_main_flow_calls_run_via_asyncio(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_main_flow as fmf
+        import main as main_mod
+
+        mock_run = Mock()
+        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
+        mock_fmf_run = Mock()
+        monkeypatch.setattr(fmf, "run", mock_fmf_run)
+
+        main_mod.dispatch_fetch("main_flow")
+
+        mock_run.assert_called_once()
+
 
 # ═══════════════════════════════════════════════════════════════════
 # dispatch_import — routes to correct import function per target
@@ -236,6 +311,66 @@ class TestDispatchImport:
         monkeypatch.setattr(fcf, "import_to_dolt", mock_import)
 
         main_mod.dispatch_import("cash_flow")
+        mock_import.assert_called_once()
+
+    def test_dragon_calls_import_to_dolt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_dragon as fdr
+        import main as main_mod
+
+        mock_import = Mock()
+        monkeypatch.setattr(fdr, "import_to_dolt", mock_import)
+
+        main_mod.dispatch_import("dragon")
+        mock_import.assert_called_once()
+
+    def test_block_trade_calls_import_to_dolt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_block_trade as fbt
+        import main as main_mod
+
+        mock_import = Mock()
+        monkeypatch.setattr(fbt, "import_to_dolt", mock_import)
+
+        main_mod.dispatch_import("block_trade")
+        mock_import.assert_called_once()
+
+    def test_institution_survey_calls_import_to_dolt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_institution_survey as fis
+        import main as main_mod
+
+        mock_import = Mock()
+        monkeypatch.setattr(fis, "import_to_dolt", mock_import)
+
+        main_mod.dispatch_import("institution_survey")
+        mock_import.assert_called_once()
+
+    def test_concept_member_calls_import_to_dolt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_concept_member as fcm
+        import main as main_mod
+
+        mock_import = Mock()
+        monkeypatch.setattr(fcm, "import_to_dolt", mock_import)
+
+        main_mod.dispatch_import("concept_member")
+        mock_import.assert_called_once()
+
+    def test_main_flow_calls_import_to_dolt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_main_flow as fmf
+        import main as main_mod
+
+        mock_import = Mock()
+        monkeypatch.setattr(fmf, "import_to_dolt", mock_import)
+
+        main_mod.dispatch_import("main_flow")
         mock_import.assert_called_once()
 
 

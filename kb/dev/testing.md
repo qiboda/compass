@@ -248,22 +248,28 @@ Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可
 
 ### 门槛（CI 强制）
 
-CI coverage job 强制以下行覆盖率门槛，低于阈值退出码 1（CI 失败）：
+CI coverage job 强制以下行覆盖率门槛，低于阈值退出码 1（CI 失败）。
+Rust 侧为 **per-crate 阈值**：数据层（compass-core / compass-data）95%，其余 crate 与
+workspace 总 80%（2026-08-04，ref #163）：
 
 ```sh
-# Rust：单次 llvm-cov --json 采集，脚本校验 workspace 总 + 每 crate（7 门槛 1 次运行）
+# Rust：单次 llvm-cov --json 采集，脚本按 per-crate 阈值表校验（7 门槛 1 次运行）
 cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
-bash scripts/check-coverage.sh 80 target/llvm-cov/coverage.json
+bash scripts/check-coverage.sh target/llvm-cov/coverage.json
 
 # Python
-cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=80
+cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=95
 ```
 
 - Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
-- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，检查 workspace 总 + 每 crate（compass-core / compass-data / compass / compass-strategy / compass-types / compass-ui）各自 ≥80%；任一低于阈值或未测到文件即退出码 1。单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
-- Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`（`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计。
+- `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，内嵌 per-crate 阈值表
+  （compass-core / compass-data → 95，compass / compass-strategy / compass-types /
+  compass-ui → 80，workspace 总 → 80）；任一低于各自阈值或未测到文件即退出码 1。
+  单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
+- Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`
+  （`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计；`--cov-fail-under=95`。
 - coverage job 会执行完整测试套件（llvm-cov 插桩运行），因此是 `nextest` 之外的隐式第二次测试。
-- 本地测量：`cargo llvm-cov --json --summary-only > cov.json && bash scripts/check-coverage.sh 80 cov.json`。
+- 本地测量：`cargo llvm-cov --json --summary-only > cov.json && bash scripts/check-coverage.sh cov.json`。
 
 ### GUI 无头集成测试（egui_kittest）
 

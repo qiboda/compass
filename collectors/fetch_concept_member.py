@@ -289,7 +289,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest
     async def _main() -> None:
         p = argparse.ArgumentParser(description="Fetch A-share concept board members")
         p.add_argument("--page-size", type=int, default=100)
