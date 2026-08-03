@@ -126,8 +126,8 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Collect coverage
         run: cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
-      - name: Enforce coverage gate (workspace + per-crate >= 80%)
-        run: bash scripts/check-coverage.sh 80 target/llvm-cov/coverage.json
+      - name: "Enforce coverage gate (per-crate thresholds: data/core 95%, others 80%)"
+        run: bash scripts/check-coverage.sh target/llvm-cov/coverage.json
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-report
@@ -153,4 +153,4 @@ jobs:
           tar -xzf /tmp/dolt.tar.gz -C /tmp
           sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
-      - run: cd collectors && uv sync && uv run pytest tests/ --cov=. --cov-fail-under=80 --cov-report=term-missing
+      - run: cd collectors && uv sync && uv run pytest tests/ --cov=. --cov-fail-under=95 --cov-report=term-missing
