@@ -302,7 +302,7 @@ parquet_data/ ────────backup──────────► Ba
 项目还维护自己的 Dolt 仓库 `compass_data/`，用于自定义可变数据（公司信息、
 财务指标、自选股列表），与只读的 `investment_data` 并存。查询可跨两个数据库
 联结：`compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`。
-使用示例见 `kb/dev/process.md#dolt-database-queries`。
+使用示例见 `kb/dev/database.md`。
 
 ### collectors：Python 数据管线
 

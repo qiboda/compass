@@ -387,21 +387,6 @@ curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=1
 curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281"
 ```
 
-### 检查 Parquet 文件
-
-```sh
-ls -lh parquet_data/stock_daily.parquet
-wc -l parquet_data/stock_daily.symbols.txt    # symbol count
-```
-
-### 用 DuckDB 查询 Parquet
-
-```rust
-use duckdb::Connection;
-let conn = Connection::open_in_memory()?;
-conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily.parquet') WHERE symbol = 'SH600519' LIMIT 5")?;
-```
-
 ### collectors（Python 数据管线）
 
 从东方财富 API 抓取数据到 CSV，然后导入 `compass_data` Dolt。
@@ -422,82 +407,10 @@ conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily.parquet
 - 格式：带时间戳的 zip（`parquet_data-YYYYMMDD-HHMMSS.zip`）
 - 独立脚本：`scripts/upload-parquet.sh [--keep-zip]`
 
-### Dolt 数据库查询
+### Dolt 数据库查询与维护
 
-```sh
-# investment_data (read-only, third-party)
-dolt --data-dir=investment_data sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
-dolt --data-dir=investment_data sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
-dolt --data-dir=investment_data sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
-```
-
-### compass_data（自定义可修改数据库）
-
-`compass_data` 是我们自己的 Dolt 仓库，用于自定义数据 — 公司概况、
-财务指标、自选股等。它与 `investment_data` 位于同级目录。
-
-```sh
-# Run `dolt sql` from the parent directory to enable cross-database queries
-cd /path/to/compass
-dolt sql -q "SELECT * FROM compass_data.stock_basic LIMIT 5"
-dolt sql -q "SELECT * FROM compass_data.fin_indicators WHERE symbol='SH600519' ORDER BY report_date DESC"
-
-# Cross-database JOINs
-dolt sql -q "
-SELECT sb.name, sb.industry_l1, ts.list_date
-FROM compass_data.stock_basic sb
-JOIN investment_data.ts_a_stock_list ts ON sb.ts_code = ts.ts_code
-"
-
-dolt sql -q "
-SELECT sb.name, fi.report_date, fi.revenue / 1e8 AS rev_yi, fi.eps
-FROM compass_data.stock_basic sb
-JOIN compass_data.fin_indicators fi ON sb.symbol = fi.symbol
-JOIN investment_data.final_a_stock_eod_price e ON sb.symbol = e.symbol
-WHERE sb.symbol = 'SH600519'
-ORDER BY e.tradedate DESC
-LIMIT 3
-"
-```
-
-核心表：
-
-| 表 | 用途 | 主键 |
-|---|---|---|
-| `stock_basic` | 公司概况 | `symbol`（`SZ000001`）+ `ts_code`（`000001.SZ`）|
-| `fin_indicators` | 每报告期财务指标 | `(symbol, report_date)` |
-| `fin_balance_sheet` | 资产负债表 | `(symbol, report_date)` |
-| `fin_income` | 利润表 | `(symbol, report_date)` |
-| `fin_cash_flow` | 现金流量表 | `(symbol, report_date)` |
-
-```sh
-# Query financial statements
-dolt sql -q "
-SELECT * FROM compass_data.fin_balance_sheet
-WHERE symbol='SH600519' ORDER BY report_date DESC LIMIT 3"
-
-dolt sql -q "
-SELECT * FROM compass_data.fin_income
-WHERE symbol='SH600519' ORDER BY report_date DESC LIMIT 3"
-
-dolt sql -q "
-SELECT * FROM compass_data.fin_cash_flow
-WHERE symbol='SH600519' ORDER BY report_date DESC LIMIT 3"
-
-# Cross-table financial analysis
-dolt sql -q "
-SELECT sb.name, bs.report_date,
-  bs.TOTAL_ASSETS / 1e8 AS total_assets_yi,
-  inc.TOTAL_OPERATE_INCOME / 1e8 AS revenue_yi,
-  cf.NETCASH_OPERATE / 1e8 AS operating_cf_yi
-FROM compass_data.stock_basic sb
-JOIN compass_data.fin_balance_sheet bs ON sb.symbol = bs.symbol
-JOIN compass_data.fin_income inc ON bs.symbol = inc.symbol AND bs.report_date = inc.report_date
-JOIN compass_data.fin_cash_flow cf ON bs.symbol = cf.symbol AND bs.report_date = cf.report_date
-WHERE sb.symbol = 'SH600519'
-ORDER BY bs.report_date DESC
-LIMIT 3"
-```
+Dolt 查询示例、investment_data 同步流程（pull → push skwy → import）、
+compass_data 提交推送与数据库布局见 **`kb/dev/database.md`**（ref #157）。
 
 ### 重置一切
 

@@ -1,0 +1,213 @@
+# 数据库开发信息
+
+本文件是 compass 数据库相关开发操作的**权威文档** — 同步、提交、生成、
+查询、布局。覆盖本地 `/data/compass-data/` 下的两个 Dolt 仓库（
+`investment_data` 与 `compass_data`）、Parquet 与 DuckDB 产物。
+
+> 跨库查询示例与表结构说明原位于 `kb/dev/process.md`，已迁移至此
+> （ref #157）。process.md 仅保留索引。
+
+## 数据库布局总览
+
+```
+/data/compass-data/
+├── investment_data/     # Dolt 仓库 — 只读第三方行情数据（上游 chenditc）
+├── compass_data/        # Dolt 仓库 — 自有数据（公司概况/财务/SEPA 采集）
+├── parquet_data/        # Parquet 文件 — GUI 实际读取的数据源
+├── compass.duckdb       # DuckDB 数据库（export 产物，可选）
+└── compass.duckdb.wal   # DuckDB WAL
+```
+
+### investment_data（只读，第三方）
+
+- 上游：`origin` → `https://doltremoteapi.dolthub.com/chenditc/investment_data`
+- 个人 fork：`skwy` → `https://doltremoteapi.dolthub.com/skwy/investment_data`
+- 分支：`master`
+- 核心表：`final_a_stock_eod_price`（18M+ 行，`(tradedate, symbol)` 主键）、
+  `ts_a_stock_list`、`ts_trade_day_calendar` 等 14 张表
+- **只读**：只从上游拉取，不直接修改；本地与 fork 仅是镜像
+
+### compass_data（自有，可修改）
+
+- 上游：`origin` → `https://doltremoteapi.dolthub.com/skwy/compass_data`
+- 分支：`main`
+- 16 张表，分三类：
+
+| 类别 | 表 | 说明 |
+|---|---|---|
+| 基本面 | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow` | 公司概况与三大报表 |
+| SEPA 采集 | `block_trade`、`capital_main_flow`、`concept_member`、`dragon_list`、`institution_survey` | 龙虎榜/大宗/主力资金/概念/机构调研 |
+| 计算产物 | `final_score`、`market_temperature`、`capital_factor`、`industry_factor`、`technical_factor`、`data_updates` | SEPA 评分与因子输出、抓取状态 |
+
+## investment_data 同步（pull → push → import）
+
+investment_data 是第三方只读库，**每次使用前都应同步**：从 chenditc 上游
+拉取最新行情，同步到自己的 skwy fork，再重新生成 Parquet 供 GUI 使用。
+
+```sh
+cd /data/compass-data/investment_data
+
+# 1. 拉取上游最新数据（含 fetch + fast-forward）
+dolt pull origin master
+
+# 2. 同步到个人 fork（备份 + 其他机器可用）
+dolt push skwy master
+
+# 3. 检查数据新鲜度（应等于最近交易日）
+dolt sql -q "SELECT MAX(tradedate) AS latest FROM final_a_stock_eod_price"
+```
+
+同步后必须重新生成 Parquet，否则 GUI 仍读旧数据：
+
+```sh
+cd /data/codes/compass
+cargo run --bin compass-data -- import --since <最近一次 import 日期>
+```
+
+> **为什么 push 到 skwy？** investment_data 是 chenditc 的只读上游仓库，
+> 本地机器只有一份。push 到自己的 fork（`skwy`）既是备份，也让其他机器
+> /CI 能从 `skwy` 拉取。AGENTS.md 中"每次数据变更后 commit & push"的
+> 规则适用于 `compass_data`；`investment_data` 的"变更"来自上游，同步动作
+> 就是 pull + push 到 fork。
+
+### 状态检查
+
+```sh
+# 本地是否落后上游（非空说明有未拉取的更新）
+dolt log --oneline HEAD..origin/master
+
+# 本地与 fork 是否同步
+dolt log --oneline skwy/master..master   # 非空 = 有未 push 的本地 commit
+dolt log --oneline master..skwy/master   # 非空 = fork 领先（不应发生）
+```
+
+## compass_data 提交推送
+
+自有数据每次修改后（import-compass、SEPA 采集、schema 变更、data_updates
+更新）都必须提交并推送：
+
+```sh
+cd /data/compass-data/compass_data
+dolt add <table>...        # or `dolt add .`
+dolt commit -m "feat: ..." # describe the data change
+dolt push origin main
+```
+
+## Parquet / DuckDB 生成
+
+GUI 只读本地 Parquet（DuckDB 查询），数据管线命令在 `compass-data` bin：
+
+```sh
+cargo run --bin compass-data -- import                    # investment_data → Parquet（全量）
+cargo run --bin compass-data -- import --since 20260725   # 增量
+cargo run --bin compass-data -- import-compass --table stock_basic  # compass_data → Parquet
+cargo run --bin compass-data -- export                    # Parquet → DuckDB
+cargo run --bin compass-data -- backup                    # Parquet → 百度云
+```
+
+- `import-compass`/`export` 默认 merge/skip，`--overwrite` 覆盖
+- `import` 总是全量直写
+- SEPA 采集表（`block_trade` 等）通过 `import-compass` 生成对应 Parquet
+
+完整选项见 `kb/user/cli.md`。
+
+## 常用维护查询
+
+### Dolt 查询（investment_data，只读第三方）
+
+```sh
+cd /data/compass-data/investment_data
+dolt sql -q "SELECT COUNT(*) FROM final_a_stock_eod_price"
+dolt sql -q "SELECT * FROM final_a_stock_eod_price WHERE symbol='SZ000001' ORDER BY tradedate DESC LIMIT 5"
+dolt sql -q "SELECT * FROM ts_a_stock_list LIMIT 5"
+
+# 新鲜度检查
+dolt sql -q "SELECT MAX(tradedate) AS latest, COUNT(*) AS row_cnt FROM final_a_stock_eod_price"
+```
+
+### Dolt 查询（compass_data，自有数据）
+
+```sh
+cd /data/compass-data/compass_data
+dolt sql -q "SELECT * FROM stock_basic WHERE symbol='SH600519'"
+dolt sql -q "SELECT * FROM fin_indicators WHERE symbol='SH600519' ORDER BY report_date DESC"
+```
+
+### 跨库 JOIN（从父目录运行 dolt sql 启用跨库查询）
+
+```sh
+cd /data/compass-data
+dolt sql -q "
+SELECT sb.name, sb.industry_l1, ts.list_date
+FROM compass_data.stock_basic sb
+JOIN investment_data.ts_a_stock_list ts ON sb.ts_code = ts.ts_code
+"
+
+dolt sql -q "
+SELECT sb.name, fi.report_date, fi.revenue / 1e8 AS rev_yi, fi.eps
+FROM compass_data.stock_basic sb
+JOIN compass_data.fin_indicators fi ON sb.symbol = fi.symbol
+JOIN investment_data.final_a_stock_eod_price e ON sb.symbol = e.symbol
+WHERE sb.symbol = 'SH600519'
+ORDER BY e.tradedate DESC
+LIMIT 3
+"
+```
+
+### 跨表财务分析（compass_data 内 JOIN）
+
+```sh
+dolt sql -q "
+SELECT sb.name, bs.report_date,
+  bs.TOTAL_ASSETS / 1e8 AS total_assets_yi,
+  inc.TOTAL_OPERATE_INCOME / 1e8 AS revenue_yi,
+  cf.NETCASH_OPERATE / 1e8 AS operating_cf_yi
+FROM compass_data.stock_basic sb
+JOIN compass_data.fin_balance_sheet bs ON sb.symbol = bs.symbol
+JOIN compass_data.fin_income inc ON bs.symbol = inc.symbol AND bs.report_date = inc.report_date
+JOIN compass_data.fin_cash_flow cf ON bs.symbol = cf.symbol AND bs.report_date = cf.report_date
+WHERE sb.symbol = 'SH600519'
+ORDER BY bs.report_date DESC
+LIMIT 3
+"
+```
+
+### 用 DuckDB 查询 Parquet
+
+本机未安装 `duckdb` CLI，用 python `duckdb` 模块（已验证可用）：
+
+```sh
+python3 -c "
+import duckdb
+c = duckdb.connect('/data/compass-data/compass.duckdb', read_only=True)
+print(c.execute(\"SELECT * FROM stock_daily WHERE symbol='SH600519' ORDER BY date DESC LIMIT 5\").fetchall())
+"
+```
+
+Rust 代码内调试（`duckdb` crate，内存连接）：
+
+```rust
+use duckdb::Connection;
+let conn = Connection::open_in_memory()?;
+conn.execute_batch("SELECT * FROM read_parquet('parquet_data/stock_daily.parquet') WHERE symbol = 'SH600519' LIMIT 5")?;
+```
+
+### 检查 Parquet 文件
+
+```sh
+ls -lt /data/compass-data/parquet_data/ | head    # 文件时间 = 生成时间
+wc -l /data/compass-data/parquet_data/stock_daily.symbols.txt  # symbol count
+python3 -c "
+import pyarrow.parquet as pq
+f = pq.ParquetFile('/data/compass-data/parquet_data/stock_daily.parquet')
+print('rows:', f.metadata.num_rows)
+"
+```
+
+## 决策记录
+
+| 决策 | 选项 | 选择 | 理由 | 排除原因 |
+|---|---|---|---|---|
+| investment_data 同步目标 | 仅 pull 上游 / pull + push 到 skwy fork | pull + push skwy | 本地单份拷贝，fork 作备份且供其他机器/CI 拉取；AGENTS.md 数据变更 push 规则的精神延伸 | 仅 pull 无法异地恢复；上游 chenditc 只读不可 push |
+| database.md 与 process.md 关系 | 全量并入 process.md / 新建独立文件 + 迁移查询章节 | 新建独立文件，查询章节迁移 | 维护/同步是独立主题域，独立文件便于导航；避免同主题两处维护漂移 | 并入 process.md 使其臃肿且查询/维护混杂 |
+| compass_data 表分类 | 不分类 / 按来源分类 | 按基本面/SEPA 采集/计算产物三类 | 16 张表来源与用途各异，分类便于理解数据管线 | 不分类则新贡献者难以判断表来源 |

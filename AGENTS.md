@@ -295,7 +295,8 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
 | `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.omo/designs/` 仅归档） |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
-| `kb/dev/process.md` | 开发流程、命令、配置、调试、Dolt 操作、重置 |
+| `kb/dev/process.md` | 开发流程、命令、配置、调试、重置 |
+| `kb/dev/database.md` | 数据库开发信息 — Dolt 查询/同步/提交、Parquet/DuckDB 生成、布局 |
 | `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 + 历史摩擦记录（User corrections） |
 | `kb/user/index.md` | 用户总览 — Compass 是什么、快速开始、前置条件 |
 | `kb/user/gui.md` | 图表应用 — 界面、控件、数据流、股票代码 |
@@ -363,7 +364,7 @@ dolt commit -m "feat: ..." # describe the data change
 dolt push origin main
 ```
 
-完整 Dolt 操作指南（含跨库查询示例）见 `kb/dev/process.md#dolt-database-queries`。
+完整 Dolt 操作指南（含跨库查询示例、investment_data 同步流程）见 `kb/dev/database.md`。
 
 ## Parquet schema & Config
 
