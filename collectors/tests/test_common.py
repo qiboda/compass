@@ -3,6 +3,7 @@
 import asyncio
 import csv
 import io
+import logging
 import subprocess
 import sys
 import time
@@ -733,3 +734,47 @@ CREATE TABLE test_replace (
             "SELECT row_count FROM data_updates WHERE table_name='test_replace'"
         ))
         assert rows[0]["row_count"] == "1"
+
+    def test_merge_insert_failure_logs_sql_error(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path, caplog
+    ) -> None:
+        """MAJOR (review): merge INSERT failure must surface the SQL error via
+        logging instead of returning 0 silently (ref #160 review finding)."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_a = tmp_path / "a.csv"
+        csv_b = tmp_path / "b.csv"
+        self._write_csv(csv_a, [["SH600519", "2026-07-31", "1.5"]])
+        assert self._import(csv_a) == 1
+
+        dolt_sql_csv("DROP TABLE stock_basic")
+        self._write_csv(csv_b, [["SH600519", "2026-08-31", "0.5"]])
+        with caplog.at_level(logging.ERROR):
+            assert self._import(csv_b) == 0
+
+        assert any("SQL error" in r.message for r in caplog.records), (
+            f"merge INSERT failure must log SQL error, got: {[r.message for r in caplog.records]!r}"
+        )
+
+    def test_merge_success_logs_inserted_row_count(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path, caplog
+    ) -> None:
+        """Merge import should report how many rows this run actually inserted
+        (INSERT IGNORE may dedupe overlap), not just the final table count."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_a = tmp_path / "a.csv"
+        csv_b = tmp_path / "b.csv"
+        self._write_csv(csv_a, [["SH600519", "2026-07-31", "1.5"]])
+        assert self._import(csv_a) == 1
+
+        # CSV B overlaps 1 existing key + adds 2 new rows → 2 inserted
+        self._write_csv(csv_b, [
+            ["SH600519", "2026-07-31", "1.5"],
+            ["SH600519", "2026-08-31", "0.5"],
+            ["SH600519", "2026-09-30", "3.5"],
+        ])
+        with caplog.at_level(logging.INFO):
+            assert self._import(csv_b) == 3
+
+        assert any("inserted 2" in r.message for r in caplog.records), (
+            f"merge import must log inserted-row count, got: {[r.message for r in caplog.records]!r}"
+        )
