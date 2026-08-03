@@ -222,8 +222,8 @@ RUST_LOG=debug scripts/run.sh   # verbose logging
 完整子命令参考见 `kb/user/cli.md`。速查：
 
 ```sh
-cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量）
-cargo run --bin compass-data -- import --since 20260725   # 增量
+cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量直写）
+cargo run --bin compass-data -- import --since 20260725   # ⚠️ 日期过滤直写：覆盖全文件，非追加（慎用，见 kb/dev/toolchain.md）
 cargo run --bin compass-data -- import-compass --table stock_basic  # Dolt compass_data → Parquet
 cargo run --bin compass-data -- export                    # Parquet → DuckDB
 cargo run --bin compass-data -- backup                    # Parquet → 百度云

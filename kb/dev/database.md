@@ -57,11 +57,13 @@ dolt push skwy master
 dolt sql -q "SELECT MAX(tradedate) AS latest FROM final_a_stock_eod_price"
 ```
 
-同步后必须重新生成 Parquet，否则 GUI 仍读旧数据：
+同步后必须重新生成 Parquet，否则 GUI 仍读旧数据。**注意：`import` 总是
+全量直写**——`--since` 只做日期过滤并**覆盖整个文件**（非追加），
+用 `--since` 同步会导致历史数据丢失（见 `kb/dev/toolchain.md` 排查卡）：
 
 ```sh
 cd /data/codes/compass
-cargo run --bin compass-data -- import --since <最近一次 import 日期>
+cargo run --bin compass-data -- import   # 全量重建 stock_daily.parquet（推荐）
 ```
 
 > **为什么 push 到 skwy？** investment_data 是 chenditc 的只读上游仓库，
@@ -98,9 +100,9 @@ dolt push origin main
 GUI 只读本地 Parquet（DuckDB 查询），数据管线命令在 `compass-data` bin：
 
 ```sh
-cargo run --bin compass-data -- import                    # investment_data → Parquet（全量）
-cargo run --bin compass-data -- import --since 20260725   # 增量
-cargo run --bin compass-data -- import-compass --table stock_basic  # compass_data → Parquet
+cargo run --bin compass-data -- import                    # investment_data → Parquet（全量直写，推荐）
+cargo run --bin compass-data -- import --since 20260725   # ⚠️ 日期过滤直写：仅导出 since 后数据并覆盖全文件，非追加（慎用）
+cargo run --bin compass-data -- import-compass --table stock_basic  # compass_data → Parquet（--since 有 merge）
 cargo run --bin compass-data -- export                    # Parquet → DuckDB
 cargo run --bin compass-data -- backup                    # Parquet → 百度云
 ```

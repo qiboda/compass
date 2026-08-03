@@ -341,14 +341,14 @@ RUST_LOG=debug scripts/run.sh # 详细日志
 ### compass-data CLI 速查
 
 ```sh
-cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量）
-cargo run --bin compass-data -- import --since 20260725   # 增量
-cargo run --bin compass-data -- import-compass --table stock_basic  # Dolt compass_data → Parquet
+cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量直写，推荐）
+cargo run --bin compass-data -- import --since 20260725   # ⚠️ 日期过滤直写：仅导出 since 后数据并覆盖全文件，非追加（慎用，见 kb/dev/toolchain.md）
+cargo run --bin compass-data -- import-compass --table stock_basic  # Dolt compass_data → Parquet（--since 有 merge）
 cargo run --bin compass-data -- export                    # Parquet → DuckDB
 cargo run --bin compass-data -- backup                    # Parquet → 百度云
 ```
 
-`import-compass`/`export` 默认 merge/skip，`--overwrite` 覆盖；`import` 总是全量直写。
+`import-compass`/`export` 默认 merge/skip，`--overwrite` 覆盖；`import` 总是全量直写（`--since` 仅过滤并覆盖，不是增量追加）。
 完整选项见 `kb/user/cli.md`。
 
 ## Architecture & Data providers

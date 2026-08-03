@@ -50,3 +50,35 @@
 - **验证**: `GITHUB_PERSONAL_ACCESS_TOKEN=<token> npx @modelcontextprotocol/server-github`
   后发 `tools/call create_issue` → 返回 issue 对象（而非 401 错误）。注意：
   本机 opencode 需重启才重新注入环境变量
+
+---
+
+## 数据管线（compass-data）
+
+### [数据管线] `import --since` 是过滤子集 + 覆盖，不是增量追加
+
+- **症状**: `cargo run --bin compass-data -- import --since 20260801` 后，
+  `stock_daily.parquet` 从 689MB/1829 万行缩为 237KB/5534 行——历史行情
+  全部丢失，只剩 2026-08-03 一天
+- **根因**: `import`（stock_daily 路径，`import_dolt.rs::run`）**没有 merge
+  逻辑**。`--since` 只是给 SQL 加 `tradedate >= '...'` WHERE 过滤，然后
+  `write` + `rename` **原子覆盖**整个 parquet 文件。与 `import-compass`
+  （`import_compass.rs`，有 `since && !overwrite && path.exists()` 的 merge
+  路径）行为不同——两者都叫"增量"，语义迥异。AGENTS.md/文档中
+  "`import --since` 增量"的注释是误导（2026-08-03 事故直接诱因）
+- **排查路径**:
+  1. import 后立即检查文件大小：`ls -lh parquet_data/stock_daily.parquet`
+     （721MB→237KB 即事故信号）
+  2. 验证数据范围：duckdb 查询
+     `SELECT MIN(tradedate), MAX(tradedate), COUNT(*) FROM read_parquet(...)`
+  3. 确认根因：读 `crates/compass-data/src/import_dolt.rs::run`——
+     找 `std::fs::rename(&tmp_path, &final_path)`（原子覆盖），对比
+     `import_compass.rs` 的 merge 分支
+- **修复**: 数据已从 Dolt 源全量重建（`import` 不带 `--since`）。文档已更正：
+  `import --since` 描述改为"过滤子集直写，会覆盖全文件"；同步流程改用
+  全量 `import` 或 `import-compass --since`（后者有 merge）
+- **验证**: `SELECT MIN(tradedate), MAX(tradedate), COUNT(*)` → 覆盖完整
+  历史（1990-12-19..2026-08-03, 18293598 行）
+- **教训**: 文档注释"增量"不等于实现语义。执行破坏性命令（覆盖/删除/重置）
+  前，先读源码确认 merge/覆盖行为；Dolt 是权威源，parquet 可重建，但
+  GUI 不可用期间就是损失——命令执行前应确认不会破坏现有产物

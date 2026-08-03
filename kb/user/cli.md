@@ -36,7 +36,7 @@ cargo run --bin compass-data -- import [OPTIONS]
 | `--limit` | `0`（全部） | 最大导入股票数量 |
 | `--start-date` | （最早） | 按起始日期过滤（YYYYMMDD） |
 | `--end-date` | （最晚） | 按截止日期过滤（YYYYMMDD） |
-| `--since` | （无） | 增量导入：仅导入 tradedate >= since 的数据（YYYYMMDD） |
+| `--since` | （无） | 日期过滤：仅导出 tradedate >= since 的数据（YYYYMMDD）。**注意：非增量追加**——导入会覆盖整个 `stock_daily.parquet` 为过滤后的子集（`import` 总是全量直写） |
 
 导入过程通过 `dolt sql -r parquet`（直接二进制 Parquet）读取每只股票的行数据，写入单一的 `stock_daily.parquet` 文件。再次运行会重新导入完整数据集。
 
@@ -66,7 +66,7 @@ cargo run --bin compass-data -- import --start-date 20200101 --end-date 20250721
 # 导入前 100 只股票（测试用）
 cargo run --bin compass-data -- import --limit 100
 
-# 增量导入：仅导入 2026-07-25 以来的数据
+# 日期过滤导入（⚠️ 覆盖全文件为 since 后的子集，非增量追加；需增量请用 import-compass）
 cargo run --bin compass-data -- import --since 20260725
 ```
 
