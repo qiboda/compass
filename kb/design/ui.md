@@ -97,6 +97,37 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 | Chart | `chart` | K 线图表（平移/缩放/十字准线），默认 100 根可见柱；空态引导（「输入代码并点击 Fetch」） |
 | Logger | `logger` | 可滚动日志面板（tracing 事件）+ 导出按钮（保存文件对话框） |
 | Screener | `screener` | 条件选股（基础/技术面两张卡片 + 结果 `DataTable`） |
+| Sepa | `sepa` | 东方SEPA 评分（温度计 + TOP50 排名表 + 详情 + 图表联动），叠入 Chart leaf 双 tab |
+
+### SEPA 评分面板（`TabKind::Sepa`，ref #152）
+
+独立标签页「东方SEPA」，**叠入顶部 Chart leaf 双 tab**（dock tab 栏 `[图表] [东方SEPA]`）；
+报告型心智模型（每日预计算排名，打开即读），与选股器的查询型模型分开。
+
+面板内部自上而下：**① 温度计条 → ② 工具条 → ③④ 表格+详情水平分栏**。
+
+- **① 市场温度计 Card**（恒显示）：温度计 icon + 「市场温度」+ score（色阶色）+ 仓位建议 Tag +
+  5 指标 chip（chip tint = `score_color(heat)`，delta 箭头 A 股红涨绿跌）
+- **② 工具条**：计数标签「共 N 行 · 日期」+ `Segmented ["TOP 50","TOP 30"]` + 刷新按钮
+  （Primary + ARROW_CLOCKWISE；loading 禁用 + spinner；**纯手动触发，无自动计算**）
+- **③ 12 列表格**（默认排序列 = 排名升序）：排名 `Rank`(1-3 warning) / 代码 `Text` /
+  名称 `Text` / 总分 `Score{max:100}` / 趋势 `Score{max:30}` / 题材 `Score{max:25}` /
+  资金 `Score{max:20}` / 形态 `Score{max:20}` / 风险 `Score{inverted}`（带符号 `-x.x`，
+  按 `1-|v|/max` 反向色阶：0 扣分绿 → 满扣分红）/ 行业 `Text`（有题材时拼
+  `行业 · 题材1 · 题材2`）/ 最新价 `Price` / 涨跌幅 `Price`
+- **④ 右侧详情面板**（~300px，行点击刷新 + 行高亮）：名称 + 排名 Tag + 总分大字 +
+  五模块行（标签 + `score/max` + `ProgressBar`，`fill = score_color(norm)`）+
+  子项 `SepaFactor` 列表（label + `score/max` + note）+ 题材 Tag 区
+- **分数色阶** `score_color(norm)`：norm ≥0.8 success；0.5–0.8 `lerp(warning, success)`；
+  0.25–0.5 `lerp(error, warning)`；<0.25 error（norm = `value/max`；风险列 `1-|v|/max`）
+- **TOP N 切换**：仅截断**本地副本**（`rows.clone().truncate(top_n)`），**绝不回写
+  shared_state**——切回 50 数据不丢
+- **行点击**：复用 `dispatch_symbol_fetch`（screener 同源共享函数）联动图表
+- **状态**：loading spinner / error colored_label + toast / 空态 EmptyState
+  「暂无 SEPA 评分数据 / 点击刷新计算全市场 TOP50」
+- **数据流**：第三条 citizen→Signal→AsyncDispatcher 通道（`RunSepaRequest` /
+  `RunSepaResponse`），backend handler **进程内**调 `compass_strategy::sepa::run_sepa`
+  ——GUI 只读 Parquet，不依赖 CLI 写回
 
 ## 交互规范
 

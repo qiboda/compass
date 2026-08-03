@@ -32,7 +32,8 @@ mod theme;
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
 use citizens::screener::ScreenerPanel;
-use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, Tab, TabKind, TabViewer};
+use citizens::sepa::SepaPanel;
+use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
 
 /// Default inner window size (design doc §Q8: 1440×900).
@@ -70,7 +71,7 @@ fn main() -> eframe::Result {
             let stock_list = load_stock_list(&config.app);
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
-            let (work_signal, run_screener_signal, _backend_handle) =
+            let (work_signal, run_screener_signal, sepa_signal, _backend_handle) =
                 backend::wire_backend(config.app.clone(), shared_state.clone(), egui_ctx);
 
             // Register citizens
@@ -95,6 +96,7 @@ fn main() -> eframe::Result {
                 }),
                 theme.tokens(),
             );
+            let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, theme.tokens());
 
             // Derive distinct industry/board lists for the screener conditions.
             let mut industries: Vec<String> = stock_list
@@ -108,8 +110,11 @@ fn main() -> eframe::Result {
             boards.sort();
             boards.dedup();
 
-            // Create initial dock state: Chart (root), Logger + Screener below.
-            let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
+            // Create initial dock state: Chart + 东方SEPA share the top leaf
+            // (SEPA's 12-column table + detail panel need the full width),
+            // Logger + Screener below.
+            let mut dock_state =
+                DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
             if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
                 && let Some(tree) = surface.node_tree_mut()
             {
@@ -141,7 +146,9 @@ fn main() -> eframe::Result {
                 chart,
                 logger,
                 screener,
+                sepa,
                 run_screener_signal,
+                sepa_signal,
                 screener_industries: industries,
                 screener_boards: boards,
                 shared_state,
@@ -158,6 +165,8 @@ fn main() -> eframe::Result {
                 last_error: None,
                 last_loading: false,
                 last_screener_error: None,
+                last_sepa_error: None,
+                last_sepa_loading: false,
                 last_screener_synced_symbol: startup_symbol,
                 sidebar_visible: true,
                 sidebar_search: String::new(),
@@ -402,7 +411,9 @@ struct CompassApp {
     chart: ChartCitizen,
     logger: LoggerPanel,
     screener: ScreenerPanel,
+    sepa: SepaPanel,
     run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
+    sepa_signal: egui_mobius::signals::Signal<messages::RunSepaRequest>,
     screener_industries: Vec<String>,
     screener_boards: Vec<String>,
     shared_state: Arc<state::SharedState>,
@@ -419,6 +430,8 @@ struct CompassApp {
     last_error: Option<String>,
     last_loading: bool,
     last_screener_error: Option<String>,
+    last_sepa_error: Option<String>,
+    last_sepa_loading: bool,
     last_screener_synced_symbol: String,
     /// Whether the left watchlist sidebar is visible.
     sidebar_visible: bool,
@@ -492,7 +505,9 @@ impl eframe::App for CompassApp {
                         chart: &mut self.chart,
                         logger: &mut self.logger,
                         screener: &mut self.screener,
+                        sepa: &mut self.sepa,
                         run_screener_signal: &self.run_screener_signal,
+                        sepa_signal: &self.sepa_signal,
                         work_signal: &self.work_signal,
                         screener_industries: &self.screener_industries,
                         screener_boards: &self.screener_boards,
@@ -540,6 +555,35 @@ impl eframe::App for CompassApp {
                 }
                 self.last_screener_error = current_screener_err;
             }
+
+            // SEPA error toast on None→Some transition (same pattern as the
+            // screener error above).
+            let current_sepa_err = self.shared_state.sepa_error.get();
+            if current_sepa_err != self.last_sepa_error {
+                if let Some(ref err) = current_sepa_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_sepa_error = current_sepa_err;
+            }
+
+            // SEPA success toast on loading true→false with no error; the
+            // stale selection index points at pre-refresh data, so it is
+            // dropped along with the toast (design §7).
+            let current_sepa_loading = self.shared_state.sepa_loading.get();
+            if self.last_sepa_loading && !current_sepa_loading {
+                self.sepa.reset_selection();
+                if self.shared_state.sepa_error.get().is_none() {
+                    let count = self
+                        .shared_state
+                        .sepa_data
+                        .get()
+                        .map(|d| d.rows.len())
+                        .unwrap_or(0);
+                    self.toast
+                        .push(ToastLevel::Success, format!("SEPA 评分已更新 · {count} 只"));
+                }
+            }
+            self.last_sepa_loading = current_sepa_loading;
 
             // Reverse-sync: when the symbol changed (e.g. a screener row
             // click), reflect it in the StockPicker — but only for bare
@@ -900,6 +944,7 @@ impl CompassApp {
                         self.toast.set_tokens(tokens);
                         self.modal.set_tokens(tokens);
                         self.screener.set_tokens(tokens);
+                        self.sepa.set_tokens(tokens);
                         self.toast.push(ToastLevel::Info, "主题已切换");
                     }
                 }
@@ -966,10 +1011,11 @@ mod tests {
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
     use crate::citizens::screener::ScreenerPanel;
+    use crate::citizens::sepa::SepaPanel;
     use crate::latest_quote;
     use crate::state::SharedState;
     use crate::stock_projection;
-    use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID};
+    use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
     use egui_citizen::{CitizenId, Dispatcher};
@@ -1041,7 +1087,7 @@ mod tests {
         let config = AppConfig::default();
         let shared_state = Arc::new(SharedState::new("000001", "1d"));
 
-        let (work_signal, run_screener_signal, _backend_handle) =
+        let (work_signal, run_screener_signal, sepa_signal, _backend_handle) =
             crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
 
         let mut dispatcher = Dispatcher::new();
@@ -1058,10 +1104,12 @@ mod tests {
             Box::new(|_| {}),
             &theme_tokens,
         );
+        let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &theme_tokens);
         let stock_picker = StockPicker::new(theme_tokens, "000001", stock_projection());
         let dock_style = egui_dock::Style::default();
 
-        let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart)]);
+        let mut dock_state =
+            DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
         if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
             && let Some(tree) = surface.node_tree_mut()
         {
@@ -1085,7 +1133,9 @@ mod tests {
             chart,
             logger,
             screener,
+            sepa,
             run_screener_signal,
+            sepa_signal,
             screener_industries: Vec::new(),
             screener_boards: Vec::new(),
             shared_state,
@@ -1102,6 +1152,8 @@ mod tests {
             last_error: None,
             last_loading: false,
             last_screener_error: None,
+            last_sepa_error: None,
+            last_sepa_loading: false,
             last_screener_synced_symbol: startup_symbol,
             sidebar_visible: true,
             sidebar_search: String::new(),
@@ -1410,6 +1462,196 @@ default_timeframe = "1w"
         harness.step();
         harness.step();
         harness.step();
+    }
+
+    // ======================================================================
+    // SEPA double-tab leaf (design M4 — egui_dock per-tab state objective
+    // verification): with Chart + 东方SEPA sharing one leaf, the active tab
+    // title renders text_primary while the inactive one renders text_secondary;
+    // clicking the inactive tab raises it with the accent ring. This is the
+    // shape-level evidence that dock_style needs no change for double tabs.
+    // ======================================================================
+
+    /// Collect the fallback colors of text shapes inside the tab bar band
+    /// (y < 30 — `Style::tab_bar.height` is 28) of the rendered dock.
+    fn tab_band_text_colors(shapes: &[egui::Shape]) -> Vec<egui::Color32> {
+        let mut colors = Vec::new();
+        fn walk(shapes: &[egui::Shape], colors: &mut Vec<egui::Color32>) {
+            for shape in shapes {
+                match shape {
+                    egui::Shape::Vec(inner) => walk(inner, colors),
+                    egui::Shape::Text(text) if text.pos.y < 30.0 => {
+                        colors.push(text.fallback_color);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        walk(shapes, &mut colors);
+        colors
+    }
+
+    /// True when a stroke of `color` intersects the tab bar band (y < 40).
+    fn tab_band_has_stroke(shapes: &[egui::Shape], color: egui::Color32) -> bool {
+        fn walk(shapes: &[egui::Shape], color: egui::Color32) -> bool {
+            shapes.iter().any(|shape| match shape {
+                egui::Shape::Vec(inner) => walk(inner, color),
+                egui::Shape::Rect(rect) => rect.stroke.color == color && rect.rect.min.y < 40.0,
+                egui::Shape::Path(path) => {
+                    path.stroke.color == egui::epaint::ColorMode::Solid(color)
+                        && path.points.iter().any(|p| p.y < 40.0)
+                }
+                _ => false,
+            })
+        }
+        walk(shapes, color)
+    }
+
+    /// Position of the first text shape whose galley contains `needle`
+    /// (used to locate a tab title for the click interaction).
+    fn text_pos_containing(shapes: &[egui::Shape], needle: &str) -> Option<egui::Pos2> {
+        fn walk(shapes: &[egui::Shape], needle: &str) -> Option<egui::Pos2> {
+            for shape in shapes {
+                match shape {
+                    egui::Shape::Vec(inner) => {
+                        if let Some(pos) = walk(inner, needle) {
+                            return Some(pos);
+                        }
+                    }
+                    egui::Shape::Text(text) if text.galley.text().contains(needle) => {
+                        return Some(text.pos);
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        walk(shapes, needle)
+    }
+
+    #[test]
+    fn double_tab_leaf_renders_active_and_inactive_styles() {
+        use crate::citizens::chart::ChartCitizen;
+        use crate::citizens::logger::LoggerPanel;
+        use crate::citizens::screener::ScreenerPanel;
+        use crate::citizens::sepa::SepaPanel;
+        use crate::dispatcher::register_citizens;
+        use crate::messages::{FetchRequest, RunScreenerRequest, RunSepaRequest};
+        use crate::state::SharedState;
+        use crate::tabs::TabViewer;
+        use egui_dock::{DockArea, DockState};
+        use egui_mobius::factory;
+
+        let tokens = compass_ui::tokens::ThemeTokens::dark();
+        let mut dispatcher = Dispatcher::new();
+        let registered = register_citizens(&mut dispatcher);
+        let mut chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let mut logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let mut screener = ScreenerPanel::new(
+            CitizenId::new(SCREENER_ID),
+            registered.screener,
+            None,
+            Box::new(|_| {}),
+            &tokens,
+        );
+        let mut sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
+        let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
+        let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
+        let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
+        let shared = SharedState::new("000001", "1d");
+        let theme = CompassTheme::compass_dark();
+
+        let mut dock_state =
+            DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
+        let mut logger_export_clicked = false;
+        let mut viewer = TabViewer {
+            dispatcher: &mut dispatcher,
+            chart: &mut chart,
+            logger: &mut logger,
+            screener: &mut screener,
+            sepa: &mut sepa,
+            run_screener_signal: &run_signal,
+            sepa_signal: &sepa_signal,
+            work_signal: &work_signal,
+            screener_industries: &[],
+            screener_boards: &[],
+            shared_state: &shared,
+            theme: &theme,
+            logger_export_clicked: &mut logger_export_clicked,
+        };
+
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 400.0))
+            .build_ui(|ui| {
+                let style = compass_ui::dock_style::dock_style(theme.tokens());
+                DockArea::new(&mut dock_state)
+                    .style(style)
+                    .show_inside(ui, &mut viewer);
+            });
+        harness.run();
+
+        let c = theme.tokens().color;
+        let shapes: Vec<egui::Shape> = harness
+            .output()
+            .shapes
+            .iter()
+            .map(|clipped| clipped.shape.clone())
+            .collect();
+        let band_colors = tab_band_text_colors(&shapes);
+        assert!(
+            band_colors.contains(&c.text_primary),
+            "active tab title must render text_primary, got {band_colors:?}"
+        );
+        assert!(
+            band_colors.contains(&c.text_secondary),
+            "inactive tab title must render text_secondary, got {band_colors:?}"
+        );
+        assert!(
+            !tab_band_has_stroke(&shapes, c.accent),
+            "no leaf focused yet: no accent ring in the tab band"
+        );
+
+        // Click the 东方SEPA tab (located via its rendered title) — the same
+        // interaction path a user performs; it focuses the leaf and raises
+        // the tab with the accent ring while Chart turns inactive.
+        let sepa_title = text_pos_containing(&shapes, "东方SEPA").expect("sepa tab title rendered");
+        harness.event(egui::Event::PointerMoved(
+            sepa_title + egui::vec2(10.0, 10.0),
+        ));
+        harness.step();
+        harness.event(egui::Event::PointerButton {
+            pos: sepa_title + egui::vec2(10.0, 10.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        harness.event(egui::Event::PointerButton {
+            pos: sepa_title + egui::vec2(10.0, 10.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        let focused_shapes: Vec<egui::Shape> = harness
+            .output()
+            .shapes
+            .iter()
+            .map(|clipped| clipped.shape.clone())
+            .collect();
+        assert!(
+            tab_band_has_stroke(&focused_shapes, c.accent),
+            "clicked tab must raise with the accent outline ring"
+        );
+        assert!(
+            tab_band_text_colors(&focused_shapes).contains(&c.accent),
+            "focused tab title must render in accent"
+        );
+        assert!(
+            tab_band_text_colors(&focused_shapes).contains(&c.text_secondary),
+            "the previously active Chart tab must turn inactive (text_secondary)"
+        );
     }
 
     // ======================================================================

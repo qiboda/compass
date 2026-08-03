@@ -211,6 +211,122 @@ pub struct ScreenerRow {
     pub industry: String,
 }
 
+// --- SEPA engine contract types (epic #139) ---------------------------------
+//
+// Shared boundary types of the SEPA (Stage Analysis + VCP) scoring engine,
+// consumed by the engine (compass-strategy), the CLI and the GUI. These are
+// deliberately NOT serde-serializable: the GUI renders them as-is without any
+// parsing, and no persistence/configuration path needs them (unlike the
+// `ScreenerQuery` family above).
+
+/// Backend-side SEPA query. Currently only the result cap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SepaQuery {
+    /// Backend truncation cap for the result list (default 50).
+    pub top_n: usize,
+}
+
+/// One scoring sub-item of a SEPA module. The GUI renders it as-is without
+/// any parsing (label + score/max as a bar, note as the raw value display).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SepaFactor {
+    /// Human-readable sub-item label (e.g. "均线结构").
+    pub label: String,
+    /// Achieved sub-score.
+    pub score: f64,
+    /// Maximum possible sub-score.
+    pub max: f64,
+    /// Optional raw-value note for display (e.g. "MA250=12.3").
+    pub note: Option<String>,
+}
+
+/// Sub-item detail breakdown of the five SEPA scoring modules.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SepaDetails {
+    /// Trend module sub-items.
+    pub trend: Vec<SepaFactor>,
+    /// Theme module sub-items.
+    pub theme: Vec<SepaFactor>,
+    /// Capital module sub-items.
+    pub capital: Vec<SepaFactor>,
+    /// Pattern (VCP) module sub-items.
+    pub pattern: Vec<SepaFactor>,
+    /// Risk module sub-items.
+    pub risk: Vec<SepaFactor>,
+}
+
+/// One SEPA result row (one ranked stock).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SepaRow {
+    /// Bare 6-digit stock code.
+    pub symbol: String,
+    /// Chinese display name.
+    pub name: String,
+    /// Final rank (1-based, after sorting).
+    pub rank: usize,
+    /// Total score in 0..100.
+    pub total_score: f64,
+    /// Trend module score (weighted contribution).
+    pub trend: f64,
+    /// Theme module score (weighted contribution).
+    pub theme: f64,
+    /// Capital module score (weighted contribution).
+    pub capital: f64,
+    /// Pattern module score (weighted contribution).
+    pub pattern: f64,
+    /// Risk module penalty in -3.75..0 (deduction contribution, review
+    /// revision: at most 75 × 0.05).
+    pub risk: f64,
+    /// Industry classification.
+    pub industry: String,
+    /// Concept themes; may be empty.
+    pub themes: Vec<String>,
+    /// Latest raw close price.
+    pub latest_price: f64,
+    /// Day-over-day change percent (A-share red-up convention).
+    pub change_pct: f64,
+    /// Per-module sub-item breakdown.
+    pub details: SepaDetails,
+}
+
+/// One thermometer indicator chip, rendered generically by the GUI.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SepaIndicator {
+    /// Indicator label (e.g. "沪深300趋势").
+    pub label: String,
+    /// Pre-formatted value text (e.g. "72.4%").
+    pub value_text: String,
+    /// Change vs yesterday; `None` when not applicable. A-share coloring:
+    /// red = up, green = down.
+    pub delta_pct: Option<f64>,
+    /// Heat value in 0..1 driving the color-scale tint.
+    pub heat: f64,
+}
+
+/// Whole-market thermometer: market breadth/regime summary with 5 indicators.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarketThermometer {
+    /// Overall market score in 0..100.
+    pub score: f64,
+    /// Position band label (e.g. "80%-100%").
+    pub position: String,
+    /// Position band midpoint percent in 0..100.
+    pub position_pct: f64,
+    /// The 5 indicator chips.
+    pub indicators: Vec<SepaIndicator>,
+}
+
+/// Full SEPA engine response payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SepaData {
+    /// Complete ranked TOP-N rows (official order, no client re-sort).
+    pub rows: Vec<SepaRow>,
+    /// Whole-market thermometer.
+    pub thermometer: MarketThermometer,
+    /// Scoring date (e.g. "2026-08-02").
+    pub date: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

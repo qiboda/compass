@@ -41,3 +41,17 @@ pub struct RunScreenerResponse {
     pub total: usize,
     pub error: Option<String>,
 }
+
+/// Sent from the SEPA panel to the backend via the sepa signal. No payload —
+/// the TOP-N cap is pure GUI state and never triggers a backend recompute.
+#[derive(Clone)]
+pub struct RunSepaRequest {}
+
+/// Sent from the backend worker back to the UI after a SEPA run.
+#[derive(Clone)]
+pub struct RunSepaResponse {
+    /// Full TOP-N scoring snapshot (rows + thermometer in one payload so the
+    /// panel never observes a half-updated state).
+    pub data: compass_types::SepaData,
+    pub error: Option<String>,
+}

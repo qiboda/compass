@@ -2,10 +2,16 @@
 
 import asyncio
 import csv
+import io
+import subprocess
 import sys
 import time
+from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -288,3 +294,211 @@ class TestLastReportDate:
         """When .dolt sub-directory does not exist, returns empty string."""
         monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
         assert last_report_date("any_table") == ""
+
+
+# ── import_replace_table (shared atomic-replace import) ──────────
+
+
+class TestImportReplaceTable:
+    _DDL = """\
+CREATE TABLE test_replace (
+    symbol VARCHAR(20) NOT NULL,
+    trade_date DATE NOT NULL,
+    value DOUBLE,
+    PRIMARY KEY (symbol, trade_date)
+)"""
+
+    _INSERT = """
+        INSERT INTO test_replace (symbol, trade_date, value)
+        SELECT symbol, trade_date, value
+        FROM _tmp_tst
+        WHERE symbol IN (SELECT symbol FROM stock_basic)
+    """
+
+    @pytest.fixture
+    def dolt_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, Callable[[str], str]]:
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
+            capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.name", "CI"],
+            capture_output=True, text=True,
+        )
+        init = subprocess.run(
+            ["dolt", "--data-dir", str(tmp_path), "init"],
+            capture_output=True, text=True,
+        )
+        assert init.returncode == 0, init.stderr
+
+        def dolt_sql_csv(sql: str) -> str:
+            return subprocess.run(
+                ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
+                capture_output=True, text=True,
+            ).stdout
+
+        dolt_sql_csv(
+            "CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY); "
+            "INSERT INTO stock_basic VALUES ('SH600519')"
+        )
+        dolt_sql_csv(
+            "CREATE TABLE data_updates (table_name VARCHAR(50) PRIMARY KEY, "
+            "last_updated DATE, source VARCHAR(200), row_count INT, last_report_date DATE)"
+        )
+
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        return tmp_path, dolt_sql_csv
+
+    @staticmethod
+    def _last(stdout: str) -> str:
+        lines = stdout.strip().split("\n")
+        return lines[-1] if lines else ""
+
+    @staticmethod
+    def _rows(stdout: str) -> list[dict[str, str]]:
+        return list(csv.DictReader(io.StringIO(stdout)))
+
+    def _write_csv(self, path: Path, rows: list[list[str]]) -> None:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["symbol", "trade_date", "value"])
+            writer.writerows(rows)
+
+    def _import(self, csv_path: Path, ddl: str | None = None) -> int:
+        from common import import_replace_table  # noqa: E402
+
+        return import_replace_table(
+            csv_path=csv_path,
+            tmp_name="_tmp_tst",
+            ddl=ddl or self._DDL,
+            insert_sql=self._INSERT,
+            dolt_table="test_replace",
+            source_label="test source",
+            last_report_expr="MAX(trade_date)",
+        )
+
+    def test_happy_path_creates_table_and_upserts_data_updates(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """First run: table created, rows imported, data_updates 5 columns filled."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+
+        assert self._import(csv_path) == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+
+        rows = self._rows(dolt_sql_csv(
+            "SELECT table_name, last_updated, source, row_count, last_report_date "
+            "FROM data_updates WHERE table_name='test_replace'"
+        ))
+        assert len(rows) == 1
+        assert rows[0]["table_name"] == "test_replace"
+        assert rows[0]["source"] == "test source"
+        assert rows[0]["row_count"] == "1"
+        assert rows[0]["last_report_date"] == "2026-07-31"
+        assert rows[0]["last_updated"] != ""
+
+    def test_csv_not_found_returns_zero(self, monkeypatch, tmp_path: Path) -> None:
+        """Missing CSV → 0 without touching Dolt."""
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        assert self._import(tmp_path / "nonexistent.csv") == 0
+
+    def test_first_run_insert_failure_leaves_no_table(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """First-run INSERT failure (stock_basic dropped) drops the table cleanly."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+        dolt_sql_csv("DROP TABLE stock_basic")
+
+        assert self._import(csv_path) == 0
+        cnt = self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_name='test_replace'"
+        ))
+        assert cnt == "0"
+        # temp tables cleaned up
+        for tbl in ("_tmp_tst", "_tmp_tst_old"):
+            cnt = self._last(dolt_sql_csv(
+                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{tbl}'"
+            ))
+            assert cnt == "0"
+
+    def test_rerun_insert_failure_rolls_back_previous_data(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Rerun with failing INSERT restores the previous table contents."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+        assert self._import(csv_path) == 1
+
+        dolt_sql_csv("DROP TABLE stock_basic")
+        assert self._import(csv_path) == 0
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+        val = self._last(dolt_sql_csv("SELECT value FROM test_replace"))
+        assert val == "1.5"
+        # watermark untouched after failed rerun
+        rows = self._rows(dolt_sql_csv(
+            "SELECT row_count, last_report_date FROM data_updates "
+            "WHERE table_name='test_replace'"
+        ))
+        assert rows[0]["row_count"] == "1"
+        assert rows[0]["last_report_date"] == "2026-07-31"
+
+    def test_ddl_failure_rolls_back_without_temp_residue(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Broken DDL on rerun: previous table restored, temp tables dropped."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+        assert self._import(csv_path) == 1
+
+        assert self._import(csv_path, ddl="CREATE TABLE test_replace (broken") == 0
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+        for tbl in ("_tmp_tst", "_tmp_tst_old"):
+            cnt = self._last(dolt_sql_csv(
+                f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{tbl}'"
+            ))
+            assert cnt == "0"
+
+    def test_rerun_replaces_table_without_duplicates(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Idempotency: rerunning the same CSV must not grow row count."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+
+        assert self._import(csv_path) == 1
+        assert self._import(csv_path) == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+
+    def test_last_report_expr_controls_watermark_value(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """last_report_expr is queried against the fresh table for the watermark."""
+        from common import import_replace_table  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+
+        import_replace_table(
+            csv_path=csv_path,
+            tmp_name="_tmp_tst",
+            ddl=self._DDL,
+            insert_sql=self._INSERT,
+            dolt_table="test_replace",
+            source_label="test source",
+            last_report_expr="CURDATE()",
+        )
+        rows = self._rows(dolt_sql_csv(
+            "SELECT last_report_date FROM data_updates WHERE table_name='test_replace'"
+        ))
+        assert rows[0]["last_report_date"] == date.today().isoformat()

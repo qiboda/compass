@@ -16,6 +16,8 @@ use compass_core::model::{CrossSectionBar, StockBasic};
 use compass_types::{MaCondition, ScreenerQuery, ScreenerRow};
 use thiserror::Error;
 
+pub mod sepa;
+
 /// Errors produced by the screening engine.
 #[derive(Debug, Error)]
 pub enum ScreenerError {

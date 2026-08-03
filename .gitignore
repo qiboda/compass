@@ -24,3 +24,4 @@ collectors/*.state.json
 .opencode/package.json
 .opencode/package-lock.json
 __pycache__/
+collectors/.coverage

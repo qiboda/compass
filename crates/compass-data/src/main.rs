@@ -1,5 +1,6 @@
 mod baostock;
 mod export;
+mod sepa;
 use compass_data::import_compass;
 use compass_data::import_dolt;
 
@@ -106,6 +107,38 @@ enum Command {
         #[arg(long, default_value_t = false)]
         keep_zip: bool,
     },
+
+    /// SEPA scoring engine (东方SEPA): score + write-back to Dolt
+    Sepa {
+        #[command(subcommand)]
+        cmd: SepaCmd,
+    },
+}
+
+/// Nested subcommands of `compass-data sepa`.
+#[derive(Subcommand)]
+enum SepaCmd {
+    /// 计算当日评分并输出 TOP N 表格，写回 Dolt
+    Score {
+        /// 输出条数上限（默认 50）
+        #[arg(long, default_value_t = 50)]
+        top: usize,
+        /// 指定日期（默认最新交易日；YYYY-MM-DD）
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// 计算市场温度计，写回 Dolt
+    Temperature,
+}
+
+impl SepaCmd {
+    /// Machine-readable subcommand name used in error messages.
+    fn name(&self) -> &'static str {
+        match self {
+            SepaCmd::Score { .. } => "score",
+            SepaCmd::Temperature => "temperature",
+        }
+    }
 }
 
 fn load_config() -> AppConfig {
@@ -229,12 +262,35 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
                 return Err("Backup failed".into());
             }
         }
+        Command::Sepa { cmd } => {
+            let dolt_dir = PathBuf::from(&config.dolt.compass_data_dir);
+            let reader = compass_core::data::parquet::ParquetReader::new(&config.parquet.dir)?;
+            let cmd_name = cmd.name();
+            match cmd {
+                SepaCmd::Score { top, date } => {
+                    let date = date
+                        .map(|s| {
+                            chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                                .map_err(|e| format!("invalid --date {s:?}: {e}"))
+                        })
+                        .transpose()?;
+                    if let Err(e) = sepa::run_score(top, date, &reader, &dolt_dir) {
+                        return Err(format!("Sepa {cmd_name} failed: {e}").into());
+                    }
+                }
+                SepaCmd::Temperature => {
+                    if let Err(e) = sepa::run_temperature(&reader, &dolt_dir) {
+                        return Err(format!("Sepa {cmd_name} failed: {e}").into());
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
@@ -242,9 +298,10 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Serialisation guard — set_var is not thread-safe, so HOME tests
-    // acquire this lock before mutating the env.
+    // acquire this lock before mutating the env. `pub(crate)` so the sepa
+    // module tests (which spawn `dolt`, a HOME reader) can hold it too.
     // -----------------------------------------------------------------------
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+    pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     /// RAII guard that restores an env var to its original value on drop.
     struct EnvGuard {
@@ -464,6 +521,56 @@ compass_data_dir = "/custom/compass"
         }
     }
 
+    #[test]
+    fn cli_sepa_score_parses_top_and_date() {
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "sepa",
+            "score",
+            "--top",
+            "30",
+            "--date",
+            "2026-07-31",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                SepaCmd::Score { top, date } => {
+                    assert_eq!(top, 30);
+                    assert_eq!(date.as_deref(), Some("2026-07-31"));
+                }
+                _ => panic!("expected Score"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_score_default_top_is_50() {
+        let cli = Cli::try_parse_from(["compass-data", "sepa", "score"]).unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                SepaCmd::Score { top, date } => {
+                    assert_eq!(top, 50);
+                    assert_eq!(date, None);
+                }
+                _ => panic!("expected Score"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_temperature_parses() {
+        let cli = Cli::try_parse_from(["compass-data", "sepa", "temperature"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Sepa {
+                cmd: SepaCmd::Temperature
+            }
+        ));
+    }
+
     // ==================================================================
     // run() dispatch tests
     // ==================================================================
@@ -610,6 +717,87 @@ compass_data_dir = "/custom/compass"
         };
         let result = run(cli, config).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_MUTEX serializes HOME mutation vs dolt spawns
+    async fn run_sepa_score_errors_on_missing_dolt() {
+        // Valid parquet fixture, but the dolt dir is not a repo → the
+        // write-back fails and run() surfaces "Sepa score failed".
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let parquet_dir = tempdir().unwrap();
+        build_minimal_sepa_fixture(parquet_dir.path());
+        let mut config = AppConfig::default();
+        config.parquet.dir = parquet_dir.path().to_string_lossy().to_string();
+        config.dolt.compass_data_dir = dir.path().to_string_lossy().to_string();
+        let cli = Cli {
+            command: Command::Sepa {
+                cmd: SepaCmd::Score {
+                    top: 50,
+                    date: Some("2026-07-31".to_string()),
+                },
+            },
+        };
+        let result = run(cli, config).await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Sepa score failed"), "error: {msg}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_MUTEX serializes HOME mutation vs dolt spawns
+    async fn run_sepa_temperature_errors_on_missing_dolt() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let parquet_dir = tempdir().unwrap();
+        build_minimal_sepa_fixture(parquet_dir.path());
+        let mut config = AppConfig::default();
+        config.parquet.dir = parquet_dir.path().to_string_lossy().to_string();
+        config.dolt.compass_data_dir = dir.path().to_string_lossy().to_string();
+        let cli = Cli {
+            command: Command::Sepa {
+                cmd: SepaCmd::Temperature,
+            },
+        };
+        let result = run(cli, config).await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Sepa temperature failed"), "error: {msg}");
+    }
+
+    /// Minimal fixture shared with the dispatch tests: one stock, one day,
+    /// no SEPA aux tables (run_sepa degrades gracefully).
+    fn build_minimal_sepa_fixture(dir: &std::path::Path) {
+        let conn = duckdb::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO daily VALUES ('000001', '2026-07-31', 14.0, 15.1, 14.9, 15.0, 15.0, 1.0e6, 5.0e8)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            dir.join("stock_daily.parquet").display()
+        ))
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO basic VALUES ('000001', '平安银行', 'SZ', '2010-01-01', NULL, '主板', '平安银行', 1.0e9, '测试', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            dir.join("stock_basic.parquet").display()
+        ))
+        .unwrap();
     }
 
     // ==================================================================

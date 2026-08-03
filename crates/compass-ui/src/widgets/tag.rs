@@ -100,7 +100,9 @@ pub fn exchange_color(text: &str) -> Color32 {
 }
 
 /// Mix `base` over a transparent background at the given alpha (0..=1).
-fn tint(base: Color32, alpha: f32) -> Color32 {
+/// Exported for composite chips (e.g. the SEPA thermometer indicators) that
+/// build their own pill with the tag's tint convention.
+pub fn tint(base: Color32, alpha: f32) -> Color32 {
     Color32::from_rgba_premultiplied(
         (base.r() as f32 * alpha) as u8,
         (base.g() as f32 * alpha) as u8,

@@ -151,7 +151,7 @@ cargo run --bin compass-data -- backup [OPTIONS]
 
 ## Python 采集器（数据源 → Dolt）
 
-`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并存入 CSV，再导入 Dolt `compass_data`。财务表仍来自东方财富；`stock_basic` 已切换到三大交易所官网：
+`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并存入 CSV，再导入 Dolt `compass_data`。财务表与 SEPA 资金/题材表来自东方财富；`stock_basic` 已切换到三大交易所官网：
 
 ```sh
 cd collectors/
@@ -159,6 +159,11 @@ uv sync                                # 首次：安装依赖
 
 uv run python main.py fetch stock_basic   # 上交所/深交所/北交所官网
 uv run python main.py fetch fin_indicators
+uv run python main.py fetch main_flow     # SEPA: 主力资金流（push2 当日截面）
+uv run python main.py fetch dragon        # SEPA: 龙虎榜席位
+uv run python main.py fetch block_trade   # SEPA: 大宗交易
+uv run python main.py fetch institution_survey  # SEPA: 机构调研
+uv run python main.py fetch concept_member      # SEPA: 概念板块成分
 uv run python main.py sync             # 获取 + 导入全部
 uv run python main.py sync-investment --restart
 ```
@@ -166,7 +171,14 @@ uv run python main.py sync-investment --restart
 关键概念：
 - **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt
-- **`.state.json`** 文件跟踪上次获取时间，用于增量更新
+- **增量机制**：既有财务采集器用 `.state.json` 跟踪上次获取时间；SEPA 采集器（main_flow/dragon/block_trade/institution_survey/concept_member）改用 Dolt `data_updates.last_report_date` 增量，且任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。4 个时间序列表（main_flow/dragon/block_trade/institution_survey）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史；concept_member 是全量重写（版本快照）。长文本表（institution_survey org_name 可达 ~800 字节）用显式宽 schema 建临时表导入（`dolt table import -u`），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8。
+
+SEPA 采集器说明：
+- `main_flow`：东财 push2 当日全市场主力资金流截面（f62/f184/f66/f72/f78/f84）；按 (symbol, trade_date) 累积每日截面（merge 导入）
+- `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
+- `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
+- `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
+- `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照）
 
 `fetch stock_basic` 现在运行 `fetch_stock_basic_official.py`，从三大交易所官网
 （SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`。旧的东财采集器
@@ -209,6 +221,27 @@ cargo run --bin compass-data -- import-compass --table fin_indicators --since 20
 cargo run --bin compass-data -- backup            # 上传 zip
 cargo run --bin compass-data -- backup --keep-zip # 上传后保留本地 zip
 ```
+
+---
+
+## `sepa` — 东方SEPA 评分（计算 + 写回 Dolt）
+
+对最新交易日运行 SEPA 五模块评分引擎（趋势/题材/资金/形态/风险），打印 TOP 榜并将计算表写回 Dolt `compass_data`（`technical_factor` / `industry_factor` / `capital_factor` / `final_score` / `market_temperature`，两段式 DELETE + `dolt table import -a`，幂等可重跑）。
+
+**写回范围**：`score` 写回全部 5 张计算表（全量通过过滤的排序结果，非仅 TOP-N）；`temperature` 只写 `market_temperature` 一张表，绝不触碰 factor/score 表。
+
+```sh
+cargo run --bin compass-data -- sepa score --top 50    # 评分 + TOP50 表格 + 写回全量
+cargo run --bin compass-data -- sepa score --top 30 --date 2026-07-31  # 指定日期
+cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 只写 market_temperature
+```
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `--top` | `50` | 终端表格输出条数上限（不影响 Dolt 写回内容——写回总是全量计算集） |
+| `--date` | 数据内最新交易日 | 计算日期（YYYY-MM-DD）；不传时取 Parquet 中最大 trade_date，周末/节假日运行不会写出非交易日行 |
+
+每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → 采集 → Dolt commit → Parquet 导入 → 计算 → Dolt commit → TOP50）。
 
 ---
 

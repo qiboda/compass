@@ -132,19 +132,145 @@ pub struct StockBasic {
 ///
 /// Returned by [`crate::data::parquet::ParquetReader::fetch_cross_section`]
 /// for whole-market scans. Unlike a chart `Bar`, it carries the `symbol` and
-/// `adjclose` fields that technical screening conditions require.
+/// `adjclose` fields that technical screening conditions require. Since the
+/// SEPA extension (epic #139) it also carries raw `open`/`high`/`low`/`amount`
+/// for shape (VCP), ATR and turnover (成交额) factors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrossSectionBar {
     /// 6-digit stock code (bare, without exchange prefix).
     pub symbol: String,
     /// Trading date.
     pub trade_date: chrono::NaiveDate,
+    /// Raw (unadjusted) open price.
+    pub open: f64,
+    /// Raw (unadjusted) high price.
+    pub high: f64,
+    /// Raw (unadjusted) low price.
+    pub low: f64,
     /// Forward-adjusted (前复权) close price.
     pub adjclose: f64,
     /// Raw (unadjusted) close price.
     pub close: f64,
     /// Trading volume (shares).
     pub volume: f64,
+    /// Trading amount (成交额, yuan).
+    pub amount: f64,
+}
+
+/// A single (concept, stock) membership row of an EastMoney concept board.
+///
+/// Read from `concept_member.parquet` by
+/// [`crate::data::parquet::ParquetReader::fetch_concept_member`]. Versioned by
+/// `update_date` — a snapshot of memberships, not a per-day time series
+/// (epic #139 decision 20).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConceptMember {
+    /// Concept board code (e.g. "BK1169").
+    pub concept_code: String,
+    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
+    pub symbol: String,
+    /// Concept board display name.
+    pub concept_name: Option<String>,
+    /// Date this membership row was last updated.
+    pub update_date: Option<chrono::NaiveDate>,
+}
+
+/// Daily main-capital (主力资金) net flow for one symbol.
+///
+/// Read from `capital_main_flow.parquet` by
+/// [`crate::data::parquet::ParquetReader::fetch_capital_main_flow`]. Net
+/// inflow amounts are in yuan; `*_rate` is a percentage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapitalMainFlow {
+    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
+    pub symbol: String,
+    /// Trading date.
+    pub trade_date: chrono::NaiveDate,
+    /// Main capital net inflow (主力净流入, yuan).
+    pub main_net_inflow: f64,
+    /// Main capital net inflow rate (主力净流入占比, percent).
+    pub main_net_inflow_rate: f64,
+    /// Super-large order net inflow (超大单净流入, yuan).
+    pub super_large_net: f64,
+    /// Large order net inflow (大单净流入, yuan).
+    pub large_net: f64,
+    /// Medium order net inflow (中单净流入, yuan).
+    pub medium_net: f64,
+    /// Small order net inflow (小单净流入, yuan); null when the source omits it.
+    pub small_net: Option<f64>,
+    /// Date this row was last updated.
+    pub update_date: Option<chrono::NaiveDate>,
+}
+
+/// One 龙虎榜 (dragon-tiger list) seat record for a symbol and trading day.
+///
+/// Read from `dragon_list.parquet` by
+/// [`crate::data::parquet::ParquetReader::fetch_dragon_list`]. Amounts are in
+/// yuan; a row may aggregate multiple seats of the same `seat_type`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DragonListRow {
+    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
+    pub symbol: String,
+    /// Trading date.
+    pub trade_date: chrono::NaiveDate,
+    /// Seat type (营业部/机构专用 etc.).
+    pub seat_type: String,
+    /// Total buy amount (买入额, yuan).
+    pub buy_amount: f64,
+    /// Total sell amount (卖出额, yuan).
+    pub sell_amount: f64,
+    /// Net amount (净买入额, yuan); null when both amounts are missing.
+    pub net_amount: Option<f64>,
+    /// 1 = institutional seat (机构专用), 0/None otherwise.
+    pub institution_flag: Option<i8>,
+    /// Date this row was last updated.
+    pub update_date: Option<chrono::NaiveDate>,
+}
+
+/// One 大宗交易 (block trade) record.
+///
+/// Read from `block_trade.parquet` by
+/// [`crate::data::parquet::ParquetReader::fetch_block_trade`]. `amount` is in
+/// yuan; `premium_rate` is the discount/premium vs. the closing price in
+/// percent (negative = discount).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTradeRow {
+    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
+    pub symbol: String,
+    /// Trading date.
+    pub trade_date: chrono::NaiveDate,
+    /// Block trade price (成交价, yuan).
+    pub price: f64,
+    /// Block trade volume (成交量, shares).
+    pub volume: f64,
+    /// Block trade amount (成交额, yuan).
+    pub amount: f64,
+    /// Buyer name (买方营业部).
+    pub buyer: Option<String>,
+    /// Seller name (卖方营业部).
+    pub seller: Option<String>,
+    /// Premium rate vs. close (折溢价率, percent).
+    pub premium_rate: Option<f64>,
+    /// Date this row was last updated.
+    pub update_date: Option<chrono::NaiveDate>,
+}
+
+/// One 机构调研 (institution survey) record.
+///
+/// Read from `institution_survey.parquet` by
+/// [`crate::data::parquet::ParquetReader::fetch_institution_survey`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstitutionSurveyRow {
+    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
+    pub symbol: String,
+    /// Survey date (调研日期).
+    pub survey_date: chrono::NaiveDate,
+    /// Investigating institution name (调研机构, e.g. 长信基金).
+    pub org_name: String,
+    /// Survey method (接待方式, e.g. 电话会议).
+    pub survey_type: Option<String>,
+    /// Date this row was last updated.
+    pub update_date: Option<chrono::NaiveDate>,
 }
 
 /// Adjustment factor record from Baostock (per-day multiplier for price adjustment).

@@ -552,3 +552,33 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **kittest 时序/动画测试坑第二次出现**（ref #131 动画命中测试、本次构造帧时序竞态）：kittest 帧推进与真实墙钟的交互是反复踩坑区——本次已把「时间敏感陷阱」写入 testing.md 固化，与 ref #131 的动画命中纪律同章节
 - **库 API 凭记忆引用导致返工**（本次 `build_ui` vs `new_ui`、ref #105 控件形态凭想象）：引用外部库 API/行为前先查 vendored 源码或文档，review 阶段被抓出就是返工
 - **review 冲突以源码级验证为准**（本次 code-quality 对兄弟测试的 MINOR 被 context-mining 的 kittest 源码分析推翻）：oracle 无法读文件时对库行为的推测可能出错，跨 agent 冲突时应以能读源码的分析为准
+
+## 2026-08-03 — ref #139 SEPA epic F3 真实端到端修复（六轮 review 驱动）
+
+**What was done**: 完成 epic #139（SEPA 多因子评分系统）的 F3 真实端到端验证，并修复 5-way review 连续发现的数据管线缺陷：sepa CLI 写回 P0（`--top` 截断、temperature 清空 factor 表、决策 22 默认日期）、dolt CSV 导入 UTF-8 字节截断、增量窗口覆盖完整历史、survey 去重分组键坍缩（86% 数据丢失）。最终真实采集 5 源 → merge 导入 → 计算 → 双段 Dolt commit push remote，全量 627 Rust + 227 Python 测试绿。
+
+**User corrections**: 无纠正型消息——用户经 question 工具选择"补齐 F3 真实端到端 + 清理周日行 (Recommended)"路径。
+
+**What went wrong**:
+1. **F3 端到端声称"已验证"但脚本数据路径从未打通**：sepa_daily.sh step 2 只跑 `main.py fetch`（写 CSV），从不 import 进 Dolt——脚本声称的端到端从未真正完成，数据全靠手动 import（context mining review 实证）。根本原因：写脚本时未验证 main.py 的 fetch/import 命令分离语义，自测 mock 只断言命令调用序列而非数据终态。
+2. **5-way review 连续三轮 FAIL，每轮发现真实缺陷**：alter_sql 无效（dolt `-c` 推断固定 varchar(200) 字节截断，post-import ALTER 无法修复）、增量窗口 + 整表替换覆盖历史（institution_survey 40096→29 行）、survey 去重 `GROUP BY gk` 仅按机构分组坍缩事件（293916→40115 行，长信基金 484→1）。这些都在 F3"已验证通过"后才被 review 抓出——真实数据验证本身不够深。
+3. **声称的"Dolt utf8mb4 GROUP BY bug"不成立**：HEX(org) 分组 workaround 的前提（中文分组列触发 bug）在 dolt 2.2.3 实测不成立；该 workaround 反而引入更严重的粒度坍缩。为规避一个不存在的 bug 而引入数据丢失。
+4. **Dolt 数据已污染**：坍缩态 40115 行被 commit 并 push 到 remote，需重抓全量 + 重导修复（147 行窗口微差源于重导日期锚点，非剩余丢失）。
+
+**Lessons learned**:
+1. **"端到端已验证"必须有数据终态证据**：脚本/管线的端到端验证不能只看命令 exit 0 或 mock 断言——必须核验真实数据落库（Dolt 行数、日期范围、样例标的），否则"验证通过"只是"命令执行过"。
+2. **review 发现缺陷后，修复本身也要用真实数据复验**：alter_sql→create_sql、INSERT IGNORE→merge、GROUP BY gk→s,d,gk 每步都用真实 CSV 重导 + 行数/事件数断言，且新增判别性回归测试（RED first）。
+3. **库行为假设必须以实测为准**：dolt 的 CSV 类型推断、GROUP BY 中文列行为都应先在小实验验证再设计 workaround；声称的库 bug 要能复现才值得规避。
+4. **增量导入语义必须与 fetch 窗口一致**：增量窗口 CSV + 整表替换 = 数据丢失；4 个时间序列表必须 merge（INSERT IGNORE on PK），concept_member 全量重写例外。
+
+**Process improvements**:
+- `kb/user/cli.md`：增量机制更新为 merge 语义 + 宽临时表导入说明（本 commit 直接落实）
+- `kb/design/data-providers.md`：追加 3 条决策记录（merge 导入、宽临时表、复合分组键，含 F3 实证）
+- `scripts/tests/test-sepa-daily.sh`：step 2 断言 fetch AND import（10 grep），防未来删 import 环节
+- `collectors/tests/test_institution_survey.py`：判别性测试 `test_same_org_different_events_not_collapsed` + `test_long_utf8_org_name_round_trips_full_length`（RED first，防分组坍缩/截断回归）
+- `collectors/common.py`：`dolt_table_import(create_sql=...)` + `import_replace_table(merge=...)` 参数化（可复用）
+
+### Trends (last 10)
+- **"端到端/收尾声称与事实不符"模式第三次出现**（ref #119 过度声称 #121/#122 已落地、ref #117 agent 遗漏收尾、本次 F3 声称已验证但脚本未打通数据路径）：验证类声称必须以客观数据/代码证据为准，不能凭命令执行或 mock 通过——本次已在反思条目 #119 落实"核实后收尾"AGENTS.md 规则，本次进一步要求"数据终态证据"（建议未来在 testing.md 固化"端到端验证必须有真实数据断言"）
+- **"库行为凭假设/记忆导致返工"模式反复**（ref #131/#155 kittest 时序凭假设、ref #105 控件形态凭想象、本次 dolt `-c` 推断与 utf8mb4 bug 凭假设）：外部库行为（含 dolt/DuckDB/kittest）必须先实测或读源码确认再设计，review 抓出即返工
+- **review 驱动的缺陷发现密度高但前置验证不足**（本次 6 commit 均由 review 驱动，每轮都抓出真实数据缺陷）：提交前用真实数据 + 判别性测试前置验证，可减少 review 轮次；判别性测试（RED first）是防止"测试通过但语义错误"的关键

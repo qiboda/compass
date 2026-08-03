@@ -206,19 +206,37 @@ ORDER BY tradedate ASC
 **所有标的**的 bar，供选股器等横截面分析使用：
 
 ```sql
-SELECT symbol, CAST(tradedate AS VARCHAR) AS tradedate, adjclose, close, volume
+SELECT symbol, CAST(tradedate AS VARCHAR) AS tradedate, open, high, low, adjclose, close, volume, amount
 FROM read_parquet('parquet_data/stock_daily.parquet')
 WHERE tradedate >= ? AND tradedate <= ?
 ORDER BY symbol, tradedate ASC
 ```
 
-返回 `Vec<CrossSectionBar>`（`symbol`、`trade_date: NaiveDate`、`adjclose`、
-`close`、`volume`）— 这是代码库中**首个把 `adjclose` 带出读取层**的路径
-（`fetch_bars` 的 fallback 查询虽 SELECT 了 adjclose 但映射时丢弃）。
+返回 `Vec<CrossSectionBar>`（`symbol`、`trade_date: NaiveDate`、`open`/`high`/`low`/`adjclose`/`close`/`volume`/`amount`）—
+这是代码库中**首个把 `adjclose` 带出读取层**的路径（`fetch_bars` 的 fallback 查询虽 SELECT 了 adjclose 但映射时丢弃）。
+SEPA 扩展（epic #139）加入 `open`/`high`/`low`/`amount`：形态（VCP）与 ATR 需要 OHLC，成交额因子需要 `amount`。
+列顺序与 `stock_daily.parquet` 实际 9 列布局一致：symbol, tradedate, open, high, low, close, adjclose, volume, amount。
 
 注意：parquet 的 `tradedate` 列实际类型是 **TIMESTAMP**（非 DATE），
 `CAST AS VARCHAR` 产出 `"1991-04-04 00:00:00"` 带时间分量。解析必须用
 `date_str_to_utc`（兼容 DATE 与 TIMESTAMP 两种格式），不能只用 `%F`。
+
+### SEPA 数据表读取原语（epic #139）
+
+5 个只读原语，模式与 `fetch_cross_section` 一致（`read_parquet()` + 内存 DuckDB 查询），
+文件名 = Dolt 表名 + `.parquet`，与 `stock_daily.parquet` 同目录（由 `import-compass --table ...` 生成）：
+
+| 方法 | 文件 | 日期过滤 | 说明 |
+|---|---|---|---|
+| `fetch_concept_member()` | `concept_member.parquet` | 无（全量快照） | 概念成分映射，版本化非每日快照 |
+| `fetch_capital_main_flow(start, end)` | `capital_main_flow.parquet` | `trade_date` | 主力资金流；NULL 金额 COALESCE 为 0.0，`small_net` 保持 Option |
+| `fetch_dragon_list(start, end)` | `dragon_list.parquet` | `trade_date` | 龙虎榜席位；`institution_flag` 为 TINYINT → `Option<i8>` |
+| `fetch_block_trade(start, end)` | `block_trade.parquet` | `trade_date` | 大宗交易；price/volume/amount NULL 时 COALESCE 为 0.0 |
+| `fetch_institution_survey(start, end)` | `institution_survey.parquet` | `survey_date` | 机构调研 |
+
+**缺文件行为（审查修订锁定）**：表未导入时返回**空 Vec**（与 `fetch_cross_section`
+缺 `stock_daily.parquet` 行为一致），**不返回 DataError**——否则 `run_sepa` 的 `?`
+会在 GUI 表未导入时直接失败，无法优雅降级。
 
 ### 标的发现
 
@@ -311,6 +329,24 @@ compass_data_dir = "/data/compass-data/compass_data"
 | stock_basic 元数据存储 | DuckDB 表 + Parquet 双轨 / 仅 Parquet | 仅 Parquet（`import-compass --table stock_basic` 生成，ParquetReader 直读） | duckdb.rs 的旧 stock_basic 路径（8 列旧 schema + upsert/get）零生产调用者；`import` 写 5 列占位文件会覆盖新 10 列 parquet；单一数据源避免双 schema 维护 | DuckDB 双轨徒增第二份 schema 定义与同步成本；`import` 保留导出会持续制造错误列文件（ref #80） |
 | 横截面原语位置 | DataProvider trait 方法 / DuckDbProvider 方法 / ParquetReader 固有方法 | ParquetReader 固有方法 `fetch_cross_section` | 与 `load_all_stock_basics` 同源同模式；避免 trait 三 impl（duckdb/parquet/synthetic）牵连；符合"直读 parquet"契约 | trait 扩展需同时改三处 impl 且 synthetic 为私有 mod；DuckDbProvider 依赖内存表缓存模型，与全表扫描不兼容 |
 | CrossSectionBar 字段集 | 全 OHLCV / 仅 adjclose / adjclose+close+volume | `symbol, trade_date, adjclose, close, volume` | 足以支撑选股器全部条件（均线/动量/突破用 adjclose，量能用 volume，最新价/市值用 close）；DuckDB 列裁剪最小化 I/O | 全字段浪费内存（约 1.6M 行）；仅 adjclose 无法算市值/最新价 |
+| CrossSectionBar 字段集（SEPA 扩展，ref #145） | 保持 5 字段 / 扩展 9 字段 | 9 字段（+`open`/`high`/`low`/`amount`） | SEPA 形态模块（VCP 需 high/low 通道）与 ATR（需 high/low/close）依赖 OHLC，成交额（20 日均额）过滤需要 `amount`；字段追加向后兼容，选股器仍只用原 5 字段，内存代价可接受（全市场单日 ~6000 行） | 保持 5 字段无法支撑形态/ATR/成交额因子；只加 amount 则形态与 ATR 仍缺数据 |
+| SEPA 新表读取原语位置（ref #145） | ParquetReader 固有方法 / DuckDbProvider 方法 / DataProvider trait 扩展 | ParquetReader 固有方法（5 个：concept_member/capital_main_flow/dragon_list/block_trade/institution_survey） | 与 `fetch_cross_section`/`load_all_stock_basics` 同源同模式（`read_parquet()` 直读）；新表只读 parquet 文件，无 DuckDB 表缓存模型；避免 trait 三处 impl（duckdb/parquet/synthetic）牵连 | trait 扩展需同时改三处 impl 且 synthetic 为私有 mod；DuckDbProvider 依赖内存表缓存模型，与全表扫描不兼容 |
 | `tradedate` 列类型解析 | `%F` 严格解析 / `date_str_to_utc` 双格式 | `date_str_to_utc`（兼容 DATE 与 TIMESTAMP） | 真实 parquet 列为 TIMESTAMP，`CAST AS VARCHAR` 带时间分量；`%F` 会静默丢弃全部行（测试 DATE fixture 不暴露） | `%F` 在生产环境静默空结果，是真实数据核验发现的陷阱 |
 | 选股市值计算 | total_share × 最新 adjclose / × 最新 close ÷ 1e8 | `total_share × 最新 close ÷ 1e8`（亿元） | 最新日 adjclose == close（前复权锚点）；市值是现实世界值，用原始价 | adjclose 复权价会失真；单位显式 ÷1e8 与 GUI 亿元输入一致 |
+| SEPA 写回方式（ref #150） | REPLACE INTO / 两段式 DELETE + `dolt table import -a` | 两段式：先 `DELETE FROM <table> WHERE trade_date='<date>'` 清当日，再 append CSV | 幂等重跑核心——同日期重跑行数不增；无需 SQL 转义整行值；与 `dolt table import` 封装风格一致 | REPLACE INTO 需转义且与 import 管线不一致；破坏性最小（只清当日，保留其他日期） |
+| SEPA 计算表列级 DDL（ref #150） | plan 模板列（ma60/ma120/ma250/atr20、return20/return60、volume_ratio_score/institution_score、hs300_trend 等）/ 按 SepaData 可得字段自定义 | 按 SepaData 字段自定义（见下） | `SepaRow` 只暴露五模块加权分 + `details` 子项分；MA/ATR/板块动量等原始值不进入 SepaData（不加 serde、不改 compass-strategy 的约束下不可得），列必须对齐实际可写值 | plan 模板列含不可得字段，强行写入只能填 NULL/占位，违背"不写表面表" |
+| technical_factor 列集（ref #150） | plan 模板（ma60/ma120/ma250/atr20/rs_score/vcp_score）/ 子项分 | `symbol, trade_date, structure_score, position_score, rs_score, vcp_score, breakout_score, update_date`，PK(symbol, trade_date) | 均线结构/价格位置/相对强度/VCP质量/突破确认为 `details.trend`/`details.pattern` 子项分，直接可得 | MA/ATR 原始值仅在 compass-strategy 内部，暴露需改引擎代码（本 todo 禁止） |
+| industry_factor 列集（ref #150） | plan 模板（concept_code/return20/return60/concept_amount）/ 概念名聚合 | `concept_name, trade_date, stock_count, gain_score, amount_score, diffusion_score, heat_score, news_score, update_date`，PK(concept_name, trade_date) | SepaData 仅暴露每股票 `themes`（概念名）与 theme 子项分，按概念名聚合可得板块热度汇总；concept_code 不进入 SepaData | 模板需 concept_code 与板块动量原始值，均不可得；聚合免二次计算（复用 run_sepa 输出） |
+| capital_factor 列集（ref #150） | plan 模板（volume_ratio_score/chip_score/main_flow_score/institution_score）/ 子项分 | `symbol, trade_date, volume_price_score, chip_score, big_capital_score, update_date`，PK(symbol, trade_date) | 量价配合/筹码集中/大资金流入为 `details.capital` 子项分，直接可得 | institution_score 独立值只存在于 note 字符串（"主力+龙虎+调研+大宗"），解析脆弱 |
+| final_score 列集（ref #150） | — | plan 模板原样：`symbol, trade_date, trend_score, theme_score, money_score, pattern_score, risk_score, total_score, rank, update_date`，PK(symbol, trade_date)；`rank` 反引号转义（Dolt 保留字） | `SepaRow` 五模块加权分 + total + rank 全部直接可得（money_score = `SepaRow.capital`） | — |
+| market_temperature 列集（ref #150） | 原始值直存 / 从 indicators value_text 解析 | plan 模板列：`trade_date, score, hs300_trend, zz1000_trend, limit_up_count, total_amount, breadth, position_suggestion, update_date`，PK(trade_date)；数值从 5 个 `SepaIndicator.value_text` 解析 | 原始值（ratio/涨停数/成交额/上涨比例）只在引擎内部计算，`MarketThermometer` 仅暴露 value_text；格式由 temperature.rs 常量锁定（`{:.1}%`/`{n} 家`/`{:.2}万亿`）且有既有测试断言 | 改引擎暴露原始值违反"不改 compass-strategy"；value_text 解析失败回退 0，绝不 panic |
+| SEPA symbol 前缀来源（ref #150） | 裸码直写 / 从 stock_basic.parquet exchange 列拼前缀 | CSV 中写 `exchange + 6位码`（如 `SZ000001`），exchange 查不到回退 `SH` | Dolt 计算表与采集表一致带前缀；SepaRow 只有裸码，exchange 列在 stock_basic.parquet 中可得 | 裸码与采集表外键语义不一致；回退 SH 只影响缺失元数据的边缘股票，不阻塞写回 |
+| run_temperature 实现（ref #150） | 独立重算温度计 / 复用 run_sepa 输出 | `run_sepa(SepaQuery{top_n:1})` 取 `SepaData.thermometer` | run_sepa 内部已算温度计，复用免重复 fetch 与分组逻辑；全市场打分一次可接受（CLI 非热路径） | 独立重算需复制 fetch/分组管线，双份维护 |
+| data_updates 登记（ref #150） | 仅 Dolt 表 / 同步登记 | 每张计算表 import 后 upsert `data_updates`（source=`'compass-data sepa'`，last_report_date=计算日期，last_updated=运行日，row_count=导入行数） | 与采集表同款可观测性；脚本/用户可查最近计算状态 | 不登记则计算历史无从追踪 |
+| 写回内容与 `--top` 解耦（ref #150，PR 评审 P0-1） | 写回 top-N 截断集 / 写回全量计算集 | `run_score` 引擎 `top_n: usize::MAX` 全量计算，`--top` 仅控制终端表格打印；write_back 持久化全量通过过滤的排序结果 | PR 评审实证：`sepa score --top 3` 重跑会 DELETE 当日已存全部行再只写 3 行（SZ000852/SZ000906 被删）；`--top` 语义是"输出条数上限"，不该决定持久化内容；与 GUI "TOP N 截断仅作用于本地副本" 原则一致 | 写回 top-N 子集导致不同 --top 值产生不同持久状态、非幂等 |
+| run_temperature 写回范围（ref #150，PR 评审 P0-2） | 复用 write_back 全 5 表 / 仅写 market_temperature | `write_back` 增加 `tables: &[&str]` 参数；`run_temperature` 只传 `["market_temperature"]`，DELETE 与 import 均限定范围 | PR 评审实证：temperature 复用 `run_sepa(top_n:1)` 后 write_back 全 5 表 → final_score/technical_factor/capital_factor 被清空至 1 行；温度计命令只应写温度计行 | 全 5 表写回使独立运行 temperature 破坏当日评分数据 |
+| 默认计算日期（ref #150，决策 22 修正） | `Utc::now()` / 数据内最新交易日 | `reader.latest_trade_date()`（stock_daily.parquet MAX(tradedate)）回退 `Utc::now()` | PR 评审实证：周日运行无 --date 写出 trade_date=2026-08-02 非交易日行且基于 07-28 数据却标 08-02；决策 22 原文"只算最新交易日" | 墙钟日期在周末/节假日非交易日，产生伪日期行 |
+| 采集器导入语义（ref #139，F3 修复） | 整表替换 / merge 追加 | 4 个时间序列表（main_flow/dragon/block_trade/institution_survey）`import_replace_table(merge=True)`：CREATE IF NOT EXISTS + INSERT IGNORE 按 PK 去重，增量窗口 CSV 追加进已有表；concept_member 保持全量重写（版本快照） | F3 实证：增量窗口 CSV（last_report_date 之后）+ 整表替换 → institution_survey 40096 行被覆盖成 29 行（历史丢失）；merge 使同日期重跑行数不增、历史完整（293769 行稳定） | 整表替换在增量窗口下破坏完整历史；财务采集器（balance_sheet/income/cash_flow）保持替换（全量抓取无窗口） |
+| 采集器长文本导入（ref #139，F3 修复） | `dolt table import -c` 类型推断 / 显式宽 schema 建表 | `dolt_table_import(create_sql=...)` 先 CREATE 宽临时表（如 RECEIVE_OBJECT VARCHAR(1000)）再 `-u` 导入 | F3 实证：dolt `-c` 推断字符串固定 varchar(200)，长 UTF-8 值按字节截断产生畸形字节（org_name 900 字节 → 198 字节），post-import ALTER 无法修复已截断数据 | `-c` 推断在长文本表上静默截断，破坏 utf8mb4 插入 |
+| institution_survey 去重分组键（ref #139，F3 修复） | HEX(org_name) 仅按机构 / 完整复合键 | `GROUP BY s, d, gk`（s/d 为已派生 symbol/date，gk=HEX(org_name)），列用 MAX() 重新派生 | F3 实证：仅按 org 分组把同机构不同 symbol/date 的事件坍缩成一行（长信基金 484 事件 → 1 行，全表 293916 行 → 40115 行，丢失 86%）；复合键在保留去重同时保留每个 (symbol, survey_date, org) 事件；实测 Dolt 2.2.3 对中文列 GROUP BY 无 bug（无需纯 ASCII 键） | 仅按 org 分组破坏事件粒度，是静默数据丢失 |
 

@@ -1,4 +1,4 @@
-use compass_types::ScreenerRow;
+use compass_types::{ScreenerRow, SepaData};
 use egui_charts::model::Bar;
 use egui_lens::ReactiveEventLoggerState;
 use egui_mobius_reactive::Dynamic;
@@ -29,6 +29,13 @@ pub struct SharedState {
     pub screener_loading: Dynamic<bool>,
     /// Last screener error message, if any.
     pub screener_error: Dynamic<Option<String>>,
+    /// Latest SEPA scoring snapshot (rows + thermometer in one `Option` so
+    /// the panel never observes a half-updated state).
+    pub sepa_data: Dynamic<Option<SepaData>>,
+    /// `true` while a SEPA run is in flight.
+    pub sepa_loading: Dynamic<bool>,
+    /// Last SEPA error message, if any.
+    pub sepa_error: Dynamic<Option<String>>,
     /// Watchlist (自选股) — bare 6-digit symbols in display order.
     pub watchlist: Dynamic<Vec<String>>,
 }
@@ -50,6 +57,9 @@ impl SharedState {
             screener_total: Dynamic::new(0),
             screener_loading: Dynamic::new(false),
             screener_error: Dynamic::new(None),
+            sepa_data: Dynamic::new(None),
+            sepa_loading: Dynamic::new(false),
+            sepa_error: Dynamic::new(None),
             watchlist: Dynamic::new(Vec::new()),
         }
     }

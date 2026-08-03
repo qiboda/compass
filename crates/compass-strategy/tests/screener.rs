@@ -601,19 +601,22 @@ fn run_screener_emits_completion_log() {
     let stocks = vec![stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0))];
     let (_tmp, reader) = build_fixture(&stocks);
 
-    // with_default scopes the subscriber to this test — set_default would
-    // race with other parallel tests over the global default.
+    // set_global_default installs the capture buffer as the process-wide
+    // dispatcher: run_screener's events reach it via the get_global fast path,
+    // immune to thread-local dispatch state. Scoped set_default/with_default
+    // were flaky (#138): under parallel test threads the library's debug!
+    // occasionally resolved to the thread-local none-dispatch and the buffer
+    // stayed empty. Err is ignored: another test may have already installed a
+    // global default (capture still works for this test's own events).
     let buf = Arc::new(Mutex::new(String::new()));
     let writer = TestWriter(buf.clone());
-    tracing::subscriber::with_default(
+    let _ = tracing::subscriber::set_global_default(
         tracing_subscriber::fmt()
             .with_writer(writer)
             .with_max_level(tracing::Level::DEBUG)
             .finish(),
-        || {
-            run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
-        },
     );
+    run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
 
     let log = buf.lock().expect("lock");
     assert!(

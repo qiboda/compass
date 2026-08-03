@@ -29,6 +29,7 @@ __all__ = [
     "dolt_table_import",
     "fetch_paginated",
     "flatten_record",
+    "import_replace_table",
     "last_report_date",
     "write_csv",
 ]
@@ -104,13 +105,36 @@ def dolt_sql_csv(sql: str, timeout: int = 300) -> str:
     return result.stdout
 
 
-def dolt_table_import(table_name: str, csv_path: Path, timeout: int = 300) -> bool:
-    """Import CSV into a Dolt table. Returns True on success."""
+def dolt_table_import(
+    table_name: str,
+    csv_path: Path,
+    timeout: int = 300,
+    create_sql: str | None = None,
+) -> bool:
+    """Import CSV into a Dolt table. Returns True on success.
+
+    With ``create_sql`` the table is created first with an explicit wide
+    schema and the CSV is imported with ``-u`` (no type inference). Dolt's
+    ``-c`` inference caps string columns at varchar(200) and truncates longer
+    UTF-8 values mid-character, so long-text tables (e.g. institution survey
+    org_name up to ~800 bytes) MUST pass ``create_sql``.
+    """
     csv_abs = csv_path.resolve()
+    if create_sql:
+        create = subprocess.run(
+            ["dolt", "--data-dir", str(dolt_dir()), "sql", "-q", create_sql],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if create.returncode != 0:
+            print(f"  dolt create error: {create.stderr.strip()}", file=sys.stderr)
+            return False
+        mode = "-u"
+    else:
+        mode = "-c"
     result = subprocess.run(
         [
             "dolt", "--data-dir", str(dolt_dir()),
-            "table", "import", "-c", table_name, "--continue", str(csv_abs),
+            "table", "import", mode, table_name, "--continue", str(csv_abs),
         ],
         capture_output=True, text=True, timeout=timeout,
     )
@@ -134,6 +158,100 @@ def last_report_date(dolt_table: str) -> str:
     if last and last != "NULL":
         return last
     return ""
+
+
+def _table_exists(table_name: str) -> str:
+    """Count rows for a table in information_schema (last CSV cell, '0'/'1')."""
+    stdout = dolt_sql_csv(
+        f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{table_name}'"
+    )
+    lines = stdout.strip().split("\n")
+    return lines[-1].strip() if len(lines) > 1 else "0"
+
+
+def import_replace_table(
+    csv_path: Path,
+    tmp_name: str,
+    ddl: str,
+    insert_sql: str,
+    dolt_table: str,
+    source_label: str,
+    last_report_expr: str,
+    create_sql: str | None = None,
+    merge: bool = False,
+) -> int:
+    """Import ``csv_path`` into ``dolt_table``.
+
+    With ``merge=False`` (default) the table is atomically REPLACED: the CSV
+    is staged in a temp table, the old table is renamed aside, a fresh table
+    is created with ``ddl`` and filled via ``insert_sql``; any failure rolls
+    back. With ``merge=True`` the CSV rows are INSERT IGNORE'd into the
+    EXISTING table (created with ``ddl`` on first run), so incremental-window
+    CSVs append to history instead of clobbering it — the caller's
+    ``insert_sql`` must use ``INSERT IGNORE INTO {dolt_table}`` and the PK
+    dedupes overlapping windows.
+
+    Flow (replace): CSV → optional wide temp create → old table renamed aside
+    → DDL creates fresh table → INSERT SELECT fills → failure rolls back →
+    data_updates upsert. Flow (merge): optional wide temp create → DDL
+    CREATE IF NOT EXISTS → INSERT IGNORE SELECT → data_updates upsert.
+    Returns the imported row count, or 0 when the CSV is missing or the
+    import fails (previous table contents are preserved).
+    """
+    if not csv_path.exists():
+        print(f"  ERROR: {csv_path} not found. Run fetch first.", file=sys.stderr)
+        return 0
+
+    if not dolt_table_import(tmp_name, csv_path, create_sql=create_sql):
+        print("  Import failed", file=sys.stderr)
+        return 0
+
+    if merge:
+        created = dolt_sql(ddl).returncode == 0
+        result = dolt_sql(insert_sql, timeout=600) if created else None
+        if result is None or result.returncode != 0:
+            dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+            return 0
+        dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+    else:
+        old_name = f"{tmp_name}_old"
+        dolt_sql(f"DROP TABLE IF EXISTS {old_name}")
+        if _table_exists(dolt_table) == "1":
+            dolt_sql(f"RENAME TABLE {dolt_table} TO {old_name}")
+
+        created = dolt_sql(ddl).returncode == 0
+        result = dolt_sql(insert_sql, timeout=600) if created else None
+        if result is None or result.returncode != 0:
+            if created:
+                dolt_sql(f"DROP TABLE IF EXISTS {dolt_table}")
+            if _table_exists(old_name) == "1":
+                dolt_sql(f"RENAME TABLE {old_name} TO {dolt_table}")
+                print("  Rolled back to previous data", file=sys.stderr)
+            dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+            return 0
+
+        dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+        dolt_sql(f"DROP TABLE IF EXISTS {old_name}")
+
+    stdout = dolt_sql_csv(f"SELECT COUNT(*) FROM {dolt_table}")
+    lines = stdout.strip().split("\n")
+    total = int(lines[-1]) if len(lines) > 1 else 0
+    last_val = (
+        dolt_sql_csv(f"SELECT {last_report_expr} FROM {dolt_table}")
+        .strip()
+        .split("\n")[-1]
+        .strip()
+    )
+    last_val = "NULL" if (not last_val or last_val == "NULL") else f"'{last_val}'"
+
+    dolt_sql(
+        f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
+        f"VALUES ('{dolt_table}', CURDATE(), '{source_label}', {total}, {last_val}) "
+        f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
+        f"last_report_date=VALUES(last_report_date)"
+    )
+    print(f"  Done: {total} rows", file=sys.stderr)
+    return total
 
 
 # ── Data fetching ───────────────────────────────────────────────

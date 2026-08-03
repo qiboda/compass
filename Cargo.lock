@@ -1180,6 +1180,8 @@ dependencies = [
  "chrono",
  "clap",
  "compass-core",
+ "compass-strategy",
+ "compass-types",
  "criterion",
  "duckdb",
  "futures",

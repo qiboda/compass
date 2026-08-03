@@ -7,11 +7,21 @@ Usage:
     uv run python main.py fetch balance_sheet [--years 2024,2025]
     uv run python main.py fetch income [--years 2024,2025]
     uv run python main.py fetch cash_flow [--years 2024,2025]
+    uv run python main.py fetch dragon
+    uv run python main.py fetch block_trade
+    uv run python main.py fetch institution_survey
+    uv run python main.py fetch concept_member
+    uv run python main.py fetch main_flow
     uv run python main.py import stock_basic
     uv run python main.py import fin_indicators
     uv run python main.py import balance_sheet
     uv run python main.py import income
     uv run python main.py import cash_flow
+    uv run python main.py import dragon
+    uv run python main.py import block_trade
+    uv run python main.py import institution_survey
+    uv run python main.py import concept_member
+    uv run python main.py import main_flow
     uv run python main.py sync              # fetch all + import all
     uv run python main.py sync-investment   # sync investment_data from upstream
 """
@@ -190,7 +200,9 @@ def dispatch_fetch(
     """Fetch data for the given target table.
 
     Args:
-        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow.
+        target: One of stock_basic, fin_indicators, balance_sheet, income,
+            cash_flow, main_flow, dragon, block_trade, institution_survey,
+            concept_member.
         years: Years to fetch (financial tables only; defaults to sub-module default).
     """
     if target == "stock_basic":
@@ -217,12 +229,34 @@ def dispatch_fetch(
         import fetch_cash_flow
         asyncio.run(fetch_cash_flow.run(years=years))
 
+    elif target == "dragon":
+        import fetch_dragon
+        asyncio.run(fetch_dragon.run())
+
+    elif target == "block_trade":
+        import fetch_block_trade
+        asyncio.run(fetch_block_trade.run())
+
+    elif target == "institution_survey":
+        import fetch_institution_survey
+        asyncio.run(fetch_institution_survey.run())
+
+    elif target == "concept_member":
+        import fetch_concept_member
+        asyncio.run(fetch_concept_member.run())
+
+    elif target == "main_flow":
+        import fetch_main_flow
+        asyncio.run(fetch_main_flow.run())
+
 
 def dispatch_import(target: str) -> None:
     """Import CSV data into Dolt for the given target table.
 
     Args:
-        target: One of stock_basic, fin_indicators, balance_sheet, income, cash_flow.
+        target: One of stock_basic, fin_indicators, balance_sheet, income,
+            cash_flow, main_flow, dragon, block_trade, institution_survey,
+            concept_member.
     """
     if target == "stock_basic":
         _import_stock_basic()
@@ -237,10 +271,25 @@ def dispatch_import(target: str) -> None:
     elif target == "cash_flow":
         import fetch_cash_flow
         fetch_cash_flow.import_to_dolt()
+    elif target == "dragon":
+        import fetch_dragon
+        fetch_dragon.import_to_dolt()
+    elif target == "block_trade":
+        import fetch_block_trade
+        fetch_block_trade.import_to_dolt()
+    elif target == "institution_survey":
+        import fetch_institution_survey
+        fetch_institution_survey.import_to_dolt()
+    elif target == "concept_member":
+        import fetch_concept_member
+        fetch_concept_member.import_to_dolt()
+    elif target == "main_flow":
+        import fetch_main_flow
+        fetch_main_flow.import_to_dolt()
 
 
 def do_sync(restart: bool = False) -> None:
-    """Fetch all 5 tables from EastMoney, import into Dolt, and update data_updates.
+    """Fetch all tables from EastMoney, import into Dolt, and update data_updates.
 
     Args:
         restart: Reserved for future use; does not change sync behavior.
@@ -281,6 +330,36 @@ def do_sync(restart: bool = False) -> None:
     asyncio.run(fetch_cash_flow.run())
     fetch_cash_flow.import_to_dolt()
 
+    # 6. dragon_list (龙虎榜席位)
+    print("\n[sync] Fetching dragon_list...", file=sys.stderr)
+    import fetch_dragon
+    asyncio.run(fetch_dragon.run())
+    fetch_dragon.import_to_dolt()
+
+    # 7. block_trade (大宗交易)
+    print("\n[sync] Fetching block_trade...", file=sys.stderr)
+    import fetch_block_trade
+    asyncio.run(fetch_block_trade.run())
+    fetch_block_trade.import_to_dolt()
+
+    # 8. institution_survey (机构调研)
+    print("\n[sync] Fetching institution_survey...", file=sys.stderr)
+    import fetch_institution_survey
+    asyncio.run(fetch_institution_survey.run())
+    fetch_institution_survey.import_to_dolt()
+
+    # 9. concept_member (概念板块成分)
+    print("\n[sync] Fetching concept_member...", file=sys.stderr)
+    import fetch_concept_member
+    asyncio.run(fetch_concept_member.run())
+    fetch_concept_member.import_to_dolt()
+
+    # 10. main_flow (主力资金流)
+    print("\n[sync] Fetching main_flow...", file=sys.stderr)
+    import fetch_main_flow
+    asyncio.run(fetch_main_flow.run())
+    fetch_main_flow.import_to_dolt()
+
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)
     for tbl in [
@@ -305,14 +384,14 @@ def main() -> None:
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
     fetch.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow"],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow"],
     )
 
     sub.add_parser("sync", help="Fetch all + import all")

@@ -118,6 +118,35 @@ let range = db.get_stored_range("SZ000001").await?;
 5. **集成测试**：使用内存 DuckDB 运行完整管线
    （import → save stock_daily → fetch bars → verify counts）。
 
+### SEPA 引擎（compass-strategy `mod sepa`，ref #147-#149）
+
+- **纯函数指标**：`ma/atr20/momentum_return/volume_ratio/rs_score/vcp_score/
+  drawdown_from_high` 均为 `&[&CrossSectionBar]` 切片风格，窗口不足返回 `None`/0
+  不 panic；fixture 用内存 `TestBar` 序列（rising/falling/flat 模式）
+- **VCP 区分度测试**：构造典型 20%→10%→5% 回撤收敛序列（≥0.7）vs 无收敛噪声
+  序列（<0.3），断言两者分差——锁定形态识别的区分能力
+- **温度计三场景 fixture**：牛市（全 >MA250 + 涨停≥80 + 高上涨占比）→ ≥80 /
+  "80%-100%"；熊市 → <60 / "0%-20%"；结构行情（指数弱板块强）→ 60-80 / "40%-70%"
+- **评分排序 fixture**：强趋势+热门题材股 vs 垃圾股 → 断言总分排序；题材满分恒 25
+  （有/无 news 两场景，分母恒 90）；风险最差恰 −3.75（不越界）
+- **真实数据冒烟**：`tests/sepa_real_smoke.rs`（`#[ignore]`，`SEPA_PARQUET_DIR`
+  覆盖）读真实 Parquet 跑 `run_sepa`，断言分数/温度计区间合理——CI 不跑，F3 门手动
+
+### egui_kittest 面板测试（compass crate，ref #152）
+
+- **无头渲染/交互**：`Harness::new_ui` + `run()` 多帧 + `query_by_label` 断言渲染；
+  点击刷新按钮 → `sepa_loading` 置位 → 注入响应 → 表格填充
+- **双 tab 视觉断言**：Chart+Sepa 双 tab leaf → 扫描 `output.shapes` 断言激活 tab
+  与未激活 tab 的样式形状差异（accent vs text_secondary），**禁目测**
+- **`score_color` 单测**：色阶端点/边界/中点 lerp/单调性
+- **UI 问题一律客观证据定位**（形状/像素采样/断言），不靠"看起来对不对"猜
+
+### 脚本自测（scripts/tests/，ref #151）
+
+- `test-sepa-daily.sh`：`bash -n` + **mock cargo/uv/dolt**（PATH 前置假命令，
+  日志记录调用参数）断言 7 步流水线调用顺序、Dolt `add` 限定表、失败非零退出、
+  preflight 分支；数据目录用 `SEPA_COMPASS_DATA_DIR` 等 env 覆盖指向临时目录
+
 ## 基准测试
 
 性能基准测试使用 [criterion.rs](https://github.com/bheisler/criterion.rs)，

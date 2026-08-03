@@ -245,12 +245,17 @@ class TestDoSync:
     def test_calls_all_5_fetches_and_5_imports(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """do_sync() triggers fetch+import for all 5 tables, plus data_updates."""
+        """do_sync() triggers fetch+import for all tables, plus data_updates."""
         import common
         import fetch_balance_sheet as fbs
+        import fetch_block_trade as fbt
         import fetch_cash_flow as fcf
+        import fetch_concept_member as fcm
+        import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
+        import fetch_institution_survey as fis
+        import fetch_main_flow as fmf
         import fetch_stock_basic_official as fsbo
         import main as main_mod
 
@@ -262,21 +267,31 @@ class TestDoSync:
         monkeypatch.setattr(fbs, "run", Mock())
         monkeypatch.setattr(fi, "run", Mock())
         monkeypatch.setattr(fcf, "run", Mock())
+        monkeypatch.setattr(fdr, "run", Mock())
+        monkeypatch.setattr(fbt, "run", Mock())
+        monkeypatch.setattr(fis, "run", Mock())
+        monkeypatch.setattr(fcm, "run", Mock())
+        monkeypatch.setattr(fmf, "run", Mock())
 
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
         monkeypatch.setattr(fbs, "import_to_dolt", Mock())
         monkeypatch.setattr(fi, "import_to_dolt", Mock())
         monkeypatch.setattr(fcf, "import_to_dolt", Mock())
+        monkeypatch.setattr(fdr, "import_to_dolt", Mock())
+        monkeypatch.setattr(fbt, "import_to_dolt", Mock())
+        monkeypatch.setattr(fis, "import_to_dolt", Mock())
+        monkeypatch.setattr(fcm, "import_to_dolt", Mock())
+        monkeypatch.setattr(fmf, "import_to_dolt", Mock())
 
         mock_dolt = Mock()
         monkeypatch.setattr(common, "dolt_sql", mock_dolt)
 
         main_mod.do_sync()
 
-        # stock_basic is sync (official source); 4 remaining tables via asyncio.run
-        assert mock_run.call_count == 4
-        # 5 import calls + 5 data_updates inserts
+        # stock_basic is sync (official source); 9 remaining tables via asyncio.run
+        assert mock_run.call_count == 9
+        # data_updates loop for the 5 legacy tables (new tables upsert inside import_to_dolt)
         assert mock_dolt.call_count >= 5
 
     def test_restart_flag_accepted_no_behavior_change(
@@ -285,9 +300,14 @@ class TestDoSync:
         """restart=True accepted (no-op for sync subcommand, future-compat)."""
         import common
         import fetch_balance_sheet as fbs
+        import fetch_block_trade as fbt
         import fetch_cash_flow as fcf
+        import fetch_concept_member as fcm
+        import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
+        import fetch_institution_survey as fis
+        import fetch_main_flow as fmf
         import fetch_stock_basic_official as fsbo
         import main as main_mod
 
@@ -299,9 +319,14 @@ class TestDoSync:
         monkeypatch.setattr(fbs, "run", Mock())
         monkeypatch.setattr(fi, "run", Mock())
         monkeypatch.setattr(fcf, "run", Mock())
+        monkeypatch.setattr(fdr, "run", Mock())
+        monkeypatch.setattr(fbt, "run", Mock())
+        monkeypatch.setattr(fis, "run", Mock())
+        monkeypatch.setattr(fcm, "run", Mock())
+        monkeypatch.setattr(fmf, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
-        for mod in (fbs, fi, fcf):
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fcm, fmf):
             monkeypatch.setattr(mod, "import_to_dolt", Mock())
 
         mock_dolt = Mock()
@@ -309,7 +334,7 @@ class TestDoSync:
 
         main_mod.do_sync(restart=True)
 
-        assert mock_run.call_count == 4
+        assert mock_run.call_count == 9
 
 
 # ═══════════════════════════════════════════════════════════════════

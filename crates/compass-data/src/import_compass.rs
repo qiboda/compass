@@ -17,6 +17,16 @@ pub enum CompassTable {
     FinBalanceSheet,
     FinIncome,
     FinCashFlow,
+    /// Concept board members (full-overwrite import, DELETE+rewrite semantics).
+    ConceptMember,
+    /// Capital main flow (主力资金流), incremental merge on (symbol, trade_date).
+    MainFlow,
+    /// Dragon list (龙虎榜), incremental merge on (symbol, trade_date, seat_type).
+    DragonList,
+    /// Block trades (大宗交易), incremental merge on (symbol, trade_date, price).
+    BlockTrade,
+    /// Institution surveys (机构调研), incremental merge on (symbol, survey_date, org_name).
+    InstitutionSurvey,
 }
 
 impl std::str::FromStr for CompassTable {
@@ -28,6 +38,11 @@ impl std::str::FromStr for CompassTable {
             "fin_balance_sheet" => Ok(CompassTable::FinBalanceSheet),
             "fin_income" => Ok(CompassTable::FinIncome),
             "fin_cash_flow" => Ok(CompassTable::FinCashFlow),
+            "concept_member" => Ok(CompassTable::ConceptMember),
+            "capital_main_flow" => Ok(CompassTable::MainFlow),
+            "dragon_list" => Ok(CompassTable::DragonList),
+            "block_trade" => Ok(CompassTable::BlockTrade),
+            "institution_survey" => Ok(CompassTable::InstitutionSurvey),
             _ => Err(format!("unknown table: {s}")),
         }
     }
@@ -53,6 +68,55 @@ pub fn run(
         CompassTable::FinCashFlow => {
             import_financial_table("fin_cash_flow", &dolt_dir, &output, overwrite, since)
         }
+        CompassTable::ConceptMember => import_concept_member(&dolt_dir, &output),
+        CompassTable::MainFlow => import_append_table(
+            AppendTableSpec {
+                table_name: "capital_main_flow",
+                date_col: "trade_date",
+                partition_cols: "symbol, trade_date",
+                prefer_new: true,
+            },
+            &dolt_dir,
+            &output,
+            overwrite,
+            since,
+        ),
+        CompassTable::DragonList => import_append_table(
+            AppendTableSpec {
+                table_name: "dragon_list",
+                date_col: "trade_date",
+                partition_cols: "symbol, trade_date, seat_type",
+                prefer_new: true,
+            },
+            &dolt_dir,
+            &output,
+            overwrite,
+            since,
+        ),
+        CompassTable::BlockTrade => import_append_table(
+            AppendTableSpec {
+                table_name: "block_trade",
+                date_col: "trade_date",
+                partition_cols: "symbol, trade_date, price",
+                prefer_new: true,
+            },
+            &dolt_dir,
+            &output,
+            overwrite,
+            since,
+        ),
+        CompassTable::InstitutionSurvey => import_append_table(
+            AppendTableSpec {
+                table_name: "institution_survey",
+                date_col: "survey_date",
+                partition_cols: "symbol, survey_date, org_name",
+                prefer_new: true,
+            },
+            &dolt_dir,
+            &output,
+            overwrite,
+            since,
+        ),
     }
 }
 
@@ -156,14 +220,62 @@ fn import_financial_table(
     overwrite: bool,
     since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    import_append_table(
+        AppendTableSpec {
+            table_name,
+            date_col: "report_date",
+            partition_cols: "symbol, report_date",
+            prefer_new: false,
+        },
+        dolt_dir,
+        output,
+        overwrite,
+        since,
+    )
+}
+
+/// Table definition for [`import_append_table`].
+struct AppendTableSpec<'a> {
+    /// Dolt table name (also the parquet file base name).
+    table_name: &'a str,
+    /// Column used for the `--since` filter.
+    date_col: &'a str,
+    /// Primary-key columns, used to dedupe old parquet rows against new Dolt
+    /// rows on the same key (comma-separated, also the output sort order).
+    partition_cols: &'a str,
+    /// Which version wins when both sides hold the same key: SEPA capital
+    /// tables are DELETE+rewritten by collectors each run, so the Dolt state
+    /// is newer and must win (`true`); financial rows never change after
+    /// publication, so old-wins behavior is preserved (`false`).
+    prefer_new: bool,
+}
+
+/// Import an append-style table (financial statements, SEPA capital-flow
+/// tables) with optional incremental merge.
+///
+/// When both sides hold the same key, `prefer_new` selects which version
+/// wins, see [`AppendTableSpec::prefer_new`].
+fn import_append_table<'a>(
+    spec: AppendTableSpec<'a>,
+    dolt_dir: &Path,
+    output: &Path,
+    overwrite: bool,
+    since: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let AppendTableSpec {
+        table_name,
+        date_col,
+        partition_cols,
+        prefer_new,
+    } = spec;
     let parquet_name = format!("{table_name}.parquet");
     let path = output.join(&parquet_name);
 
     let date_filter = match since {
-        Some(s) if !s.is_empty() => format!(" WHERE report_date >= '{s}'"),
+        Some(s) if !s.is_empty() => format!(" WHERE {date_col} >= '{s}'"),
         _ => String::new(),
     };
-    let query = format!("SELECT * FROM {table_name}{date_filter} ORDER BY symbol, report_date");
+    let query = format!("SELECT * FROM {table_name}{date_filter} ORDER BY {partition_cols}");
 
     info!("Exporting {table_name}...");
     let new_data = run_dolt_sql_parquet(dolt_dir, &query)?;
@@ -180,12 +292,17 @@ fn import_financial_table(
         let new_path = work_dir.join(format!("{table_name}.new.parquet"));
         std::fs::write(&new_path, &new_data)?;
 
+        let priority_order = if prefer_new {
+            "priority DESC"
+        } else {
+            "priority"
+        };
         let tmp_path = work_dir.join(format!("{table_name}.merged.parquet"));
         let duck = Connection::open_in_memory()?;
         let sql = format!(
-            "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) AS rn \
+            "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY {partition_cols} ORDER BY {priority_order}) AS rn \
              FROM (SELECT *, 1 AS priority FROM read_parquet('{}') \
-             UNION ALL SELECT *, 2 FROM read_parquet('{}'))) WHERE rn = 1 ORDER BY symbol, report_date) \
+             UNION ALL SELECT *, 2 FROM read_parquet('{}'))) WHERE rn = 1 ORDER BY {partition_cols}) \
              TO '{}' (FORMAT PARQUET)",
             path.display(),
             new_path.display(),
@@ -203,6 +320,25 @@ fn import_financial_table(
         std::fs::write(&path, &new_data)?;
     }
 
+    info!("  → {}", path.display());
+    Ok(())
+}
+
+/// Import concept board members as a full overwrite.
+///
+/// Unlike the append-style tables, `concept_member` is version-tracked
+/// (collectors DELETE + rewrite the whole table each run), so an incremental
+/// ROW_NUMBER merge would leave removed members lingering in the parquet and
+/// stale concepts would keep scoring. Always write the full Dolt state,
+/// equivalent to `--overwrite` regardless of the flag.
+fn import_concept_member(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Exporting concept_member...");
+    let data = run_dolt_sql_parquet(
+        dolt_dir,
+        "SELECT * FROM concept_member ORDER BY concept_code, symbol",
+    )?;
+    let path = output.join("concept_member.parquet");
+    std::fs::write(&path, &data)?;
     info!("  → {}", path.display());
     Ok(())
 }
@@ -225,6 +361,54 @@ mod tests {
         revenue_yoy DOUBLE, net_profit_yoy DOUBLE, operating_profit_yoy DOUBLE, net_profit_qoq DOUBLE, \
         shares_growth DOUBLE, dividend_plan TEXT, dividend_year VARCHAR(10), \
         PRIMARY KEY (symbol, report_date))";
+
+    const CONCEPT_MEMBER_SCHEMA: &str = "\
+        CREATE TABLE concept_member (\
+        concept_code VARCHAR(20) NOT NULL, \
+        symbol VARCHAR(20) NOT NULL, \
+        concept_name VARCHAR(50), \
+        update_date DATE, \
+        PRIMARY KEY (concept_code, symbol))";
+
+    const MAIN_FLOW_SCHEMA: &str = "\
+        CREATE TABLE capital_main_flow (\
+        symbol VARCHAR(20) NOT NULL, \
+        trade_date DATE NOT NULL, \
+        main_net_inflow DOUBLE, main_net_inflow_rate DOUBLE, \
+        super_large_net DOUBLE, large_net DOUBLE, \
+        medium_net DOUBLE, small_net DOUBLE, \
+        update_date DATE, \
+        PRIMARY KEY (symbol, trade_date))";
+
+    const DRAGON_LIST_SCHEMA: &str = "\
+        CREATE TABLE dragon_list (\
+        symbol VARCHAR(20) NOT NULL, \
+        trade_date DATE NOT NULL, \
+        seat_type VARCHAR(10) NOT NULL, \
+        buy_amount DOUBLE, sell_amount DOUBLE, net_amount DOUBLE, \
+        institution_flag TINYINT, \
+        update_date DATE, \
+        PRIMARY KEY (symbol, trade_date, seat_type))";
+
+    const BLOCK_TRADE_SCHEMA: &str = "\
+        CREATE TABLE block_trade (\
+        symbol VARCHAR(20) NOT NULL, \
+        trade_date DATE NOT NULL, \
+        price DOUBLE NOT NULL, \
+        volume DOUBLE, amount DOUBLE, \
+        buyer VARCHAR(100), seller VARCHAR(100), \
+        premium_rate DOUBLE, \
+        update_date DATE, \
+        PRIMARY KEY (symbol, trade_date, price))";
+
+    const INSTITUTION_SURVEY_SCHEMA: &str = "\
+        CREATE TABLE institution_survey (\
+        symbol VARCHAR(20) NOT NULL, \
+        survey_date DATE NOT NULL, \
+        org_name VARCHAR(100) NOT NULL, \
+        survey_type VARCHAR(20), \
+        update_date DATE, \
+        PRIMARY KEY (symbol, survey_date, org_name))";
 
     fn setup_dolt(tmp: &std::path::Path) {
         for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
@@ -389,6 +573,26 @@ mod tests {
         assert!(matches!(
             "fin_cash_flow".parse::<CompassTable>(),
             Ok(CompassTable::FinCashFlow)
+        ));
+        assert!(matches!(
+            "concept_member".parse::<CompassTable>(),
+            Ok(CompassTable::ConceptMember)
+        ));
+        assert!(matches!(
+            "capital_main_flow".parse::<CompassTable>(),
+            Ok(CompassTable::MainFlow)
+        ));
+        assert!(matches!(
+            "dragon_list".parse::<CompassTable>(),
+            Ok(CompassTable::DragonList)
+        ));
+        assert!(matches!(
+            "block_trade".parse::<CompassTable>(),
+            Ok(CompassTable::BlockTrade)
+        ));
+        assert!(matches!(
+            "institution_survey".parse::<CompassTable>(),
+            Ok(CompassTable::InstitutionSurvey)
         ));
     }
 
@@ -770,5 +974,429 @@ mod tests {
             .collect();
         assert_eq!(symbols[0], "SH600519");
         assert_eq!(symbols[1], "SZ000001");
+    }
+
+    #[test]
+    fn concept_member_full_overwrite_propagates_deletion() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(CONCEPT_MEMBER_SCHEMA)
+            .output()
+            .expect("create table");
+
+        // Version N: 50 members
+        let mut values = String::new();
+        for i in 0..50 {
+            if i > 0 {
+                values.push_str(", ");
+            }
+            values.push_str(&format!(
+                "('C{:04}', 'SH{:06}', '概念{}', '2026-01-01')",
+                i,
+                600000 + i,
+                i
+            ));
+        }
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(format!(
+                "INSERT INTO concept_member (concept_code, symbol, concept_name, update_date) \
+                 VALUES {values}"
+            ))
+            .output()
+            .expect("insert 50 members");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::ConceptMember,
+            false,
+            None,
+        )
+        .expect("first import");
+        let parquet = tmp.path().join("concept_member.parquet");
+        assert_eq!(read_parquet_row_count(&parquet), 50);
+
+        // Version N+1: collector rewrote the table with 45 members (5 removed)
+        let removed: Vec<String> = (0..5).map(|i| format!("'SH{:06}'", 600000 + i)).collect();
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(format!(
+                "DELETE FROM concept_member WHERE symbol IN ({})",
+                removed.join(", ")
+            ))
+            .output()
+            .expect("delete 5 members");
+
+        // Second import without --overwrite/--since must still fully overwrite
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::ConceptMember,
+            false,
+            None,
+        )
+        .expect("second import");
+
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            45,
+            "deleted members must not linger in parquet"
+        );
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let stale: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM read_parquet('{}') WHERE symbol IN ({})",
+                    parquet.display(),
+                    removed.join(", ")
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("stale count");
+        assert_eq!(stale, 0, "removed members must not exist in parquet");
+    }
+
+    #[test]
+    fn run_sepa_capital_tables_export_parquet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(MAIN_FLOW_SCHEMA)
+            .output()
+            .expect("create main flow");
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO capital_main_flow (symbol, trade_date, main_net_inflow, main_net_inflow_rate) \
+                  VALUES ('SH600519', '2026-01-05', 1.2e8, 3.5)")
+            .output()
+            .expect("insert main flow");
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(DRAGON_LIST_SCHEMA)
+            .output()
+            .expect("create dragon list");
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO dragon_list (symbol, trade_date, seat_type, buy_amount, sell_amount, net_amount, institution_flag) \
+                  VALUES ('SH600519', '2026-01-05', '机构专用', 1e8, 2e8, -1e8, 1)")
+            .output()
+            .expect("insert dragon list");
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(BLOCK_TRADE_SCHEMA)
+            .output()
+            .expect("create block trade");
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("INSERT INTO block_trade (symbol, trade_date, price, volume, amount, buyer, seller, premium_rate) \
+                  VALUES ('SH600519', '2026-01-05', 1500.0, 1e5, 1.5e8, '机构专用', '东方证券', -0.02)")
+            .output()
+            .expect("insert block trade");
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(INSTITUTION_SURVEY_SCHEMA)
+            .output()
+            .expect("create institution survey");
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "INSERT INTO institution_survey (symbol, survey_date, org_name, survey_type) \
+                  VALUES ('SH600519', '2026-01-05', '华夏基金', '现场调研')",
+            )
+            .output()
+            .expect("insert institution survey");
+
+        for (table, parquet_name) in [
+            (CompassTable::MainFlow, "capital_main_flow.parquet"),
+            (CompassTable::DragonList, "dragon_list.parquet"),
+            (CompassTable::BlockTrade, "block_trade.parquet"),
+            (
+                CompassTable::InstitutionSurvey,
+                "institution_survey.parquet",
+            ),
+        ] {
+            run(
+                tmp.path().to_path_buf(),
+                tmp.path().to_path_buf(),
+                table,
+                false,
+                None,
+            )
+            .expect("run table");
+            let parquet = tmp.path().join(parquet_name);
+            assert!(parquet.exists(), "{parquet_name} should exist after import");
+            assert_eq!(
+                read_parquet_row_count(&parquet),
+                1,
+                "{parquet_name} row count"
+            );
+        }
+    }
+
+    #[test]
+    fn capital_table_since_merge_new_value_wins() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(MAIN_FLOW_SCHEMA)
+            .output()
+            .expect("create table");
+
+        // Two rows: SZ000001 @ 01-04, SH600519 @ 01-05 (inflow 1.0)
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "INSERT INTO capital_main_flow (symbol, trade_date, main_net_inflow) VALUES \
+                ('SZ000001', '2026-01-04', 0.5e8), \
+                ('SH600519', '2026-01-05', 1.0e8)",
+            )
+            .output()
+            .expect("insert initial");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::MainFlow,
+            false,
+            None,
+        )
+        .expect("first import");
+        let parquet = tmp.path().join("capital_main_flow.parquet");
+        assert_eq!(read_parquet_row_count(&parquet), 2);
+
+        // Dolt updated: same PK 01-05 row corrected (1.0 → 2.0), plus new 01-06 row
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "UPDATE capital_main_flow SET main_net_inflow = 2.0e8 \
+                  WHERE symbol = 'SH600519' AND trade_date = '2026-01-05'",
+            )
+            .output()
+            .expect("update 01-05");
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "INSERT INTO capital_main_flow (symbol, trade_date, main_net_inflow) VALUES \
+                ('SH600519', '2026-01-06', 3.0e8)",
+            )
+            .output()
+            .expect("insert 01-06");
+
+        // Incremental import with since — triggers merge path
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::MainFlow,
+            false,
+            Some("2026-01-05"),
+        )
+        .expect("incremental import");
+
+        // 3 rows: 01-04 preserved, 01-05 new value wins, 01-06 added
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            3,
+            "merge should keep old rows, replace updated PK, add new rows"
+        );
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let inflow: f64 = duck
+            .query_row(
+                &format!(
+                    "SELECT main_net_inflow FROM read_parquet('{}') \
+                     WHERE symbol = 'SH600519' AND trade_date = '2026-01-05'",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("inflow");
+        assert!(
+            (inflow - 2.0e8).abs() < 1.0,
+            "new Dolt value must override old parquet value, got {inflow}"
+        );
+    }
+
+    #[test]
+    fn dragon_list_merge_preserves_multiple_seat_types() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(DRAGON_LIST_SCHEMA)
+            .output()
+            .expect("create table");
+
+        // Same symbol+date, two seat types (three-column PK)
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "INSERT INTO dragon_list (symbol, trade_date, seat_type, buy_amount) VALUES \
+                ('SH600519', '2026-01-05', '机构专用', 1e8), \
+                ('SH600519', '2026-01-05', '营业部', 2e8)",
+            )
+            .output()
+            .expect("insert initial");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::DragonList,
+            false,
+            None,
+        )
+        .expect("first import");
+        let parquet = tmp.path().join("dragon_list.parquet");
+        assert_eq!(read_parquet_row_count(&parquet), 2);
+
+        // Both rows corrected in Dolt
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg("UPDATE dragon_list SET buy_amount = 3e8 \
+                  WHERE symbol = 'SH600519' AND trade_date = '2026-01-05' AND seat_type = '机构专用'")
+            .output()
+            .expect("update institutional");
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "UPDATE dragon_list SET buy_amount = 4e8 \
+                  WHERE symbol = 'SH600519' AND trade_date = '2026-01-05' AND seat_type = '营业部'",
+            )
+            .output()
+            .expect("update broker");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::DragonList,
+            false,
+            Some("2026-01-05"),
+        )
+        .expect("incremental import");
+
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            2,
+            "merge must not collapse distinct seat_type rows"
+        );
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        for (seat_type, expected) in [("机构专用", 3e8), ("营业部", 4e8)] {
+            let buy: f64 = duck
+                .query_row(
+                    &format!(
+                        "SELECT buy_amount FROM read_parquet('{}') \
+                         WHERE symbol = 'SH600519' AND trade_date = '2026-01-05' AND seat_type = '{}'",
+                        parquet.display(),
+                        seat_type
+                    ),
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("buy amount");
+            assert!(
+                (buy - expected).abs() < 1.0,
+                "{seat_type} buy amount must be new value, got {buy}"
+            );
+        }
+    }
+
+    #[test]
+    fn capital_table_skip_tiny_data() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        // Empty table — import must warn-skip without creating a parquet
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(MAIN_FLOW_SCHEMA)
+            .output()
+            .expect("create table");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::MainFlow,
+            false,
+            None,
+        )
+        .expect("import with empty table should succeed");
+
+        let parquet = tmp.path().join("capital_main_flow.parquet");
+        assert!(
+            !parquet.exists(),
+            "empty table should be skipped due to tiny data"
+        );
     }
 }
