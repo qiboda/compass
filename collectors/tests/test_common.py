@@ -502,3 +502,234 @@ CREATE TABLE test_replace (
             "SELECT last_report_date FROM data_updates WHERE table_name='test_replace'"
         ))
         assert rows[0]["last_report_date"] == date.today().isoformat()
+
+
+class TestImportReplaceTableMerge:
+    """PIN tests for import_replace_table(merge=True) semantics (issue #160)."""
+
+    _DDL_MERGE = """\
+CREATE TABLE IF NOT EXISTS test_replace (
+    symbol VARCHAR(20) NOT NULL,
+    trade_date DATE NOT NULL,
+    value DOUBLE,
+    PRIMARY KEY (symbol, trade_date)
+)"""
+
+    _INSERT_IGNORE = """
+        INSERT IGNORE INTO test_replace (symbol, trade_date, value)
+        SELECT symbol, trade_date, value
+        FROM _tmp_tst
+        WHERE symbol IN (SELECT symbol FROM stock_basic)
+    """
+
+    _DDL_PLAIN = """\
+CREATE TABLE test_replace (
+    symbol VARCHAR(20) NOT NULL,
+    trade_date DATE NOT NULL,
+    value DOUBLE,
+    PRIMARY KEY (symbol, trade_date)
+)"""
+
+    @pytest.fixture
+    def dolt_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, Callable[[str], str]]:
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
+            capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.name", "CI"],
+            capture_output=True, text=True,
+        )
+        init = subprocess.run(
+            ["dolt", "--data-dir", str(tmp_path), "init"],
+            capture_output=True, text=True,
+        )
+        assert init.returncode == 0, init.stderr
+
+        def dolt_sql_csv(sql: str) -> str:
+            return subprocess.run(
+                ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
+                capture_output=True, text=True,
+            ).stdout
+
+        dolt_sql_csv(
+            "CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY); "
+            "INSERT INTO stock_basic VALUES ('SH600519')"
+        )
+        dolt_sql_csv(
+            "CREATE TABLE data_updates (table_name VARCHAR(50) PRIMARY KEY, "
+            "last_updated DATE, source VARCHAR(200), row_count INT, last_report_date DATE)"
+        )
+
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        return tmp_path, dolt_sql_csv
+
+    @staticmethod
+    def _last(stdout: str) -> str:
+        lines = stdout.strip().split("\n")
+        return lines[-1] if lines else ""
+
+    @staticmethod
+    def _rows(stdout: str) -> list[dict[str, str]]:
+        return list(csv.DictReader(io.StringIO(stdout)))
+
+    def _write_csv(self, path: Path, rows: list[list[str]]) -> None:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["symbol", "trade_date", "value"])
+            writer.writerows(rows)
+
+    def _import(self, csv_path: Path, ddl: str | None = None) -> int:
+        from common import import_replace_table  # noqa: E402
+
+        return import_replace_table(
+            csv_path,
+            "_tmp_tst",
+            ddl or self._DDL_MERGE,
+            self._INSERT_IGNORE,
+            "test_replace",
+            "test source",
+            "MAX(trade_date)",
+            merge=True,
+        )
+
+    def test_merge_first_run_creates_table_and_upserts(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """First merge run: table created, row upserted, data_updates filled."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+
+        assert self._import(csv_path) == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+
+        rows = self._rows(dolt_sql_csv(
+            "SELECT last_updated, source, row_count, last_report_date "
+            "FROM data_updates WHERE table_name='test_replace'"
+        ))
+        assert len(rows) == 1
+        assert rows[0]["source"] == "test source"
+        assert rows[0]["row_count"] == "1"
+        assert rows[0]["last_report_date"] == "2026-07-31"
+        assert rows[0]["last_updated"] != ""
+
+    def test_merge_incremental_csv_appends_without_loss(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Incremental window CSV appends: no history loss, original bytes intact."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_a = tmp_path / "a.csv"
+        csv_b = tmp_path / "b.csv"
+        self._write_csv(csv_a, [
+            ["SH600519", "2026-06-30", "2.5"],
+            ["SH600519", "2026-07-31", "1.5"],
+        ])
+        assert self._import(csv_a) == 2
+        self._write_csv(csv_b, [
+            ["SH600519", "2026-07-31", "1.5"],
+            ["SH600519", "2026-08-31", "0.5"],
+        ])
+
+        assert self._import(csv_b) == 3
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "3"
+        # original rows byte-identical after the merge
+        assert self._last(dolt_sql_csv(
+            "SELECT value FROM test_replace "
+            "WHERE symbol='SH600519' AND trade_date='2026-06-30'"
+        )) == "2.5"
+        assert self._last(dolt_sql_csv(
+            "SELECT value FROM test_replace "
+            "WHERE symbol='SH600519' AND trade_date='2026-07-31'"
+        )) == "1.5"
+        assert self._last(dolt_sql_csv(
+            "SELECT value FROM test_replace "
+            "WHERE symbol='SH600519' AND trade_date='2026-08-31'"
+        )) == "0.5"
+
+    def test_merge_same_csv_twice_idempotent(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Same CSV twice: PK dedupe keeps exactly one row."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "t.csv"
+        self._write_csv(csv_path, [["SH600519", "2026-07-31", "1.5"]])
+
+        assert self._import(csv_path) == 1
+        assert self._import(csv_path) == 1
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+
+    def test_merge_watermark_full_table_count_and_max(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Watermark reflects FULL table count and MAX trade_date, not CSV size."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_a = tmp_path / "a.csv"
+        csv_b = tmp_path / "b.csv"
+        self._write_csv(csv_a, [["SH600519", "2026-06-30", "2.5"]])
+        assert self._import(csv_a) == 1
+        self._write_csv(csv_b, [["SH600519", "2026-07-31", "1.5"]])
+        # merge returns the FULL table count, not this CSV's row count
+        assert self._import(csv_b) == 2
+
+        rows = self._rows(dolt_sql_csv(
+            "SELECT row_count, last_report_date FROM data_updates "
+            "WHERE table_name='test_replace'"
+        ))
+        assert rows[0]["row_count"] == "2"
+        assert rows[0]["last_report_date"] == "2026-07-31"
+
+    def test_merge_insert_failure_preserves_rows_and_watermark(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Failed INSERT (stock_basic dropped) keeps prior rows and watermark."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_a = tmp_path / "a.csv"
+        csv_b = tmp_path / "b.csv"
+        self._write_csv(csv_a, [
+            ["SH600519", "2026-06-30", "2.5"],
+            ["SH600519", "2026-07-31", "1.5"],
+        ])
+        assert self._import(csv_a) == 2
+
+        dolt_sql_csv("DROP TABLE stock_basic")
+        self._write_csv(csv_b, [["SH600519", "2026-08-31", "0.5"]])
+        assert self._import(csv_b) == 0
+
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "2"
+        assert self._last(dolt_sql_csv(
+            "SELECT value FROM test_replace "
+            "WHERE symbol='SH600519' AND trade_date='2026-06-30'"
+        )) == "2.5"
+        # no temp table residue
+        cnt = self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='_tmp_tst'"
+        ))
+        assert cnt == "0"
+        # watermark untouched after failed merge
+        rows = self._rows(dolt_sql_csv(
+            "SELECT row_count, last_report_date FROM data_updates "
+            "WHERE table_name='test_replace'"
+        ))
+        assert rows[0]["row_count"] == "2"
+        assert rows[0]["last_report_date"] == "2026-07-31"
+
+    def test_merge_plain_ddl_silently_skips_import(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Hazard pin: plain CREATE TABLE on existing table returns 0, no change."""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_a = tmp_path / "a.csv"
+        csv_b = tmp_path / "b.csv"
+        self._write_csv(csv_a, [["SH600519", "2026-07-31", "1.5"]])
+        assert self._import(csv_a) == 1
+
+        self._write_csv(csv_b, [["SH600519", "2026-08-31", "0.5"]])
+        assert self._import(csv_b, ddl=self._DDL_PLAIN) == 0
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM test_replace")) == "1"
+        rows = self._rows(dolt_sql_csv(
+            "SELECT row_count FROM data_updates WHERE table_name='test_replace'"
+        ))
+        assert rows[0]["row_count"] == "1"

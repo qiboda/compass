@@ -1,8 +1,8 @@
 """Integration tests for import_to_dolt() — temp Dolt + COMPASS_DATA_DIR.
 
-Covers the table-replacement logic: first run vs rerun, and INSERT failure
-rollback safety (the RENAME TABLE IF EXISTS bug: Dolt rejects that syntax,
-so existence is checked via information_schema).
+Covers the merge-import semantics (ref #160): first run vs rerun, INSERT
+failure safety (the table is left empty on first-run failure — CREATE TABLE
+IF NOT EXISTS runs before the INSERT, so the table exists but holds no rows).
 """
 
 import csv
@@ -165,12 +165,10 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "1"
 
-    def test_first_run_insert_failure_leaves_no_table_and_no_error(self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path) -> None:
-        """Regression: first-run INSERT failure must not try to RENAME a
-        nonexistent _old table (Dolt rejects RENAME TABLE IF EXISTS).
-
-        Dropping stock_basic makes the WHERE ... IN (SELECT ...) subquery fail,
-        which exercises the rollback path.
+    def test_first_run_insert_failure_leaves_empty_table(self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path) -> None:
+        """Merge semantics: first-run INSERT failure leaves the table present
+        but empty (CREATE TABLE IF NOT EXISTS runs before the INSERT, and the
+        failed INSERT IGNORE touches nothing), with no temp-table residue.
         """
         dolt_dir, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "bs.csv"
@@ -181,8 +179,7 @@ class TestImportToDolt:
 
         assert rows == 0
         cnt = self._last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_name='fin_balance_sheet'"
+            "SELECT COUNT(*) FROM fin_balance_sheet"
         ))
         assert cnt == "0"
         cnt = self._last(dolt_sql_csv(
