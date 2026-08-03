@@ -99,7 +99,22 @@ reached"。如果尚未调用 `/grill-me`，请返回并先完成。
 
 ## 规则（按优先级排序）
 
-### 1. 文档同步（关键）
+### 1. 问题处理闭环（执行中任何异常，最高优先级）
+
+执行中遇到**任何**异常（工具失败、命令报错、配置错误、数据不一致、流程
+障碍、输出可疑）时，**禁止静默绕过或静默降级**——包括"改用替代工具"
+"忽略错误继续""跳过步骤""换个说法糊弄过去"。必须依次完成：
+
+1. **感知**：停下，识别这是问题，不把绕行当解决
+2. **诊断**：用客观证据定位根因（日志、环境变量、复现实验、对比验证），不猜
+3. **处理**：修复根因；仅在确认根因无法修复时允许 fallback，且必须在记录中说明
+4. **记录**：根因与排查路径沉淀到 `kb/dev/toolchain.md`（问题排查卡）或 reflections.md
+
+绕行本身就是违规，无论结果多顺利（ref #159）。本规则覆盖 MCP 401、
+编译错误、测试失败、hook 拒绝等一切异常。遇到疑似已知问题时，先查
+`kb/dev/toolchain.md` 排查卡，命中则照「排查路径」复现诊断。
+
+### 2. 文档同步（关键）
 
 任何影响行为、公开 API、数据结构、配置或工作流的代码变更，必须在同一次 commit 中更新相关 `kb/` 文件和 `AGENTS.md`。
 
@@ -114,7 +129,7 @@ reached"。如果尚未调用 `/grill-me`，请返回并先完成。
 | 工作流、hooks、约定 | `kb/dev/process.md` |
 | 项目级约定 | `AGENTS.md` |
 
-### 2. 需求流程（关键）
+### 3. 需求流程（关键）
 
 编写任何 feature 或 bugfix 代码之前：
 a) 调用 `/issue-workflow` 处理 issue 创建和管理
@@ -129,7 +144,7 @@ Epic 工作中，每个 commit 引用其子 issue（`ref #<sub-N>`）。
 
 **这适用于所有 commit——chore、docs、scripts 均无例外。**
 
-### 3. 计划先行（`/ulw-plan`）
+### 4. 计划先行（`/ulw-plan`）
 
 **多步工作不可妥协。** 以下情况必须运行 `/ulw-plan`：多步任务（2+ 模块）、架构变更、新增数据源、需求范围模糊。
 
@@ -137,7 +152,7 @@ Epic 工作中，每个 commit 引用其子 issue（`ref #<sub-N>`）。
 
 仅以下情况可跳过计划：真正的单文件修复、测试添加、文档更新。
 
-### 4. 测试先行
+### 5. 测试先行
 
 Feature 和 bugfix 工作遵循 RED → GREEN → REFACTOR：
 - 先写失败测试，确保因正确原因失败
@@ -145,13 +160,13 @@ Feature 和 bugfix 工作遵循 RED → GREEN → REFACTOR：
 - 探索性变更可以先写代码后补测试
 - 纯重构：先用特征测试锁定当前行为
 
-### 5. 逐步验证
+### 6. 逐步验证
 
 每次代码变更后：
 - `cargo test` → 必须全部通过
 - `lsp_diagnostics` 在变更文件上无错误
 
-### 6. 提交前本地验证
+### 7. 提交前本地验证
 
 ```sh
 cargo test && cargo clippy -- -D warnings && cargo fmt --check
@@ -159,12 +174,12 @@ cargo test && cargo clippy -- -D warnings && cargo fmt --check
 
 三者全部通过后才可 `git push`。
 
-### 7. 禁止类型逃逸
+### 8. 禁止类型逃逸
 
 - 生产代码中永不使用 `unwrap()` —— 使用 `.expect(msg)` 或正确的错误处理
 - 永不使用 `as` 类型转换或类似手段压制类型错误
 
-### 8. 分支策略
+### 9. 分支策略
 
 Feature 分支工作流：大部分工作在分支上进行，通过 PR 合并。
 简单修复（typo、配置、单行变更）可直接提交到 master。
@@ -184,7 +199,7 @@ master  ●──●──●──●────────●  (主干，仅
 feat/xxx      ●──●──●──┘   (worktree 分支，通过 PR 合并)
 ```
 
-### 9. 标签强制
+### 10. 标签强制
 
 创建 GitHub issue 或 PR 时：
 - 必须附加至少一个 **A-**（area，领域）和一个 **C-**（category，分类）标签。
@@ -194,7 +209,7 @@ feat/xxx      ●──●──●──┘   (worktree 分支，通过 PR 合�
 
 `gh issue create --label "C-Bug,A-Data"` 或 `gh pr create --label "C-Feature,A-GUI"`。
 
-### 10. Sprint 节奏
+### 11. Sprint 节奏
 
 使用 GitHub Milestones 进行每周 sprint 管理。周一（规划）→ 周日（回顾）。
 
@@ -202,7 +217,7 @@ feat/xxx      ●──●──●──┘   (worktree 分支，通过 PR 合�
 - **周日**：回顾已完成工作，所有 issues 完成后关闭 milestone，调用 `/reflect`
 - 手动触发：随时调用 `/product brainstorm` 获取新的候选
 
-### 11. 摩擦记录（并入反思）
+### 12. 摩擦记录（并入反思）
 
 当用户纠正 AI 行为（矛盾、范围扩张、约束遗漏、方案偏离）时——
 在写事后反思（`/reflect`）时一并记录，不再单独使用 friction 机制。

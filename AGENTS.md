@@ -19,6 +19,13 @@ Python collectors 抓取数据写入 Dolt（财务数据来自 EastMoney；stock
 - 流程有漏洞就堵，不要绕过去
 - **禁止依赖视觉表现来 debug**：UI 问题必须用客观证据定位（代码逻辑、测试断言、日志、像素采样），不靠"看起来对不对"猜
 - **agent 可自行完善项目书**：发现重复摩擦或可预防的失误时，agent 有权在 AGENTS.md / `kb/` 中添加或修订规则以改善自身行为——规则变更随当次 commit 提交并在 commit message 中说明理由（ref #N）
+- **问题处理闭环（强制）**：执行中遇到**任何**异常（工具失败、命令报错、配置错误、数据不一致、流程障碍、输出可疑）时，**禁止静默绕过或静默降级**——包括"改用替代工具""忽略错误继续""跳过步骤""换个说法糊弄过去"。必须依次完成：
+  1. **感知**：停下，识别这是问题，不把绕行当解决
+  2. **诊断**：用客观证据定位根因（日志、环境变量、复现实验、对比验证），不猜
+  3. **处理**：修复根因；仅在确认根因无法修复时允许 fallback，且必须在记录中说明
+  4. **记录**：根因与排查路径沉淀到 `kb/dev/toolchain.md`（问题排查卡）或 reflections.md，使其可复用
+
+  绕行本身就是违规，无论结果多顺利。本规则覆盖 MCP 401、编译错误、测试失败、hook 拒绝等一切异常（ref #159）。
 
 ---
 
@@ -297,6 +304,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、重置 |
 | `kb/dev/database.md` | 数据库开发信息 — Dolt 查询/同步/提交、Parquet/DuckDB 生成、布局 |
+| `kb/dev/toolchain.md` | 工具链问题排查卡 — 执行中遇到并解决的问题，按症状/根因/排查路径/修复/验证沉淀 |
 | `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 + 历史摩擦记录（User corrections） |
 | `kb/user/index.md` | 用户总览 — Compass 是什么、快速开始、前置条件 |
 | `kb/user/gui.md` | 图表应用 — 界面、控件、数据流、股票代码 |
