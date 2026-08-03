@@ -164,7 +164,7 @@ async def fetch_page(
             else:
                 raise
 
-    return []
+    return []  # pragma: no cover — unreachable (loop always returns or raises); mypy requires the statement
 
 
 # ── Main ───────────────────────────────────────────────────────
@@ -252,5 +252,5 @@ async def main():
     print(f"\nDone: {total} stocks → {output_path.resolve()}", file=sys.stderr)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest
     asyncio.run(main())

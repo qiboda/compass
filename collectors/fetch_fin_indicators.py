@@ -361,5 +361,5 @@ async def main():
         )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest
     asyncio.run(main())
