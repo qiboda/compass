@@ -249,3 +249,17 @@ class TestMain:
         with open(output, encoding="utf-8-sig") as f:
             lines = f.readlines()
         assert len(lines) == 12
+
+
+class TestThrottle:
+    async def test_acquire_waits_when_below_min_interval(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Second acquire within min_interval takes the asyncio.sleep wait branch."""
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        t = Throttle(min_interval=10)
+        await t.acquire()
+        await t.acquire()
+        assert mock_sleep.call_count >= 2
