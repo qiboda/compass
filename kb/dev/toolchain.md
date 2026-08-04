@@ -120,6 +120,31 @@
 
 ---
 
+## Git 工作流（hooks / push）
+
+### [Git] pre-push hook 拦截"修复失败 CI 的 PR"（死锁）
+
+- **症状**: push 报
+  `ERROR: Latest CI run on master is FAILING. Fix CI before pushing.`，
+  但本 PR 正是修复该 CI 失败（#169 修复 toast flaky，master CI 因 #169 红）
+- **根因**: `.githooks/pre-push` 第 0 步无条件检查 master 最新 CI run，
+  若 `conclusion=failure` 直接 `has_error=1`。但"master CI 失败"的原因
+  往往就是某个 open flaky issue（如 #169）——修它的 PR 必然撞上该检查，
+  形成"CI 红了才能修，修了不让推"的死锁
+- **排查路径**:
+  1. `gh run list --repo qiboda/compass --branch master --limit 1` 确认失败 run
+  2. 判断失败 run 是否与本次 PR 修复的目标一致（如 #169 的 toast flaky 测试）
+  3. 若一致 → 属已知问题，hook 其余门禁（fmt/clippy/doc/ref #N）已跑过则
+     `git push --no-verify` 绕行；若不一致 → 先修真正的 CI 失败再推
+- **修复**: 本次 `git push --no-verify -u origin fix/toast-flaky-test`
+  （hook 的 fmt/clippy/doc/ref 检查全部通过，仅 CI 状态检查误拦；用户批准绕行）
+- **验证**: `git push --no-verify` 成功推送分支，`gh pr create` 正常创建 PR #170
+- **教训**: pre-push 的 master-CI 检查应区分"未知/已知问题"——已知 open issue
+  的 CI 失败应放行修复 PR（或提供 `--allow-ci-failure` 白名单机制），
+  否则修复 flaky 的 PR 永远无法正常推送（ref #168 #169）
+
+---
+
 ## 测试（Rust / egui_kittest）
 
 ### [测试] egui_kittest 动画测试受 wall-clock 影响偶发失败（慢 CI）
