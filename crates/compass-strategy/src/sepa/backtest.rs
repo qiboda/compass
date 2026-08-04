@@ -13,8 +13,13 @@
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
+use compass_core::data::parquet::ParquetReader;
+use compass_core::data::provider::DataError;
 use compass_core::model::{CrossSectionBar, StockBasic};
-use compass_types::SepaRow;
+use compass_types::{SepaData, SepaQuery, SepaRow};
+
+use super::run_sepa;
+use crate::ScreenerError;
 
 /// Backtest window start (calendar default): 2025-01-01 (locked decision 3).
 pub const DEFAULT_BACKTEST_START: &str = "2025-01-01";
@@ -242,6 +247,191 @@ fn day_return_on(series: &[&CrossSectionBar], date: NaiveDate) -> Option<f64> {
         return None;
     }
     Some(cur / prev - 1.0)
+}
+
+/// Full backtest result: daily equity curve plus summary metrics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BacktestResult {
+    /// Daily equity points (`start..=end` window only).
+    pub points: Vec<EquityPoint>,
+    /// Summary performance metrics.
+    pub metrics: BacktestMetrics,
+}
+
+/// Run a backtest over `[start..end]` by replaying
+/// [`run_sepa`](super::run_sepa) per trading day.
+///
+/// Calendar: distinct trading dates from
+/// `fetch_cross_section(start - 1 day, end)` (ascending). `start - 1` (or
+/// the first available trading day at/before `start`) is the initial
+/// position day: the position is built at its close with a single buy cost,
+/// its NAV is not part of the output. Output points cover `start..=end`.
+///
+/// Errors: `ScreenerError` when `start > end`, when `start` is later than
+/// the latest data, or when a data fetch fails. Missing/empty parquet files
+/// degrade to empty rows (not an error) — the result may then have an empty
+/// curve.
+pub fn run_backtest(
+    params: &BacktestParams,
+    reader: &ParquetReader,
+) -> Result<BacktestResult, ScreenerError> {
+    use std::collections::BTreeSet;
+
+    let latest = reader.latest_trade_date()?;
+    let end = match params.end {
+        Some(e) => e,
+        None => latest.ok_or_else(|| ScreenerError::Data(no_latest_data_error()))?,
+    };
+    if params.start > end {
+        return Err(ScreenerError::Data(start_after_end_error(params.start, end)));
+    }
+    if let Some(l) = latest {
+        if params.start > l {
+            return Err(ScreenerError::Data(start_after_data_error(params.start, l)));
+        }
+    }
+
+    // Calendar from the day before start (for day-1 returns).
+    let cal_start = params.start - chrono::Duration::days(1);
+    let all_bars = reader.fetch_cross_section(cal_start, end)?;
+    let calendar: Vec<NaiveDate> = all_bars
+        .iter()
+        .map(|b| b.trade_date)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Per-day ranked rows via run_sepa (all calendar days, incl. the
+    // initial position day). run_sepa's internal window is date-bounded so
+    // this is point-in-time; empty rows degrade gracefully.
+    let query = SepaQuery { top_n: params.top_n };
+    let mut sepa_datas: Vec<SepaData> = Vec::with_capacity(calendar.len());
+    for &date in &calendar {
+        sepa_datas.push(run_sepa(&query, reader, date)?);
+    }
+    // Borrowed view of the owned rows, kept alive by `sepa_datas` for the
+    // duration of simulate_portfolio.
+    let ranked_daily: Vec<(NaiveDate, Vec<&SepaRow>)> = calendar
+        .iter()
+        .zip(sepa_datas.iter())
+        .map(|(date, data)| (*date, data.rows.iter().collect()))
+        .collect();
+
+    // Daily returns from the same window: symbol -> date -> day return.
+    let mut daily_returns: HashMap<String, HashMap<NaiveDate, f64>> = HashMap::new();
+    for (symbol, series) in group_by_symbol(&all_bars) {
+        let mut m = HashMap::new();
+        let mut prev: Option<&CrossSectionBar> = None;
+        for bar in series {
+            let r = match prev {
+                None => 0.0, // first calendar day has return 0
+                Some(p) => {
+                    if p.adjclose.is_finite() && bar.adjclose.is_finite() && p.adjclose != 0.0 {
+                        bar.adjclose / p.adjclose - 1.0
+                    } else {
+                        0.0
+                    }
+                }
+            };
+            m.insert(bar.trade_date, r);
+            prev = Some(bar);
+        }
+        daily_returns.insert(symbol, m);
+    }
+
+    let (nav, rebalances) = simulate_portfolio(&ranked_daily, &daily_returns, params);
+    let out_dates: Vec<NaiveDate> = calendar
+        .iter()
+        .copied()
+        .filter(|d| *d >= params.start)
+        .collect();
+
+    // Benchmark daily returns on the same dates.
+    let basics = reader.load_all_stock_basics()?;
+    let basics_by_symbol: HashMap<String, &StockBasic> =
+        basics.iter().map(|b| (b.symbol.clone(), b)).collect();
+    let bars_by_symbol = group_by_symbol(&all_bars);
+    let bench_returns = compute_benchmark_returns(&bars_by_symbol, &basics_by_symbol, &calendar);
+
+    // Strategy NAV per output date, plus benchmark NAV compounded from 1.0.
+    let nav_by_date: HashMap<NaiveDate, f64> = calendar
+        .iter()
+        .copied()
+        .zip(nav.iter().copied())
+        .collect();
+    let mut bench_nav = 1.0;
+    let mut bench_nav_by_date: HashMap<NaiveDate, f64> = HashMap::new();
+    for &date in &calendar {
+        bench_nav *= 1.0 + bench_returns.get(&date).copied().unwrap_or(0.0);
+        bench_nav_by_date.insert(date, bench_nav);
+    }
+
+    let mut points = Vec::with_capacity(out_dates.len());
+    for date in &out_dates {
+        points.push(EquityPoint {
+            trade_date: *date,
+            strategy_nav: nav_by_date.get(date).copied().unwrap_or(1.0),
+            benchmark_nav: bench_nav_by_date.get(date).copied().unwrap_or(1.0),
+        });
+    }
+
+    let strat_nav: Vec<f64> = points.iter().map(|p| p.strategy_nav).collect();
+    let bench_series: Vec<f64> = points.iter().map(|p| p.benchmark_nav).collect();
+    let metrics = compute_metrics(&strat_nav, &out_dates, &rebalances, &bench_series);
+
+    Ok(BacktestResult { points, metrics })
+}
+
+/// Group bars by symbol preserving ascending date order.
+fn group_by_symbol<'a>(
+    bars: &'a [CrossSectionBar],
+) -> HashMap<String, Vec<&'a CrossSectionBar>> {
+    let mut m: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
+    for b in bars {
+        m.entry(b.symbol.clone()).or_default().push(b);
+    }
+    m
+}
+
+/// Serialize the equity curve to CSV (header + one row per point).
+///
+/// Columns: `trade_date,strategy_nav,benchmark_nav`. Dates use `%Y-%m-%d`;
+/// numbers use up to 6 decimals without exponent notation.
+pub fn equity_csv(points: &[EquityPoint]) -> String {
+    let mut out = String::from("trade_date,strategy_nav,benchmark_nav\n");
+    for p in points {
+        out.push_str(&format!(
+            "{},{},{}\n",
+            p.trade_date.format("%Y-%m-%d"),
+            fmt_double(p.strategy_nav),
+            fmt_double(p.benchmark_nav)
+        ));
+    }
+    out
+}
+
+/// Format a double: up to 6 decimals, no exponent, `.1` for integral values.
+fn fmt_double(v: f64) -> String {
+    if !v.is_finite() {
+        return String::from("0");
+    }
+    if v == v.trunc() {
+        format!("{v:.1}")
+    } else {
+        format!("{v:.6}")
+    }
+}
+
+fn no_latest_data_error() -> DataError {
+    DataError::Parse("backtest: no trade data available".to_string())
+}
+
+fn start_after_end_error(start: NaiveDate, end: NaiveDate) -> DataError {
+    DataError::Parse(format!("backtest: start {start} is after end {end}"))
+}
+
+fn start_after_data_error(start: NaiveDate, latest: NaiveDate) -> DataError {
+    DataError::Parse(format!("backtest: start {start} is after latest data {latest}"))
 }
 
 #[cfg(test)]
@@ -738,3 +928,167 @@ fn max_drawdown(nav: &[f64]) -> f64 {
     }
     max_dd
 }
+
+    /// CSV serialization: header + rows, format `%Y-%m-%d`, ≤6 decimals.
+    #[test]
+    fn equity_csv_format() {
+        let pts = vec![
+            EquityPoint {
+                trade_date: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+                strategy_nav: 1.0,
+                benchmark_nav: 1.0,
+            },
+            EquityPoint {
+                trade_date: NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap(),
+                strategy_nav: 1.123456789,
+                benchmark_nav: 1.0005,
+            },
+        ];
+        let csv = equity_csv(&pts);
+        let lines: Vec<&str> = csv.trim().split('\n').collect();
+        assert_eq!(lines[0], "trade_date,strategy_nav,benchmark_nav");
+        assert_eq!(lines[1], "2025-01-02,1.0,1.0");
+        assert_eq!(lines[2], "2025-01-03,1.123457,1.000500");
+    }
+
+    /// Integration: run_backtest over a 10-trading-day fixture with 3
+    /// stocks; asserts points.len()==10 and points[0] numeric convention.
+    #[test]
+    fn run_backtest_integration() {
+        use compass_core::data::parquet::ParquetReader;
+        use duckdb::Connection;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let conn = Connection::open_in_memory().expect("duckdb");
+
+        // 10 trading days ending 2025-01-14 (weekday-only), 3 stocks with
+        // engineered closes so SEPA ranking is stable (A highest score).
+        // Prices rise ~1%/day so run_sepa's momentum/trend modules score
+        // every symbol positively.
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        let dates = [
+            "2024-12-30", "2024-12-31", "2025-01-02", "2025-01-03", "2025-01-06",
+            "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14",
+        ];
+        for (i, d) in dates.iter().enumerate() {
+            for (sym, base) in [("600001", 10.0), ("600002", 20.0), ("600003", 30.0)] {
+                let close = base * (1.0 + 0.01 * i as f64);
+                conn.execute(
+                    "INSERT INTO daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    duckdb::params![
+                        sym, d, close - 0.01, close, close - 0.02, close, close, 5e7, 5e8
+                    ],
+                )
+                .expect("insert daily");
+            }
+        }
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_daily.parquet").display()
+        ))
+        .expect("copy daily");
+
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        )
+        .expect("create basic");
+        for (sym, name) in [("600001", "A"), ("600002", "B"), ("600003", "C")] {
+            conn.execute(
+                "INSERT INTO basic VALUES (?, ?, ?, '2024-01-01', NULL, '主板', ?, 1e9, '测试', NULL)",
+                duckdb::params![sym, name, "SH", name],
+            )
+            .expect("insert basic");
+        }
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_basic.parquet").display()
+        ))
+        .expect("copy basic");
+
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+        let params = BacktestParams {
+            start: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap()),
+            top_n: 2,
+            hold_days: 5,
+            cost: 0.0,
+        };
+        let result = run_backtest(&params, &reader).expect("backtest runs");
+        // 9 output days: 2025-01-02 .. 2025-01-14 (excl. initial day).
+        assert_eq!(result.points.len(), 9);
+        assert_eq!(
+            result.points[0].trade_date,
+            NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()
+        );
+        // Initial position built at 2024-12-31 close, first output NAV =
+        // (1-cost) * (1 + day-1 return); cost=0 → 1.0 * (1+r).
+        assert!(result.points[0].strategy_nav > 0.0);
+        assert!(result.points[0].benchmark_nav > 0.0);
+        assert!(result.metrics.cumulative_return > 0.0);
+    }
+
+    /// Integration: start > end and start after latest data both error.
+    #[test]
+    fn run_backtest_validation_errors() {
+        use compass_core::data::parquet::ParquetReader;
+        use duckdb::Connection;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let conn = Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        conn.execute(
+            "INSERT INTO daily VALUES ('600001', '2025-01-02', 10, 10, 10, 10, 10, 5e7, 5e8)",
+            duckdb::params![],
+        )
+        .expect("insert");
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_daily.parquet").display()
+        ))
+        .expect("copy");
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+
+        // start > end → Err.
+        let p1 = BacktestParams {
+            start: NaiveDate::parse_from_str("2025-02-01", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()),
+            ..BacktestParams::default()
+        };
+        assert!(run_backtest(&p1, &reader).is_err());
+
+        // start after latest data (explicit end given) → Err.
+        let p2 = BacktestParams {
+            start: NaiveDate::parse_from_str("2026-01-01", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2026-06-01", "%Y-%m-%d").unwrap()),
+            ..BacktestParams::default()
+        };
+        assert!(run_backtest(&p2, &reader).is_err());
+    }
+
+    /// Integration: missing parquet (empty fixture) with explicit end →
+    /// Ok with empty points (run_sepa degrades, no panic).
+    #[test]
+    fn run_backtest_empty_fixture_degrades() {
+        use compass_core::data::parquet::ParquetReader;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+        let params = BacktestParams {
+            start: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap()),
+            top_n: 2,
+            hold_days: 5,
+            cost: 0.0,
+        };
+        let result = run_backtest(&params, &reader).expect("empty fixture degrades to Ok");
+        assert!(result.points.is_empty());
+    }
