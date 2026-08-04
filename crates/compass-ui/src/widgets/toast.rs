@@ -7,7 +7,7 @@
 //! the top-right corner, with a 3 px level bar on the left, an optional close
 //! button and a 3 px lifetime progress bar at the bottom.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::tokens::{ColorTokens, ThemeTokens};
 
@@ -17,9 +17,12 @@ const ENTRY_DURATION: Duration = Duration::from_millis(150);
 const CLOSE_DURATION: Duration = Duration::from_millis(100);
 
 /// Linear 0→1 progress of `started → now` within `duration`, clamped.
-fn progress_since(started: Instant, now: Instant, duration: Duration) -> f32 {
-    (now.saturating_duration_since(started).as_secs_f32() / duration.as_secs_f32().max(0.001))
-        .clamp(0.0, 1.0)
+///
+/// Both timestamps are egui virtual seconds (`ctx.input(|i| i.time)`), which
+/// egui advances by `predicted_dt` per frame — deterministic in kittest
+/// instead of wall-clock (ref #168).
+fn progress_since(started: f64, now: f64, duration: Duration) -> f32 {
+    ((now - started) / duration.as_secs_f64().max(0.001)).clamp(0.0, 1.0) as f32
 }
 
 /// Severity level of a toast notification.
@@ -67,22 +70,25 @@ pub struct Toast {
     pub level: ToastLevel,
     /// Display message text.
     pub message: String,
-    /// When this toast was created (entry animation + expiry base).
-    pub created_at: Instant,
+    /// Creation time in egui virtual seconds (`ctx.input(|i| i.time)`) —
+    /// entry animation + expiry base. Virtual (frame-driven) time keeps the
+    /// animations deterministic under kittest instead of wall-clock (ref #168).
+    pub created_at: f64,
     /// How long this toast stays visible before auto-dismiss.
     pub duration: Duration,
     /// Whether the closing animation is running.
     pub closing: bool,
-    /// When the closing animation started (`Some` while closing).
-    pub close_started: Option<Instant>,
+    /// When the closing animation started (`Some` while closing), in egui
+    /// virtual seconds.
+    pub close_started: Option<f64>,
     /// Rendered card height from the last frame (close-collapse reference).
     pub height: f32,
 }
 
 impl Toast {
-    /// Create a new toast; duration is auto-selected by level
-    /// (Info/Success/Warning: 3 s, Error: 8 s).
-    fn new(id: u64, level: ToastLevel, message: String) -> Self {
+    /// Create a new toast at virtual time `created_at`; duration is
+    /// auto-selected by level (Info/Success/Warning: 3 s, Error: 8 s).
+    fn new(id: u64, level: ToastLevel, message: String, created_at: f64) -> Self {
         let duration = match level {
             ToastLevel::Info | ToastLevel::Success | ToastLevel::Warning => Duration::from_secs(3),
             ToastLevel::Error => Duration::from_secs(8),
@@ -91,7 +97,7 @@ impl Toast {
             id,
             level,
             message,
-            created_at: Instant::now(),
+            created_at,
             duration,
             closing: false,
             close_started: None,
@@ -100,28 +106,29 @@ impl Toast {
     }
 
     /// Entry animation progress 0→1 (150 ms since creation).
-    pub fn entry_progress(&self, now: Instant) -> f32 {
+    pub fn entry_progress(&self, now: f64) -> f32 {
         progress_since(self.created_at, now, ENTRY_DURATION)
     }
 
     /// Close animation progress 0→1 (100 ms since closing started); 0 when not closing.
-    pub fn close_progress(&self, now: Instant) -> f32 {
+    pub fn close_progress(&self, now: f64) -> f32 {
         self.close_started
             .map(|t| progress_since(t, now, CLOSE_DURATION))
             .unwrap_or(0.0)
     }
 
     /// Begin the closing animation (idempotent).
-    fn close(&mut self, now: Instant) {
+    fn close(&mut self, now: f64) {
         if !self.closing {
             self.closing = true;
             self.close_started = Some(now);
         }
     }
 
-    /// Returns true if this toast has exceeded its display duration.
-    fn is_expired(&self) -> bool {
-        self.created_at.elapsed() >= self.duration
+    /// Returns true if this toast has exceeded its display duration at
+    /// virtual time `now`.
+    fn is_expired(&self, now: f64) -> bool {
+        now - self.created_at >= self.duration.as_secs_f64()
     }
 }
 
@@ -136,6 +143,10 @@ pub struct ToastManager {
     tokens: ThemeTokens,
     toasts: Vec<Toast>,
     next_id: u64,
+    /// egui virtual time (`ctx.input(|i| i.time)`) of the most recent render
+    /// frame. `push()` stamps new toasts with it — within one frame of the
+    /// real creation moment, negligible against 3 s/8 s durations (ref #168).
+    last_frame_time: f64,
 }
 
 impl ToastManager {
@@ -145,6 +156,7 @@ impl ToastManager {
             tokens,
             toasts: Vec::new(),
             next_id: 0,
+            last_frame_time: 0.0,
         }
     }
 
@@ -169,7 +181,7 @@ impl ToastManager {
     /// Automatically assigns duration based on level. If the queue exceeds the
     /// maximum capacity (10), the oldest toast is evicted.
     pub fn push(&mut self, level: ToastLevel, message: impl Into<String>) {
-        let toast = Toast::new(self.next_id, level, message.into());
+        let toast = Toast::new(self.next_id, level, message.into(), self.last_frame_time);
         self.next_id += 1;
         self.toasts.push(toast);
         if self.toasts.len() > 10 {
@@ -189,15 +201,19 @@ impl ToastManager {
     /// Render the toast stack (top-right, 16 px anchor).
     ///
     /// Expired toasts enter the closing animation; closing toasts fade and
-    /// collapse (alpha → 0, height → 0, 100 ms) before removal.
+    /// collapse (alpha → 0, height → 0, 100 ms) before removal. Animations
+    /// are driven by egui virtual time (`ctx.input(|i| i.time)`), which
+    /// advances by `predicted_dt` per frame — deterministic under kittest,
+    /// immune to slow-CI wall-clock drift (ref #168).
     pub fn render(&mut self, ctx: &egui::Context) {
         let tokens = self.tokens;
-        let now = Instant::now();
+        let now = ctx.input(|i| i.time);
+        self.last_frame_time = now;
 
         // Expiry transitions the toast into the closing animation instead of
         // removing it instantly, so the fade-out plays.
         for toast in &mut self.toasts {
-            if toast.is_expired() {
+            if toast.is_expired(now) {
                 toast.close(now);
             }
         }
@@ -234,7 +250,7 @@ impl ToastManager {
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0 - x_off, y))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
-                    height = render_toast(ui, toast, &tokens, alpha, vis_height);
+                    height = render_toast(ui, toast, &tokens, alpha, vis_height, now);
                 });
             toast.height = height;
             y += toast.height + 8.0;
@@ -267,6 +283,7 @@ fn render_toast(
     tokens: &ThemeTokens,
     alpha: f32,
     vis_height: Option<f32>,
+    now: f64,
 ) -> f32 {
     let c = &tokens.color;
     let level_color = toast.level.color(c);
@@ -317,16 +334,16 @@ fn render_toast(
                 .frame(false)
                 .min_size(egui::vec2(18.0, 18.0));
                 if ui.add(close_btn).clicked() {
-                    toast.close(Instant::now());
+                    toast.close(now);
                 }
             });
         });
 
         // 3 px lifetime progress bar at the bottom.
-        let elapsed = toast.created_at.elapsed();
-        let remaining = toast.duration.saturating_sub(elapsed);
-        let fraction = remaining.as_secs_f32() / toast.duration.as_secs_f32().max(0.001);
-        let bar_width = ui.available_width() * fraction.clamp(0.0, 1.0);
+        let elapsed = now - toast.created_at;
+        let remaining = toast.duration.as_secs_f64() - elapsed;
+        let fraction = (remaining / toast.duration.as_secs_f64().max(0.001)).clamp(0.0, 1.0) as f32;
+        let bar_width = ui.available_width() * fraction;
         let bar_rect =
             egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(bar_width, 3.0));
         ui.painter().rect_filled(bar_rect, 0.0, level_color);
@@ -415,8 +432,8 @@ mod tests {
 
     #[test]
     fn test_is_expired_fresh_toast_not_expired() {
-        let toast = Toast::new(0, ToastLevel::Info, "fresh".into());
-        assert!(!toast.is_expired());
+        let toast = Toast::new(0, ToastLevel::Info, "fresh".into(), 0.0);
+        assert!(!toast.is_expired(0.0));
     }
 
     #[test]
@@ -425,13 +442,13 @@ mod tests {
             id: 0,
             level: ToastLevel::Info,
             message: "expired".into(),
-            created_at: Instant::now() - Duration::from_secs(10),
+            created_at: -10.0,
             duration: Duration::from_secs(3),
             closing: false,
             close_started: None,
             height: 0.0,
         };
-        assert!(expired.is_expired());
+        assert!(expired.is_expired(0.0));
     }
 
     #[test]
@@ -440,14 +457,14 @@ mod tests {
             id: 0,
             level: ToastLevel::Success,
             message: "boundary".into(),
-            created_at: Instant::now() - Duration::from_secs(3),
+            created_at: -3.0,
             duration: Duration::from_secs(3),
             closing: false,
             close_started: None,
             height: 0.0,
         };
         // >= duration, so this should be expired.
-        assert!(exact.is_expired());
+        assert!(exact.is_expired(0.0));
     }
 
     // --- level tokens (NEW: 4 colors read ColorTokens) ---
@@ -481,47 +498,33 @@ mod tests {
 
     #[test]
     fn entry_progress_boundaries() {
-        let toast = Toast::new(0, ToastLevel::Info, "x".into());
-        let start = toast.created_at;
-        assert_eq!(toast.entry_progress(start), 0.0);
-        assert!((toast.entry_progress(start + Duration::from_millis(75)) - 0.5).abs() < 0.001);
-        assert_eq!(
-            toast.entry_progress(start + Duration::from_millis(150)),
-            1.0
-        );
-        assert_eq!(toast.entry_progress(start + Duration::from_secs(1)), 1.0);
+        let toast = Toast::new(0, ToastLevel::Info, "x".into(), 0.0);
+        assert_eq!(toast.entry_progress(0.0), 0.0);
+        assert!((toast.entry_progress(0.075) - 0.5).abs() < 0.001);
+        assert_eq!(toast.entry_progress(0.15), 1.0);
+        assert_eq!(toast.entry_progress(1.0), 1.0);
     }
 
     #[test]
     fn close_progress_boundaries() {
-        let mut toast = Toast::new(0, ToastLevel::Info, "x".into());
-        let start = toast.created_at;
-        assert_eq!(toast.close_progress(start), 0.0, "not closing → 0");
-        toast.close(start);
+        let mut toast = Toast::new(0, ToastLevel::Info, "x".into(), 0.0);
+        assert_eq!(toast.close_progress(0.0), 0.0, "not closing → 0");
+        toast.close(0.0);
         let close_started = toast.close_started.expect("close sets the timestamp");
         assert_eq!(toast.close_progress(close_started), 0.0);
-        assert!(
-            (toast.close_progress(close_started + Duration::from_millis(50)) - 0.5).abs() < 0.001
-        );
-        assert_eq!(
-            toast.close_progress(close_started + Duration::from_millis(100)),
-            1.0
-        );
-        assert_eq!(
-            toast.close_progress(close_started + Duration::from_secs(1)),
-            1.0
-        );
+        assert!((toast.close_progress(close_started + 0.05) - 0.5).abs() < 0.001);
+        assert_eq!(toast.close_progress(close_started + 0.1), 1.0);
+        assert_eq!(toast.close_progress(close_started + 1.0), 1.0);
     }
 
     // --- closing state machine (NEW) ---
 
     #[test]
     fn close_is_idempotent() {
-        let now = Instant::now();
-        let mut toast = Toast::new(0, ToastLevel::Info, "x".into());
-        toast.close(now);
+        let mut toast = Toast::new(0, ToastLevel::Info, "x".into(), 0.0);
+        toast.close(0.0);
         let started = toast.close_started;
-        toast.close(now + Duration::from_millis(50));
+        toast.close(0.05);
         assert_eq!(
             toast.close_started, started,
             "second close must not restart"
@@ -529,13 +532,20 @@ mod tests {
         assert!(toast.closing);
     }
 
+    /// Build a harness with a fine virtual clock (10 ms per step) so the
+    /// toast animations (entry 150 ms, close 100 ms) can be stepped through
+    /// deterministically. `render()` reads `ctx.input(|i| i.time)` (egui
+    /// virtual time, advanced by `step_dt` per frame), so no wall-clock
+    /// sleep is involved (ref #168).
     fn harness_for_toasts(
         manager: &std::rc::Rc<std::cell::RefCell<ToastManager>>,
     ) -> egui_kittest::Harness<'static> {
         let m = manager.clone();
-        egui_kittest::Harness::new_ui(move |ui| {
-            m.borrow_mut().render(ui.ctx());
-        })
+        egui_kittest::Harness::builder()
+            .with_step_dt(0.01)
+            .build_ui(move |ui| {
+                m.borrow_mut().render(ui.ctx());
+            })
     }
 
     #[test]
@@ -577,13 +587,16 @@ mod tests {
         use std::rc::Rc;
         let manager = Rc::new(RefCell::new(ToastManager::new(ThemeTokens::dark())));
 
-        // Inject an expired toast plus a fresh one.
+        // Inject an expired toast plus a fresh one. `created_at` is in egui
+        // virtual seconds (advanced by step_dt per harness frame); -10.0
+        // means "10 s before the virtual clock started" → expired against the
+        // 3 s duration regardless of wall-clock drift (ref #168).
         {
             let expired = Toast {
                 id: 0,
                 level: ToastLevel::Info,
                 message: "expired-toast".into(),
-                created_at: Instant::now() - Duration::from_secs(10),
+                created_at: -10.0,
                 duration: Duration::from_secs(3),
                 closing: false,
                 close_started: None,
@@ -595,15 +608,11 @@ mod tests {
             .borrow_mut()
             .push(ToastLevel::Success, "fresh-toast");
 
+        // The harness constructor already ran one frame (virtual time 0),
+        // where the expired toast started closing. Because render() samples
+        // egui virtual time, the closing state is fully deterministic — no
+        // wall-clock reset is needed.
         let mut harness = harness_for_toasts(&manager);
-        // The harness constructor already ran one frame, where the expired
-        // toast started closing (`close_started` stamped at that frame's
-        // wall-clock time). On a slow CI runner the real-time gap to run()
-        // can exceed CLOSE_DURATION (100 ms), which would remove the toast
-        // before the assertions below. Reset the stamp so the closing
-        // animation is deterministic: freshly started, progress ≈ 0.
-        manager.borrow_mut().toasts[0].close_started = Some(Instant::now());
-        harness.run();
 
         // Expired toast must have entered the closing animation, not be
         // removed instantly.
@@ -615,10 +624,10 @@ mod tests {
         assert!(manager.borrow().toasts[0].closing);
         assert!(manager.borrow().toasts[0].close_started.is_some());
 
-        // Once the closing animation completes, the toast is removed.
-        let now = Instant::now();
-        manager.borrow_mut().toasts[0].close_started = Some(now - Duration::from_millis(200));
-        harness.run();
+        // Advance the virtual clock past CLOSE_DURATION (100 ms) in 10 ms
+        // steps → 11 steps = 110 ms → the closing animation completes and the
+        // toast is removed, leaving only the fresh one.
+        harness.run_steps(11);
         let remaining = manager.borrow().len();
         assert_eq!(
             remaining, 1,
@@ -652,10 +661,11 @@ mod tests {
         // Mid-animation the toast is still rendered.
         assert_eq!(manager.borrow().len(), 1);
 
-        // After the close animation completes the toast is removed.
-        let now = Instant::now();
-        manager.borrow_mut().toasts[0].close_started = Some(now - Duration::from_millis(200));
-        harness.run();
+        // After the close animation completes the toast is removed: the
+        // close button stamped `close_started` at the click frame's virtual
+        // time, so advancing 11 steps (110 ms) past CLOSE_DURATION (100 ms)
+        // removes it deterministically.
+        harness.run_steps(11);
         assert!(manager.borrow().is_empty());
     }
 

@@ -205,3 +205,4 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 组件 vs 依赖 | 自建为主 / 引 egui-notify、egui-modal 等 | 自建为主（仅保留 phosphor/file-dialog/extras/charts/dock） | 用户明确要求自建复用；现有 toast/modal 已是自建雏形；引库风格不统一、重复 | 引库与「自建为主」冲突；file-dialog 平台级能力自建成本极高保留（ref #119 D5） |
 | 涨跌色 | A 股红涨绿跌 / TradingView 绿涨红跌 / 默认 | A 股红涨绿跌（#EF5350/#26A69A） | A 股用户心智（同花顺/东财一致）；token 统一 K 线与文本 | TV 惯例违背 A 股直觉（ref #119 D10） |
 | Modal 绑定场景 | 保持占位 / 仅启动引导 / 三场景全接 | 启动引导 + 日志导出 + 删除确认 | 零新依赖、真实高频；激活闲置 file_dialog | 保持占位违背 epic 目标（ref #119 D9） |
+| Toast 动画时间源 | 真实墙钟 `Instant::now()` / egui 虚拟时间 `ctx.input(|i| i.time)` / 注入 Clock trait | egui 虚拟时间（f64 秒字段 `created_at`/`close_started`，manager 缓存 `last_frame_time` 供 `push()` 打戳） | kittest 下虚拟时间按 `predicted_dt` 每帧推进、完全确定——根治慢 CI wall-clock 漂移导致的 flaky（ref #168）；真实 GUI 中 egui 帧时间本就正确驱动动画；无 Clock 注入的 API 膨胀 | 墙钟驱动动画使 kittest 测试依赖机器负载、慢 CI 间歇失败（#155 修后仍发 #168）；Clock trait 为单一消费方引入抽象、过度设计（ref #168） |

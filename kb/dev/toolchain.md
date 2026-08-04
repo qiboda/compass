@@ -117,3 +117,39 @@
   AttributeError 消失）
 - **教训**: 编辑重复片段前先 grep 计数；oldString 带足上下文；编辑后
   立即编译/结构验证——禁止凭"看起来对了"跳过验证
+
+---
+
+## 测试（Rust / egui_kittest）
+
+### [测试] egui_kittest 动画测试受 wall-clock 影响偶发失败（慢 CI）
+
+- **症状**: `compass-ui widgets::toast::tests::test_render_expired_toast_closes_then_is_removed`
+  在 CI 慢 runner 上间歇失败：`assert len()==2` 得到 1，报
+  "expired toast is closing, not removed"（ref #155 修复后仍偶发，ref #168/#169）。
+  本地快机基本复现不出——正是 flaky 特征
+- **根因**: `render()` 用**真实墙钟** `Instant::now()` 驱动动画
+  （`close_progress`/`is_expired`/`close()` 全基于它）。kittest `Harness::run()`
+  在慢 CI 上因 `wait_for_images`（字体纹理首载）触发 `sleep(step_dt=250ms)`
+  循环——一帧 sleep 即超过 CLOSE_DURATION(100ms) → toast 在断言前被移除。
+  本地无 pending images → 直接 break → 通过。测试与真实时间耦合 = 天生 flaky
+- **排查路径**:
+  1. 确认失败模式：`gh run view <id> --log-failed` 看 `assertion left == right failed`
+  2. 读 `egui_kittest` 源码确认时间语义：`RawInput` 构造 `..Default::default()`
+     → `time: None`；`InputState::begin_pass` 用
+     `new.time.unwrap_or(self.time + predicted_dt)` → **虚拟时间累积**，
+     每 step 推进 `step_dt`（默认 0.25s）
+  3. 确认产品代码时间源：`grep -n "Instant::now\|elapsed()" toast.rs` →
+     render/render_toast 全用墙钟
+- **修复**: 动画改由 egui 虚拟时间驱动——`render()` 取
+  `ctx.input(|i| i.time)`（f64 秒，每帧按 predicted_dt 推进，kittest 下确定），
+  `Toast.created_at`/`close_started` 改 f64；`ToastManager` 缓存
+  `last_frame_time`（push 在 ctx 外，用它作 created_at）；测试 harness 用
+  `Harness::builder().with_step_dt(0.01)` 细粒度推进，`run_steps(11)` 精确
+  越过 100ms 关闭动画
+- **验证**: `cargo nextest run -p compass-ui widgets::toast::tests::test_render_expired_toast_closes_then_is_removed`
+  连续 20 次无失败；`cargo test` 全量通过。正确性由虚拟时间构造保证，
+  与机器负载无关
+- **教训**: kittest 测试断言跨帧动画状态时，**绝不用真实墙钟**（`Instant::now()`、
+  `elapsed()`）——必须用 egui 虚拟时间（`ctx.input(|i| i.time)`）或注入时钟。
+  慢 CI 上任何"重置时间戳再 run()"的 workaround 都有残留竞态
