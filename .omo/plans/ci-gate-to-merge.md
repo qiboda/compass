@@ -16,10 +16,10 @@ push），改为 branch protection 强制 PR merge 的 CI 门槛。
 
 | id | outcome | status | evidence path |
 |---|---|---|---|
-| hook | `.githooks/pre-push` master CI 检查块（第 9-31 行）删除，push 不再被 master CI 状态拦截 | planned | `.githooks/pre-push` |
-| protection | master branch protection 强制 9 个 status check（strict=true），CI 未全绿 merge 按钮禁用 | planned | GitHub API `PUT branches/master/protection` |
-| docs | `kb/dev/process.md` push gate 清单删除 CI 健康项、补充 branch protection merge 门槛说明 | planned | `kb/dev/process.md:88-103` |
-| test | `scripts/tests/pre-push-no-ci-check-test.sh` 行为测试断言 hook 不再含 master CI 检查 | planned | `scripts/tests/pre-push-no-ci-check-test.sh` |
+| hook | `.githooks/pre-push` master CI 检查块（第 9-31 行）删除，push 不再被 master CI 状态拦截 | done | `.githooks/pre-push`（commit 39f10b0） |
+| protection | master branch protection 强制 9 个 status check（strict=true），CI 未全绿 merge 按钮禁用 | done | GitHub API `PUT branches/master/protection`（已验证返回） |
+| docs | `kb/dev/process.md` push gate 清单删除 CI 健康项、补充 branch protection merge 门槛说明 | done | `kb/dev/process.md:88-109` |
+| test | `scripts/tests/pre-push-no-ci-check-test.sh` 行为测试断言 hook 不再含 master CI 检查 | done | `scripts/tests/pre-push-no-ci-check-test.sh`（RED→GREEN 已实证） |
 
 ## Decisions (grill-me 锁定 + draft 批准)
 
@@ -123,9 +123,9 @@ push），改为 branch protection 强制 PR merge 的 CI 门槛。
 
 ## Verification gates
 
-- [ ] RED：`scripts/tests/pre-push-no-ci-check-test.sh` 在删除前失败
-- [ ] GREEN：删除后测试通过
-- [ ] `scripts/tests/pre-push-ref-regex-test.sh` 仍全过
-- [ ] `bash -n .githooks/pre-push` 通过
-- [ ] branch protection API 返回 contexts 与 strict=true 正确
-- [ ] 本 PR push 不被 hook 拦截（自验证）
+- [x] RED：`scripts/tests/pre-push-no-ci-check-test.sh` 在删除前失败（4 个 CI 块断言失败，5 个质量 gate 通过）
+- [x] GREEN：删除后测试通过（9/9 PASS，含 review 补充的裸 `gh run` 哨兵）
+- [x] `scripts/tests/pre-push-ref-regex-test.sh` 仍全过（9/9 PASS）
+- [x] `bash -n .githooks/pre-push` 通过
+- [x] branch protection API 返回 contexts 与 strict=true 正确（9 contexts + enforce_admins=false 已验证）
+- [x] 本 PR push 不被 hook 拦截（自验证——review-work 后修复 commit 直接 commit 成功）

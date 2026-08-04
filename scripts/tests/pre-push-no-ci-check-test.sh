@@ -27,6 +27,8 @@ check_removed() {
 
 check_removed "no gh run list --branch master" \
     'gh run list.*--branch master'
+check_removed "no bare gh run usage (CI check's only source)" \
+    'gh run'
 check_removed "no CI_STATUS variable" \
     'CI_STATUS'
 check_removed "no 'Fix CI before pushing' hint" \

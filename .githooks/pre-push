@@ -5,6 +5,7 @@
 # 2. cargo clippy (must be warning-free)
 # 3. cargo doc (must be warning-free)
 # 4. "ref #N" in commit messages must point to open issues
+# 5. Python lint + tests (if collectors/pyproject.toml exists)
 #
 # CI gating for PRs is enforced by branch protection on master
 # (9 required status checks, strict) — see kb/dev/process.md.

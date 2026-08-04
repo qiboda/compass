@@ -104,7 +104,7 @@ push 前按顺序执行：
 > 只限制 merge，不拦 master 直推（docs/lint/typo/反思类直推照常，未启用
 > enforce_admins）。
 
-> **覆盖率门禁**在 CI 执行（coverage job 强制 workspace + 每 crate ≥80%、Python ≥80%），太慢不适合 pre-push 本地检查。见 `kb/dev/testing.md` 覆盖率章节。
+> **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥80% + per-crate 阈值——数据层 data/core 95%、其余 80%；Python ≥95%），太慢不适合 pre-push 本地检查。见 `kb/dev/testing.md` 覆盖率章节。
 
 手动 pre-push checklist（与 hook 相同）：`git fetch origin <base>` + rebase 落后 commits + `cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
