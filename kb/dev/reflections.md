@@ -673,3 +673,31 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 ### Trends (last 10)
 - **"review 阶段才暴露可前置验证的问题"模式持续**（ref #139 声称已验证但数据路径未通、ref #160 Wave 4 未执行、本次 Rust 门槛基线未在 plan 实测）：plan 阶段"实测而非信任文档"应成为硬习惯——本次已因 review 的 llvm-cov 实测闭环，未造成返工
 - **编辑/验证类工具误用可沉淀为排查卡**（本次 edit 误匹配 + LSP 噪音是新类别，toolchain.md 首次新增「编辑器工具链」组）：工具链问题闭环记录机制在持续吸收新教训，符合 AGENTS.md 问题处理闭环的预期
+
+## 2026-08-04 — ref #168 #169 toast flaky 测试根治：egui 虚拟时间驱动动画
+
+**What was done**: `compass-ui::widgets::toast` 动画时间源从真实墙钟 `Instant::now()` 改为 egui 虚拟时间 `ctx.input(|i| i.time)`（f64 秒）：`Toast.created_at/close_started` 改 f64，`ToastManager` 缓存 `last_frame_time` 供 `push()` 打戳，测试 harness 用 `with_step_dt(0.01)` + `run_steps(11)` 细粒度推进。根治 #155 修复不彻底的 flaky（慢 CI 上 `harness.run()` 的 `wait_for_images` sleep 让真实时间越过 CLOSE_DURATION）。flaky 测试 20× 连续通过，workspace 全量测试/clippy/fmt/doc 全绿。2 commit（a05a597 fix + 446d637 test/doc），同步 testing.md §274 模式、toolchain.md 排查卡、ui.md 决策记录。
+
+**User corrections**:
+1. 「handoff.md 记录了你先前要求的 test-only 方案，与本会话 grill 的方案 C 冲突。以哪个为准？」→ 用户答「**本会话方案 C**」——推翻 worktree 内既有 handoff 契约（test-only 未来时间戳 + "不要改动非测试逻辑"）。我 grill 时未先读 handoff 就给出方案 C 推荐，导致与既有契约冲突；用户裁决后我更新了 handoff 并记录契约变更。
+2. 「review 全过，但有两个 MINOR 建议。如何处理？」→ 用户答「修两个 MINOR（推荐）」——review 发现的 doc 前提 + push 打戳断言两个 MINOR 需修复再交付，不跳过。
+
+**What went wrong**:
+1. **grill-me 未先读 worktree 内既有 handoff 契约**：进入 gate 第 0.5 步才发现 handoff.md 已锁定 test-only 方案（用户先前要求），与本会话 grill 结论冲突。虽然最终用户裁决方案 C 生效，但流程上应先读 handoff 再 grill——handoff 是 worktree 交接的上下文契约（AGENTS.md 明确"worktree 会话启动后第一步读取 .omo/handoff.md"），主 session grill 前也应检查。
+2. **kb/ 文档编辑误落 master 工作区**：Step 5b/5c 更新三份 kb/ 文件时，在 master 工作区（/data/codes/compass/kb/）编辑而非 worktree 内，违反"实现工作必须在 worktree 内"规则（doc-sync 属于实现 PR 一部分）。幸而通过 `git status` 对比发现，`cp` + `git restore` 迁移回 worktree 后 master 恢复干净——未造成 commit 污染，但属流程违规，应在 reflections 记录。
+3. **review agent 输出截断**：5-agent review 中 code quality 输出超长被截断，需 grep 工具输出文件提取 verdict——非流程问题，记录以备后续 review 上下文管理。
+
+**Lessons learned**:
+1. **grill 前先读 worktree 内 handoff.md**：主 session 对已存在 worktree 的 issue 开始 grill 前，第一步 `cat .worktrees/<name>/.omo/handoff.md`——handoff 可能已锁定用户先前决策（test-only 契约即前例）。有冲突先向用户澄清，不带着矛盾契约推进。
+2. **doc-sync 的 kb/ 编辑必须落在 worktree 内**：Step 5b/5c 与代码变更同属实现 PR，kb/ 文件修改要在 worktree 路径操作；编辑后用 `git status --short` 对比 master 与 worktree 是否各归其位。
+3. **egui_kittest 动画测试的时间源规则**：断言跨帧动画状态时绝不用 `Instant::now()`/`elapsed()`（慢 CI 必 flaky）；用 egui 虚拟时间 `ctx.input(|i| i.time)`（kittest 下按 predicted_dt 确定累积）+ `with_step_dt` 细粒度推进。已沉淀 toolchain.md 排查卡。
+
+**Process improvements**:
+- `kb/dev/toolchain.md` 新增「测试」类别排查卡：egui_kittest 动画测试 wall-clock 依赖 → 用 egui 虚拟时间（症状/根因/排查路径/修复/验证，覆盖 #155→#168 两次事故链）
+- `kb/dev/testing.md` §274 时间敏感陷阱段重写：明确"产品动画用 egui 虚拟时间 + 细粒度 step_dt"为正确模式，标注旧"重置时间戳"workaround 有残留竞态
+- `kb/design/ui.md` 决策记录追加「Toast 动画时间源」决策行（egui 虚拟时间 vs 墙钟 vs Clock trait）
+- 后续建议：modal.rs 存在同类 wall-clock 动画模式（7 处"重置时间戳"workaround），同类 flaky 隐患——已由 review 标记，可建独立 issue 迁移
+
+### Trends (last 10)
+- **worktree 交接契约（handoff）与 grill 冲突处理首次出现**：ref #163 的 handoff 直接可用（用户预授权全流程），本次 handoff 契约与 grill 结论冲突需用户裁决——handoff 更新为"契约变更记录"后流程才闭环。教训：handoff 不是不可变的，用户后续决策可推翻，但推翻必须经用户确认并在 handoff 记录
+- **"测试与真实时间耦合 = flaky"教训在 toast 上闭环**（ref #155 workaround → ref #168 复发 → 本次根治）：wall-clock 驱动动画的测试任何 workaround 都有残留竞态，唯一根治是把时间源换成 egui 虚拟时间。modal.rs 仍处同一模式，是下一个候选
