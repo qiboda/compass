@@ -282,12 +282,18 @@ compass-ui 的 dev-dependencies 必须同时包含 `eframe`（默认 features）
 - `Harness::new_ui(|ui| ...)` 直接驱动 `Fn(&mut egui::Ui)` —— 纯 CPU，**无需显示服务器**，CI 无头环境可跑。
 - `Harness::new_eframe` + `eframe::Frame::_new_kittest()` 驱动完整 `eframe::App::ui`（CompassApp）。
 - `get_by_label` / `Node::click` / `type_text` / `harness.run()` 模拟交互，基于 AccessKit 树查询。
-- **时间敏感陷阱**：`Harness::new_ui` 在**构造时立即跑一帧**（"The ui closure will
-  immediately be called once to create the initial ui"），且 `Instant::now()` 是真实墙钟。
-  若测试依赖「构造帧之后、`run()` 帧之前」的时序（如 toast 的 100ms close 动画），
-  慢 CI 上两帧间隔超过动画时长会导致状态提前推进、测试偶发失败（ref #155）。
-  修复模式：断言前重置动画起始时间戳（如 `close_started = Some(Instant::now())`），
-  使动画"刚启动"；避免在 kittest 测试中断言跨帧的真实时间流逝。
+- **时间敏感陷阱（重要）**：`Instant::now()` 是**真实墙钟**，而 kittest 的
+  `ctx.input(|i| i.time)` 是 **egui 虚拟时间**——`RawInput.time` 恒为 `None`
+  （default），`InputState::begin_pass` 用 `self.time + predicted_dt` 累积，
+  每 `step()` 推进 `step_dt`（默认 0.25s，可用 `Harness::builder().with_step_dt(x)`
+  覆盖）。因此：
+  - 若产品代码用 `Instant::now()` 驱动动画，慢 CI 上 `harness.run()` 的
+    `wait_for_images` sleep（字体首载）可能让真实时间越过动画时长，导致
+    状态提前推进、测试偶发失败（ref #155/#168）。
+  - **正确模式**：产品动画用 egui 虚拟时间（`ctx.input(|i| i.time)`），
+    测试用细粒度 `step_dt`（如 0.01s）+ `run_steps(n)` 精确跨过动画时长，
+    完全确定、与机器负载无关（toast 动画即此模式，ref #168）。
+  - 避免"重置时间戳为 `Instant::now()` 再 run()"的 workaround——有残留竞态。
 - **限制**：egui_dock 0.20 tab 按钮不暴露 AccessKit label（raw `ui.interact` + TextShape），无法 `get_by_label` 定位 —— tab 切换测试用程序化 `DockState::set_active_tab`，断言 tab 内容 widget。
 
 ### Python 网络 mock（stub AsyncSession）
