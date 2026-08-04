@@ -1,3 +1,4 @@
+mod backtest;
 mod baostock;
 mod export;
 mod sepa;

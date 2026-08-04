@@ -68,7 +68,7 @@ const TEMPERATURE_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS market_temperature 
     update_date DATE, \
     PRIMARY KEY (trade_date))";
 
-const UPDATES_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS data_updates (\
+pub(crate) const UPDATES_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS data_updates (\
     table_name VARCHAR(50) NOT NULL, \
     last_updated DATE NOT NULL, \
     source VARCHAR(200), \
@@ -200,12 +200,12 @@ fn parse_trillion(value: &str) -> f64 {
 }
 
 /// Quote a CSV field: wrap in double quotes and double inner quotes.
-fn csv_field(s: &str) -> String {
+pub(crate) fn csv_field(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
 /// Format a double for CSV: up to 6 decimals, no exponent.
-fn fmt_double(v: f64) -> String {
+pub(crate) fn fmt_double(v: f64) -> String {
     if v == v.trunc() {
         format!("{v:.1}")
     } else {
@@ -408,7 +408,7 @@ fn write_back(
 }
 
 /// Run `dolt sql -q <query>`; fail loudly on any subprocess error.
-fn dolt_sql(dolt_dir: &Path, query: &str) -> Result<(), Box<dyn Error>> {
+pub(crate) fn dolt_sql(dolt_dir: &Path, query: &str) -> Result<(), Box<dyn Error>> {
     let output = Command::new("dolt")
         .arg("--data-dir")
         .arg(dolt_dir)
@@ -424,7 +424,7 @@ fn dolt_sql(dolt_dir: &Path, query: &str) -> Result<(), Box<dyn Error>> {
 }
 
 /// Run `dolt table import -a --continue <table> <csv>` (append mode).
-fn dolt_import(dolt_dir: &Path, table: &str, csv: &Path) -> Result<(), Box<dyn Error>> {
+pub(crate) fn dolt_import(dolt_dir: &Path, table: &str, csv: &Path) -> Result<(), Box<dyn Error>> {
     let output = Command::new("dolt")
         .arg("--data-dir")
         .arg(dolt_dir)
@@ -444,7 +444,7 @@ fn dolt_import(dolt_dir: &Path, table: &str, csv: &Path) -> Result<(), Box<dyn E
 }
 
 /// Upsert the data_updates row for one compute table.
-fn dolt_upsert_updates(
+pub(crate) fn dolt_upsert_updates(
     dolt_dir: &Path,
     table: &str,
     today: NaiveDate,
