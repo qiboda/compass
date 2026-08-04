@@ -50,6 +50,61 @@ impl ChartTokens {
     }
 }
 
+/// Indicator overlay tokens (MA/BOLL lines, design doc §4.1 `indicator.*`).
+///
+/// MA lines follow A-share conventions (MA5 white, MA10 gold, ...); the three
+/// Bollinger bands intentionally share one color so the band reads as a single
+/// channel rather than three competing lines.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IndicatorTokens {
+    /// MA5 line (A-share convention: white; aliases [`ColorTokens::text_primary`]).
+    pub ma5: Color32,
+    /// MA10 line (A-share convention: gold; aliases [`ColorTokens::warning`]).
+    pub ma10: Color32,
+    /// MA60 line (purple).
+    pub ma60: Color32,
+    /// MA120 line (cyan).
+    pub ma120: Color32,
+    /// MA250 line (annual line, warm brown/gray).
+    pub ma250: Color32,
+    /// Bollinger upper band.
+    pub bb_upper: Color32,
+    /// Bollinger middle band (MA20, same color as the other bands).
+    pub bb_middle: Color32,
+    /// Bollinger lower band.
+    pub bb_lower: Color32,
+}
+
+impl IndicatorTokens {
+    /// Indicator tokens for the dark palette.
+    pub const fn dark() -> Self {
+        Self {
+            ma5: Color32::from_rgb(0xD1, 0xD4, 0xDC),
+            ma10: Color32::from_rgb(0xF5, 0xA6, 0x23),
+            ma60: Color32::from_rgb(0xBA, 0x68, 0xC8),
+            ma120: Color32::from_rgb(0x00, 0xBC, 0xD4),
+            ma250: Color32::from_rgb(0xA1, 0x88, 0x7F),
+            bb_upper: Color32::from_rgb(0x90, 0xA4, 0xAE),
+            bb_middle: Color32::from_rgb(0x90, 0xA4, 0xAE),
+            bb_lower: Color32::from_rgb(0x90, 0xA4, 0xAE),
+        }
+    }
+
+    /// Indicator tokens for the light palette.
+    pub const fn light() -> Self {
+        Self {
+            ma5: Color32::from_rgb(0x1B, 0x24, 0x30),
+            ma10: Color32::from_rgb(0xB5, 0x7A, 0x00),
+            ma60: Color32::from_rgb(0x7B, 0x1F, 0xA2),
+            ma120: Color32::from_rgb(0x00, 0x83, 0x8F),
+            ma250: Color32::from_rgb(0x6D, 0x4C, 0x41),
+            bb_upper: Color32::from_rgb(0x54, 0x6E, 0x7A),
+            bb_middle: Color32::from_rgb(0x54, 0x6E, 0x7A),
+            bb_lower: Color32::from_rgb(0x54, 0x6E, 0x7A),
+        }
+    }
+}
+
 /// Full color palette for one theme (design doc §4.1).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ColorTokens {
@@ -99,6 +154,8 @@ pub struct ColorTokens {
     pub selection_bg: Color32,
     /// Chart rendering colors.
     pub chart: ChartTokens,
+    /// Indicator overlay colors (MA/BOLL lines).
+    pub indicator: IndicatorTokens,
 }
 
 impl ColorTokens {
@@ -128,6 +185,7 @@ impl ColorTokens {
             info: Color32::from_rgb(0x29, 0x62, 0xFF),
             selection_bg: Color32::from_rgba_unmultiplied_const(0x29, 0x62, 0xFF, 51),
             chart: ChartTokens::dark(),
+            indicator: IndicatorTokens::dark(),
         }
     }
 
@@ -157,6 +215,7 @@ impl ColorTokens {
             info: Color32::from_rgb(0x29, 0x62, 0xFF),
             selection_bg: Color32::from_rgba_unmultiplied_const(0x29, 0x62, 0xFF, 51),
             chart: ChartTokens::light(),
+            indicator: IndicatorTokens::light(),
         }
     }
 }
@@ -301,5 +360,51 @@ mod tests {
         let light = ColorTokens::light();
         assert_eq!(light.error, light.up);
         assert_eq!(light.info, light.accent);
+    }
+
+    /// Every dark-palette indicator field asserted against the design doc §4.1 table.
+    #[test]
+    fn dark_indicator_tokens_match_design_spec() {
+        let t = ColorTokens::dark().indicator;
+        assert_eq!(t.ma5, Color32::from_rgb(0xD1, 0xD4, 0xDC));
+        assert_eq!(t.ma10, Color32::from_rgb(0xF5, 0xA6, 0x23));
+        assert_eq!(t.ma60, Color32::from_rgb(0xBA, 0x68, 0xC8));
+        assert_eq!(t.ma120, Color32::from_rgb(0x00, 0xBC, 0xD4));
+        assert_eq!(t.ma250, Color32::from_rgb(0xA1, 0x88, 0x7F));
+        assert_eq!(t.bb_upper, Color32::from_rgb(0x90, 0xA4, 0xAE));
+        assert_eq!(t.bb_middle, Color32::from_rgb(0x90, 0xA4, 0xAE));
+        assert_eq!(t.bb_lower, Color32::from_rgb(0x90, 0xA4, 0xAE));
+    }
+
+    /// Every light-palette indicator field asserted against the design doc §4.1 table.
+    #[test]
+    fn light_indicator_tokens_match_design_spec() {
+        let t = ColorTokens::light().indicator;
+        assert_eq!(t.ma5, Color32::from_rgb(0x1B, 0x24, 0x30));
+        assert_eq!(t.ma10, Color32::from_rgb(0xB5, 0x7A, 0x00));
+        assert_eq!(t.ma60, Color32::from_rgb(0x7B, 0x1F, 0xA2));
+        assert_eq!(t.ma120, Color32::from_rgb(0x00, 0x83, 0x8F));
+        assert_eq!(t.ma250, Color32::from_rgb(0x6D, 0x4C, 0x41));
+        assert_eq!(t.bb_upper, Color32::from_rgb(0x54, 0x6E, 0x7A));
+        assert_eq!(t.bb_middle, Color32::from_rgb(0x54, 0x6E, 0x7A));
+        assert_eq!(t.bb_lower, Color32::from_rgb(0x54, 0x6E, 0x7A));
+    }
+
+    /// Design aliases: MA5 reuses text_primary, MA10 reuses warning (both palettes).
+    #[test]
+    fn indicator_tokens_reuse_semantic_alias() {
+        for palette in [ColorTokens::dark(), ColorTokens::light()] {
+            assert_eq!(palette.indicator.ma5, palette.text_primary);
+            assert_eq!(palette.indicator.ma10, palette.warning);
+        }
+    }
+
+    /// Bollinger bands share a single color so the band reads as one channel.
+    #[test]
+    fn boll_three_bands_same_color() {
+        for palette in [ColorTokens::dark(), ColorTokens::light()] {
+            assert_eq!(palette.indicator.bb_upper, palette.indicator.bb_middle);
+            assert_eq!(palette.indicator.bb_middle, palette.indicator.bb_lower);
+        }
     }
 }
