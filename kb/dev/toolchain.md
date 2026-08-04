@@ -142,6 +142,10 @@
 - **教训**: pre-push 的 master-CI 检查应区分"未知/已知问题"——已知 open issue
   的 CI 失败应放行修复 PR（或提供 `--allow-ci-failure` 白名单机制），
   否则修复 flaky 的 PR 永远无法正常推送（ref #168 #169）
+- **根治（ref #172）**: 该 master-CI 检查已从 `.githooks/pre-push` **整体删除**，
+  CI 门槛移交 master branch protection（9 个 required status checks, strict）
+  在 merge 侧强制。`--no-verify` 绕行与 `--allow-ci-failure` 机制均不再需要
+  ——修复失败 CI 的 PR 可直接正常 push，PR CI 全绿后才能 merge。
 
 ---
 
