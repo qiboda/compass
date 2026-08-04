@@ -13,10 +13,16 @@ use duckdb::{Connection, OptionalExt, params};
 use egui_charts::model::Bar;
 
 use crate::data::provider::{DataError, DataProvider};
+use crate::indicators::{RawBar, adjust_ohlc};
 use crate::model::{
     BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow,
     InstitutionSurveyRow, StockBasic, SymbolInfo,
 };
+
+/// One row from the daily parquet query: (date_str, open, high, low, close,
+/// volume, adjclose). `adjclose` is optional — NULL rows keep factor 1.0
+/// during forward adjustment.
+type DailyRow = (String, f64, f64, f64, f64, f64, Option<f64>);
 
 /// Validate symbol for use in DuckDB parameter bindings.
 ///
@@ -133,13 +139,13 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume
+            "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume, adjclose
              FROM read_parquet('{escaped}')
              WHERE symbol = ? AND tradedate >= ? AND tradedate <= ?
              ORDER BY tradedate ASC"
         );
         let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
-        let rows: Vec<(String, f64, f64, f64, f64, f64)> = stmt
+        let rows: Vec<DailyRow> = stmt
             .query_map(params![symbol, start_str, end_str], |row| {
                 Ok((
                     row.get(0)?,
@@ -148,26 +154,33 @@ impl ParquetReader {
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             })
             .map_err(DataError::Database)?
             .collect::<Result<Vec<_>, duckdb::Error>>()
             .map_err(DataError::Database)?;
 
-        let bars: Vec<Bar> = rows
-            .into_iter()
-            .filter_map(|(date_str, open, high, low, close, volume)| {
-                let time = date_str_to_utc(&date_str)?;
-                Some(Bar {
-                    time,
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume,
-                })
-            })
-            .collect();
+        // Forward-adjust (ref #176): scale each bar by adjclose/close. Rows
+        // with NULL adjclose keep factor 1.0 (no scaling).
+        let mut raw: Vec<RawBar> = Vec::with_capacity(rows.len());
+        let mut adjclose: Vec<f64> = Vec::with_capacity(rows.len());
+        for (date_str, open, high, low, close, volume, adj) in rows {
+            let Some(time) = date_str_to_utc(&date_str) else {
+                continue;
+            };
+            raw.push(RawBar {
+                date: time.date_naive(),
+                open,
+                high,
+                low,
+                close,
+                volume,
+            });
+            adjclose.push(adj.unwrap_or(close));
+        }
+
+        let bars = adjust_ohlc(&raw, &adjclose);
 
         if bars.is_empty() {
             return Err(DataError::NoData {
@@ -812,6 +825,44 @@ mod tests {
         }
     }
 
+    /// `(date_str, close, adjclose)` triplet for the adjclose-aware fixture.
+    type AdjcloseTriple<'a> = (&'a str, f64, f64);
+
+    /// Like [`create_test_stock_daily_parquet`] but with an explicit adjclose
+    /// per row. `data` is (symbol, [(date_str, close, adjclose), ...]);
+    /// open = close - 1, high = close + 1, low = close - 0.5.
+    fn create_test_stock_daily_parquet_adjclose(
+        tmp: &tempfile::TempDir,
+        data: &[(&str, &[AdjcloseTriple])],
+    ) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE)",
+        ).expect("create");
+        for (symbol, rows) in data {
+            for (date, close, adjclose) in *rows {
+                conn.execute(
+                    "INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    duckdb::params![
+                        *symbol,
+                        *date,
+                        close - 1.0,
+                        close + 1.0,
+                        close - 0.5,
+                        *close,
+                        *adjclose,
+                        1000.0,
+                        0.0
+                    ],
+                )
+                .expect("insert");
+            }
+        }
+        let path = tmp.path().join("stock_daily.parquet");
+        conn.execute_batch(&format!("COPY t TO '{}' (FORMAT PARQUET)", path.display()))
+            .expect("copy");
+    }
+
     #[test]
     fn parquet_reader_returns_error_for_missing_symbol() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -822,6 +873,40 @@ mod tests {
 
         let result = reader.fetch_bars_blocking("SZ000001", start, end);
         assert!(matches!(result, Err(DataError::NoData { .. })));
+    }
+
+    /// `fetch_bars_blocking` must carry adjclose out of the parquet query and
+    /// scale OHLC by factor = adjclose/close (前复权, ref #176); the latest
+    /// bar is the anchor (factor 1.0).
+    #[test]
+    fn fetch_bars_blocking_scales_ohlc_by_adjclose() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet_adjclose(
+            &tmp,
+            &[(
+                "000001",
+                &[("2024-01-02", 10.0, 8.0), ("2024-01-03", 12.0, 12.0)],
+            )],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let start = DateTime::from_timestamp(0, 0).unwrap();
+        let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
+
+        let bars = reader
+            .fetch_bars_blocking("000001", start, end)
+            .expect("fetch_bars_blocking failed");
+
+        assert_eq!(bars.len(), 2);
+        // Older bar: factor = 8/10 = 0.8 → open 9×0.8=7.2, close 10×0.8=8.0.
+        assert!((bars[0].open - 7.2).abs() < 1e-9, "scaled open");
+        assert!(
+            (bars[0].close - 8.0).abs() < 1e-9,
+            "scaled close == adjclose"
+        );
+        // Latest bar: anchor factor 1.0 → unchanged.
+        assert_eq!(bars[1].open, 11.0);
+        assert_eq!(bars[1].close, 12.0);
     }
 
     #[test]

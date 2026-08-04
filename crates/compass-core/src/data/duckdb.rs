@@ -11,6 +11,7 @@ use egui_charts::model::Bar;
 use tracing;
 
 use crate::data::provider::{DataError, DataProvider, DataWriter, NegativeCache};
+use crate::indicators::{RawBar, adjust_ohlc};
 use crate::model::SymbolInfo;
 
 // ---------------------------------------------------------------------------
@@ -502,6 +503,11 @@ impl DuckDbProvider {
 // DataProvider — read-only data source
 // ---------------------------------------------------------------------------
 
+/// One row from the daily queries: (date_str, open, high, low, close, volume,
+/// adjclose). `adjclose` is optional — rows written without it (e.g. via
+/// `save_bars`) fall back to factor 1.0 during forward adjustment.
+type DailyRow = (String, f64, f64, f64, f64, f64, Option<f64>);
+
 #[async_trait]
 impl DataProvider for DuckDbProvider {
     async fn fetch_bars(
@@ -525,14 +531,14 @@ impl DataProvider for DuckDbProvider {
 
             let mut stmt = conn
                 .prepare(
-                    "SELECT CAST(trade_date AS VARCHAR), open, high, low, close, volume
+                    "SELECT CAST(trade_date AS VARCHAR), open, high, low, close, volume, adjclose
                      FROM stock_daily
                      WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
                      ORDER BY trade_date ASC",
                 )
                 .map_err(DataError::Database)?;
 
-            let mut rows: Vec<(String, f64, f64, f64, f64, f64)> = stmt
+            let mut rows: Vec<DailyRow> = stmt
                 .query_map(
                     params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
                     |row| {
@@ -543,6 +549,7 @@ impl DataProvider for DuckDbProvider {
                             row.get(3)?,
                             row.get(4)?,
                             row.get(5)?,
+                            row.get(6)?,
                         ))
                     },
                 )
@@ -589,11 +596,12 @@ impl DataProvider for DuckDbProvider {
                         .collect::<Result<Vec<_>, duckdb::Error>>()
                         .map_err(DataError::Database)?;
 
-                    // Build 6-tuple rows for the normal flow (open, high, low, close, volume)
+                    // Carry adjclose through so the daily path below can
+                    // forward-adjust; amount is not needed for chart bars.
                     rows = parquet_rows
                         .iter()
-                        .map(|(d, o, h, l, c, v, _, _)| {
-                            (d.clone(), *o, *h, *l, *c, *v)
+                        .map(|(d, o, h, l, c, v, a, _)| {
+                            (d.clone(), *o, *h, *l, *c, *v, Some(*a))
                         })
                         .collect();
 
@@ -633,6 +641,9 @@ impl DataProvider for DuckDbProvider {
 
             // Issue #46: timeframe aggregation — re-query with date_trunc
             // GROUP BY for weekly/monthly OHLCV resample from daily data.
+            // Forward-adjustment (ref #176): daily bars are scaled by
+            // factor = adjclose/close BEFORE aggregation, so the weekly
+            // MAX(high)/MIN(low) are extremes of the adjusted series.
             if timeframe != "1d" && !rows.is_empty() {
                 let unit = match timeframe.as_str() {
                     "1w" => "week",
@@ -651,15 +662,27 @@ impl DataProvider for DuckDbProvider {
                              LAST(close) as close,
                              SUM(volume) as volume
                          FROM (
-                             SELECT * FROM stock_daily
-                             WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
-                             ORDER BY trade_date ASC
+                             SELECT trade_date,
+                                    open * scale as open,
+                                    high * scale as high,
+                                    low * scale as low,
+                                    close * scale as close,
+                                    volume
+                             FROM (
+                                 SELECT trade_date, open, high, low, close, volume,
+                                        CASE WHEN close > 0 AND adjclose IS NOT NULL
+                                                  AND isfinite(adjclose)
+                                             THEN adjclose / close ELSE 1.0 END AS scale
+                                 FROM stock_daily
+                                 WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+                                 ORDER BY trade_date ASC
+                             )
                          )
                          GROUP BY grp_date
                      ) ORDER BY trade_date"
                 );
                 let mut agg_stmt = conn.prepare(&sql).map_err(DataError::Database)?;
-                rows = agg_stmt
+                let agg_rows: Vec<(String, f64, f64, f64, f64, f64)> = agg_stmt
                     .query_map(
                         params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
                         |row| {
@@ -676,24 +699,45 @@ impl DataProvider for DuckDbProvider {
                     .map_err(DataError::Database)?
                     .collect::<Result<Vec<_>, duckdb::Error>>()
                     .map_err(DataError::Database)?;
+
+                let bars: Vec<Bar> = agg_rows
+                    .into_iter()
+                    .filter_map(|(date_str, open, high, low, close, volume)| {
+                        let time = DuckDbProvider::date_str_to_utc(&date_str)?;
+                        Some(Bar {
+                            time,
+                            open,
+                            high,
+                            low,
+                            close,
+                            volume,
+                        })
+                    })
+                    .collect();
+
+                return Ok(bars);
             }
 
-            let bars: Vec<Bar> = rows
-                .into_iter()
-                .filter_map(|(date_str, open, high, low, close, volume)| {
-                    let time = DuckDbProvider::date_str_to_utc(&date_str)?;
-                    Some(Bar {
-                        time,
-                        open,
-                        high,
-                        low,
-                        close,
-                        volume,
-                    })
-                })
-                .collect();
+            // Daily path: forward-adjust each bar by adjclose/close. Rows with
+            // NULL adjclose (e.g. written by save_bars) keep factor 1.0.
+            let mut raw: Vec<RawBar> = Vec::with_capacity(rows.len());
+            let mut adjclose: Vec<f64> = Vec::with_capacity(rows.len());
+            for (date_str, open, high, low, close, volume, adj) in rows {
+                let Some(time) = DuckDbProvider::date_str_to_utc(&date_str) else {
+                    continue;
+                };
+                raw.push(RawBar {
+                    date: time.date_naive(),
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                });
+                adjclose.push(adj.unwrap_or(close));
+            }
 
-            Ok(bars)
+            Ok(adjust_ohlc(&raw, &adjclose))
         })
         .await
         .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
@@ -1485,6 +1529,122 @@ mod tests {
         let (min, max) = range.unwrap();
         assert_eq!(min, chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap());
         assert_eq!(max, chrono::NaiveDate::from_ymd_opt(2020, 1, 6).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // Forward-adjustment (前复权) tests — fetch scales OHLC by adjclose/close
+    // -----------------------------------------------------------------------
+
+    /// Daily fetch from the in-memory table scales every OHLC price by
+    /// factor = adjclose/close (ref #176). Latest bar is the anchor
+    /// (adjclose == close → factor 1.0, prices unchanged).
+    #[tokio::test]
+    async fn fetch_bars_daily_scales_ohlc_by_adjclose_from_memory_table() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "INSERT INTO stock_daily
+                     (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                 VALUES
+                     ('000001', '2026-07-06', 9.0, 11.0, 8.0, 10.0, 8.0, 1000.0, 8000.0),
+                     ('000001', '2026-07-07', 11.5, 13.0, 11.0, 12.0, 12.0, 2000.0, 24000.0)",
+            )
+            .expect("insert rows");
+        }
+
+        let bars = provider
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end())
+            .await
+            .expect("fetch_bars failed");
+
+        assert_eq!(bars.len(), 2);
+        // Older bar: factor = 8/10 = 0.8 → open 7.2, high 8.8, low 6.4, close 8.0.
+        assert!((bars[0].open - 7.2).abs() < 1e-9, "scaled open");
+        assert!((bars[0].high - 8.8).abs() < 1e-9, "scaled high");
+        assert!((bars[0].low - 6.4).abs() < 1e-9, "scaled low");
+        assert!(
+            (bars[0].close - 8.0).abs() < 1e-9,
+            "scaled close == adjclose"
+        );
+        assert_eq!(bars[0].volume, 1000.0, "volume passes through");
+        // Latest bar: anchor factor 1.0 → unchanged.
+        assert_eq!(bars[1].open, 11.5);
+        assert_eq!(bars[1].close, 12.0);
+    }
+
+    /// Parquet fallback path (empty in-memory table → reads stock_daily.parquet)
+    /// must also apply forward adjustment instead of dropping adjclose.
+    #[tokio::test]
+    async fn fetch_bars_scales_parquet_fallback_by_adjclose() {
+        let (_tmp, provider) = setup_parquet_provider(
+            "000001",
+            &[
+                ("2020-01-02", 10.0, 11.0, 9.5, 10.5, 8.4, 1000.0, 10500.0),
+                ("2020-01-03", 10.5, 12.0, 10.0, 11.5, 11.5, 2000.0, 23000.0),
+            ],
+        );
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
+
+        let bars = provider
+            .fetch_bars("000001", "1d", start, end)
+            .await
+            .expect("fetch_bars failed");
+
+        assert_eq!(bars.len(), 2);
+        // Older bar: factor = 8.4/10.5 = 0.8 → open 8.0, high 8.8, low 7.6, close 8.4.
+        assert!((bars[0].open - 8.0).abs() < 1e-9, "scaled open");
+        assert!((bars[0].high - 8.8).abs() < 1e-9, "scaled high");
+        assert!((bars[0].low - 7.6).abs() < 1e-9, "scaled low");
+        assert!(
+            (bars[0].close - 8.4).abs() < 1e-9,
+            "scaled close == adjclose"
+        );
+        // Latest bar: anchor factor 1.0 → unchanged.
+        assert!(
+            (bars[1].close - 11.5).abs() < 1e-9,
+            "anchor close unchanged"
+        );
+    }
+
+    /// Weekly aggregation must scale daily bars FIRST, then aggregate — the
+    /// week's MAX(high)/MIN(low) must be extremes of the *scaled* series,
+    /// not of the raw series (ref #176).
+    #[tokio::test]
+    async fn fetch_bars_weekly_aggregates_scaled_daily_extremes() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch(
+                "INSERT INTO stock_daily
+                     (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                 VALUES
+                     ('000001', '2026-07-06', 20.0, 25.0, 8.0, 10.0, 6.0, 300.0, 3000.0),
+                     ('000001', '2026-07-07', 11.0, 13.0, 10.5, 12.0, 12.0, 500.0, 6000.0)",
+            )
+            .expect("insert rows");
+        }
+
+        let bars = provider
+            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end())
+            .await
+            .expect("fetch_bars failed");
+
+        assert_eq!(bars.len(), 1, "two bars in the same week → one weekly bar");
+        let w = &bars[0];
+        // Mon factor = 6/10 = 0.6 → scaled: open 12, high 15, low 4.8, close 6.
+        // Weekly: open = FIRST(scaled open) = 12, high = MAX(15, 13) = 15,
+        // low = MIN(4.8, 10.5) = 4.8, close = LAST(scaled close) = 12.
+        // Unscaled extremes would be high 25 / low 8 — must NOT appear.
+        assert!((w.open - 12.0).abs() < 1e-9, "open is first scaled open");
+        assert!((w.high - 15.0).abs() < 1e-9, "high is max of scaled highs");
+        assert!((w.low - 4.8).abs() < 1e-9, "low is min of scaled lows");
+        assert!((w.close - 12.0).abs() < 1e-9, "close is last scaled close");
+        assert_eq!(w.volume, 800.0, "volume sums unchanged");
     }
 
     // -----------------------------------------------------------------------
