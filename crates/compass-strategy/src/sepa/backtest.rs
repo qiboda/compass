@@ -421,6 +421,145 @@ mod tests {
         assert!(ereb.is_empty());
     }
 
+    /// Metrics: NAV [1.0, 1.1, 0.99, 1.2] → cumulative 0.2, max drawdown
+    /// 0.1; 3 periods [win, loss, win] with rebalance_indices=[1,2] → 2/3.
+    #[test]
+    fn metrics_hand_calculated() {
+        let nav = vec![1.0, 1.1, 0.99, 1.2];
+        let dates = vec![
+            NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+            NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap(),
+            NaiveDate::parse_from_str("2025-01-06", "%Y-%m-%d").unwrap(),
+            NaiveDate::parse_from_str("2025-01-07", "%Y-%m-%d").unwrap(),
+        ];
+        let bench = vec![1.0, 1.05, 1.02, 1.1];
+        let m = compute_metrics(&nav, &dates, &[1, 2], &bench);
+        assert!((m.cumulative_return - 0.2).abs() < 1e-12);
+        assert!((m.max_drawdown - 0.1).abs() < 1e-12);
+        assert!((m.win_rate - 2.0 / 3.0).abs() < 1e-12);
+        assert_eq!(m.rebalance_count, 2);
+        assert!((m.benchmark_cumulative_return - 0.1).abs() < 1e-12);
+        assert!((m.excess_return - 0.1).abs() < 1e-12);
+        assert!(m.profit_loss_ratio > 0.0);
+    }
+
+    /// Metrics: empty and single-point series return zeros without panic;
+    /// all-win periods yield profit/loss ratio 0.
+    #[test]
+    fn metrics_empty_and_all_win() {
+        let m = compute_metrics(&[], &[], &[], &[]);
+        assert_eq!(m.cumulative_return, 0.0);
+        assert_eq!(m.annualized_return, 0.0);
+        assert_eq!(m.win_rate, 0.0);
+        assert_eq!(m.max_drawdown, 0.0);
+
+        let nav = vec![1.0, 1.1, 1.21];
+        let dates = vec![
+            NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+            NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap(),
+            NaiveDate::parse_from_str("2025-01-06", "%Y-%m-%d").unwrap(),
+        ];
+        let bench = vec![1.0, 1.0, 1.0];
+        // One period 0→2, win → win_rate 1.0, all-win → PL ratio 0.
+        let m = compute_metrics(&nav, &dates, &[], &bench);
+        assert!((m.win_rate - 1.0).abs() < 1e-12);
+        assert_eq!(m.profit_loss_ratio, 0.0);
+    }
+
+    /// Benchmark proxy: 3 stocks with market caps [1e9, 2e9, 3e9]; top 2 by
+    /// cap (equal weight) have day returns [0.1, 0.2] → benchmark 0.15.
+    fn mk_bar(symbol: &str, date: NaiveDate, close: f64) -> CrossSectionBar {
+        CrossSectionBar {
+            symbol: symbol.to_string(),
+            trade_date: date,
+            open: close,
+            high: close,
+            low: close,
+            adjclose: close,
+            close,
+            volume: 0.0,
+            amount: 0.0,
+        }
+    }
+
+    fn mk_basic(symbol: &str, share: f64, list: NaiveDate) -> StockBasic {
+        StockBasic {
+            symbol: symbol.to_string(),
+            name: symbol.to_string(),
+            area: None,
+            industry: Some("测试".to_string()),
+            market: Some("主板".to_string()),
+            board: Some("主板".to_string()),
+            full_name: Some(symbol.to_string()),
+            total_share: Some(share),
+            exchange: Some("SZ".to_string()),
+            list_date: Some(list),
+            delist_date: None,
+        }
+    }
+
+    #[test]
+    fn benchmark_top_two_equal_weight() {
+        let d1 = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
+        let d0 = NaiveDate::parse_from_str("2025-01-01", "%Y-%m-%d").unwrap();
+        // Owned bars at function scope so references outlive the map.
+        let a0 = mk_bar("A", d0, 10.0);
+        let a1 = mk_bar("A", d1, 11.0); // A return 0.1
+        let b0 = mk_bar("B", d0, 20.0);
+        let b1 = mk_bar("B", d1, 24.0); // B return 0.2
+        let c0 = mk_bar("C", d0, 30.0);
+        let c1 = mk_bar("C", d1, 30.0); // C return 0.0
+        let mut bars: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
+        bars.insert("A".to_string(), vec![&a0, &a1]);
+        bars.insert("B".to_string(), vec![&b0, &b1]);
+        bars.insert("C".to_string(), vec![&c0, &c1]);
+
+        let ba = mk_basic("A", 1e9, d0);
+        let bb = mk_basic("B", 2e9, d0);
+        let bc = mk_basic("C", 3e9, d0);
+        let mut basics: HashMap<String, &StockBasic> = HashMap::new();
+        basics.insert("A".to_string(), &ba);
+        basics.insert("B".to_string(), &bb);
+        basics.insert("C".to_string(), &bc);
+
+        let rets = compute_benchmark_returns(&bars, &basics, &[d1]);
+        // Market caps on d1: A=1e9×11=1.1e10, B=2e9×24=4.8e10,
+        // C=3e9×30=9.0e10 → top-2 = C, B; returns C=0.0, B=0.2 → mean 0.10.
+        let r = rets.get(&d1).copied().unwrap_or(f64::NAN);
+        assert!((r - 0.10).abs() < 1e-12, "expected 0.10, got {r}");
+    }
+
+    /// Benchmark: non-finite/zero close or total_share excluded; no
+    /// constituents on a date → return 0 (not NaN).
+    #[test]
+    fn benchmark_edge_cases() {
+        let d1 = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
+        let d0 = NaiveDate::parse_from_str("2025-01-01", "%Y-%m-%d").unwrap();
+        // X has zero close on d1 (excluded); Y has NaN total_share (excluded).
+        let x0 = mk_bar("X", d0, 10.0);
+        let x1 = mk_bar("X", d1, 0.0);
+        let y0 = mk_bar("Y", d0, 10.0);
+        let y1 = mk_bar("Y", d1, 10.0);
+        let mut bars: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
+        bars.insert("X".to_string(), vec![&x0, &x1]);
+        bars.insert("Y".to_string(), vec![&y0, &y1]);
+
+        let bx = mk_basic("X", 1e9, d0);
+        let by = mk_basic("Y", f64::NAN, d0);
+        let mut basics: HashMap<String, &StockBasic> = HashMap::new();
+        basics.insert("X".to_string(), &bx);
+        basics.insert("Y".to_string(), &by);
+
+        let rets = compute_benchmark_returns(&bars, &basics, &[d1]);
+        let r = rets.get(&d1).copied().unwrap_or(f64::NAN);
+        assert!(r == 0.0, "expected 0.0 (no constituents), got {r}");
+
+        // Empty bars → empty output, no panic.
+        let empty: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
+        let rets2 = compute_benchmark_returns(&empty, &basics, &[d1]);
+        assert_eq!(rets2.get(&d1), Some(&0.0));
+    }
+
     /// Case ⑤: top_n limits holdings (3 ranked but top_n=2 → only 2 held).
     #[test]
     fn simulate_top_n_limits_holdings() {
@@ -439,4 +578,163 @@ mod tests {
         let (nav, _) = simulate_portfolio(&days, &rets, &params("2025-01-02", 5, 0.0));
         assert!((nav[1] - 1.10).abs() < 1e-12);
     }
+}
+
+/// Performance metrics over a strategy equity curve (locked decision 8).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BacktestMetrics {
+    /// Cumulative return: `last/first - 1` (0 for empty/single point).
+    pub cumulative_return: f64,
+    /// Annualized return over 252 trading days (0 when no return period).
+    pub annualized_return: f64,
+    /// Win rate: fraction of rebalance periods with positive return.
+    pub win_rate: f64,
+    /// Profit/loss ratio: mean win / mean loss; 0 when no losing period.
+    pub profit_loss_ratio: f64,
+    /// Maximum peak-to-trough drawdown of the NAV series.
+    pub max_drawdown: f64,
+    /// Number of rebalances performed.
+    pub rebalance_count: usize,
+    /// Benchmark cumulative return (same convention as strategy).
+    pub benchmark_cumulative_return: f64,
+    /// Strategy cumulative minus benchmark cumulative.
+    pub excess_return: f64,
+    /// Strategy annualized minus benchmark annualized.
+    pub annualized_excess: f64,
+}
+
+/// Number of trading days used for annualization (A-share convention).
+pub const TRADING_DAYS_PER_YEAR: f64 = 252.0;
+
+/// Compute performance metrics from the strategy NAV series, the output
+/// dates, the rebalance indices and the benchmark NAV series.
+///
+/// Period boundaries for win rate / profit-loss ratio are derived from
+/// `rebalance_indices` (indices into `nav`): the first period runs from
+/// index 0 to the first rebalance, middle periods between consecutive
+/// rebalances, and the last period includes the truncated tail. Each period
+/// return = `nav[end]/nav[start] - 1` (boundary costs are already inside
+/// the NAV series). `nav` and `benchmark_nav` must have equal length.
+pub fn compute_metrics(
+    nav: &[f64],
+    dates: &[NaiveDate],
+    rebalance_indices: &[usize],
+    benchmark_nav: &[f64],
+) -> BacktestMetrics {
+    debug_assert_eq!(nav.len(), benchmark_nav.len());
+
+    let cumulative = cumulative_return(nav);
+    let annualized = annualize(cumulative, dates.len());
+    let (win_rate, profit_loss_ratio) = period_stats(nav, rebalance_indices);
+
+    let benchmark_cumulative = cumulative_return(benchmark_nav);
+    let benchmark_annualized = annualize(benchmark_cumulative, dates.len());
+
+    BacktestMetrics {
+        cumulative_return: cumulative,
+        annualized_return: annualized,
+        win_rate,
+        profit_loss_ratio,
+        max_drawdown: max_drawdown(nav),
+        rebalance_count: rebalance_indices.len(),
+        benchmark_cumulative_return: benchmark_cumulative,
+        excess_return: cumulative - benchmark_cumulative,
+        annualized_excess: annualized - benchmark_annualized,
+    }
+}
+
+/// `last/first - 1`; 0 for empty or single-point series.
+fn cumulative_return(nav: &[f64]) -> f64 {
+    if nav.len() < 2 {
+        return 0.0;
+    }
+    let first = nav[0];
+    if !first.is_finite() || first == 0.0 {
+        return 0.0;
+    }
+    nav.last().expect("len >= 2") / first - 1.0
+}
+
+/// `(1 + cum)^(252/days) - 1`; 0 when there are no return periods.
+fn annualize(cumulative: f64, days: usize) -> f64 {
+    if days < 2 || cumulative <= -1.0 || !cumulative.is_finite() {
+        return 0.0;
+    }
+    let periods = (days - 1) as f64;
+    (1.0 + cumulative).powf(TRADING_DAYS_PER_YEAR / periods) - 1.0
+}
+
+/// Win rate and profit/loss ratio over rebalance periods.
+fn period_stats(nav: &[f64], rebalance_indices: &[usize]) -> (f64, f64) {
+    if nav.len() < 2 {
+        return (0.0, 0.0);
+    }
+    let mut boundaries = rebalance_indices.to_vec();
+    boundaries.retain(|&i| i > 0 && i < nav.len());
+    boundaries.push(nav.len() - 1);
+
+    let mut start = 0usize;
+    let mut wins = 0usize;
+    let mut losses = 0usize;
+    let mut win_sum = 0.0;
+    let mut loss_sum = 0.0;
+    let mut periods = 0usize;
+
+    for &end in &boundaries {
+        if end <= start {
+            continue;
+        }
+        let a = nav[start];
+        let b = nav[end];
+        if a.is_finite() && b.is_finite() && a != 0.0 {
+            let ret = b / a - 1.0;
+            if ret > 0.0 {
+                wins += 1;
+                win_sum += ret;
+            } else {
+                losses += 1;
+                loss_sum += ret;
+            }
+            periods += 1;
+        }
+        start = end;
+    }
+
+    if periods == 0 {
+        return (0.0, 0.0);
+    }
+    let win_rate = wins as f64 / periods as f64;
+    let pl = if losses == 0 {
+        0.0
+    } else {
+        let avg_win = if wins == 0 { 0.0 } else { win_sum / wins as f64 };
+        let avg_loss = loss_sum / losses as f64;
+        if avg_loss == 0.0 {
+            0.0
+        } else {
+            avg_win / avg_loss.abs()
+        }
+    };
+    (win_rate, pl)
+}
+
+/// Maximum peak-to-trough decline of the NAV series.
+fn max_drawdown(nav: &[f64]) -> f64 {
+    let mut peak = f64::NEG_INFINITY;
+    let mut max_dd = 0.0;
+    for &v in nav {
+        if !v.is_finite() {
+            continue;
+        }
+        if v > peak {
+            peak = v;
+        }
+        if peak > 0.0 {
+            let dd = 1.0 - v / peak;
+            if dd > max_dd {
+                max_dd = dd;
+            }
+        }
+    }
+    max_dd
 }
