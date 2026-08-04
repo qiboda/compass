@@ -1,34 +1,21 @@
 #!/bin/bash
 # pre-push hook — verify quality gates and GitHub issue references.
 #
-# 0. Latest CI on master must be passing
 # 1. cargo fmt (must be clean)
 # 2. cargo clippy (must be warning-free)
 # 3. cargo doc (must be warning-free)
 # 4. "ref #N" in commit messages must point to open issues
+# 5. Python lint + tests (if collectors/pyproject.toml exists)
+#
+# CI gating for PRs is enforced by branch protection on master
+# (9 required status checks, strict) — see kb/dev/process.md.
+# This hook intentionally does NOT check master CI status: that check
+# deadlocked fix-PR pushes (a failing master CI blocked the very PR that
+# would fix it, ref #172).
 #
 # Matches the pre-push checklist in kb/dev/process.md.
 
 has_error=0
-
-# --- Quality gate: CI status ---
-echo "pre-push: checking latest CI on master..."
-CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 10 --json name,conclusion --jq '.[] | select(.name=="CI") | .conclusion' 2>/dev/null | head -1)
-if [ -z "$CI_STATUS" ]; then
-    CI_STATUS=$(gh run list --repo qiboda/compass --branch master --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
-fi
-if [ "$CI_STATUS" = "failure" ]; then
-    echo ""
-    echo "ERROR: Latest CI run on master is FAILING."
-    echo "  Fix CI before pushing. Run: gh run list --repo qiboda/compass --limit 1"
-    echo "  If it's a known issue, create an issue and fix it before pushing."
-    echo ""
-    has_error=1
-elif [ "$CI_STATUS" = "unknown" ]; then
-    echo "  (could not check CI status — continuing)"
-else
-    echo "  CI status: $CI_STATUS"
-fi
 
 # --- Quality gate: cargo fmt ---
 echo "pre-push: cargo fmt --check..."

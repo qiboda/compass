@@ -701,3 +701,29 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 ### Trends (last 10)
 - **worktree 交接契约（handoff）与 grill 冲突处理首次出现**：ref #163 的 handoff 直接可用（用户预授权全流程），本次 handoff 契约与 grill 结论冲突需用户裁决——handoff 更新为"契约变更记录"后流程才闭环。教训：handoff 不是不可变的，用户后续决策可推翻，但推翻必须经用户确认并在 handoff 记录
 - **"测试与真实时间耦合 = flaky"教训在 toast 上闭环**（ref #155 workaround → ref #168 复发 → 本次根治）：wall-clock 驱动动画的测试任何 workaround 都有残留竞态，唯一根治是把时间源换成 egui 虚拟时间。modal.rs 仍处同一模式，是下一个候选
+
+## 2026-08-04 — ref #172 pre-push 死锁修复：hook 删 CI 检查 + branch protection 强制 merge 门槛
+
+**What was done**: 删除 `.githooks/pre-push` 的 master CI 状态检查（死锁根源：master CI 失败时修复 PR 无法 push，曾需 --no-verify 绕行），CI 门槛移交 master branch protection（strict=true + 9 required status checks，enforce_admins=false 保留 docs 直推）。同步 kb/dev/process.md push gate 清单、toolchain.md 排查卡根治标记；新增 scripts/tests/pre-push-no-ci-check-test.sh 行为测试（RED→GREEN）。3 commits（39f10b0 实现 / b89921c review 修复 / 2f6b15c toolchain 根治标记），review-work 5 agent 全 PASS。
+
+**User corrections**: 无纠正型消息——用户消息为推进指令（"按 handoff 契约推进"）与两条 question 决策（toolchain.md 纳入 PR、确认 push）。
+
+**What went wrong**:
+1. **commit message 写 "ref #170" 字面量被 commit-msg hook 拒绝**：39f10b0 首版 message 正文含 "ref #170 曾需 --no-verify 绕行"（#170 已 MERGED）→ commit 被拒，去掉该字面量后通过。这是 reflections 522 行（ref #119 "正文示例 ref #<N> 误判"）同类摩擦的再次发生——写 commit message 时引用了已关闭 issue 的 ref。
+2. **process.md 覆盖率数字错误（Python ≥80% vs 实际 95%）**：既有 context 行，但紧邻本次编辑区，review 抓出后才修正（对齐 testing.md/ci.yml 权威值）——文档数字应主动核对权威源，不凭记忆照抄。
+3. **hook 头部注释与 process.md 清单不一致**：头部注释重写时漏列 Python gate（process.md 5 项、注释仅 4 项），review NITPICK 抓出后补。
+4. **toolchain.md 排查卡未标根治**：3 个 review agent 独立指出排查卡仍建议已失效的 --no-verify workaround，用户批准纳入后追加根治标记（2f6b15c）——流程修复落地后应主动检查相关排查卡。
+
+**Lessons learned**:
+1. **commit message 中引用已关闭/合并 issue 时不得写成 `ref #N` 字面量**——commit-msg hook 会把 message 中的 `ref #N` 提取为 issue 引用并校验状态，指向非 OPEN issue 直接拒 commit。叙述性提及已合并 issue 用 "#N" 不带 ref 前缀；写前可用 `gh issue view N --jq .state` 确认 OPEN。此摩擦两次出现（#119 正文示例、#172 正文引用），已固化 AGENTS.md。
+2. **文档中的数字/阈值修改前先 grep 权威源**（testing.md / ci.yml / AGENTS.md），不凭记忆或旧文照抄——本次覆盖率数字 review 阶段才暴露（ref #163 同类"门槛基线未实测"）。
+3. **hook 行为变更必须带行为测试且测试应从"删 marker"升级为"禁任何用法"**——本次 no-ci-check-test.sh 的裸 `gh run` 哨兵是 review 补强的最强不变量（hook 中任何 gh run 用法都是 CI 检查唯一来源），先例为 ref #97。
+
+**Process improvements**:
+- **AGENTS.md Issue-Driven Commits 段落追加规则**：commit message 中 `ref #N` 必须指向 OPEN issue——叙述性引用已关闭/合并 issue 时不得使用 `ref #N` 字面量（commit-msg hook 会校验并拒绝）。理由：ref #119 正文示例、ref #172 正文引用两次同类摩擦。
+- **scripts/tests/pre-push-no-ci-check-test.sh 落地为回归测试**：hook 删除 CI 检查后，任何重新引入的 `gh run` 用法都会触发测试失败（含裸 gh run 哨兵）。
+
+### Trends (last 10)
+- **hook 链路次生摩擦反复出现**（ref #16 range / #95 rebase 误拒 / #97 词边界误报 / #119 正文示例误判 / #172 引用已合并 issue）：commit message 与 hook 正则/校验的交互是持续摩擦源——本次已将"ref #N 必须指向 OPEN issue"固化进 AGENTS.md，后续观察是否闭环
+- **"review 阶段才暴露可前置验证的问题"持续**（ref #139 数据路径未实测、ref #163 门槛基线未实测、本次覆盖率数字与权威源不符）：文档数字与权威源核对、plan 阶段实测应成为默认动作
+- **修复根因后排查卡同步遗漏**（本次 toolchain.md 卡标记根治，3 reviewer 独立指出）：hook/流程修复落地后应主动检查相关 toolchain.md 排查卡是否需标注"已根治"，而非等 review 抓

@@ -90,14 +90,21 @@ per-step verify → commit → review → push）。以下是 skill 未覆盖的
 push 前按顺序执行：
 
 0. **Rebase base 分支**：`git fetch origin <base>` → `git log HEAD..origin/<base>` 非空时 `git rebase origin/<base>`，解决冲突后再继续。分支必须基于最新 base 才能 push（避免携带过期 base 的提交）。
-1. **CI 健康**：`master` 上的最新 CI 运行必须通过。如果失败，为失败创建 issue，修复后再 push。永远不要在 CI 破损的基础上 push。
-2. **cargo fmt --check**
-3. **cargo clippy -- -D warnings**
-4. **cargo doc --no-deps**（必须无警告）
-5. **Issue 引用**：`ref #N` 必须指向 open issues
-6. **Python 检查**（若存在 `collectors/pyproject.toml`）：`uv run ruff check *.py tests/` + `uv run pytest tests/ -q`
+1. **cargo fmt --check**
+2. **cargo clippy -- -D warnings**
+3. **cargo doc --no-deps**（必须无警告）
+4. **Issue 引用**：`ref #N` 必须指向 open issues
+5. **Python 检查**（若存在 `collectors/pyproject.toml`）：`uv run ruff check *.py tests/` + `uv run pytest tests/ -q`
 
-> **覆盖率门禁**在 CI 执行（coverage job 强制 workspace + 每 crate ≥80%、Python ≥80%），太慢不适合 pre-push 本地检查。见 `kb/dev/testing.md` 覆盖率章节。
+> **CI 门槛在 merge 侧，不在 push 侧（ref #172）**：master 的 branch protection
+> 强制 9 个 required status checks（Build/Clippy/Format/Docs/Bench (compile)/
+> Test (nextest)/Coverage (llvm-cov)/Python Lint/Python Test，strict=true）——
+> PR 的 CI 未全绿 merge 按钮直接禁用。pre-push hook **不再检查 master CI 状态**
+> （曾导致死锁：master CI 失败时，修复它的 PR 无法 push）。branch protection
+> 只限制 merge，不拦 master 直推（docs/lint/typo/反思类直推照常，未启用
+> enforce_admins）。
+
+> **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥80% + per-crate 阈值——数据层 data/core 95%、其余 80%；Python ≥95%），太慢不适合 pre-push 本地检查。见 `kb/dev/testing.md` 覆盖率章节。
 
 手动 pre-push checklist（与 hook 相同）：`git fetch origin <base>` + rebase 落后 commits + `cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
