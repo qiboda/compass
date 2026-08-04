@@ -146,6 +146,9 @@ pub struct ToastManager {
     /// egui virtual time (`ctx.input(|i| i.time)`) of the most recent render
     /// frame. `push()` stamps new toasts with it — within one frame of the
     /// real creation moment, negligible against 3 s/8 s durations (ref #168).
+    /// Precondition: `push()` must be called from within a frame (e.g. during
+    /// `update()`); a push from a background thread or async context would
+    /// stamp a stale time and shorten the toast's lifetime.
     last_frame_time: f64,
 }
 
@@ -428,6 +431,19 @@ mod tests {
 
         assert_eq!(err_toast.duration, Duration::from_secs(8));
         assert_eq!(info_toast.duration, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_push_stamps_last_frame_time_as_created_at() {
+        let mut manager = ToastManager::new(ThemeTokens::dark());
+        manager.last_frame_time = 12.5;
+        manager.push(ToastLevel::Info, "stamped");
+
+        let toast = manager.pop().expect("pushed toast");
+        assert_eq!(
+            toast.created_at, 12.5,
+            "push() must stamp the cached virtual frame time, not wall clock (ref #168)"
+        );
     }
 
     #[test]
