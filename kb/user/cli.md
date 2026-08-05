@@ -267,7 +267,7 @@ cargo run --bin compass-data -- sepa backtest --start 2026-07-01 --top 30 --days
 | `--cost` | `0.001` | 单边交易成本比例（买入/卖出各收一次） |
 | `--csv` | — | 权益曲线 CSV 输出路径（strategy_nav/benchmark_nav 两列） |
 
-**输出**：stdout 摘要指标表（策略累计/年化收益、胜率、盈亏比、最大回撤、换仓次数、基准累计、超额收益、年化超额）；`--csv` 写权益曲线文件；Dolt `backtest_result` 表存每日策略/基准净值曲线（按窗口 range DELETE + append，幂等可重跑，`data_updates` 同步登记）。
+**输出**：stdout 摘要指标表（策略累计/年化收益、胜率、盈亏比、最大回撤、换仓次数、基准累计、超额收益、年化超额）；`--csv` 写权益曲线文件；Dolt `backtest_result` 表存每日策略/基准净值曲线（单快照全表替换，幂等可重跑，`data_updates` 同步登记）。
 
 **已知限制**：概念成员/ST 状态为当前快照（历史回测存在轻微前瞻偏差，窗口 2025 起可控，报告中标注）；主力资金流无历史 → 资金模块降级为量价配合+筹码集中（大资金流入归 0）。架构细节与决策记录见 `kb/design/backtest.md`。
 
