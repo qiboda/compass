@@ -26,8 +26,10 @@ ParquetReader.fetch_cross_section(start-1, end) ──► daily_returns (adjclos
                           equity_csv / write_back_result (Dolt backtest_result)
 ```
 
-- **引擎逐日重算**：不重构 `run_sepa`——按回测日历逐日调用，评分引擎本身已
-  日期参数化（`now` 参数），每日本质独立。
+- **引擎逐日重算（预取 + 切片）**：`run_backtest` 用 `fetch_sepa_window`
+  一次性预取 `[start − 1 − 550, end]` 全窗口数据，逐日 `score_sepa` 从内存
+  切片 `[now − 550, now]` 重算评分（`run_sepa` = fetch + score，公共 API
+  不变）。点内计算天然防偷看，每日本质独立。
 - **日历**：从 `fetch_cross_section(start − 1, end)` 取 distinct trade_date
   升序。`start − 1` 是初始建仓日（其 NAV 不输出），输出窗口为 `[start..end]`。
 - **组合模拟**（纯函数）：每个评分日收盘按当日评分取 TOP_N 等权建仓，持有
@@ -84,11 +86,12 @@ CREATE TABLE IF NOT EXISTS backtest_result (
 - **基准成员资格 = 当日收盘市值**：日 t 的基准成员由日 t 收盘市值排名决定并
   吃掉日 t 收益——这是基准自身的轻微 look-ahead，多数指数代理同此惯例，属
   可接受口径而非策略问题（见决策记录）。
-- **计算成本（已知，接受）**：逐日调 `run_sepa` 每次独立重取 550 日窗口 +
-  6 张 SEPA 表（约 130 交易日窗口 ≈ 130 × 单日筛股成本，分钟级）；
-  `compute_benchmark_returns` 按 (日期 × 标的 × 序列长度) 线性扫描
-  （~250 × 6000 × 250 比较量级）。CLI 一次性分析场景可接受；若需加速，
-  将 `run_sepa` 拆分为 fetch + compute 并复用预取数据、基准排序用二分查找。
+- **计算成本（已优化，2026-08-05）**：原逐日 `run_sepa` 每次独立重取 7 份
+  数据（550 日窗口 + 6 张 SEPA 表，单日 ~3s、93% 为 I/O）→ 全窗口 385 天
+  需 40+ 分钟。拆分为 `fetch_sepa_window`（预取一次）+ `score_sepa`（内存
+  切片 + 纯计算，单日 ~0.25s）后，全窗口 ~95 秒。`compute_benchmark_returns`
+  按 (日期 × 标的 × 序列长度) 线性扫描（~250 × 6000 × 250 比较量级）仍为
+  已知成本，如需进一步加速可二分查找。
 
 ## 决策记录
 
@@ -109,3 +112,5 @@ CREATE TABLE IF NOT EXISTS backtest_result (
 | CLI 参数 | 配置文件 / 命令行 flag | 全部走 clap flag（start/end/top/days/cost/csv） | 回测是一次性分析命令，参数即用即传；配置文件适合长期运行任务 | config 键为重复运行场景设计，回测频率低不值得加键 |
 | SEPA 类型序列化 | 给 compass-types 加 serde 派生 / 手写 CSV 提取 | 手写提取字段（equity_csv 等） | 加 serde 违反既有"不加 serde"契约（lib.rs 文档化），且波及 GUI 依赖 | serde 派生改动公共类型面，影响面超出回测需求 |
 | 已知 PIT 偏差 | 构建历史快照 fixture / 接受限制并标注 | 接受概念成员/ST 当前快照偏差，报告中标注 | 构建 PIT 快照需历史版本数据（不可得或成本极高）；窗口 2025 起偏差可控 | PIT fixture 是重型工程，收益与成本不匹配 |
+| 回测性能（2026-08-05） | 逐日 run_sepa 独立重取 / fetch 预取 + score 切片 | `fetch_sepa_window` 预取全窗口一次 + 逐日 `score_sepa` 内存切片 | 单日 ~3s 中 93% 是重复 I/O（380 天读 255GB）；拆分后全窗口 40+ 分钟 → ~95 秒；run_sepa 公共 API 不变（GUI/CLI 无感） | 逐日重取简单但性能不可接受（40+ 分钟）；缓存层需处理滑动窗口与快照语义，复杂且收益低 |
+| 基准收益合理性守卫（2026-08-05） | 原样计入 / 跳过 ±100% 外收益 | 跳过 `|ret| ≥ 100%` 的成分 | A 股单日涨跌停 ≤±30%（ST 5%/主板 10%/双创 20%/北交所 30%）；>100% 必为数据伪影（指数代码混源跨日期，issue #181），计入会污染均值（曾致 benchmark 单日 +94%） | 原样计入党务虚基准收益；设阈值低于真实涨跌停（如 30%）可能误杀真实极端行情 |

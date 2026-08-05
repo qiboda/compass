@@ -229,3 +229,39 @@
 - **验证**: 冒烟重跑——strategy -9.63%、benchmark -13.93%、excess +4.30%，
   NAV 曲线合理（0.85-1.01）；`cargo test -p compass-strategy backtest` 含
   `dedup_bars_keeps_last_row_per_symbol_date` 全绿
+
+### [性能] 回测逐日 run_sepa 重复读取 7 份数据（全窗口 40+ 分钟）
+
+- **症状**: `sepa backtest` 全窗口（385 天）40+ 分钟未完成；单日 ~3.1s。
+  `RUST_LOG=debug` 显示每日期 `fetch_ms≈3000`、`compute_ms≈210`（fetch 占 93%）
+- **根因**: `run_backtest` 逐日调用 `run_sepa`，而 `run_sepa` 每次独立 fetch
+  7 份数据（550 日 cross-section + stock_basic + concept_member +
+  capital_main_flow + dragon_list + block_trade + institution_survey）。
+  385 天重复读取 380 次（累计 rchar 255GB）——IO 是瓶颈，compute 只占 7%
+- **排查路径**:
+  1. 加 tracing 量化：`scoring.rs` 各 fetch 单独计时 + `backtest.rs` 每日/阶段
+     计时（`RUST_LOG=debug cargo run ... sepa backtest`）
+  2. 日志显示 `fetch_ms / compute_ms` 占比 → 确认 IO 主导
+  3. `/proc/<pid>/io` 看 rchar 累计（255GB）证实重复读取
+- **修复**: 拆分 `run_sepa` 为 `fetch_sepa_window`（预取 `[start-1-550, end]`
+  全窗口一次）+ `score_sepa`（逐日从内存切片 `[now-550, now]` + 原 compute）。
+  `run_sepa` 公共 API 不变（fetch + score 组合）。`run_backtest` 用预取 +
+  逐日 `score_sepa` → 全窗口 40+ 分钟 → ~95 秒（提速 ~25 倍）
+- **验证**: 24 天窗口优化前后结果一致（-9.63%）；全窗口 385 天 94-97 秒；
+  `cargo test -p compass-strategy` 60 用例全绿；覆盖率 compass-data 95.2%
+- **教训**: 性能优化前先量化（tracing），确认瓶颈是 I/O 而非 compute；
+  逐日调用"重计算引擎"时，数据预取是收益最大的优化点（消除重复读取）
+
+### [数据] 指数混源导致 benchmark 单日 +94%（日期交错，dedup 无法处理）
+
+- **症状**: 回测全窗口 benchmark 单日 +94.3%（2025-03-11）；strategy 无异常
+- **根因**: 000905/000852 等指数 symbol 的两套数据（点位 ~9000 与净值 ~21.5）
+  在**相邻日期交错**（非同日重复）——`dedup_bars` 只去重同 (symbol, date)，
+  无法处理跨日期交错 → `day_return_on` 算出 cur/prev = 9000/21.5（+41895%）
+- **排查路径**: 打印 benchmark 各日收益排序，定位异常日期 → 检查该日 top 300
+  成分的 series 是否有价格跳变
+- **修复**: `compute_benchmark_returns` 加收益合理性守卫——跳过
+  `|ret| ≥ 100%` 的成分（A 股单日涨跌停 ≤±30%，>100% 必为数据伪影；
+  数据管线根因仍由 issue #181 跟踪）
+- **验证**: 全窗口 benchmark 从 296% → 101.7%，单日最大跳变从 +94% → +4.8%；
+  新增 `benchmark_skips_absurd_returns` 测试锁定

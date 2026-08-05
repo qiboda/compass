@@ -18,3 +18,4 @@ pub mod scoring;
 pub mod temperature;
 
 pub use scoring::run_sepa;
+pub(crate) use scoring::{dedup_bars, fetch_sepa_window, score_sepa};

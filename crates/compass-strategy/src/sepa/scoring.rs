@@ -28,7 +28,8 @@ use chrono::{Duration, NaiveDate};
 use compass_core::data::parquet::ParquetReader;
 use compass_core::data::symbol::parse_explicit_prefix;
 use compass_core::model::{
-    BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, StockBasic,
+    BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow,
+    InstitutionSurveyRow, StockBasic,
 };
 use compass_types::{SepaData, SepaDetails, SepaFactor, SepaQuery, SepaRow};
 
@@ -78,26 +79,149 @@ const SUSPEND_CAL_DAYS: i64 = 7; // ≈ 5 trading days
 /// [`parse_explicit_prefix`]; theme names come from `fetch_concept_member`
 /// grouped by symbol. Missing SEPA parquet files degrade to empty vecs —
 /// their modules score 0 without a panic.
+/// Pre-fetched SEPA scoring window (full range, sliced per-day by
+/// [`score_sepa`]). Fetching once and scoring many days avoids re-reading
+/// the parquet files for every backtest day (the original per-day
+/// `run_sepa` re-fetched 7 datasets per day, ~3s/day of which ~93% was I/O).
+pub(crate) struct SepaWindow {
+    bars: Vec<CrossSectionBar>,
+    basics: Vec<StockBasic>,
+    members: Vec<ConceptMember>,
+    flows: Vec<CapitalMainFlow>,
+    dragons: Vec<DragonListRow>,
+    blocks: Vec<BlockTradeRow>,
+    surveys: Vec<InstitutionSurveyRow>,
+}
+
+/// Keep the last row per (symbol, date). Real parquet data occasionally
+/// carries duplicate rows for one symbol on one day (index-like symbols
+/// mixing two sources); deduplicating keeps day-over-day returns
+/// comparable. Input order is preserved for the surviving rows.
+pub(crate) fn dedup_bars(bars: Vec<CrossSectionBar>) -> Vec<CrossSectionBar> {
+    let mut seen: HashSet<(String, NaiveDate)> = HashSet::new();
+    let mut deduped: Vec<CrossSectionBar> = Vec::with_capacity(bars.len());
+    for bar in bars.into_iter().rev() {
+        if seen.insert((bar.symbol.clone(), bar.trade_date)) {
+            deduped.push(bar);
+        }
+    }
+    deduped.reverse();
+    deduped
+}
+
+/// Fetch the full scoring window `[range_start, range_end]` once. The
+/// window must cover `[now - SEPA_WINDOW_DAYS, now]` for every `now` that
+/// [`score_sepa`] will be called with.
+pub(crate) fn fetch_sepa_window(
+    reader: &ParquetReader,
+    range_start: NaiveDate,
+    range_end: NaiveDate,
+) -> Result<SepaWindow, ScreenerError> {
+    let started = std::time::Instant::now();
+    let t = std::time::Instant::now();
+    let bars = dedup_bars(reader.fetch_cross_section(range_start, range_end)?);
+    tracing::debug!(
+        fetch = "cross_section",
+        elapsed_ms = t.elapsed().as_millis()
+    );
+    let t = std::time::Instant::now();
+    let basics = reader.load_all_stock_basics()?;
+    tracing::debug!(fetch = "stock_basics", elapsed_ms = t.elapsed().as_millis());
+    let t = std::time::Instant::now();
+    let members = reader.fetch_concept_member()?;
+    tracing::debug!(
+        fetch = "concept_member",
+        elapsed_ms = t.elapsed().as_millis()
+    );
+    let t = std::time::Instant::now();
+    let flows = reader.fetch_capital_main_flow(range_start, range_end)?;
+    tracing::debug!(
+        fetch = "capital_main_flow",
+        elapsed_ms = t.elapsed().as_millis()
+    );
+    let t = std::time::Instant::now();
+    let dragons = reader.fetch_dragon_list(range_start, range_end)?;
+    tracing::debug!(fetch = "dragon_list", elapsed_ms = t.elapsed().as_millis());
+    let t = std::time::Instant::now();
+    let blocks = reader.fetch_block_trade(range_start, range_end)?;
+    tracing::debug!(fetch = "block_trade", elapsed_ms = t.elapsed().as_millis());
+    let t = std::time::Instant::now();
+    let surveys = reader.fetch_institution_survey(range_start, range_end)?;
+    tracing::debug!(
+        fetch = "institution_survey",
+        elapsed_ms = t.elapsed().as_millis()
+    );
+    tracing::debug!(
+        bars_loaded = bars.len(),
+        window_start = %range_start,
+        window_end = %range_end,
+        fetch_ms = started.elapsed().as_millis(),
+        "sepa window fetched"
+    );
+    Ok(SepaWindow {
+        bars,
+        basics,
+        members,
+        flows,
+        dragons,
+        blocks,
+        surveys,
+    })
+}
+
 pub fn run_sepa(
     query: &SepaQuery,
     reader: &ParquetReader,
     now: NaiveDate,
 ) -> Result<SepaData, ScreenerError> {
+    let range_start = now - Duration::days(SEPA_WINDOW_DAYS);
+    let window = fetch_sepa_window(reader, range_start, now)?;
+    score_sepa(query, &window, now)
+}
+
+pub(crate) fn score_sepa(
+    query: &SepaQuery,
+    window: &SepaWindow,
+    now: NaiveDate,
+) -> Result<SepaData, ScreenerError> {
     let started = std::time::Instant::now();
     let range_start = now - Duration::days(SEPA_WINDOW_DAYS);
-    let bars = reader.fetch_cross_section(range_start, now)?;
-    let basics = reader.load_all_stock_basics()?;
-    let members = reader.fetch_concept_member()?;
-    let flows = reader.fetch_capital_main_flow(range_start, now)?;
-    let dragons = reader.fetch_dragon_list(range_start, now)?;
-    let blocks = reader.fetch_block_trade(range_start, now)?;
-    let surveys = reader.fetch_institution_survey(range_start, now)?;
+
+    // Slice the pre-fetched window to [range_start, now] (references, no copy).
+    let bars: Vec<&CrossSectionBar> = window
+        .bars
+        .iter()
+        .filter(|b| b.trade_date >= range_start && b.trade_date <= now)
+        .collect();
+    let flows: Vec<&CapitalMainFlow> = window
+        .flows
+        .iter()
+        .filter(|f| f.trade_date >= range_start && f.trade_date <= now)
+        .collect();
+    let dragons: Vec<&DragonListRow> = window
+        .dragons
+        .iter()
+        .filter(|d| d.trade_date >= range_start && d.trade_date <= now)
+        .collect();
+    let blocks: Vec<&BlockTradeRow> = window
+        .blocks
+        .iter()
+        .filter(|b| b.trade_date >= range_start && b.trade_date <= now)
+        .collect();
+    let surveys: Vec<&InstitutionSurveyRow> = window
+        .surveys
+        .iter()
+        .filter(|s| s.survey_date >= range_start && s.survey_date <= now)
+        .collect();
+    let basics = &window.basics;
+    let members = &window.members;
+    let slice_ms = started.elapsed().as_millis();
 
     // --- Group raw rows by bare symbol (run_screener shape) -----------------
     let basics_by_symbol: HashMap<String, &StockBasic> =
         basics.iter().map(|b| (b.symbol.clone(), b)).collect();
     let mut bars_by_symbol: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
-    for bar in &bars {
+    for bar in bars.iter().copied() {
         bars_by_symbol
             .entry(bar.symbol.clone())
             .or_default()
@@ -106,7 +230,7 @@ pub fn run_sepa(
 
     // Membership rows carry exchange-prefixed symbols → group by bare code.
     let mut memberships: HashMap<String, Vec<&ConceptMember>> = HashMap::new();
-    for m in &members {
+    for m in members {
         let bare = parse_explicit_prefix(&m.symbol).1;
         memberships.entry(bare.to_string()).or_default().push(m);
     }
@@ -126,8 +250,8 @@ pub fn run_sepa(
     let thermometer = compute_market_thermometer(&bars_by_symbol, &basics_by_symbol);
 
     // --- Concept-board theme pass -------------------------------------------
-    let concept_daily = aggregate_concept_daily(&members, &bars_by_symbol);
-    let board_stats = board_momentums(&members, &bars_by_symbol);
+    let concept_daily = aggregate_concept_daily(members, &bars_by_symbol);
+    let board_stats = board_momentums(members, &bars_by_symbol);
     let gain_values: Vec<f64> = board_stats
         .values()
         .filter(|s| s.gain_count > 0)
@@ -190,7 +314,7 @@ pub fn run_sepa(
     // 5-day cumulative main net inflow per symbol, ranked across symbols that
     // have flow data.
     let mut flow_group: HashMap<String, Vec<&CapitalMainFlow>> = HashMap::new();
-    for f in &flows {
+    for f in flows.iter().copied() {
         flow_group
             .entry(parse_explicit_prefix(&f.symbol).1.to_string())
             .or_default()
@@ -214,7 +338,7 @@ pub fn run_sepa(
         .collect();
 
     let mut institution_buy: HashSet<String> = HashSet::new();
-    for d in &dragons {
+    for d in dragons.iter().copied() {
         let bare = parse_explicit_prefix(&d.symbol).1;
         if d.institution_flag == Some(1) && d.net_amount.unwrap_or(0.0) > 0.0 {
             institution_buy.insert(bare.to_string());
@@ -222,14 +346,14 @@ pub fn run_sepa(
     }
 
     let mut surveyed: HashSet<String> = HashSet::new();
-    for s in &surveys {
+    for s in surveys.iter().copied() {
         surveyed.insert(parse_explicit_prefix(&s.symbol).1.to_string());
     }
 
     // Block-trade ±5 adjustment from the last 5 rows per symbol: a discount
     // (>2%) adds, a premium (>2%) subtracts.
     let mut block_group: HashMap<String, Vec<&BlockTradeRow>> = HashMap::new();
-    for b in &blocks {
+    for b in blocks.iter().copied() {
         block_group
             .entry(parse_explicit_prefix(&b.symbol).1.to_string())
             .or_default()
@@ -341,6 +465,8 @@ pub fn run_sepa(
         concept_members = members.len(),
         matched = total,
         returned = rows.len(),
+        slice_ms = slice_ms,
+        compute_ms = started.elapsed().as_millis() - slice_ms,
         elapsed_ms = started.elapsed().as_millis(),
         "sepa run completed"
     );

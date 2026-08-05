@@ -1,7 +1,7 @@
 //! SEPA quantitative backtest engine (issue #154).
 //!
-//! Replays the five-module scoring engine day by day via
-//! [`run_sepa`] over a historical window, simulates a
+//! Replays the five-module scoring engine day by day via `score_sepa`
+//! over a historical window, simulates a
 //! TOP-N equal-weight portfolio with N-trading-day rebalancing and a
 //! per-side transaction cost, and compares its equity curve against a
 //! market-cap top-300 equal-weight benchmark proxy.
@@ -10,7 +10,7 @@
 //! they are fully testable offline. Return conventions are locked to
 //! avoid look-ahead and `NaN` propagation (see module-level tests).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use chrono::NaiveDate;
 use compass_core::data::parquet::ParquetReader;
@@ -18,7 +18,7 @@ use compass_core::data::provider::DataError;
 use compass_core::model::{CrossSectionBar, StockBasic};
 use compass_types::{SepaData, SepaQuery, SepaRow};
 
-use super::run_sepa;
+use super::{SEPA_WINDOW_DAYS, dedup_bars, fetch_sepa_window, score_sepa};
 use crate::ScreenerError;
 
 /// Backtest window start (calendar default): 2025-01-01 (locked decision 3).
@@ -219,7 +219,13 @@ pub fn compute_benchmark_returns(
             let Some(ret) = day_return_on(series, date) else {
                 continue;
             };
-            if ret.is_finite() {
+            // Sanity guard: A-share daily moves are bounded by ±30% price
+            // limits (ST 5%, main 10%, ChiNext/STAR 20%, BSE 30%). A return
+            // beyond ±100% cannot be a real single-day move — it is a data
+            // artifact (index-like symbols mixing two sources on adjacent
+            // dates, e.g. 000905 at 9031 vs 21.5, tracked in issue #181).
+            // Skipping the member keeps the mean representative.
+            if ret.is_finite() && ret.abs() < 1.0 {
                 sum += ret;
                 count += 1;
             }
@@ -254,8 +260,8 @@ pub struct BacktestResult {
     pub metrics: BacktestMetrics,
 }
 
-/// Run a backtest over `[start..end]` by replaying
-/// [`run_sepa`] per trading day.
+/// Run a backtest over `[start..end]` by replaying `score_sepa` per
+/// trading day (window pre-fetched once by `fetch_sepa_window`).
 ///
 /// Calendar: distinct trading dates from
 /// `fetch_cross_section(start - 1 day, end)` (ascending). `start - 1` (or
@@ -320,16 +326,32 @@ pub fn run_backtest(
         .into_iter()
         .collect();
 
-    // Per-day ranked rows via run_sepa (all calendar days, incl. the
-    // initial position day). run_sepa's internal window is date-bounded so
-    // this is point-in-time; empty rows degrade gracefully.
+    // Per-day ranked rows via score_sepa. The full scoring window is
+    // pre-fetched once (fetch_sepa_window) and each calendar day slices
+    // `[now - SEPA_WINDOW_DAYS, now]` from it in memory — the original
+    // per-day run_sepa re-read 7 parquet datasets per day (~3s/day, 93%
+    // I/O), which made a full-year backtest take 20+ minutes.
     let query = SepaQuery {
         top_n: params.top_n,
     };
+    let window = fetch_sepa_window(
+        reader,
+        cal_start - chrono::Duration::days(SEPA_WINDOW_DAYS),
+        end,
+    )?;
+    let scoring_started = std::time::Instant::now();
     let mut sepa_datas: Vec<SepaData> = Vec::with_capacity(calendar.len());
     for &date in &calendar {
-        sepa_datas.push(run_sepa(&query, reader, date)?);
+        let t = std::time::Instant::now();
+        sepa_datas.push(score_sepa(&query, &window, date)?);
+        tracing::debug!(date = %date, day_ms = t.elapsed().as_millis(), "score_sepa day");
     }
+    tracing::info!(
+        days = calendar.len(),
+        scoring_ms = scoring_started.elapsed().as_millis(),
+        avg_day_ms = scoring_started.elapsed().as_millis() / calendar.len().max(1) as u128,
+        "backtest scoring phase"
+    );
     // Borrowed view of the owned rows, kept alive by `sepa_datas` for the
     // duration of simulate_portfolio.
     let ranked_daily: Vec<(NaiveDate, Vec<&SepaRow>)> = calendar
@@ -415,22 +437,6 @@ fn group_by_symbol(bars: &[CrossSectionBar]) -> HashMap<String, Vec<&CrossSectio
         m.entry(b.symbol.clone()).or_default().push(b);
     }
     m
-}
-
-/// Keep the last row per (symbol, date). Real parquet data occasionally
-/// carries duplicate rows for one symbol on one day (index-like symbols
-/// mixing two sources); deduplicating keeps day-over-day returns
-/// comparable. Input order is preserved for the surviving rows.
-fn dedup_bars(bars: Vec<CrossSectionBar>) -> Vec<CrossSectionBar> {
-    let mut seen: HashSet<(String, NaiveDate)> = HashSet::new();
-    let mut deduped: Vec<CrossSectionBar> = Vec::with_capacity(bars.len());
-    for bar in bars.into_iter().rev() {
-        if seen.insert((bar.symbol.clone(), bar.trade_date)) {
-            deduped.push(bar);
-        }
-    }
-    deduped.reverse();
-    deduped
 }
 
 /// Serialize the equity curve to CSV (header + one row per point).
@@ -964,6 +970,37 @@ mod tests {
         let empty: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
         let rets2 = compute_benchmark_returns(&empty, &basics, &[d1]);
         assert_eq!(rets2.get(&d1), Some(&0.0));
+    }
+
+    /// Benchmark sanity guard: a member whose day-over-day return exceeds
+    /// ±100% (impossible for real A-share daily moves, bounded by ±30%
+    /// limits) is a cross-source data artifact and must be skipped, not
+    /// averaged into the mean (issue #181 index-code mixing).
+    #[test]
+    fn benchmark_skips_absurd_returns() {
+        let d1 = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
+        let d0 = NaiveDate::parse_from_str("2025-01-01", "%Y-%m-%d").unwrap();
+        // A: normal +10% move. Z: 21.5 → 9028.93 (cross-source, +41895%).
+        let a0 = mk_bar("A", d0, 10.0);
+        let a1 = mk_bar("A", d1, 11.0);
+        let z0 = mk_bar("Z", d0, 21.5);
+        let z1 = mk_bar("Z", d1, 9028.93);
+        let mut bars: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
+        bars.insert("A".to_string(), vec![&a0, &a1]);
+        bars.insert("Z".to_string(), vec![&z0, &z1]);
+
+        let ba = mk_basic("A", 1e9, d0);
+        let bz = mk_basic("Z", 1e9, d0);
+        let mut basics: HashMap<String, &StockBasic> = HashMap::new();
+        basics.insert("A".to_string(), &ba);
+        basics.insert("Z".to_string(), &bz);
+
+        let rets = compute_benchmark_returns(&bars, &basics, &[d1]);
+        let r = rets.get(&d1).copied().unwrap_or(f64::NAN);
+        assert!(
+            (r - 0.10).abs() < 1e-12,
+            "Z's +41895% must be skipped, only A's +10% averaged, got {r}"
+        );
     }
 
     /// Case ⑤: top_n limits holdings (3 ranked but top_n=2 → only 2 held).
