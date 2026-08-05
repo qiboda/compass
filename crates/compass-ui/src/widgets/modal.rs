@@ -7,7 +7,7 @@
 //! and a `Danger` confirm variant. The `on_confirm` `FnOnce` contract is
 //! preserved: the callback fires once on confirm and is then consumed.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use egui::{Align2, Area, Color32, Frame, Id, LayerId, Margin, Order, Rect, Sense, Vec2};
 
@@ -22,9 +22,12 @@ const PANEL_DURATION: Duration = Duration::from_millis(150);
 const CLOSE_DURATION: Duration = Duration::from_millis(100);
 
 /// Linear 0→1 progress of `started → now` within `duration`, clamped.
-fn progress_since(started: Instant, now: Instant, duration: Duration) -> f32 {
-    (now.saturating_duration_since(started).as_secs_f32() / duration.as_secs_f32().max(0.001))
-        .clamp(0.0, 1.0)
+///
+/// `started` and `now` are egui virtual-time seconds (`ctx.input(|i| i.time)`),
+/// so animations advance deterministically under kittest regardless of the
+/// machine's wall clock (see `kb/dev/testing.md` §时间敏感陷阱).
+fn progress_since(started: f64, now: f64, duration: Duration) -> f32 {
+    ((now - started) / duration.as_secs_f64().max(0.001)).clamp(0.0, 1.0) as f32
 }
 
 /// Request a repaint scaled to the backend's frame time (see [`Modal::show`]).
@@ -58,10 +61,12 @@ pub struct Modal {
     is_open: bool,
     /// Whether the closing animation is running (public for state-machine tests).
     pub closing: bool,
-    /// When the open animation started (`Some` while opening).
-    pub open_started: Option<Instant>,
-    /// When the closing animation started (`Some` while closing).
-    pub close_started: Option<Instant>,
+    /// When the open animation started, in egui virtual-time seconds
+    /// (`ctx.input(|i| i.time)`); `Some` while opening.
+    pub open_started: Option<f64>,
+    /// When the closing animation started, in egui virtual-time seconds
+    /// (`ctx.input(|i| i.time)`); `Some` while closing.
+    pub close_started: Option<f64>,
     /// Title text displayed in the modal header.
     title: String,
     /// Body text displayed in the modal content area.
@@ -120,8 +125,10 @@ impl Modal {
     }
 
     /// Open the modal and start the entry animation (resets any closing state).
-    pub fn open(&mut self) {
-        let now = Instant::now();
+    ///
+    /// `now` is the current egui virtual time in seconds
+    /// (`ctx.input(|i| i.time)`), stamped as the entry-animation start.
+    pub fn open(&mut self, now: f64) {
         self.is_open = true;
         self.closing = false;
         self.close_started = None;
@@ -130,19 +137,25 @@ impl Modal {
 
     /// Close the modal: starts the 100 ms closing animation; `is_open` flips
     /// to `false` once the fade completes during [`Self::show`].
-    pub fn close(&mut self) {
+    ///
+    /// `now` is the current egui virtual time in seconds
+    /// (`ctx.input(|i| i.time)`), stamped as the closing-animation start.
+    pub fn close(&mut self, now: f64) {
         if self.is_open && !self.closing {
             self.closing = true;
-            self.close_started = Some(Instant::now());
+            self.close_started = Some(now);
         }
     }
 
     /// Toggle the open/close state.
-    pub fn toggle(&mut self) {
+    ///
+    /// `now` is the current egui virtual time in seconds
+    /// (`ctx.input(|i| i.time)`), forwarded to [`Self::open`] / [`Self::close`].
+    pub fn toggle(&mut self, now: f64) {
         if self.is_open {
-            self.close();
+            self.close(now);
         } else {
-            self.open();
+            self.open(now);
         }
     }
 
@@ -180,21 +193,27 @@ impl Modal {
     }
 
     /// Entry animation progress 0→1 (120 ms since open).
-    pub fn entry_progress(&self, now: Instant) -> f32 {
+    ///
+    /// `now` is the current egui virtual time in seconds.
+    pub fn entry_progress(&self, now: f64) -> f32 {
         self.open_started
             .map(|t| progress_since(t, now, BACKDROP_DURATION))
             .unwrap_or(1.0)
     }
 
     /// Panel scale animation progress 0→1 (150 ms since open).
-    pub fn panel_progress(&self, now: Instant) -> f32 {
+    ///
+    /// `now` is the current egui virtual time in seconds.
+    pub fn panel_progress(&self, now: f64) -> f32 {
         self.open_started
             .map(|t| progress_since(t, now, PANEL_DURATION))
             .unwrap_or(1.0)
     }
 
     /// Close animation progress 0→1 (100 ms since closing started); 0 when not closing.
-    pub fn close_progress(&self, now: Instant) -> f32 {
+    ///
+    /// `now` is the current egui virtual time in seconds.
+    pub fn close_progress(&self, now: f64) -> f32 {
         self.close_started
             .map(|t| progress_since(t, now, CLOSE_DURATION))
             .unwrap_or(0.0)
@@ -219,7 +238,7 @@ impl Modal {
 
         let tokens = self.tokens;
         let c = &tokens.color;
-        let now = Instant::now();
+        let now = ctx.input(|i| i.time);
         let entry = self.entry_progress(now);
         let close = self.close_progress(now);
 
@@ -355,7 +374,7 @@ impl Modal {
             cb();
         }
         if should_close {
-            self.close();
+            self.close(now);
         }
     }
 }
@@ -384,33 +403,40 @@ mod tests {
     #[test]
     fn open_sets_modal_to_open() {
         let mut modal = Modal::new(ThemeTokens::dark());
-        modal.open();
+        modal.open(0.0);
         assert!(modal.is_open());
         assert!(!modal.closing);
     }
 
     #[test]
     fn close_starts_closing_state_machine() {
-        let mut modal = Modal::new(ThemeTokens::dark());
-        modal.open();
-        modal.close();
-        assert!(modal.closing, "close() must enter the closing animation");
-        assert!(modal.close_started.is_some());
-        assert!(modal.is_open(), "still open while the fade runs");
+        let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
+        modal.borrow_mut().open(0.0);
+        modal.borrow_mut().close(0.0);
+        assert!(
+            modal.borrow().closing,
+            "close() must enter the closing animation"
+        );
+        assert!(modal.borrow().close_started.is_some());
+        assert!(modal.borrow().is_open(), "still open while the fade runs");
 
-        // Once the fade completes (100 ms), show() flips is_open to false.
-        modal.close_started = Some(Instant::now() - Duration::from_millis(200));
-        modal.show(&egui::Context::default());
-        assert!(!modal.is_open());
-        assert!(!modal.closing, "closing state must be reset after the fade");
+        // Once the fade completes (100 ms), show() flips is_open to false:
+        // 11 × 10 ms steps > 100 ms, driven by egui virtual time (ref #171).
+        let mut harness = harness_for_modal(&modal);
+        harness.run_steps(11);
+        assert!(!modal.borrow().is_open());
+        assert!(
+            !modal.borrow().closing,
+            "closing state must be reset after the fade"
+        );
     }
 
     #[test]
     fn open_resets_closing_state() {
         let mut modal = Modal::new(ThemeTokens::dark());
-        modal.open();
-        modal.close();
-        modal.open();
+        modal.open(0.0);
+        modal.close(0.0);
+        modal.open(1.0);
         assert!(modal.is_open());
         assert!(!modal.closing, "re-open must cancel the closing animation");
         assert!(modal.close_started.is_none());
@@ -420,13 +446,13 @@ mod tests {
     fn toggle_flips_state() {
         let mut modal = Modal::new(ThemeTokens::dark());
         // closed → open
-        modal.toggle();
+        modal.toggle(0.0);
         assert!(modal.is_open());
         // open → closing
-        modal.toggle();
+        modal.toggle(0.0);
         assert!(modal.closing);
         // toggle during the closing fade is a no-op (the fade continues)
-        modal.toggle();
+        modal.toggle(0.0);
         assert!(modal.closing);
     }
 
@@ -479,54 +505,61 @@ mod tests {
     #[test]
     fn entry_progress_boundaries() {
         let mut modal = Modal::new(ThemeTokens::dark());
-        modal.open();
+        modal.open(0.0);
         let start = modal.open_started.expect("open sets the timestamp");
         assert_eq!(modal.entry_progress(start), 0.0);
-        assert!((modal.entry_progress(start + Duration::from_millis(60)) - 0.5).abs() < 0.001);
-        assert_eq!(
-            modal.entry_progress(start + Duration::from_millis(120)),
-            1.0
-        );
-        assert_eq!(modal.entry_progress(start + Duration::from_secs(1)), 1.0);
+        assert!((modal.entry_progress(start + 0.06) - 0.5).abs() < 0.001);
+        assert_eq!(modal.entry_progress(start + 0.12), 1.0);
+        assert_eq!(modal.entry_progress(start + 1.0), 1.0);
     }
 
     #[test]
     fn panel_progress_boundaries() {
         let mut modal = Modal::new(ThemeTokens::dark());
-        modal.open();
+        modal.open(0.0);
         let start = modal.open_started.expect("open sets the timestamp");
         assert_eq!(modal.panel_progress(start), 0.0);
-        assert!((modal.panel_progress(start + Duration::from_millis(75)) - 0.5).abs() < 0.001);
-        assert_eq!(
-            modal.panel_progress(start + Duration::from_millis(150)),
-            1.0
-        );
+        assert!((modal.panel_progress(start + 0.075) - 0.5).abs() < 0.001);
+        assert_eq!(modal.panel_progress(start + 0.15), 1.0);
     }
 
     #[test]
     fn close_progress_boundaries() {
         let mut modal = Modal::new(ThemeTokens::dark());
-        modal.open();
+        modal.open(0.0);
         let start = modal.open_started.expect("open sets the timestamp");
         assert_eq!(modal.close_progress(start), 0.0);
-        modal.close();
+        modal.close(0.0);
         let close_started = modal.close_started.expect("close sets the timestamp");
         assert_eq!(modal.close_progress(close_started), 0.0);
-        assert!(
-            (modal.close_progress(close_started + Duration::from_millis(50)) - 0.5).abs() < 0.001
-        );
-        assert_eq!(
-            modal.close_progress(close_started + Duration::from_millis(100)),
-            1.0
-        );
+        assert!((modal.close_progress(close_started + 0.05) - 0.5).abs() < 0.001);
+        assert_eq!(modal.close_progress(close_started + 0.1), 1.0);
+    }
+
+    #[test]
+    fn progress_follows_injected_virtual_time() {
+        // Animation progress is driven purely by the injected `now` (egui
+        // virtual time), never the wall clock — the kittest determinism
+        // contract (ref #171).
+        let mut modal = Modal::new(ThemeTokens::dark());
+        modal.open(5.0);
+        assert_eq!(modal.entry_progress(5.0), 0.0);
+        assert_eq!(modal.entry_progress(5.12), 1.0);
+        assert_eq!(modal.panel_progress(5.0), 0.0);
+        assert_eq!(modal.panel_progress(5.15), 1.0);
+        modal.close(10.0);
+        assert_eq!(modal.close_progress(10.0), 0.0);
+        assert_eq!(modal.close_progress(10.1), 1.0);
     }
 
     /// Helper: create a harness for a modal, running one frame.
     fn harness_for_modal(modal: &Rc<RefCell<Modal>>) -> egui_kittest::Harness<'static> {
         let m = modal.clone();
-        egui_kittest::Harness::new_ui(move |ui| {
-            m.borrow_mut().show(ui.ctx());
-        })
+        egui_kittest::Harness::builder()
+            .with_step_dt(0.01)
+            .build_ui(move |ui| {
+                m.borrow_mut().show(ui.ctx());
+            })
     }
 
     // --- kittest rendering (migrated) ---
@@ -542,7 +575,7 @@ mod tests {
     #[test]
     fn show_open_renders_buttons() {
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
-        modal.borrow_mut().open();
+        modal.borrow_mut().open(0.0);
         modal.borrow_mut().set_title("Test");
         modal.borrow_mut().set_body("Body");
 
@@ -559,7 +592,7 @@ mod tests {
     fn cancel_closes_modal_without_calling_callback() {
         let called = Rc::new(Cell::new(false));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
-        modal.borrow_mut().open();
+        modal.borrow_mut().open(0.0);
         modal.borrow_mut().set_on_confirm({
             let called = called.clone();
             move || {
@@ -585,8 +618,8 @@ mod tests {
         );
 
         // Complete the fade → closed.
-        modal.borrow_mut().close_started = Some(Instant::now() - Duration::from_millis(200));
-        harness.run();
+        // 11 × 10 ms steps complete the 100 ms fade (ref #171).
+        harness.run_steps(11);
         assert!(
             !modal.borrow().is_open(),
             "modal should close after the fade"
@@ -598,7 +631,7 @@ mod tests {
     fn confirm_button_calls_callback_and_closes() {
         let called = Rc::new(Cell::new(false));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
-        modal.borrow_mut().open();
+        modal.borrow_mut().open(0.0);
         modal.borrow_mut().set_on_confirm({
             let called = called.clone();
             move || {
@@ -619,8 +652,8 @@ mod tests {
             "callback should be consumed after confirm"
         );
 
-        modal.borrow_mut().close_started = Some(Instant::now() - Duration::from_millis(200));
-        harness.run();
+        // 11 × 10 ms steps complete the 100 ms fade (ref #171).
+        harness.run_steps(11);
         assert!(
             !modal.borrow().is_open(),
             "modal should close after the fade"
@@ -631,7 +664,7 @@ mod tests {
     fn confirm_button_consumes_callback_exactly_once() {
         let call_count = Rc::new(Cell::new(0u32));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
-        modal.borrow_mut().open();
+        modal.borrow_mut().open(0.0);
         modal.borrow_mut().set_on_confirm({
             let call_count = call_count.clone();
             move || {
@@ -648,12 +681,16 @@ mod tests {
         assert_eq!(call_count.get(), 1);
 
         // Finish the fade, re-open and click again — callback already consumed.
-        modal.borrow_mut().close_started = Some(Instant::now() - Duration::from_millis(200));
-        harness.run();
+        // 11 × 10 ms steps complete the 100 ms fade (ref #171).
+        harness.run_steps(11);
         assert!(!modal.borrow().is_open());
 
-        modal.borrow_mut().open();
-        harness.run();
+        modal.borrow_mut().open(1.0);
+        // Re-open at a later virtual timestamp (literal, ahead of the harness
+        // clock), so the entry animation stays frozen at progress 0. That does
+        // not affect the click below: the scale transform only shifts painted
+        // shapes, never the interaction rects. Steps just render deterministically.
+        harness.run_steps(16);
         harness.get_by_label("Confirm").click();
         harness.run();
         assert_eq!(
@@ -668,7 +705,7 @@ mod tests {
     #[test]
     fn escape_starts_closing_animation() {
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
-        modal.borrow_mut().open();
+        modal.borrow_mut().open(0.0);
 
         let mut harness = harness_for_modal(&modal);
         harness.run();
@@ -686,7 +723,7 @@ mod tests {
     fn danger_modal_confirms_on_click() {
         let called = Rc::new(Cell::new(false));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
-        modal.borrow_mut().open();
+        modal.borrow_mut().open(0.0);
         modal.borrow_mut().set_danger(true);
         modal.borrow_mut().set_confirm_text("移除");
         modal.borrow_mut().set_on_confirm({
