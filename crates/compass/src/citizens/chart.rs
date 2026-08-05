@@ -129,7 +129,9 @@ impl ChartCitizen {
             ]);
         }
 
-        let response = self.chart.show_with_indicators(ui, None, Some(&self.registry));
+        let response = self
+            .chart
+            .show_with_indicators(ui, None, Some(&self.registry));
         self.draw_indicator_legend(ui, response, app_theme.tokens());
     }
 
@@ -178,8 +180,13 @@ impl ChartCitizen {
                 format!("{price:.6}")
             }
         };
-        let format_value =
-            |v: &f64| -> String { if v.is_nan() { "—".to_owned() } else { format_price(*v) } };
+        let format_value = |v: &f64| -> String {
+            if v.is_nan() {
+                "—".to_owned()
+            } else {
+                format_price(*v)
+            }
+        };
 
         // Segment list with the gap to advance after each one: MA items are
         // caption labels (text_secondary) + mono values in the line color,
@@ -236,10 +243,12 @@ impl ChartCitizen {
         let mut widths = Vec::with_capacity(segments.len());
         for segment in &segments {
             let width = match segment {
-                Segment::Text(font, color, text) => painter
-                    .layout_no_wrap(text.clone(), font.clone(), *color)
-                    .size()
-                    .x,
+                Segment::Text(font, color, text) => {
+                    painter
+                        .layout_no_wrap(text.clone(), font.clone(), *color)
+                        .size()
+                        .x
+                }
                 Segment::Divider => DIVIDER_WIDTH,
             };
             widths.push(width);
