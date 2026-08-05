@@ -147,6 +147,30 @@
   在 merge 侧强制。`--no-verify` 绕行与 `--allow-ci-failure` 机制均不再需要
   ——修复失败 CI 的 PR 可直接正常 push，PR CI 全绿后才能 merge。
 
+### [Git] `git rebase --continue` 在 agent 无 TTY 环境挂起（编辑器等待）
+
+- **症状**: agent（opencode bash 工具，无 TTY）执行 `git rebase --continue`
+  时**挂起直至超时**（实测 120s、60s 两次），同一操作在交互式终端正常；
+  冲突已解决并 `git add` 后仍挂起
+- **根因**: `git rebase --continue` 提交时会启动**默认编辑器**（`core.editor`
+  未设置 → vi/nano）确认 commit message——无 TTY 环境挂起等待输入。
+  与 commit-msg hook 的 gh API 调用无关（gh 实测 2s 响应）
+- **排查路径**:
+  1. `ps aux | grep -E "git rebase|git-commit|vi|nano"` 确认无卡死进程；
+     实际是命令自身挂起（bash 工具超时杀掉）
+  2. 排除 hook 慢：单独 `time gh issue view <N> ...` 测 gh API 响应
+  3. **验证根因**：加 `GIT_EDITOR=true` 后 rebase 秒级完成（实证：4 个
+     commit 全部顺利重放）——确认是编辑器调用
+- **修复**: agent 无 TTY 环境执行 rebase 相关命令前置
+  `GIT_EDITOR=true`（或 `git -c core.editor=true rebase --continue`）；
+  涉及多个 commit 冲突时用 `GIT_EDITOR=true setsid nohup git rebase ... &`
+  后台执行 + 日志文件轮询
+- **验证**: `GIT_EDITOR=true git rebase --continue` 冲突解决后立即完成
+- **教训**: 任何可能触发 git 编辑器的命令（rebase --continue、reword、
+  `git commit` 交互式 message）在 agent 环境必须显式
+  `GIT_EDITOR=true`——"文档已固化但未遵守"同类：规则写入（本卡）
+  需执行侧习惯（每次 rebase 前想起 GIT_EDITOR=true）（ref #189）
+
 ---
 
 ## 测试（Rust / egui_kittest）
