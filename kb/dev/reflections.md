@@ -249,6 +249,7 @@
 ### Trends (last 10)
 - **"文档/流程规则存在但未执行"模式**（AGENTS.md 退役规则从未执行致 789 行、ref #185 的 commit-message 规则复犯）：规则写入 ≠ 行为固化——长文档应主动定期归档，规则执行依赖钩子/回归测试兜底
 - **文档重组的高风险 = 内容丢失**（ref #77 项目书重组、本次 570 行归档）：大文件重组必须脚本切分 + 逐行校验，校验逻辑（标题命中 + 行级包含）应在重组后立即执行而非目测
+
 ## 2026-08-05 — ref #154 SEPA 回测系统：接续执行 + review 两轮修复
 
 **What was done**: 完成 SEPA 历史回测系统（引擎纯函数、run_backtest 编排、CLI 子命令、Dolt backtest_result 写回、文档同步），接续执行遗留 plan（Todo 5-6 + F1-F4）并修复 review 发现的 MAJOR off-by-one、真实数据重复行 bug、测试死锁、质量门禁缺口。
@@ -275,3 +276,28 @@
 - **"完成声明先于验证"反复出现**（ref #160 review 前未走完 plan 波次、ref #174 "实现完成≠plan 完成"、本次提交未过门禁+冒烟滞后）：验证前置（提交前门禁 + 冒烟）是反复被"学到"但未固化的教训——应固化为提交时即执行的机制而非自觉
 - **真实数据验证是数据/计算管线的不可替代验收**（ref #139 数据终态证据、ref #159 import --since 事故、本次重复行 bug）：mock/fixture 测试全绿 ≠ 真实数据正确，数据管线变更的完成定义必须含真实数据冒烟
 - **review 是安全网但不应是唯一防线**（ref #139 六轮 review、本次 off-by-one 由 review 发现）：测试覆盖盲区（坐标空间、边界配置）应在 review 前自查——review 发现的缺陷常常是测试设计缺陷
+
+## 2026-08-06 — ref #171 modal 动画时间源虚拟时间化
+
+**What was done**: modal 动画时间源从墙钟 `Instant::now()` 改为 egui 虚拟时间 `ctx.input(|i| i.time)`（f64 秒），`open(now: f64)`/`close(now: f64)`/`toggle(now: f64)` 显式收参；移除 8 处测试"重置时间戳"workaround（modal.rs 4 + main.rs 4，改 `with_step_dt(0.01)`+`run_steps(11)` 确定性推进）；新增 `progress_follows_injected_virtual_time` 回归测试；文档同步 3 处 + reflections.md:43 过时教训标注。与 toast #168 同构根治慢 CI wall-clock flaky。3 commits（17ba9bf/2120eff/3d982e5）。
+
+**User corrections**: 无（用户仅下发 handoff 指令、批准计划、push）。
+
+**What went wrong**:
+1. **提交前验证遗漏 `cargo fmt --check`**：AGENTS.md/compass-workflow 要求提交前三件套 `cargo test && cargo clippy -- -D warnings && cargo fmt --check`，本实现只跑了 clippy/test/rustdoc/coverage，未跑 fmt——review-work QA lane 独立发现 2 处 rustfmt 违规（modal.rs 多行 assert，commit 17ba9bf 引入），CI fmt 门禁（ci.yml:54）会红。这是「文档已固化但未遵守」模式的**第三次**出现（ref #96 → #104 → 本次）。
+2. review-work 的 `unspecified-high` category 在本环境（opencode task 工具）不存在，QA/Context lane 改用 `general` agent 替代（同能力，非流程偏差）。
+
+**Lessons learned**:
+1. **提交前验证必须完整执行三件套**——fmt 违规只有 `cargo fmt --check` 能抓到（clippy 不检查格式、编译不报错），且最易被遗漏。已建 issue #187 排期：pre-commit hook 增加 cargo fmt 检查（与现有 Python ruff 检查同构），从"文档规则"升级为"执行侧硬钩子"。
+2. **review-work 独立 QA lane 的查漏价值再次证实**（ref #139 六轮 review 驱动、本次 2 轮）：实现者自查有盲区（fmt、失真注释、陈旧文档），独立 lane 能抓到——review 不是流程仪式而是质量防线。
+3. **环境差异适配**：本环境 task 工具无 `unspecified-high` category，review-work 的 QA/Context lane 用 `general` 替代即同能力。
+
+**Process improvements**:
+- proposed (ref #187)：`.githooks/pre-commit` 增加 Rust fmt 检查（暂存区含 .rs 变更时 `cargo fmt --check`），与现有 Python ruff 检查同构
+- 已落实：reflections.md:43 过时教训（回拨时间戳 workaround 推荐）标注已被 #168/#171 取代——文档与代码同步更新
+
+### Trends (last 10)
+- **「文档已固化但未遵守」第三次复发**（ref #96 → #104 → 本次 fmt 三件套遗漏）：AGENTS.md 规则写入 ≠ 行为固化，执行侧必须 hook/CI 硬性钩子兜底——#187 已排期 pre-commit fmt 检查，正是该模式的针对性固化
+- **review 驱动修复循环持续有效**（ref #139 六轮 review、本次 2 轮）：独立 QA lane 能发现实现者自查遗漏（fmt 违规、失真注释、陈旧文档）——review 独立性是质量防线，不可省略
+- **同根因模式复用成效**（toast #168 → modal #171）：排查卡 + 决策记录 + 测试模式的先例复用使本次修复风险低、周期短——工具链排查卡沉淀是跨 issue 复利
+
