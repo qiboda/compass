@@ -158,6 +158,17 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 - **十字准线**：悬停 K 线显示 OHLCV 详情
 - **空态**：未加载数据时显示 EmptyState 引导
 - 数据源：本地 DuckDB `read_parquet()`，**无在线回退**
+- **MA/BOLL 叠加层**（ref #174）：K 线上叠加 MA(5/10/60/120/250) 五条均线 +
+  BOLL(20, 2.0) 三线（8 色暗/亮两套，`IndicatorTokens`）。指标**实时计算不存储**
+  （compass-core 纯函数，GUI 每帧经缓存指纹重算）；缓存指纹
+  `(symbol, len, 首末 bar time, 末根 close)` 防切标的/前复权重算碰撞。
+- **图例行**（左上第二行，vendored OHLC 行下方）：85% alpha `bg_panel_alt`
+  chip + 1px `border_strong` + `radius.sm`；MA 项 = caption 标签（`text_secondary`）
+  + mono 值（线色）；BOLL 单标签 + 三值 ` / ` 连接；MA/BOLL 组间 1px 竖分隔线；
+  数值格式复用 vendored `format_price`（≥100→2 位、≥1→4 位、<1→6 位）；暖机
+  显示 `—`；不消费输入事件。
+- **前复权 Tag**（工具栏「周期」组内）：非交互 `Tag`（`TagVariant::Custom` +
+  info 色）——K 线均为前复权价（fetch 层缩放），本迭代无模式切换开关。
 
 ### 反馈状态
 
@@ -188,6 +199,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 |---|---|---|---|
 | 2026-08-02 | 初始骨架：基于现有 GUI 提炼设计系统/布局/交互（ref #129） | — | 已实现（与代码同步） |
 | 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.omo/designs/gui-upgrade.md` | 已实现（与代码同步） |
+| 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.omo/designs/chart-ma-boll.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
@@ -206,3 +218,11 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 涨跌色 | A 股红涨绿跌 / TradingView 绿涨红跌 / 默认 | A 股红涨绿跌（#EF5350/#26A69A） | A 股用户心智（同花顺/东财一致）；token 统一 K 线与文本 | TV 惯例违背 A 股直觉（ref #119 D10） |
 | Modal 绑定场景 | 保持占位 / 仅启动引导 / 三场景全接 | 启动引导 + 日志导出 + 删除确认 | 零新依赖、真实高频；激活闲置 file_dialog | 保持占位违背 epic 目标（ref #119 D9） |
 | Toast 动画时间源 | 真实墙钟 `Instant::now()` / egui 虚拟时间 `ctx.input(|i| i.time)` / 注入 Clock trait | egui 虚拟时间（f64 秒字段 `created_at`/`close_started`，manager 缓存 `last_frame_time` 供 `push()` 打戳） | kittest 下虚拟时间按 `predicted_dt` 每帧推进、完全确定——根治慢 CI wall-clock 漂移导致的 flaky（ref #168）；真实 GUI 中 egui 帧时间本就正确驱动动画；无 Clock 注入的 API 膨胀 | 墙钟驱动动画使 kittest 测试依赖机器负载、慢 CI 间歇失败（#155 修后仍发 #168）；Clock trait 为单一消费方引入抽象、过度设计（ref #168） |
+| MA 五线配色（ref #174） | A 股惯例 白/黄/紫/青/棕 / TV 蓝橙系 / 全灰阶单色 | 白/黄/紫/青/棕（暗亮两套按背景调明度） | 贴合 A 股用户心智（同花顺/东财均线色系）；五色相环均匀分布、2px 下两两可分；避开涨跌红绿与 accent 蓝 | TV 蓝橙系与 accent 蓝冲突；全灰阶丧失周期区分度 |
+| MA5/MA10 色值来源（ref #174/#177） | 复用 `text_primary`/`warning` token / 独立新色值 | 复用既有 token 值 | 与语义别名惯例一致（error==up、info==accent）；白/黄正是惯例所需 | 独立色值制造冗余 token |
+| BOLL 三线配色（ref #174） | 三线同色 slate / 上中下三色 | 三线同色 slate 灰蓝（`#90A4AE`/`#546E7A`） | 用户心智 BOLL 是整体指标（同花顺三线同色）；中轨=MA20 由图例标签承载 | 三色割裂「一个指标」认知 |
+| BOLL 通道填充（ref #174） | 不填充 / 半透明填充 / 填充+三线 | 不填充 | vendored overlay renderer 无填充路径（需 fork 补丁）；填充遮挡 K 线主体；同花顺/东财默认无填充 | 半透明填充遮挡一级数据（OHLC）且增加 fork 维护面 |
+| 图例实现位置（ref #174） | ChartCitizen 自绘 overlay / patch vendored `render_legend` | ChartCitizen 自绘 overlay | 零 vendored 变更；图例数据源经公开 `visible_range()` 可得 | patch vendored 与图表库 legend 布局强耦合 |
+| 图例数值格式（ref #178 review） | 复用 vendored `format_price` 规则 / 固定 2 位小数 | format_price 规则（≥100→2 位、≥1→4 位、<1→6 位） | 与上方 OHLC legend 精度一致；低价股不失真 | 固定精度在 <1 元股失真 |
+| 指标重算时机（ref #174/#178） | 每帧重算 / 数据变化缓存重算 | 缓存重算，键 = `(symbol, len, 首末 bar time, 末根 close)` | 每帧 O(n) 分配浪费；symbol 防切标的碰撞、close 防前复权重算同窗口价格修正后的陈旧叠加 | 每帧重算虽量级小但属工程浪费 |
+| 指标色 token 组织（ref #177） | 新增 `IndicatorTokens` 子结构 / 扩展 `ChartTokens` | 新增 `IndicatorTokens`（8 色暗亮两套） | 指标色与图表骨架色语义独立；`ChartTokens` 已被 `apply_to_chart` 逐字段消费 | 扩 ChartTokens 使 apply_to_chart 与指标色映射耦合 |

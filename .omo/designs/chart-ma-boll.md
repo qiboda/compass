@@ -232,9 +232,13 @@ cached_bars_key: Option<(usize, i64)>, // (bars.len(), 末根 time 秒) 缓存�
 
 - **数据路径**（fetch 层，渲染层无感知）：`fetch_bars_blocking` 的 SQL 增加
   `adjclose` 列；取全量序列后按前复权锚定缩放：
-  `scale_i = adjclose_latest / adjclose_i`（`stock_adj_factor` 因子同理），
-  `open/high/low/close × scale_i` 后写入 `Bar`。最新日 scale=1，价格与现价
-  一致。MA/BOLL 在缩放后的 adjusted 序列上实时计算（即基于前复权价）。
+  `factor_i = adjclose_i / close_i`，`open/high/low/close × factor_i` 后写入
+  `Bar`。最新日 adjclose==close → factor=1.0，价格与现价一致。MA/BOLL 在
+  缩放后的 adjusted 序列上实时计算（即基于前复权价）。
+  （**更正标注**：初稿误写 `scale_i = adjclose_latest / adjclose_i`——Oracle
+  核验该式与权威前复权公式不符（最新日因子会偏离 1.0，价格与现价不一致）；
+  `factor_i = adjclose_i / close_i` 是标准前复权公式，最新日因子恒 1.0，
+  已按实现落地。）
   （注：本迭代只存在前复权一种模式，无切换开关。）
 - **视觉提示**：工具栏 **Group B（周期）** 内、Segmented 之后追加一个
   **非交互 `Tag` 组件**，标签「前复权」：

@@ -69,21 +69,21 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
 > ### Batch 1
 > | Status | Issue | Task | Depends On |
 > |--------|-------|------|------------|
-> | pending | #175 | core: indicators 纯函数模块（ma/bollinger/adjust_ohlc） | — |
-> | pending | #176 | core: fetch 层前复权缩放 | #175 |
-> | pending | #177 | ui: IndicatorTokens（8 色暗亮两套） | — |
+> | done | #175 | core: indicators 纯函数模块（ma/bollinger/adjust_ohlc） | — |
+> | done | #176 | core: fetch 层前复权缩放 | #175 |
+> | done | #177 | ui: IndicatorTokens（8 色暗亮两套） | — |
 >
 > ### Batch 2
 > | Status | Issue | Task | Depends On |
 > |--------|-------|------|------------|
-> | pending | #178 | gui: MA/BOLL 叠加层渲染 + 图例行 + 前复权 Tag | #175, #176, #177 |
+> | done | #178 | gui: MA/BOLL 叠加层渲染 + 图例行 + 前复权 Tag | #175, #176, #177 |
 >
 > ### Batch 3
 > | Status | Issue | Task | Depends On |
 > |--------|-------|------|------------|
-> | pending | #179 | docs: MA/BOLL 叠加层 + 前复权设计同步 | #178 |
+> | in_progress | #179 | docs: MA/BOLL 叠加层 + 前复权设计同步 | #178 |
 
-- [ ] 1. compass-core indicators 纯函数模块（ma/bollinger/adjust_ohlc）
+- [x] 1. compass-core indicators 纯函数模块（ma/bollinger/adjust_ohlc）
   What to do / Must NOT do: 新建 `crates/compass-core/src/indicators.rs`，`crates/compass-core/src/lib.rs` 增 `pub mod indicators;`。三个 pub 纯函数：(a) `pub fn ma(values: &[f64], n: usize) -> Vec<Option<f64>>`——窗口不足/NaN 输入 → None，永不 panic；(b) `pub fn bollinger(values: &[f64], period: usize, k: f64) -> Vec<(Option<f64>, Option<f64>, Option<f64>)>`——(upper, mid, lower)，mid = ma，std = population stddev，窗口不足 → None；(c) `pub fn adjust_ohlc(raw: &[(chrono::NaiveDate, f64, f64, f64, f64, f64)], adjclose: &[f64]) -> Vec<egui_charts::model::Bar>`——factor_i = adjclose_i / close_i（close<=0 或 adjclose 非有限时 factor=1.0 守卫），OHLC × factor，volume 原样，date → `Bar::new`。风格参照 `crates/compass-strategy/src/sepa/indicators.rs:14`（all_finite 防 NaN、Option 返回、同文件 `#[cfg(test)]` fixture 模式）。必须 NOT 做：不引入 egui-charts 类型进函数签名（除 adjust_ohlc 返回 Bar）、不改 sepa/indicators.rs、不 panic、无 unwrap。
   Parallelization: Wave 1 | Blocked by: — | Blocks: T4
   References: crates/compass-core/src/lib.rs:18-19; crates/compass-strategy/src/sepa/indicators.rs:14-23 (ma 模板), :268-592 (fixture 模式); egui-charts Bar 定义 ~/.cargo/git/checkouts/egui-charts-a14ffbf1d5a8ad83/2b18acd/src/model/bar/bar.rs:30-43 (Bar::new 签名)
@@ -91,7 +91,7 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
   QA scenarios (agent-executable): happy——`cargo test -p compass-core indicators::tests` 输出含 N passed；failure——`ma(&[1.0;3], 5)` 窗口不足返回全 None 且不 panic；`adjust_ohlc` 中 close=0 行 factor 回落 1.0 不产生 inf/NaN（单测断言 `is_finite`）。Evidence `.omo/evidence/task-1-chart-ma-boll.txt`
   Commit: Y | `feat(core): add pure indicators module (ma/bollinger/adjust_ohlc)`
 
-- [ ] 2. fetch 层前复权缩放（duckdb.rs 三子路径 + parquet.rs fetch_bars_blocking）
+- [x] 2. fetch 层前复权缩放（duckdb.rs 三子路径 + parquet.rs fetch_bars_blocking）
   What to do / Must NOT do: `crates/compass-core/src/data/duckdb.rs` 三条子路径全部带出 adjclose 并按 factor_i = adjclose_i/close_i 缩放 OHLC 后写 Bar：① 内存表路径 (527-533 SELECT 增 adjclose)；② parquet fallback (565-570 已有 adjclose，:593-598 丢弃处改为保留并缩放)；③ 1w/1M 聚合路径 (636-679)——**先缩放后聚合**：内层 SELECT 按日 factor 缩放 OHLC，外层 FIRST(open)/MAX(high)/MIN(low)/LAST(close)/SUM(volume)（LAST 取末根 adjclose 对应因子）。`crates/compass-core/src/data/parquet.rs` fetch_bars_blocking (112-170) SQL 增 adjclose 列并缩放。**优先复用 T1 的 `adjust_ohlc`**（先取原始行 + adjclose 数组 → 调 adjust_ohlc → 得 Bar），避免 4 处逻辑复制；聚合路径可先查原始日线再内存聚合或用 SQL 内联同款表达式。必须 NOT 做：不改 DuckDbProvider 构造/backend.rs、不改 CrossSectionBar/fetch_cross_section（选股器路径不受影响）、不改 DataWriter::save_bars、不引入复权模式开关。
   Parallelization: Wave 1 | Blocked by: — | Blocks: T4
   References: crates/compass-core/src/data/duckdb.rs:527-533, :565-598, :636-679, :681-694 (Bar 构造); crates/compass-core/src/data/parquet.rs:112-179, :135-140 (SQL), :157-170 (Bar 构造); crates/compass/src/backend.rs:79 (GUI 每请求新建 provider → fallback 必走)
@@ -99,7 +99,7 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
   QA scenarios (agent-executable): happy——内存 DuckDB tempdir fixture（参照 crates/compass-core/src/data/duckdb.rs:1254+ 模式）：插入已知 adjclose 的日线 → fetch_bars("1d") 断言返回 Bar 的 close == adjclose、open/high/low × factor 正确；failure——close=0 行 fetch 不 panic 且 factor=1.0；1w 聚合含除权日断言高低点。Evidence `.omo/evidence/task-2-chart-ma-boll.txt`
   Commit: Y | `feat(core): fetch 层前复权缩放（adjclose 带出 + adjust_ohlc 应用）`
 
-- [ ] 3. compass-ui IndicatorTokens（8 色暗/亮）+ token 测试
+- [x] 3. compass-ui IndicatorTokens（8 色暗/亮）+ token 测试
   What to do / Must NOT do: `crates/compass-ui/src/tokens/color.rs` 在 ColorTokens 下新增 `pub indicator: IndicatorTokens` 子结构（8 字段：ma5/ma10/ma60/ma120/ma250/bb_upper/bb_middle/bb_lower），dark()/light() 两套值按 design 表（dark: #D1D4DC/#F5A623/#BA68C8/#00BCD4/#A1887F/#90A4AE×3；light: #1B2430/#B57A00/#7B1FA2/#00838F/#6D4C41/#546E7A×3），复用 text_primary/warning 值不新增冗余。参照现有 ChartTokens (color.rs:7-50) 结构 + 每字段 dark/light 配对测试 (color.rs:164-305 模式)。必须 NOT 做：不改 vendored egui-charts IndicatorSemanticTokens、不硬编码色值到 GUI 代码（一律经 tokens 取用）、不扩展 ChartTokens（指标色与图表骨架色职责分离，design 决策记录已锁）。
   Parallelization: Wave 1 | Blocked by: — | Blocks: T4
   References: crates/compass-ui/src/tokens/color.rs:7-50 (ChartTokens 结构 + dark/light), :54-102 (ColorTokens), :164-305 (配对测试); .omo/designs/chart-ma-boll.md §1 配色表 + 决策记录; kb/design/ui.md:13-19 (token 系统)
@@ -107,7 +107,7 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
   QA scenarios (agent-executable): happy——新增测试断言 dark.indicator.ma5 == #D1D4DC 等 16 值精确匹配；failure——(编译期) 结构缺字段即编译失败。Evidence `.omo/evidence/task-3-chart-ma-boll.txt`
   Commit: Y | `feat(ui): add IndicatorTokens (MA/BOLL 8 色暗亮两套)`
 
-- [ ] 4. GUI 渲染接入（自定义 8 线 Indicator + 图例行 + 前复权 Tag）
+- [x] 4. GUI 渲染接入（自定义 8 线 Indicator + 图例行 + 前复权 Tag）
   What to do / Must NOT do: (a) 新建 `crates/compass/src/citizens/indicators.rs`：实现 `egui_charts::studies::Indicator` 的 8 线结构 `MaBollIndicator`——`calculate(&mut self, data: &[Bar])` 内取 `bar.close` 序列（fetch 后已是前复权价）调 compass-core `ma()`/`bollinger()`，`values()` 每 bar 返回 `Multiple(vec![ma5, ma10, ma60, ma120, ma250, bb_u, bb_m, bb_l])`，**暖机行 `Multiple([f64::NAN; 8])` 占位**（renderer NaN 自动跳过 → 逐线独立暖机）；实现 7 个必实现方法（name/calculate/values/colors/set_colors/set_visible/clone_box，其余默认）；`line_cnt()=8`、`line_names()` 8 个、`colors()` 来自 8 色。(b) `crates/compass/src/citizens/chart.rs` ChartCitizen 增字段 `registry: IndicatorRegistry` + `cache_key: Option<(String, usize, i64, i64)>`（symbol, len, 首根 time, 末根 time）；`show()` (61-80) 在 update_data 后：读 `app_theme.tokens().color.indicator` 8 色 → 若 cache_key 变化则 `registry.calculate_all(&bars)`（更新指纹）→ 对 registry 各指标 `set_colors`（**ChartCitizen 做，不扩展 apply_to_chart 签名**）→ `self.chart.show_with_indicators(ui, None, Some(&registry))` 替换 `chart.show(ui)`；bars 空时跳过（保留 EmptyState）。(c) 图例行：show 返回后 `ui.painter_at(response.rect)` 在 `rect.min + vec2(40.0, 30.0)` 画第二行（vendored legend 在 y=12，行高 ~16）：`MA5 <v> MA10 <v> ... │ BOLL <u> / <m> / <l>`，值 mono 12px JetBrains Mono + 线色着色，暖机/NaN 显示 `—`，整行 85% alpha `bg_panel_alt` chip + 1px border_strong + radius.sm；取数 `chart.state.visible_range()` → `values()[end.saturating_sub(1)]`（end 开区间）。(d) `crates/compass/src/main.rs` 工具栏 Group B 周期 Segmented 后 (884 附近) 加非交互 `Tag`「前复权」`TagVariant::Custom` + info 色。必须 NOT do：不改 vendored egui-charts、不扩展 apply_to_chart 签名、图例不拦截鼠标、无动画、无参数控件、数值不跟随 hover bar。
   Parallelization: Wave 2 | Blocked by: T1, T2, T3 | Blocks: T5
   References: crates/compass/src/citizens/chart.rs:16-20 (struct), :61-80 (show), :83-174 (kittest 模式); egui-charts studies 接口 ~/.cargo/git/checkouts/egui-charts-a14ffbf1d5a8ad83/2b18acd/src/studies/indicator_trait.rs:54-150 (trait), studies/mod.rs:92-153 (registry), widget/mod.rs:620-625 (show_with_indicators), chart/renderers/indicator.rs:89-100 (line_segment 渲染), model/chartstate.rs:150-165 (visible_range, end 开区间), chart/renderers/labels.rs:311-313 (legend 锚点 rect.min+(40,12)); crates/compass/src/main.rs:884-903 (工具栏 Group B); crates/compass-ui/src/widgets/tag.rs (Tag 组件)
@@ -115,7 +115,7 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
   QA scenarios (agent-executable): happy——`cargo test -p compass citizens::chart` kittest 全过；kittest 断言 registry.indicators()[0].values()[end-1] 的 Multiple 值 == 手工计算的 MA5/BOLL（缩放后 close 输入）；failure——切标的同指纹场景断言 values 更新（防缓存碰撞回归）；空 bars 断言无 panic。Evidence `.omo/evidence/task-4-chart-ma-boll.txt`
   Commit: Y | `feat(gui): 图表 MA/BOLL 叠加层 + 图例行 + 前复权 Tag`
 
-- [ ] 5. docs 同步（kb/design/ui.md + data-providers.md + design 公式更正 + 决策记录）
+- [x] 5. docs 同步（kb/design/ui.md + data-providers.md + design 公式更正 + 决策记录）
   What to do / Must NOT do: (a) `kb/design/ui.md` 追加本 feature 设计要点（MA 白/黄/紫/青/棕配色表暗亮两套、BOLL slate 三线不填充、图例行左上第二行 85% chip、前复权 Tag、叠放层级）到设计变更记录表 + 决策记录表；(b) `kb/design/data-providers.md` 补前复权说明（fetch_bars 返回前复权价、factor_i = adjclose_i/close_i、1w/1M 先缩放后聚合）；(c) `.omo/designs/chart-ma-boll.md` §6 公式更正标注（`adjclose_latest/adjclose_i` → `factor_i = adjclose_i/close_i`，附 Oracle 核验理由）；(d) `.omo/plans/chart-ma-boll.md` 任务表格填子 issue 编号。必须 NOT do：不改 kb/ 其他文件、不写新 kb/ 文件（除非 docs skill 判定必要）、不关闭任何 issue。
   Parallelization: Wave 3 | Blocked by: T4 | Blocks: —
   References: kb/design/ui.md:185-208 (设计变更记录 + 决策记录格式); kb/design/data-providers.md:89-127 (Schema 章节), :331-335 (决策记录); .omo/designs/chart-ma-boll.md:231-246 (§6), :284-300 (决策记录)
