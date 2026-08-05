@@ -182,3 +182,49 @@
 - **教训**: kittest 测试断言跨帧动画状态时，**绝不用真实墙钟**（`Instant::now()`、
   `elapsed()`）——必须用 egui 虚拟时间（`ctx.input(|i| i.time)`）或注入时钟。
   慢 CI 上任何"重置时间戳再 run()"的 workaround 都有残留竞态
+
+---
+
+## GitHub CLI / Hook
+
+### [GitHub] commit-msg hook 误报 "issue #N is MISSING"（gh API 瞬时故障）
+
+- **症状**: commit 时 commit-msg hook 报
+  `ERROR: commit rejected — issue #154 is MISSING (must be OPEN)`；立即
+  重试同一 commit 即成功；手动 `gh issue view 154 --repo qiboda/compass
+  --json state --jq '.state'` 返回 OPEN
+- **根因**: hook 内 `gh issue view ... 2>/dev/null || echo "MISSING"` 中 gh
+  API 调用瞬时失败（网络抖动/限流），stderr 被吞 → 误判 MISSING。非 issue
+  状态问题、非认证问题（`unset GITHUB_TOKEN` 后 gh 用 hosts.yml 凭据正常）
+- **排查路径**:
+  1. 手动跑 hook 同款命令确认 issue 真实状态：
+     `unset GITHUB_TOKEN; gh issue view <N> --repo qiboda/compass --json state --jq '.state'`
+  2. 若返回 OPEN → 判定为瞬时故障，直接重试 commit
+- **修复**: 无需代码修复——瞬时故障，重试即过。hook 设计上 2>/dev/null
+  吞错误导致误报误导，但重试成本低可接受
+- **验证**: 同 commit 重试成功；连续多次 commit 无复发
+
+## 数据（Dolt / Parquet）
+
+### [数据] stock_daily.parquet 同 symbol 同日重复行（指数代码混源）
+
+- **症状**: `sepa backtest` 冒烟输出荒谬指标——strategy 累计 -100%、
+  benchmark 累计 1.48e15%、benchmark 日收益 +41895%。逐日调试发现
+  symbol 000905/000852/000906（中证500/1000/800 指数代码）的 series 中
+  **同一天有两行**：如 000905 在 2026-06-30 同时有 adjclose=9031.38
+  （指数点位）与 21.5（另一数据源净值）
+- **根因**: stock_daily.parquet 中部分指数代码混入两套数据（指数点位 +
+  另一源），同一 (symbol, date) 出现多行。回测的 day-over-day 收益计算
+  跨数据源比较（9028.93/21.5−1 = +41895%），daily_returns 的 insert 覆盖
+  又产生 -99.75% 假收益 → 策略/基准 NAV 失真
+- **排查路径**:
+  1. 冒烟输出异常 → 写临时 `#[ignore]` 测试加载真实 parquet，打印
+     `fetch_cross_section` 返回的 sample symbols/adjclose，定位异常 symbol
+  2. 打印该 symbol 完整 series，发现同日多行（两套数据并存）
+  3. 对比 Dolt `final_a_stock_eod_price` 正常数据，确认 parquet 侧污染
+- **修复**: 回测入口 `run_backtest` 增加 `dedup_bars`（同 (symbol, date)
+  保留最后一行）——回测代码对真实数据输入防御。**数据管线侧根因未修**：
+  stock_daily.parquet 生成（import）应去重或排除指数代码，列为后续排查项
+- **验证**: 冒烟重跑——strategy -9.63%、benchmark -13.93%、excess +4.30%，
+  NAV 曲线合理（0.85-1.01）；`cargo test -p compass-strategy backtest` 含
+  `dedup_bars_keeps_last_row_per_symbol_date` 全绿
