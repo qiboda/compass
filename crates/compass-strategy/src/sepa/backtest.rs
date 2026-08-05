@@ -289,6 +289,16 @@ pub fn run_backtest(
     {
         return Err(ScreenerError::Data(start_after_data_error(params.start, l)));
     }
+    if params.hold_days == 0 {
+        return Err(ScreenerError::Data(invalid_param_error(
+            "hold_days must be >= 1",
+        )));
+    }
+    if !params.cost.is_finite() || params.cost < 0.0 || params.cost >= 1.0 {
+        return Err(ScreenerError::Data(invalid_param_error(
+            "cost must be in [0, 1)",
+        )));
+    }
 
     // Calendar from the day before start (for day-1 returns).
     let cal_start = params.start - chrono::Duration::days(1);
@@ -379,7 +389,16 @@ pub fn run_backtest(
 
     let strat_nav: Vec<f64> = points.iter().map(|p| p.strategy_nav).collect();
     let bench_series: Vec<f64> = points.iter().map(|p| p.benchmark_nav).collect();
-    let metrics = compute_metrics(&strat_nav, &out_dates, &rebalances, &bench_series);
+    // `rebalances` are indices into the full-calendar NAV (simulate_portfolio
+    // includes the initial position day at index 0); the output window drops
+    // `k` calendar days before `start`, so shift the indices into output
+    // coordinates before computing period metrics (review #154 off-by-one).
+    let k = calendar
+        .iter()
+        .position(|d| *d >= params.start)
+        .unwrap_or(calendar.len());
+    let output_rebalances: Vec<usize> = rebalances.iter().map(|&i| i.saturating_sub(k)).collect();
+    let metrics = compute_metrics(&strat_nav, &out_dates, &output_rebalances, &bench_series);
 
     Ok(BacktestResult { points, metrics })
 }
@@ -450,6 +469,10 @@ fn start_after_data_error(start: NaiveDate, latest: NaiveDate) -> DataError {
     DataError::Parse(format!(
         "backtest: start {start} is after latest data {latest}"
     ))
+}
+
+fn invalid_param_error(msg: &str) -> DataError {
+    DataError::Parse(format!("backtest: invalid parameter: {msg}"))
 }
 
 #[cfg(test)]
@@ -707,6 +730,100 @@ mod tests {
         assert!((m.benchmark_cumulative_return - 0.1).abs() < 1e-12);
         assert!((m.excess_return - 0.1).abs() < 1e-12);
         assert!(m.profit_loss_ratio > 0.0);
+    }
+
+    /// Regression (review #154): `simulate_portfolio` returns rebalance
+    /// indices in full-calendar coordinates (index 0 = initial position
+    /// day), but `run_backtest` passes the output-window NAV (initial day
+    /// dropped, k ≥ 1 when `start` is not the first calendar day) to
+    /// `compute_metrics`. Indices must be shifted by k — otherwise period
+    /// boundaries are misaligned and win rate / profit-loss ratio are
+    /// systematically wrong. Locked with the Goal-review scenario: 7-day
+    /// calendar, hold_days=4, k=1 → true win rate 0.5, unshifted → 0.0.
+    #[test]
+    fn metrics_period_boundaries_shifted_by_initial_day() {
+        let dates = [
+            "2025-01-02",
+            "2025-01-03",
+            "2025-01-06",
+            "2025-01-07",
+            "2025-01-08",
+            "2025-01-09",
+            "2025-01-10",
+        ];
+        let owned = vec![
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+            owned_rows(&[("A", 90.0), ("B", 80.0)]),
+        ];
+        let days = ranked(&owned, &dates);
+        // A and B share identical returns; holdings = A+B (equal weight).
+        // d0 (initial day) 0; d1 +20%; d2 +10%; d3 0; d4 0 (rebalance at
+        // close, cost 0); d5 -10%; d6 0.
+        let rets = returns(&[
+            (
+                "A",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.20),
+                    ("2025-01-06", 0.10),
+                    ("2025-01-07", 0.0),
+                    ("2025-01-08", 0.0),
+                    ("2025-01-09", -0.10),
+                    ("2025-01-10", 0.0),
+                ],
+            ),
+            (
+                "B",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.20),
+                    ("2025-01-06", 0.10),
+                    ("2025-01-07", 0.0),
+                    ("2025-01-08", 0.0),
+                    ("2025-01-09", -0.10),
+                    ("2025-01-10", 0.0),
+                ],
+            ),
+        ]);
+        let (nav, reb) = simulate_portfolio(&days, &rets, &params("2025-01-02", 4, 0.0));
+        // nav: [1.0, 1.2, 1.32, 1.32, 1.32, 1.188, 1.188]; rebalance at
+        // calendar index 4 (d4 close).
+        assert_eq!(reb, vec![4]);
+        assert!((nav[4] - 1.32).abs() < 1e-12);
+
+        // run_backtest drops the initial day (k=1): output NAV = nav[1..].
+        let k = 1;
+        let out_nav: Vec<f64> = nav.iter().copied().skip(k).collect();
+        assert_eq!(out_nav.len(), 6);
+        let out_dates: Vec<NaiveDate> = dates[1..]
+            .iter()
+            .map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap())
+            .collect();
+        let bench = vec![1.0; out_nav.len()];
+
+        // Fixed (shifted): boundaries [3, 5] → period 1 = nav[1..4] = +10%
+        // (win), period 2 = nav[4..6] = -10% (loss) → win rate 0.5.
+        let shifted: Vec<usize> = reb.iter().map(|&i| i - k).collect();
+        let m_fixed = compute_metrics(&out_nav, &out_dates, &shifted, &bench);
+        assert!(
+            (m_fixed.win_rate - 0.5).abs() < 1e-12,
+            "shifted win rate expected 0.5, got {}",
+            m_fixed.win_rate
+        );
+
+        // Buggy (unshifted): boundaries [4, 5] → period 1 = nav[1..5] =
+        // -1%, period 2 = nav[5..6] = 0% → both losses → win rate 0.0.
+        let m_bug = compute_metrics(&out_nav, &out_dates, &reb, &bench);
+        assert!(
+            (m_bug.win_rate - 0.0).abs() < 1e-12,
+            "unshifted win rate expected 0.0, got {}",
+            m_bug.win_rate
+        );
     }
 
     /// Metrics: empty and single-point series return zeros without panic;
@@ -1021,6 +1138,29 @@ mod tests {
             ..BacktestParams::default()
         };
         assert!(run_backtest(&p2, &reader).is_err());
+
+        // Degenerate params → Err (review #154 MINOR): hold_days=0 and
+        // out-of-range cost would produce nonsense NAVs.
+        let p3 = BacktestParams {
+            hold_days: 0,
+            ..BacktestParams::default()
+        };
+        let e3 = run_backtest(&p3, &reader).expect_err("hold_days=0 rejected");
+        assert!(
+            format!("{e3:?}").contains("hold_days"),
+            "error mentions hold_days, got {e3:?}"
+        );
+        for bad_cost in [-0.1, 1.0, f64::NAN] {
+            let p4 = BacktestParams {
+                cost: bad_cost,
+                ..BacktestParams::default()
+            };
+            let e4 = run_backtest(&p4, &reader).expect_err("bad cost rejected");
+            assert!(
+                format!("{e4:?}").contains("cost"),
+                "error mentions cost, got {e4:?}"
+            );
+        }
     }
 
     /// Integration: missing parquet (empty fixture) with explicit end →

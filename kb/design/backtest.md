@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS backtest_result (
 | 基准成员资格 | 期初固定 / 当日收盘市值逐日更新 | 当日收盘市值排名（日 t 成员吃日 t 收益） | 多数指数代理同此惯例；简单无需成员快照表 | 期初固定需历史成员数据（不可得）；注意此为基准自身轻微 look-ahead，非策略问题 |
 | 交易成本 | 零成本 / 统一单边 0.1% | 统一 0.1% 单边（买入/卖出各收，参数化） | 反映实际摩擦成本，参数可调 | 零成本高估策略收益，掩盖换仓频率影响 |
 | backtest_result 表结构 | 存每日持仓明细 / 只存每日净值 | PK(trade_date) + strategy_nav/benchmark_nav/update_date | 净值曲线足够支撑绩效复盘与画图；明细体积大且可重算 | 明细持久化无查询需求，徒增表体积 |
-| 写回方式 | 按窗口整体 REPLACE / range DELETE + append | range DELETE `WHERE trade_date BETWEEN start AND end` + `dolt table import -a` | 幂等重跑（同窗口重跑行数不增）；与 sepa.rs 两段式模式一致 | REPLACE 需整表转义；range 精确限定窗口避免误删窗口外历史 |
+| 写回方式 | 按窗口整体 REPLACE / range DELETE + append | 全表 DELETE + `dolt table import -a` | `backtest_result` 是单一回测快照表（PK trade_date）——每次运行替换整条曲线，改 `--start` 重跑不会残留旧窗口行（review #154 修正：原 range DELETE 使不同窗口的运行在表内混存，语义混乱） | REPLACE 需整表转义；range DELETE 在窗口平移时残留 stale rows |
 | CLI 参数 | 配置文件 / 命令行 flag | 全部走 clap flag（start/end/top/days/cost/csv） | 回测是一次性分析命令，参数即用即传；配置文件适合长期运行任务 | config 键为重复运行场景设计，回测频率低不值得加键 |
 | SEPA 类型序列化 | 给 compass-types 加 serde 派生 / 手写 CSV 提取 | 手写提取字段（equity_csv 等） | 加 serde 违反既有"不加 serde"契约（lib.rs 文档化），且波及 GUI 依赖 | serde 派生改动公共类型面，影响面超出回测需求 |
 | 已知 PIT 偏差 | 构建历史快照 fixture / 接受限制并标注 | 接受概念成员/ST 当前快照偏差，报告中标注 | 构建 PIT 快照需历史版本数据（不可得或成本极高）；窗口 2025 起偏差可控 | PIT fixture 是重型工程，收益与成本不匹配 |

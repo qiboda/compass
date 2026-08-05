@@ -61,7 +61,7 @@ pub fn run_backtest_cli(
         .last()
         .map(|p| p.trade_date)
         .unwrap_or(params.start);
-    write_back_result(dolt_dir, &result.points, params.start, window_end)?;
+    write_back_result(dolt_dir, &result.points, window_end)?;
     Ok(())
 }
 
@@ -98,24 +98,21 @@ fn print_summary(result: &compass_strategy::sepa::backtest::BacktestResult) {
     println!("annualized excess: {:.2}%", m.annualized_excess * 100.0);
 }
 
-/// Two-stage write-back of the equity curve (issue #154 decision 7): range
-/// DELETE `[start..end]` then append CSV via `dolt table import -a`.
+/// Two-stage write-back of the equity curve (issue #154 decision 7): full
+/// DELETE then append CSV via `dolt table import -a`. `backtest_result` is a
+/// single-run snapshot table (PK trade_date) — each run replaces the whole
+/// curve so windows from earlier runs with a different `--start` cannot
+/// accumulate stale rows.
 fn write_back_result(
     dolt_dir: &Path,
     points: &[compass_strategy::sepa::backtest::EquityPoint],
-    start: NaiveDate,
     end: NaiveDate,
 ) -> Result<(), Box<dyn Error>> {
     let today = Utc::now().date_naive();
 
     dolt_sql(dolt_dir, BACKTEST_SCHEMA)?;
     dolt_sql(dolt_dir, crate::sepa::UPDATES_SCHEMA)?;
-    dolt_sql(
-        dolt_dir,
-        &format!(
-            "DELETE FROM backtest_result WHERE trade_date >= '{start}' AND trade_date <= '{end}'"
-        ),
-    )?;
+    dolt_sql(dolt_dir, "DELETE FROM backtest_result")?;
 
     if points.is_empty() {
         return Ok(());
@@ -214,13 +211,12 @@ mod tests {
         setup_dolt(dir.path());
 
         let pts = points_fixture();
-        let start = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
         let end = NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap();
-        write_back_result(dir.path(), &pts, start, end).expect("write");
+        write_back_result(dir.path(), &pts, end).expect("write");
 
         assert_eq!(table_count(dir.path(), "backtest_result"), 2);
         // Idempotent rerun: range DELETE + import keeps the count stable.
-        write_back_result(dir.path(), &pts, start, end).expect("rewrite");
+        write_back_result(dir.path(), &pts, end).expect("rewrite");
         assert_eq!(table_count(dir.path(), "backtest_result"), 2);
 
         let upsert = upsert_row(dir.path(), "backtest_result");
@@ -247,28 +243,26 @@ mod tests {
         let _lock = dolt_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         setup_dolt(dir.path());
-        let start = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
         let end = NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap();
-        write_back_result(dir.path(), &[], start, end).expect("empty ok");
+        write_back_result(dir.path(), &[], end).expect("empty ok");
         assert_eq!(table_count(dir.path(), "backtest_result"), 0);
     }
 
-    /// Range DELETE clears rows outside the current points window on rerun.
+    /// Full-table replace: a second write with a narrower curve leaves only
+    /// the new rows (earlier windows do not accumulate).
     #[test]
-    fn write_back_result_range_delete() {
+    fn write_back_result_full_replace() {
         let _lock = dolt_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         setup_dolt(dir.path());
 
         let pts = points_fixture();
-        let start = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
         let end = NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap();
-        write_back_result(dir.path(), &pts, start, end).expect("first write");
 
-        // Second write with a narrower window (only the first point): the
-        // second day's row must be deleted by the range DELETE.
+        // Second write with a narrower curve (only the first point): the
+        // second day's row must be gone — the table holds only the new run.
         let narrow = vec![pts[0].clone()];
-        write_back_result(dir.path(), &narrow, start, end).expect("narrow write");
+        write_back_result(dir.path(), &narrow, end).expect("narrow write");
         assert_eq!(table_count(dir.path(), "backtest_result"), 1);
     }
 
