@@ -23,8 +23,12 @@ pub struct ChartCitizen {
     /// MA/BOLL overlay indicator registry, computed from the current bars.
     registry: IndicatorRegistry,
     /// Fingerprint of the bars the registry was last computed for:
-    /// (symbol, bar count, first bar time, last bar time).
-    cache_key: Option<(String, usize, i64, i64)>,
+    /// (symbol, bar count, first bar time, last bar time, last close bits).
+    /// The last-close guard catches price revisions inside an unchanged
+    /// date window — e.g. a 前复权 re-adjustment after a dividend rewrites
+    /// every price while keeping the count and first/last timestamps the
+    /// same — so a re-fetch cannot serve stale overlay values.
+    cache_key: Option<(String, usize, i64, i64, u64)>,
 }
 
 impl Citizen for ChartCitizen {
@@ -72,9 +76,9 @@ impl ChartCitizen {
     /// the egui-charts widget — or an empty-state guide when no bars exist.
     ///
     /// The MA/BOLL overlay is recomputed only when the bar series fingerprint
-    /// (symbol, bar count, first/last bar timestamps) changes, and its colors
-    /// are re-applied from the theme every frame. A custom second legend row
-    /// is painted over the chart's top-left corner.
+    /// (symbol, bar count, first/last bar timestamps, last close) changes,
+    /// and its colors are re-applied from the theme every frame. A custom
+    /// second legend row is painted over the chart's top-left corner.
     pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, app_theme: &CompassTheme) {
         app_theme.apply_to_chart(&mut self.chart);
         self.chart.set_symbol(&state.symbol.get());
@@ -99,6 +103,7 @@ impl ChartCitizen {
             bars.len(),
             bars[0].time.timestamp(),
             bars[bars.len() - 1].time.timestamp(),
+            bars[bars.len() - 1].close.to_bits(),
         ));
         if fingerprint != self.cache_key {
             self.registry.calculate_all(&bars);
@@ -132,8 +137,10 @@ impl ChartCitizen {
     ///
     /// Reads the indicator values on the last visible bar and draws a
     /// translucent chip (`bg_panel_alt` at 85% alpha, 1px `border_strong`
-    /// stroke, `radius.sm`) with one mono 12px segment per line. Warmup
-    /// values show "—". Purely decorative: it does not consume input.
+    /// stroke, `radius.sm`) with one mono 12px value per MA line plus a
+    /// joined three-value BOLL item, separated from the MA group by a 1px
+    /// `border_strong` divider. Warmup values show "—". Purely decorative:
+    /// it does not consume input.
     fn draw_indicator_legend(
         &self,
         ui: &egui::Ui,
@@ -149,41 +156,99 @@ impl ChartCitizen {
             return;
         };
 
-        let names = first.line_names();
-        let line_colors = first.colors();
-        let font_id = egui::FontId::monospace(tokens.typography.mono);
-        let painter = ui.painter_at(response.rect);
-
-        // One text segment per line (label + value), with a "│" separator
-        // between the MA group and the BOLL group.
-        let mut segments: Vec<(String, Color32)> = Vec::with_capacity(9);
-        for (i, name) in names.iter().enumerate() {
-            if i == 5 {
-                segments.push(("│".to_owned(), tokens.color.text_secondary));
-            }
-            let value = if values[i].is_nan() {
-                "—".to_owned()
-            } else {
-                format!("{:.2}", values[i])
-            };
-            segments.push((format!("{name} {value}"), line_colors[i]));
+        /// One legend atom: a text run or the MA↔BOLL group divider.
+        enum Segment {
+            Text(egui::FontId, Color32, String),
+            Divider,
         }
 
-        let spacing = tokens.spacing.sm;
+        let line_colors = first.colors();
+        let label_font = egui::FontId::proportional(tokens.typography.caption);
+        let mono_font = egui::FontId::monospace(tokens.typography.mono);
+        let painter = ui.painter_at(response.rect);
+
+        // Vendored format_price rule (labels.rs): ≥100 → 2 decimals, ≥1 → 4,
+        // <1 → 6, keeping the legend aligned with the OHLC legend precision.
+        let format_price = |price: f64| -> String {
+            if price >= 100.0 {
+                format!("{price:.2}")
+            } else if price >= 1.0 {
+                format!("{price:.4}")
+            } else {
+                format!("{price:.6}")
+            }
+        };
+        let format_value =
+            |v: &f64| -> String { if v.is_nan() { "—".to_owned() } else { format_price(*v) } };
+
+        // Segment list with the gap to advance after each one: MA items are
+        // caption labels (text_secondary) + mono values in the line color,
+        // spaced by spacing.sm; the BOLL group is one "BOLL" label + the
+        // three slate values joined by " / "; a 1px divider with spacing.md
+        // on each side sits between the groups.
+        let names = first.line_names();
+        let ma_names = &names[..5];
+        let mut segments: Vec<Segment> = Vec::with_capacity(ma_names.len() * 2 + 3);
+        let mut gaps: Vec<f32> = Vec::with_capacity(segments.capacity());
+        let space = painter
+            .layout_no_wrap(" ".to_owned(), label_font.clone(), Color32::WHITE)
+            .size()
+            .x;
+        for (i, name) in ma_names.iter().enumerate() {
+            segments.push(Segment::Text(
+                label_font.clone(),
+                tokens.color.text_secondary,
+                name.clone(),
+            ));
+            gaps.push(space);
+            segments.push(Segment::Text(
+                mono_font.clone(),
+                line_colors[i],
+                format_value(&values[i]),
+            ));
+            gaps.push(if i == ma_names.len() - 1 {
+                tokens.spacing.md
+            } else {
+                tokens.spacing.sm
+            });
+        }
+        segments.push(Segment::Divider);
+        gaps.push(tokens.spacing.md);
+        segments.push(Segment::Text(
+            label_font.clone(),
+            tokens.color.text_secondary,
+            "BOLL".to_owned(),
+        ));
+        gaps.push(space);
+        segments.push(Segment::Text(
+            mono_font.clone(),
+            line_colors[5],
+            [&values[5], &values[6], &values[7]]
+                .iter()
+                .map(|v| format_value(v))
+                .collect::<Vec<_>>()
+                .join(" / "),
+        ));
+        gaps.push(0.0);
+
+        const DIVIDER_WIDTH: f32 = 1.0;
         let mut total_width = 0.0f32;
         let mut widths = Vec::with_capacity(segments.len());
-        for (text, color) in &segments {
-            let width = painter
-                .layout_no_wrap(text.clone(), font_id.clone(), *color)
-                .size()
-                .x;
+        for segment in &segments {
+            let width = match segment {
+                Segment::Text(font, color, text) => painter
+                    .layout_no_wrap(text.clone(), font.clone(), *color)
+                    .size()
+                    .x,
+                Segment::Divider => DIVIDER_WIDTH,
+            };
             widths.push(width);
             total_width += width;
         }
-        total_width += spacing * (segments.len() as f32 - 1.0);
+        total_width += gaps.iter().sum::<f32>();
 
         let row_height = painter
-            .layout_no_wrap("Ag".to_owned(), font_id.clone(), Color32::WHITE)
+            .layout_no_wrap("Ag".to_owned(), mono_font.clone(), Color32::WHITE)
             .size()
             .y;
         let padding = egui::vec2(6.0, 4.0);
@@ -208,15 +273,29 @@ impl ChartCitizen {
 
         let mut x = chip.min.x + padding.x;
         let y = chip.min.y + padding.y;
-        for ((text, color), width) in segments.iter().zip(widths) {
-            painter.text(
-                egui::pos2(x, y),
-                egui::Align2::LEFT_TOP,
-                text.clone(),
-                font_id.clone(),
-                *color,
-            );
-            x += width + spacing;
+        for ((segment, gap), width) in segments.iter().zip(&gaps).zip(widths) {
+            match segment {
+                Segment::Text(font, color, text) => {
+                    painter.text(
+                        egui::pos2(x, y),
+                        egui::Align2::LEFT_TOP,
+                        text.clone(),
+                        font.clone(),
+                        *color,
+                    );
+                }
+                Segment::Divider => {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            egui::pos2(x, chip.min.y + padding.y),
+                            egui::vec2(DIVIDER_WIDTH, row_height),
+                        ),
+                        egui::CornerRadius::ZERO,
+                        tokens.color.border_strong,
+                    );
+                }
+            }
+            x += width + gap;
         }
     }
 }
