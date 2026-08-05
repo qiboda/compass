@@ -470,7 +470,7 @@ impl eframe::App for CompassApp {
                 self.modal.set_confirm_text("知道了");
                 self.modal.set_cancel_text("取消");
                 self.modal.set_on_confirm(|| {});
-                self.modal.open();
+                self.modal.open(ui.ctx().input(|i| i.time));
             }
         }
 
@@ -761,7 +761,9 @@ impl CompassApp {
                 SidebarEvent::Select { symbol } => self.fetch_symbol(&symbol),
                 SidebarEvent::Search(_) => {}
                 SidebarEvent::Add => self.add_to_watchlist(&current_symbol),
-                SidebarEvent::DeleteRequest { symbol } => self.request_watchlist_removal(&symbol),
+                SidebarEvent::DeleteRequest { symbol } => {
+                    self.request_watchlist_removal(ui.ctx().input(|i| i.time), &symbol)
+                }
             }
         }
     }
@@ -801,7 +803,10 @@ impl CompassApp {
     /// Open the danger confirm modal for removing `symbol` from the watchlist
     /// (design §6.5 scenario 3). The confirm callback only flips a shared
     /// flag; the actual removal runs after [`Modal::show`] in `ui()`.
-    fn request_watchlist_removal(&mut self, symbol: &str) {
+    ///
+    /// `now` is the current egui virtual time in seconds
+    /// (`ctx.input(|i| i.time)`), stamped as the modal's entry-animation start.
+    fn request_watchlist_removal(&mut self, now: f64, symbol: &str) {
         if self.pending_delete.as_deref() == Some(symbol) && self.modal.is_open() {
             return;
         }
@@ -817,7 +822,7 @@ impl CompassApp {
         self.modal.set_on_confirm(move || {
             *confirmed.borrow_mut() = true;
         });
-        self.modal.open();
+        self.modal.open(now);
     }
 
     /// Handle a log-export save path: write the shared log entries and toast
@@ -1740,11 +1745,10 @@ default_timeframe = "1w"
         harness.run_steps(3);
 
         // Dismiss the startup data-missing modal so its backdrop stops
-        // blocking clicks (the 100 ms fade is completed explicitly).
+        // blocking clicks (the 100 ms fade completes within one 0.25 s step
+        // of egui virtual time).
         harness.get_by_label("知道了").click();
         harness.step();
-        harness.state_mut().modal.close_started =
-            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
         harness.step();
         assert!(!harness.state().modal.is_open());
 
@@ -1955,10 +1959,9 @@ default_timeframe = "1w"
         delete_buttons.remove(0).click();
         harness.step();
 
-        // Danger confirm modal (design §6.5 scenario 3). The entry scale
-        // animation breaks hit-testing while running, so complete it first.
-        harness.state_mut().modal.open_started =
-            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        // Danger confirm modal (design §6.5 scenario 3). One 0.25 s step
+        // completes the 120/150 ms entry animation (egui virtual time) so
+        // hit-testing is restored.
         harness.step();
         let _ = harness.get_by_label("移除自选");
         assert!(harness.state().modal.is_open());
@@ -2002,8 +2005,8 @@ default_timeframe = "1w"
         let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
         delete_buttons.remove(0).click();
         harness.step();
-        harness.state_mut().modal.open_started =
-            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        // One 0.25 s step completes the entry animation so the Cancel button
+        // is clickable.
         harness.step();
         harness.get_by_label("保留").click();
         harness.step();
@@ -2017,9 +2020,8 @@ default_timeframe = "1w"
             harness.state().modal.closing,
             "cancel must start the modal closing animation"
         );
-        // Complete the fade: the pending delete is cleared without confirm.
-        harness.state_mut().modal.close_started =
-            Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        // Complete the fade: the pending delete is cleared without confirm
+        // (one 0.25 s step > the 100 ms close fade).
         harness.step();
         assert!(!harness.state().modal.is_open());
         assert!(
