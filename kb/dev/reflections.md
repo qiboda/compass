@@ -288,16 +288,16 @@
 2. review-work 的 `unspecified-high` category 在本环境（opencode task 工具）不存在，QA/Context lane 改用 `general` agent 替代（同能力，非流程偏差）。
 
 **Lessons learned**:
-1. **提交前验证必须完整执行三件套**——fmt 违规只有 `cargo fmt --check` 能抓到（clippy 不检查格式、编译不报错），且最易被遗漏。已建 issue #187 排期：pre-commit hook 增加 cargo fmt 检查（与现有 Python ruff 检查同构），从"文档规则"升级为"执行侧硬钩子"。
+1. **提交前验证必须完整执行三件套**——fmt 违规只有 `cargo fmt --check` 能抓到（clippy 不检查格式、编译不报错），且最易被遗漏。已建 issue 排期（#182，由 #154 反思先行创建，#187 因重复合并关闭）：pre-commit hook 增加 cargo fmt 检查（与现有 Python ruff 检查同构），从"文档规则"升级为"执行侧硬钩子"。
 2. **review-work 独立 QA lane 的查漏价值再次证实**（ref #139 六轮 review 驱动、本次 2 轮）：实现者自查有盲区（fmt、失真注释、陈旧文档），独立 lane 能抓到——review 不是流程仪式而是质量防线。
 3. **环境差异适配**：本环境 task 工具无 `unspecified-high` category，review-work 的 QA/Context lane 用 `general` 替代即同能力。
 
 **Process improvements**:
-- proposed (ref #187)：`.githooks/pre-commit` 增加 Rust fmt 检查（暂存区含 .rs 变更时 `cargo fmt --check`），与现有 Python ruff 检查同构
+- proposed (ref #182)：`.githooks/pre-commit` 增加 Rust fmt 检查（暂存区含 .rs 变更时 `cargo fmt --check`），与现有 Python ruff 检查同构（#187 为重复 issue 已合并关闭）
 - 已落实：reflections.md:43 过时教训（回拨时间戳 workaround 推荐）标注已被 #168/#171 取代——文档与代码同步更新
 
 ### Trends (last 10)
-- **「文档已固化但未遵守」第三次复发**（ref #96 → #104 → 本次 fmt 三件套遗漏）：AGENTS.md 规则写入 ≠ 行为固化，执行侧必须 hook/CI 硬性钩子兜底——#187 已排期 pre-commit fmt 检查，正是该模式的针对性固化
+- **「文档已固化但未遵守」第三次复发**（ref #96 → #104 → 本次 fmt 三件套遗漏）：AGENTS.md 规则写入 ≠ 行为固化，执行侧必须 hook/CI 硬性钩子兜底——#182 已排期 pre-commit fmt 检查（#154/#171 两次独立反思指向同一需求），正是该模式的针对性固化
 - **review 驱动修复循环持续有效**（ref #139 六轮 review、本次 2 轮）：独立 QA lane 能发现实现者自查遗漏（fmt 违规、失真注释、陈旧文档）——review 独立性是质量防线，不可省略
 - **同根因模式复用成效**（toast #168 → modal #171）：排查卡 + 决策记录 + 测试模式的先例复用使本次修复风险低、周期短——工具链排查卡沉淀是跨 issue 复利
 
