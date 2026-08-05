@@ -1,8 +1,11 @@
+use crate::citizens::indicators::MaBollIndicator;
 use crate::state::SharedState;
 use crate::theme::CompassTheme;
 use compass_ui::widgets::empty_state::EmptyState;
+use egui::Color32;
 use egui_charts::ChartType;
 use egui_charts::model::BarData;
+use egui_charts::studies::{IndicatorRegistry, IndicatorValue};
 use egui_charts::widget::Chart;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 
@@ -17,6 +20,11 @@ pub struct ChartCitizen {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
     chart: Chart,
+    /// MA/BOLL overlay indicator registry, computed from the current bars.
+    registry: IndicatorRegistry,
+    /// Fingerprint of the bars the registry was last computed for:
+    /// (symbol, bar count, first bar time, last bar time).
+    cache_key: Option<(String, usize, i64, i64)>,
 }
 
 impl Citizen for ChartCitizen {
@@ -46,10 +54,14 @@ impl ChartCitizen {
         chart.set_chart_type(ChartType::Candles);
         chart.set_visible_bars(100);
         chart.set_timeframe_label("1d");
+        let mut registry = IndicatorRegistry::new();
+        registry.add(Box::new(MaBollIndicator::new()));
         Self {
             citizen_id,
             citizen_state,
             chart,
+            registry,
+            cache_key: None,
         }
     }
 
@@ -58,6 +70,11 @@ impl ChartCitizen {
     /// Applies `app_theme` chart colors (candles, grid, crosshair) each
     /// frame, reads `bars` from shared state, and delegates rendering to
     /// the egui-charts widget — or an empty-state guide when no bars exist.
+    ///
+    /// The MA/BOLL overlay is recomputed only when the bar series fingerprint
+    /// (symbol, bar count, first/last bar timestamps) changes, and its colors
+    /// are re-applied from the theme every frame. A custom second legend row
+    /// is painted over the chart's top-left corner.
     pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, app_theme: &CompassTheme) {
         app_theme.apply_to_chart(&mut self.chart);
         self.chart.set_symbol(&state.symbol.get());
@@ -74,9 +91,133 @@ impl ChartCitizen {
             return;
         }
 
+        // Recompute indicators only when the series actually changed; the
+        // symbol is part of the fingerprint so switching to a symbol with
+        // identical bar shapes cannot serve stale values.
+        let fingerprint = Some((
+            state.symbol.get(),
+            bars.len(),
+            bars[0].time.timestamp(),
+            bars[bars.len() - 1].time.timestamp(),
+        ));
+        if fingerprint != self.cache_key {
+            self.registry.calculate_all(&bars);
+            self.cache_key = fingerprint;
+        }
+
         self.chart.update_data(BarData::from_bars(bars));
         self.chart.set_timeframe_label(&state.timeframe.get());
-        self.chart.show(ui);
+
+        // Theme indicator colors are applied every frame so a theme switch
+        // recolors the overlay immediately (tokens are the single source).
+        let indicator = &app_theme.tokens().color.indicator;
+        if let Some(first) = self.registry.indicators_mut().first_mut() {
+            first.set_colors(vec![
+                indicator.ma5,
+                indicator.ma10,
+                indicator.ma60,
+                indicator.ma120,
+                indicator.ma250,
+                indicator.bb_upper,
+                indicator.bb_middle,
+                indicator.bb_lower,
+            ]);
+        }
+
+        let response = self.chart.show_with_indicators(ui, None, Some(&self.registry));
+        self.draw_indicator_legend(ui, response, app_theme.tokens());
+    }
+
+    /// Paints the static MA/BOLL legend row below the vendored OHLC legend.
+    ///
+    /// Reads the indicator values on the last visible bar and draws a
+    /// translucent chip (`bg_panel_alt` at 85% alpha, 1px `border_strong`
+    /// stroke, `radius.sm`) with one mono 12px segment per line. Warmup
+    /// values show "—". Purely decorative: it does not consume input.
+    fn draw_indicator_legend(
+        &self,
+        ui: &egui::Ui,
+        response: egui::Response,
+        tokens: &compass_ui::tokens::ThemeTokens,
+    ) {
+        let (_, end) = self.chart.state.visible_range();
+        let Some(first) = self.registry.indicators().first() else {
+            return;
+        };
+        let Some(IndicatorValue::Multiple(values)) = first.values().get(end.saturating_sub(1))
+        else {
+            return;
+        };
+
+        let names = first.line_names();
+        let line_colors = first.colors();
+        let font_id = egui::FontId::monospace(tokens.typography.mono);
+        let painter = ui.painter_at(response.rect);
+
+        // One text segment per line (label + value), with a "│" separator
+        // between the MA group and the BOLL group.
+        let mut segments: Vec<(String, Color32)> = Vec::with_capacity(9);
+        for (i, name) in names.iter().enumerate() {
+            if i == 5 {
+                segments.push(("│".to_owned(), tokens.color.text_secondary));
+            }
+            let value = if values[i].is_nan() {
+                "—".to_owned()
+            } else {
+                format!("{:.2}", values[i])
+            };
+            segments.push((format!("{name} {value}"), line_colors[i]));
+        }
+
+        let spacing = tokens.spacing.sm;
+        let mut total_width = 0.0f32;
+        let mut widths = Vec::with_capacity(segments.len());
+        for (text, color) in &segments {
+            let width = painter
+                .layout_no_wrap(text.clone(), font_id.clone(), *color)
+                .size()
+                .x;
+            widths.push(width);
+            total_width += width;
+        }
+        total_width += spacing * (segments.len() as f32 - 1.0);
+
+        let row_height = painter
+            .layout_no_wrap("Ag".to_owned(), font_id.clone(), Color32::WHITE)
+            .size()
+            .y;
+        let padding = egui::vec2(6.0, 4.0);
+        let chip = egui::Rect::from_min_size(
+            response.rect.min + egui::vec2(40.0, 30.0),
+            egui::vec2(total_width + padding.x * 2.0, row_height + padding.y * 2.0),
+        );
+
+        let bg = Color32::from_rgba_unmultiplied(
+            tokens.color.bg_panel_alt.r(),
+            tokens.color.bg_panel_alt.g(),
+            tokens.color.bg_panel_alt.b(),
+            218,
+        );
+        painter.rect_filled(chip, tokens.radius.sm, bg);
+        painter.rect_stroke(
+            chip,
+            tokens.radius.sm,
+            egui::Stroke::new(1.0, tokens.color.border_strong),
+            egui::StrokeKind::Inside,
+        );
+
+        let mut x = chip.min.x + padding.x;
+        let y = chip.min.y + padding.y;
+        for ((text, color), width) in segments.iter().zip(widths) {
+            painter.text(
+                egui::pos2(x, y),
+                egui::Align2::LEFT_TOP,
+                text.clone(),
+                font_id.clone(),
+                *color,
+            );
+            x += width + spacing;
+        }
     }
 }
 
@@ -85,6 +226,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use egui_charts::model::Bar;
+    use egui_charts::studies::IndicatorValue;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
 
@@ -169,6 +311,118 @@ mod tests {
         assert!(
             harness.query_by_label("暂无图表数据").is_none(),
             "chart must render instead of the empty state when bars exist"
+        );
+    }
+
+    /// Helper: bars with ascending closes starting at `base` over `count`
+    /// consecutive days anchored at `start`.
+    fn series(start: chrono::DateTime<Utc>, base: f64, count: usize) -> Vec<Bar> {
+        (0..count)
+            .map(|i| {
+                let c = base + i as f64;
+                make_bar(
+                    start + chrono::Duration::days(i as i64),
+                    c,
+                    c + 2.0,
+                    c - 2.0,
+                    c,
+                    1000.0,
+                )
+            })
+            .collect()
+    }
+
+    /// With bars loaded, the registry carries hand-checkable MA5/MA10/BOLL
+    /// values on the last visible bar (MA60+ still in warmup → NaN placeholders
+    /// so the vendored renderer warms each line up independently).
+    #[test]
+    fn show_with_bars_computes_ma_and_boll_values() {
+        let id = CitizenId::new("chart");
+        let state = CitizenState::new();
+        let mut citizen = ChartCitizen::new(id, state);
+
+        // 20 bars, closes 1..=20.
+        let start = Utc::now();
+        let bars = series(start, 1.0, 20);
+
+        let shared = SharedState::new("000001", "1d");
+        shared.bars.set(bars);
+        let theme = CompassTheme::compass_dark();
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                citizen.show(ui, &shared, &theme);
+            });
+            harness.run();
+        }
+
+        let (_, end) = citizen.chart.state.visible_range();
+        assert_eq!(end, 20, "all 20 bars are visible");
+        let values = citizen.registry.indicators()[0].values();
+        let IndicatorValue::Multiple(v) = &values[end - 1] else {
+            panic!("expected Multiple values on the last bar");
+        };
+        assert_eq!(v.len(), 8, "5 MA lines + 3 BOLL lines");
+        // MA5(19) = mean(16..=20) = 18.0; MA10(19) = mean(11..=20) = 15.5.
+        assert!((v[0] - 18.0).abs() < 1e-9, "MA5 = 18.0, got {}", v[0]);
+        assert!((v[1] - 15.5).abs() < 1e-9, "MA10 = 15.5, got {}", v[1]);
+        for &(i, label) in &[(2, "MA60"), (3, "MA120"), (4, "MA250")] {
+            assert!(
+                v[i].is_nan(),
+                "{label} must still warm up with only 20 bars (NaN placeholder)"
+            );
+        }
+        // BOLL(20, 2.0) at the last bar: window 1..=20 → mid 10.5, population
+        // stddev sqrt(33.25), bands = mid ± 2·std.
+        let std = (33.25f64).sqrt();
+        assert!((v[5] - (10.5 + 2.0 * std)).abs() < 1e-9, "BOLL upper");
+        assert!((v[6] - 10.5).abs() < 1e-9, "BOLL middle");
+        assert!((v[7] - (10.5 - 2.0 * std)).abs() < 1e-9, "BOLL lower");
+    }
+
+    /// Switching symbols must recompute the indicator even when the new bars
+    /// share the exact cache fingerprint (same len, same first/last times) —
+    /// the symbol is part of the cache key, guarding against stale values.
+    #[test]
+    fn show_recomputes_indicator_values_on_symbol_change_same_fingerprint() {
+        let id = CitizenId::new("chart");
+        let state = CitizenState::new();
+        let mut citizen = ChartCitizen::new(id, state);
+
+        let start = Utc::now();
+        let bars_a = series(start, 1.0, 10);
+        let bars_b = series(start, 101.0, 10);
+        let theme = CompassTheme::compass_dark();
+
+        let shared_a = SharedState::new("600001", "1d");
+        shared_a.bars.set(bars_a);
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                citizen.show(ui, &shared_a, &theme);
+            });
+            harness.run();
+        }
+
+        let shared_b = SharedState::new("600002", "1d");
+        shared_b.bars.set(bars_b);
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                citizen.show(ui, &shared_b, &theme);
+            });
+            harness.run();
+        }
+
+        let (_, end) = citizen.chart.state.visible_range();
+        let values = citizen.registry.indicators()[0].values();
+        let IndicatorValue::Multiple(v) = &values[end - 1] else {
+            panic!("expected Multiple values on the last bar");
+        };
+        // closes 101..=110 → MA5 of last bar = mean(106..=110) = 108.0.
+        // A cache key without the symbol would reuse the stale 8.0 from bars_a.
+        assert!(
+            (v[0] - 108.0).abs() < 1e-9,
+            "MA5 must be recomputed for the new symbol, got {}",
+            v[0]
         );
     }
 }
