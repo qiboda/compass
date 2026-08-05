@@ -758,3 +758,32 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **"宣布完成"与"实际收尾"不一致反复出现**（ref #117 push 后漏 comment/close、ref #119 合并后反思被迫 reopen + 过度声称 #121/#122、本次 plan 完成声明过早）：收尾核验（evidence/台账/审查/comment）与完成声明的绑定多次断裂——应把"完成定义"写进流程而非依赖自觉
 - **可前置验证的问题在 review/用户质疑阶段才暴露**（ref #139 F3 六轮 review、ref #163 门槛未实测、ref #172 覆盖率数字、本次 evidence 缺失与 design §4 偏差）：交付前自验证（对照 plan/design 逐条 + 产物落盘检查）是系统性短板
 - **全局语义变更的间接消费者审计缺失**（本次 export 继承前复权、ref #160 数据丢失事故同类）：行为变更影响面分析应覆盖间接调用链，不只直接调用者
+
+## 2026-08-05 — ref #185 docs: import 过滤参数帮助文本标注覆盖警示
+
+**What was done**: `import` 的 5 个过滤参数（`--symbols`/`--limit`/`--start-date`/`--end-date`/`--since`）帮助文本全部标注"过滤 + 覆盖整个 stock_daily.parquet、非增量"（`--since` 移除误导的 "Incremental" 字样并指向 `import-compass`）；同步 kb/user/cli.md 参数表 + architecture.md 决策记录（修正"`import --since` 增量导入缓解"的错误表述）；新增回归测试 `import_filter_flags_help_warns_overwrite` 锁定 help 文本（RED→GREEN，禁止 "Incremental" 字样回归）。1 commit（c3b1b48）。
+
+**User corrections**（逐字引用对话记录）:
+1. 「所以这个代码逻辑上，没有问题？」—— 我初判"只有帮助文本有问题"，用户质疑后才深挖出两个真实问题：① symbols.txt 与 --since 过滤后的数据不一致（空壳符号）；② 全部过滤参数共享"过滤 + 覆盖全文件"路径，ref #159 只修了文档没修代码
+2. 「B，也看一下import 的其他过滤参数有用吗？」—— 选定 B 方案（移除 --since）并让我核查其他过滤参数——发现 --symbols/--limit/--start-date/--end-date 同样会覆盖全文件，只是文档没把它们标成增量
+3. 「算了，先不移除，标记一下就好。」—— 推翻 B 方案（移除参数），改为最小方案：保留全部参数、仅标注覆盖警示。理由：过滤参数有合法用途（构建子集），移除是过度反应
+4. 「仅帮助文本 + 文档（推荐）」—— question 确认不做运行时行为变更
+
+**What went wrong**:
+1. **初判"逻辑没问题"过早**：只看了帮助文本与 `--since` 一处，未审视全部过滤参数共享的执行路径（WHERE 过滤 → 原子覆盖）和 symbols.txt 一致性——用户两次追问才深挖到真实缺陷。分析深度不足，被用户引导到正确方向。
+2. **commit-msg hook 拦截 `ref #159`**：首版 commit message 正文写 "ref #159 data-loss incident"（#159 已关闭）被 hook 拒——AGENTS.md 已明确"叙述性引用已关闭/合并 issue 用 #N 不带 ref 前缀"（ref #172 教训），仍犯。重写 message 去掉 `ref` 前缀后通过。
+
+**Lessons learned**:
+1. **"有问题吗？"类问题要审全部共享路径，不只最显眼一处**——过滤参数共享同一条执行路径时，一个参数的问题就是全部参数的问题；分析面 = 路径（WHERE 过滤 → 写入），不是参数个数。ref #159 修复"文档 4 处"时同样只改了显眼处、漏了 help 文本——同一盲区。
+2. **commit message 正文引用已关闭 issue 绝不写 `ref #N` 字面量**（AGENTS.md 已固化 ref #172 教训，本次复犯）：写 commit message 前先 `gh issue view <N> --jq .state` 确认 OPEN，或一律用不带 ref 前缀的 `#N` 叙述。
+3. **用户推翻方案是正常迭代，不是失败**——B→标记 的转变说明"先给完整选项（移除 vs 保留+标记）再让用户决策"比单推一个方案好；分析时给出破坏性全景（本次发现全部参数都危险），决策权留给用户。
+
+**Process improvements**:
+- 已落实：回归测试 `import_filter_flags_help_warns_overwrite`（本 commit 内，禁 "Incremental" 字样 + 强制 5 参数 help 含 overwrite 警示）
+- 已落实：`kb/design/architecture.md` 决策记录修正"`--since` 增量导入缓解"错误表述
+- 建议固化（一次性教训，写入本条目）：docs/修复类工作的"全路径审视"与"commit message 引用 OPEN issue 检查"——后者已存在 AGENTS.md 规则，本条为执行层复犯记录
+
+### Trends (last 10)
+- **"只修显眼处、漏共享路径"盲区反复出现**（ref #159 修 4 处文档漏 help 文本、本次初判漏全部过滤参数 + symbols.txt）：共享执行路径的缺陷分析必须以路径为分析单位，逐一列出该路径上的所有入口/产物——修复面 = 路径覆盖，不是单点
+- **commit message 引用已关闭 issue 复犯**（ref #119 正文示例、ref #172 正文引用、本次 `ref #159` 字面量）：AGENTS.md 规则已存在但执行仍失守——hook 是最后防线（本次拦截成功）；写 message 时应主动 `gh issue view` 核验而非依赖 hook 拦截
+- **用户质疑是深挖缺陷的可靠信号**（本次"逻辑上没有问题？"触发全景审视、ref #174"plan 完成了？"触发收尾核验）：收到"确认性反问"时，默认自己漏了东西，先全景核查再回答
