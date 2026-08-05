@@ -3,7 +3,7 @@
 //! Runs the backtest engine ([`compass_strategy::sepa::backtest`]) over a
 //! historical window and writes the daily equity curve into the
 //! `backtest_result` Dolt table via the established two-stage pattern
-//! (range DELETE + `dolt table import -a`), registering `data_updates`.
+//! (full-table DELETE + `dolt table import -a`), registering `data_updates`.
 
 use std::error::Error;
 use std::path::Path;

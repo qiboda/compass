@@ -60,8 +60,8 @@ compass-data sepa backtest [--start YYYY-MM-DD] [--end YYYY-MM-DD]
 
 ## Dolt 写回
 
-`backtest_result` 表（PK trade_date），按窗口 range DELETE + `dolt table
-import -a` 追加（幂等可重跑），`data_updates` 同步登记：
+`backtest_result` 表（PK trade_date），全表 DELETE + `dolt table
+import -a` 追加（单快照替换、幂等可重跑），`data_updates` 同步登记：
 
 ```sql
 CREATE TABLE IF NOT EXISTS backtest_result (
@@ -84,6 +84,11 @@ CREATE TABLE IF NOT EXISTS backtest_result (
 - **基准成员资格 = 当日收盘市值**：日 t 的基准成员由日 t 收盘市值排名决定并
   吃掉日 t 收益——这是基准自身的轻微 look-ahead，多数指数代理同此惯例，属
   可接受口径而非策略问题（见决策记录）。
+- **计算成本（已知，接受）**：逐日调 `run_sepa` 每次独立重取 550 日窗口 +
+  6 张 SEPA 表（约 130 交易日窗口 ≈ 130 × 单日筛股成本，分钟级）；
+  `compute_benchmark_returns` 按 (日期 × 标的 × 序列长度) 线性扫描
+  （~250 × 6000 × 250 比较量级）。CLI 一次性分析场景可接受；若需加速，
+  将 `run_sepa` 拆分为 fetch + compute 并复用预取数据、基准排序用二分查找。
 
 ## 决策记录
 
