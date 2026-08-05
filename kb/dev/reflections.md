@@ -248,3 +248,29 @@
 ### Trends (last 10)
 - **"文档/流程规则存在但未执行"模式**（AGENTS.md 退役规则从未执行致 789 行、ref #185 的 commit-message 规则复犯）：规则写入 ≠ 行为固化——长文档应主动定期归档，规则执行依赖钩子/回归测试兜底
 - **文档重组的高风险 = 内容丢失**（ref #77 项目书重组、本次 570 行归档）：大文件重组必须脚本切分 + 逐行校验，校验逻辑（标题命中 + 行级包含）应在重组后立即执行而非目测
+## 2026-08-05 — ref #154 SEPA 回测系统：接续执行 + review 两轮修复
+
+**What was done**: 完成 SEPA 历史回测系统（引擎纯函数、run_backtest 编排、CLI 子命令、Dolt backtest_result 写回、文档同步），接续执行遗留 plan（Todo 5-6 + F1-F4）并修复 review 发现的 MAJOR off-by-one、真实数据重复行 bug、测试死锁、质量门禁缺口。
+
+**User corrections**: 无（本 session 用户仅状态查询"之前的plan执行完毕了吗？"与指令"继续"）。
+
+**What went wrong**:
+1. **Todo 1-4 提交时未过质量门禁**：clippy 8 错、rustdoc 2 错、fmt 未格式化、4 个测试函数在 `mod tests` 外（误导性缩进）——compass-workflow 规则 7"提交前本地验证"（cargo test + clippy + fmt）存在但未执行；pre-push 门禁要到 push 才触发，提交阶段零拦截
+2. **真实数据冒烟滞后**：`stock_daily.parquet` 指数代码混源（000905 等同日两行）导致回测荒谬收益（benchmark +41895%），直到 F3 冒烟才发现——数据级 bug 只能靠真实数据暴露，fixture 测试永远覆盖不到
+3. **review 发现 MAJOR off-by-one**：`simulate_portfolio` 的 rebalance 索引（full-calendar 坐标）未映射到 output-window 坐标 → 胜率/盈亏比系统性错误；现有集成测试因 cal_start 恰逢节假日（k=0）意外避开了触发场景
+4. **诊断失误**：误判"4 个 commit 缺 ref #154"（`git log --oneline` 只显示 subject 不含 body）→ 触发不必要的历史重写（虽无害，浪费步骤）
+
+**Lessons learned**:
+1. 每个实现 commit 提交前必须跑完整门禁（fmt --check + clippy -D warnings + rustdoc -D warnings），不能只跑 cargo test——pre-push 检查在 push 才生效，提交阶段需要自己的拦截
+2. 真实数据冒烟应前置到实现批次提交前——fixture 测试无法暴露数据级问题（重复行、symbol 格式、单位/口径）；数据/计算管线变更必须有真实数据验收（ref #139 数据终态证据同类）
+3. 索引/坐标空间转换必须显式映射并配回归测试；写测试时核对 fixture 是否真覆盖目标场景（本次现有测试因 k=0 巧合躲过 off-by-one）
+4. 检查 commit 是否含 ref #N 用完整 message（`git log --format=%B`），`--oneline` 只显示 subject
+
+**Process improvements**:
+- pre-commit hook 增加 `cargo fmt --check`（秒级快检查）——提交阶段拦截未格式化代码：proposed（hook 类，走 gate 建 issue）
+- compass-workflow 验证章节补充"真实数据冒烟在实现批次提交前"：直接更新 skill（文档类）
+
+### Trends (last 10)
+- **"完成声明先于验证"反复出现**（ref #160 review 前未走完 plan 波次、ref #174 "实现完成≠plan 完成"、本次提交未过门禁+冒烟滞后）：验证前置（提交前门禁 + 冒烟）是反复被"学到"但未固化的教训——应固化为提交时即执行的机制而非自觉
+- **真实数据验证是数据/计算管线的不可替代验收**（ref #139 数据终态证据、ref #159 import --since 事故、本次重复行 bug）：mock/fixture 测试全绿 ≠ 真实数据正确，数据管线变更的完成定义必须含真实数据冒烟
+- **review 是安全网但不应是唯一防线**（ref #139 六轮 review、本次 off-by-one 由 review 发现）：测试覆盖盲区（坐标空间、边界配置）应在 review 前自查——review 发现的缺陷常常是测试设计缺陷
