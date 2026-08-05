@@ -144,6 +144,12 @@ mod tests {
     use chrono::NaiveDate;
     use compass_strategy::sepa::backtest::{equity_csv, EquityPoint};
 
+    /// Serialise Dolt tests: dolt reads the process-global HOME, racing with
+    /// main.rs's HOME-mutating tests (sepa.rs test convention).
+    fn dolt_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::tests::ENV_MUTEX.lock().unwrap()
+    }
+
     fn setup_dolt(dir: &Path) {
         let init = Command::new("dolt")
             .arg("--data-dir")
@@ -199,6 +205,7 @@ mod tests {
     /// idempotent; data_updates registered with last_report_date = end.
     #[test]
     fn write_back_result_roundtrip() {
+        let _lock = dolt_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         setup_dolt(dir.path());
 
@@ -233,6 +240,7 @@ mod tests {
     /// Empty points: no import, no panic; data_updates untouched.
     #[test]
     fn write_back_result_empty() {
+        let _lock = dolt_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         setup_dolt(dir.path());
         let start = NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap();
@@ -244,6 +252,7 @@ mod tests {
     /// Range DELETE clears rows outside the current points window on rerun.
     #[test]
     fn write_back_result_range_delete() {
+        let _lock = dolt_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         setup_dolt(dir.path());
 
@@ -268,6 +277,7 @@ mod tests {
         use compass_core::data::parquet::ParquetReader;
         use duckdb::Connection;
 
+        let _lock = dolt_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let dolt_dir = tempfile::tempdir().expect("dolt tempdir");
         setup_dolt(dolt_dir.path());

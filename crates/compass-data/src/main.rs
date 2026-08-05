@@ -137,6 +137,27 @@ enum SepaCmd {
     },
     /// 计算市场温度计，写回 Dolt
     Temperature,
+    /// 历史批量回测：逐日重算评分，模拟 TOP-N 等权 N 日换仓策略
+    Backtest {
+        /// 回测窗口起始（默认 2025-01-01；YYYY-MM-DD）
+        #[arg(long)]
+        start: Option<String>,
+        /// 回测窗口结束（默认最新交易日；YYYY-MM-DD）
+        #[arg(long)]
+        end: Option<String>,
+        /// 持仓数量 TOP-N（默认 50）
+        #[arg(long, default_value_t = 50)]
+        top: usize,
+        /// 持有交易日数（默认 5）
+        #[arg(long, default_value_t = 5)]
+        days: usize,
+        /// 单边交易成本比例（默认 0.001）
+        #[arg(long, default_value_t = 0.001)]
+        cost: f64,
+        /// 权益曲线 CSV 输出路径（可选）
+        #[arg(long)]
+        csv: Option<PathBuf>,
+    },
 }
 
 impl SepaCmd {
@@ -145,6 +166,7 @@ impl SepaCmd {
         match self {
             SepaCmd::Score { .. } => "score",
             SepaCmd::Temperature => "temperature",
+            SepaCmd::Backtest { .. } => "backtest",
         }
     }
 }
@@ -288,6 +310,33 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
                 }
                 SepaCmd::Temperature => {
                     if let Err(e) = sepa::run_temperature(&reader, &dolt_dir) {
+                        return Err(format!("Sepa {cmd_name} failed: {e}").into());
+                    }
+                }
+                SepaCmd::Backtest {
+                    start,
+                    end,
+                    top,
+                    days,
+                    cost,
+                    csv,
+                } => {
+                    let parse = |s: String, flag: &str| {
+                        chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                            .map_err(|e| format!("invalid {flag} {s:?}: {e}"))
+                    };
+                    let start = start.map(|s| parse(s, "--start")).transpose()?;
+                    let end = end.map(|s| parse(s, "--end")).transpose()?;
+                    if let Err(e) = backtest::run_backtest_cli(
+                        top,
+                        start,
+                        end,
+                        days,
+                        cost,
+                        csv.as_deref(),
+                        &reader,
+                        &dolt_dir,
+                    ) {
                         return Err(format!("Sepa {cmd_name} failed: {e}").into());
                     }
                 }
@@ -577,6 +626,97 @@ compass_data_dir = "/custom/compass"
                 cmd: SepaCmd::Temperature
             }
         ));
+    }
+
+    #[test]
+    fn cli_sepa_backtest_parses_all_options() {
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "sepa",
+            "backtest",
+            "--start",
+            "2025-01-01",
+            "--end",
+            "2026-07-31",
+            "--top",
+            "30",
+            "--days",
+            "10",
+            "--cost",
+            "0.002",
+            "--csv",
+            "/tmp/curve.csv",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                SepaCmd::Backtest {
+                    start,
+                    end,
+                    top,
+                    days,
+                    cost,
+                    csv,
+                } => {
+                    assert_eq!(start.as_deref(), Some("2025-01-01"));
+                    assert_eq!(end.as_deref(), Some("2026-07-31"));
+                    assert_eq!(top, 30);
+                    assert_eq!(days, 10);
+                    assert!((cost - 0.002).abs() < 1e-9);
+                    assert_eq!(csv.as_deref(), Some(std::path::Path::new("/tmp/curve.csv")));
+                }
+                _ => panic!("expected Backtest"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_backtest_defaults() {
+        let cli = Cli::try_parse_from(["compass-data", "sepa", "backtest"]).unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                SepaCmd::Backtest {
+                    start,
+                    end,
+                    top,
+                    days,
+                    cost,
+                    csv,
+                } => {
+                    assert_eq!(start, None);
+                    assert_eq!(end, None);
+                    assert_eq!(top, 50);
+                    assert_eq!(days, 5);
+                    assert!((cost - 0.001).abs() < 1e-9);
+                    assert_eq!(csv, None);
+                }
+                _ => panic!("expected Backtest"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_backtest_rejects_invalid_date() {
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "sepa",
+            "backtest",
+            "--start",
+            "not-a-date",
+        ])
+        .unwrap();
+        // Parse succeeds at clap level; the date validation happens in run().
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                SepaCmd::Backtest { start, .. } => {
+                    assert_eq!(start.as_deref(), Some("not-a-date"));
+                }
+                _ => panic!("expected Backtest"),
+            },
+            _ => panic!("expected Sepa"),
+        }
     }
 
     // ==================================================================
