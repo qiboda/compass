@@ -81,7 +81,7 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
 > ### Batch 3
 > | Status | Issue | Task | Depends On |
 > |--------|-------|------|------------|
-> | in_progress | #179 | docs: MA/BOLL 叠加层 + 前复权设计同步 | #178 |
+> | done | #179 | docs: MA/BOLL 叠加层 + 前复权设计同步 | #178 |
 
 - [x] 1. compass-core indicators 纯函数模块（ma/bollinger/adjust_ohlc）
   What to do / Must NOT do: 新建 `crates/compass-core/src/indicators.rs`，`crates/compass-core/src/lib.rs` 增 `pub mod indicators;`。三个 pub 纯函数：(a) `pub fn ma(values: &[f64], n: usize) -> Vec<Option<f64>>`——窗口不足/NaN 输入 → None，永不 panic；(b) `pub fn bollinger(values: &[f64], period: usize, k: f64) -> Vec<(Option<f64>, Option<f64>, Option<f64>)>`——(upper, mid, lower)，mid = ma，std = population stddev，窗口不足 → None；(c) `pub fn adjust_ohlc(raw: &[(chrono::NaiveDate, f64, f64, f64, f64, f64)], adjclose: &[f64]) -> Vec<egui_charts::model::Bar>`——factor_i = adjclose_i / close_i（close<=0 或 adjclose 非有限时 factor=1.0 守卫），OHLC × factor，volume 原样，date → `Bar::new`。风格参照 `crates/compass-strategy/src/sepa/indicators.rs:14`（all_finite 防 NaN、Option 返回、同文件 `#[cfg(test)]` fixture 模式）。必须 NOT 做：不引入 egui-charts 类型进函数签名（除 adjust_ohlc 返回 Bar）、不改 sepa/indicators.rs、不 panic、无 unwrap。

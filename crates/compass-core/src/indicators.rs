@@ -131,7 +131,7 @@ pub fn adjust_ohlc(raw: &[RawBar], adjclose: &[f64]) -> Vec<Bar> {
     raw.iter()
         .zip(adjclose)
         .map(|(r, &adj)| {
-            let factor = if r.close > 0.0 && adj.is_finite() {
+            let factor = if r.close > 0.0 && adj.is_finite() && adj > 0.0 {
                 adj / r.close
             } else {
                 1.0
@@ -283,6 +283,18 @@ mod tests {
     fn bollinger_insufficient_window_all_none() {
         let out = bollinger(&[1.0, 2.0], 5, 2.0);
         assert_eq!(out.len(), 2);
+        assert!(
+            out.iter()
+                .all(|t| t.0.is_none() && t.1.is_none() && t.2.is_none())
+        );
+    }
+
+    /// Zero period: nothing meaningful can be computed — all entries None,
+    /// never panics.
+    #[test]
+    fn bollinger_zero_period_all_none() {
+        let out = bollinger(&[1.0, 2.0, 3.0], 0, 2.0);
+        assert_eq!(out.len(), 3);
         assert!(
             out.iter()
                 .all(|t| t.0.is_none() && t.1.is_none() && t.2.is_none())

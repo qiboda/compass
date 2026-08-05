@@ -115,6 +115,9 @@ impl ParquetReader {
     }
 
     /// Fetch bars for a symbol and date range from the single Parquet file.
+    /// Bars are **forward-adjusted** (前复权): OHLC is scaled by
+    /// `factor_i = adjclose_i / close_i`, so the latest bar's price equals the
+    /// current market price.
     pub fn fetch_bars_blocking(
         &self,
         symbol: &str,

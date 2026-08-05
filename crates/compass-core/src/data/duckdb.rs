@@ -671,7 +671,7 @@ impl DataProvider for DuckDbProvider {
                              FROM (
                                  SELECT trade_date, open, high, low, close, volume,
                                         CASE WHEN close > 0 AND adjclose IS NOT NULL
-                                                  AND isfinite(adjclose)
+                                                  AND isfinite(adjclose) AND adjclose > 0
                                              THEN adjclose / close ELSE 1.0 END AS scale
                                  FROM stock_daily
                                  WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
