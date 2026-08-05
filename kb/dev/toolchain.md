@@ -224,7 +224,8 @@
   3. 对比 Dolt `final_a_stock_eod_price` 正常数据，确认 parquet 侧污染
 - **修复**: 回测入口 `run_backtest` 增加 `dedup_bars`（同 (symbol, date)
   保留最后一行）——回测代码对真实数据输入防御。**数据管线侧根因未修**：
-  stock_daily.parquet 生成（import）应去重或排除指数代码，列为后续排查项
+  stock_daily.parquet 生成（import）应去重或排除指数代码，跟踪于
+  [issue #181](https://github.com/qiboda/compass/issues/181)
 - **验证**: 冒烟重跑——strategy -9.63%、benchmark -13.93%、excess +4.30%，
   NAV 曲线合理（0.85-1.01）；`cargo test -p compass-strategy backtest` 含
   `dedup_bars_keeps_last_row_per_symbol_date` 全绿
