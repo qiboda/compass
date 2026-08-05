@@ -294,6 +294,11 @@ pub fn run_backtest(
             "hold_days must be >= 1",
         )));
     }
+    if params.top_n == 0 {
+        return Err(ScreenerError::Data(invalid_param_error(
+            "top_n must be >= 1",
+        )));
+    }
     if !params.cost.is_finite() || params.cost < 0.0 || params.cost >= 1.0 {
         return Err(ScreenerError::Data(invalid_param_error(
             "cost must be in [0, 1)",
@@ -1091,8 +1096,10 @@ mod tests {
             result.points[0].trade_date,
             NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()
         );
-        // Initial position built at 2024-12-31 close, first output NAV =
-        // (1-cost) * (1 + day-1 return); cost=0 → 1.0 * (1+r).
+        // cal_start = start - 1 = 2025-01-01 (holiday): the first trading
+        // day in the fetch window is start itself, so the initial position
+        // day IS the first output day (k=0) and points[0].strategy_nav =
+        // 1.0 * (1 - cost) with no day-1 return. cost=0 → 1.0.
         assert!(result.points[0].strategy_nav > 0.0);
         assert!(result.points[0].benchmark_nav > 0.0);
         assert!(result.metrics.cumulative_return > 0.0);
@@ -1161,6 +1168,15 @@ mod tests {
                 "error mentions cost, got {e4:?}"
             );
         }
+        let p5 = BacktestParams {
+            top_n: 0,
+            ..BacktestParams::default()
+        };
+        let e5 = run_backtest(&p5, &reader).expect_err("top_n=0 rejected");
+        assert!(
+            format!("{e5:?}").contains("top_n"),
+            "error mentions top_n, got {e5:?}"
+        );
     }
 
     /// Integration: missing parquet (empty fixture) with explicit end →
