@@ -1,0 +1,28 @@
+Task 1 (C1) — compass-core indicators 纯函数模块
+================================================
+Issue:   #175
+Commit:  2c72efa feat(core): add pure indicators module (ma/bollinger/adjust_ohlc)
+Plan:    .omo/plans/chart-ma-boll.md Todo 1
+验收:    ma/bollinger/adjust_ohlc 纯函数 + 单测（compass-core 95% 门槛）
+
+验证命令与输出（2026-08-05 回放）:
+-------------------------------------
+$ cargo test -p compass-core indicators
+  test indicators::tests::adjust_ohlc_nan_adjclose_falls_back_to_factor_one ... ok
+  test indicators::tests::adjust_ohlc_empty_input_returns_empty ... ok
+  test indicators::tests::adjust_ohlc_preserves_dates ... ok
+  test indicators::tests::adjust_ohlc_scales_ohlc_by_adjclose_over_close ... ok
+  test indicators::tests::adjust_ohlc_zero_close_falls_back_to_factor_one ... ok
+  ... (ma/bollinger 窗口/NaN 守卫测试全过)
+  test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo clippy -p compass-core
+  0 warnings
+
+$ cargo doc -p compass-core --no-deps
+  0 warnings（missing_docs gate 干净）
+
+覆盖率（scripts/check-coverage.sh，全 workspace 报告节选）:
+  OK: compass-core line coverage 98.07%  (≥ 95% 门槛 ✓)
+
+结论: PASS — 全部验收标准达成。

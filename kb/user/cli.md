@@ -128,6 +128,10 @@ cargo run --bin compass-data -- export
 cargo run --bin compass-data -- export --overwrite
 ```
 
+> **注意（ref #176）**：export 经 `fetch_bars` 读取，输出为**前复权价**
+> （`factor_i = adjclose_i / close_i` 已烘焙，`adjclose` 列 == close）。
+> 如需原始未复权价，请直接读 Dolt `investment_data` 或 Parquet 源文件。
+
 ---
 
 ## `backup` — Parquet → 百度云

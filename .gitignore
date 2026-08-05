@@ -2,6 +2,7 @@
 .omo/*
 !.omo/plans/
 !.omo/designs/
+!.omo/evidence/
 compass.db
 compass.duckdb
 logs/

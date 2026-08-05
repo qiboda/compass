@@ -56,7 +56,10 @@ pub enum DataError {
 /// and synthetic data without changing consumer code.
 #[async_trait]
 pub trait DataProvider: Send + Sync {
-    /// Fetch OHLCV bars for a symbol, timeframe, and date range.
+    /// Fetch OHLCV bars for a symbol, timeframe, and date range. Bars are
+    /// **forward-adjusted** (前复权): OHLC is scaled by
+    /// `factor_i = adjclose_i / close_i`, so the latest bar's price equals the
+    /// current market price.
     async fn fetch_bars(
         &self,
         symbol: &str,

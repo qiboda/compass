@@ -1,0 +1,29 @@
+Task 2 (C2) — fetch 层前复权缩放
+=================================
+Issue:   #176
+Commit:  0884d86 feat(core): fetch 层前复权缩放（adjclose 带出 + adjust_ohlc 应用）
+Plan:    .omo/plans/chart-ma-boll.md Todo 2
+验收:    duckdb.rs 三子路径 + parquet.rs fetch_bars_blocking 按 factor_i=adjclose_i/close_i
+         缩放 OHLC；1w/1M 先缩放后聚合；close=0/NaN 守卫
+
+验证命令与输出（2026-08-05 回放）:
+-------------------------------------
+$ cargo test -p compass-core fetch
+  test data::duckdb::tests::fetch_bars_scales_parquet_fallback_by_adjclose ... ok
+  test data::duckdb::tests::fetch_bars_reads_from_parquet_on_first_query ... ok
+  test data::duckdb::tests::fetch_bars_caches_parquet_data_in_memory ... ok
+  test data::duckdb::tests::fetch_bars_respects_date_range_from_parquet ... ok
+  test data::duckdb::tests::fetch_bars_aggregates_daily_to_non_daily_timeframe::case_1 ... ok
+  test data::duckdb::tests::fetch_bars_aggregates_daily_to_non_daily_timeframe::case_2 ... ok
+  test data::duckdb::tests::fetch_bars_unknown_timeframe_falls_back_to_day ... ok
+  test data::parquet::tests::fetch_bars_filters_by_date_range ... ok
+  test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo clippy -p compass-core
+  0 warnings
+
+覆盖率（scripts/check-coverage.sh，全 workspace 报告节选）:
+  OK: compass-core line coverage 98.07%  (≥ 95% 门槛 ✓)
+
+结论: PASS — 前复权缩放（含 parquet fallback 缩放、聚合路径先缩放后聚合、
+      close=0/NaN factor 回落 1.0 守卫）全部验收达成。

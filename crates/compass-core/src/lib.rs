@@ -16,4 +16,5 @@
 //! local Parquet files via `read_parquet()`.
 
 pub mod data;
+pub mod indicators;
 pub mod model;

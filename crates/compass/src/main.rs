@@ -18,6 +18,7 @@ use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
 use compass_ui::widgets::segmented::Segmented;
 use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
 use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
+use compass_ui::widgets::tag::{Tag, TagVariant};
 use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use compass_ui::widgets::toolbar::Toolbar;
 
@@ -892,7 +893,7 @@ impl CompassApp {
                 self.symbol_input_id = Some(response.id);
             });
 
-            // Group B — 周期: segmented 1d/1w/1M.
+            // Group B — 周期: segmented 1d/1w/1M + 前复权 tag.
             tb.group(ui, |ui| {
                 if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
                     .selected(self.timeframe_index)
@@ -900,6 +901,10 @@ impl CompassApp {
                 {
                     self.set_timeframe(idx);
                 }
+                Tag::new(&tokens, "前复权")
+                    .variant(TagVariant::Custom)
+                    .color(tokens.color.info)
+                    .show(ui);
             });
 
             // Group C — 操作: primary Fetch button with loading state.
@@ -1316,6 +1321,16 @@ default_timeframe = "1w"
 
         let _ = harness.get_by_label("1d");
         let _ = harness.get_by_label_contains("compass_dark");
+    }
+
+    #[test]
+    fn render_toolbar_renders_adjusted_price_tag() {
+        let mut app = build_compass_app(egui::Context::default());
+        let harness = egui_kittest::Harness::new_ui(|ui| {
+            app.render_toolbar(ui);
+        });
+
+        let _ = harness.get_by_label("前复权");
     }
 
     #[test]

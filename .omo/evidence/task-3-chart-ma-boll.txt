@@ -1,0 +1,29 @@
+Task 3 (C4) — compass-ui IndicatorTokens（8 色暗亮两套）
+=======================================================
+Issue:   #177
+Commit:  e9c779e feat(ui): add IndicatorTokens (MA/BOLL 8 色暗亮两套)
+Plan:    .omo/plans/chart-ma-boll.md Todo 3
+验收:    ColorTokens.indicator 子结构（8 字段）+ dark()/light() 两套 16 值精确断言
+
+验证命令与输出（2026-08-05 回放）:
+-------------------------------------
+$ cargo test -p compass-ui indicator
+  test tokens::color::tests::dark_indicator_tokens_match_design_spec ... ok
+  test tokens::color::tests::light_indicator_tokens_match_design_spec ... ok
+  test tokens::color::tests::indicator_tokens_reuse_semantic_alias ... ok
+  (ma5==text_primary / ma10==warning 复用断言; BOLL 三线同色断言)
+
+$ cargo test -p compass-ui
+  test result: ok. 200 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo clippy -p compass-ui
+  0 warnings
+
+$ cargo doc -p compass-ui --no-deps
+  0 warnings（missing_docs gate 干净）
+
+覆盖率（scripts/check-coverage.sh，全 workspace 报告节选）:
+  OK: compass-ui line coverage 97.09%  (≥ 80% 门槛 ✓)
+
+结论: PASS — IndicatorTokens 16 值（dark/light）精确匹配 design 表、
+      ma5/ma10 语义别名复用、BOLL 三线同色，全部验收达成。
