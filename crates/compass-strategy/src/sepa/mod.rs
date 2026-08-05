@@ -12,8 +12,10 @@
 pub const SEPA_WINDOW_DAYS: i64 = 550;
 
 pub mod aggregation;
+pub mod backtest;
 pub mod indicators;
 pub mod scoring;
 pub mod temperature;
 
 pub use scoring::run_sepa;
+pub(crate) use scoring::{dedup_bars, fetch_sepa_window, score_sepa};

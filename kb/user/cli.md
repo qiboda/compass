@@ -249,6 +249,28 @@ cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 只�
 
 每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → 采集 → Dolt commit → Parquet 导入 → 计算 → Dolt commit → TOP50）。
 
+### `sepa backtest` — 历史批量回测
+
+逐日重算回测窗口内全市场 SEPA 评分（点内计算，不偷看未来），模拟"每日收盘后按评分取 TOP-N 等权持仓、持有 N 个交易日后换仓"策略，输出绩效指标（累计/年化收益、胜率、盈亏比、最大回撤、换仓次数），并与市值前 300 等权代理基准对比。权益曲线写回 Dolt `backtest_result` 表，也可导出 CSV。
+
+```sh
+cargo run --bin compass-data -- sepa backtest                                       # 默认 2025-01-01 至今，TOP50，5 日换仓，成本 0.1%
+cargo run --bin compass-data -- sepa backtest --start 2026-07-01 --top 30 --days 10 --cost 0.0005 --csv /tmp/bt.csv
+```
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `--start` | `2025-01-01` | 回测窗口起始（YYYY-MM-DD） |
+| `--end` | 数据内最新交易日 | 回测窗口结束（YYYY-MM-DD） |
+| `--top` | `50` | 每期持仓数量 TOP-N（持仓股票数，非表格打印条数） |
+| `--days` | `5` | 持有交易日数（换仓周期） |
+| `--cost` | `0.001` | 单边交易成本比例（买入/卖出各收一次） |
+| `--csv` | — | 权益曲线 CSV 输出路径（strategy_nav/benchmark_nav 两列） |
+
+**输出**：stdout 摘要指标表（策略累计/年化收益、胜率、盈亏比、最大回撤、换仓次数、基准累计、超额收益、年化超额）；`--csv` 写权益曲线文件；Dolt `backtest_result` 表存每日策略/基准净值曲线（单快照全表替换，幂等可重跑，`data_updates` 同步登记）。
+
+**已知限制**：概念成员/ST 状态为当前快照（历史回测存在轻微前瞻偏差，窗口 2025 起可控，报告中标注）；主力资金流无历史 → 资金模块降级为量价配合+筹码集中（大资金流入归 0）。架构细节与决策记录见 `kb/design/backtest.md`。
+
 ---
 
 ## 排障

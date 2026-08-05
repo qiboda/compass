@@ -309,6 +309,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 |---|---|
 | `kb/design/architecture.md` | 系统总览、crate 关系、线程模型、数据管线、存储策略、库选型 |
 | `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL |
+| `kb/design/backtest.md` | SEPA 历史回测 — 架构、组合模拟/基准代理口径、绩效指标、决策记录 |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
 | `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.omo/designs/` 仅归档） |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |

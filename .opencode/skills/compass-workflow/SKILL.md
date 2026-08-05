@@ -165,14 +165,23 @@ Feature 和 bugfix 工作遵循 RED → GREEN → REFACTOR：
 每次代码变更后：
 - `cargo test` → 必须全部通过
 - `lsp_diagnostics` 在变更文件上无错误
+- **真实数据冒烟在实现批次提交前**（ref #154 教训）：数据/计算管线变更
+  （采集、计算、写回、查询路径）必须在提交前用真实数据跑通冒烟——
+  fixture 测试永远覆盖不到数据级问题（重复行、symbol 格式、单位口径）。
+  冒烟输出要有"数据终态证据"（落库行数、日期范围、数值合理性），
+  不能只看 exit 0（ref #139 同类教训）
 
 ### 7. 提交前本地验证
 
 ```sh
 cargo test && cargo clippy -- -D warnings && cargo fmt --check
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps   # 新 pub 项时
 ```
 
-三者全部通过后才可 `git push`。
+全部通过后才可 commit 或 push。**pre-push 门禁在 push 才触发，提交阶段
+零拦截**（ref #154 教训：Todo 1-4 提交时 clippy 8 错 + fmt 未格式化 +
+测试在 mod tests 外，直到 push 前才暴露）——每个实现 commit 前都必须
+自跑完整门禁，不能只跑 cargo test。
 
 ### 8. 禁止类型逃逸
 

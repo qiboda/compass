@@ -26,3 +26,6 @@ collectors/*.state.json
 .opencode/package-lock.json
 __pycache__/
 collectors/.coverage
+
+# Saved output files (backtest results, exports) — not tracked
+saved/

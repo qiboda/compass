@@ -364,3 +364,4 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 采集器长文本导入（ref #139，F3 修复） | `dolt table import -c` 类型推断 / 显式宽 schema 建表 | `dolt_table_import(create_sql=...)` 先 CREATE 宽临时表（如 RECEIVE_OBJECT VARCHAR(1000)）再 `-u` 导入 | F3 实证：dolt `-c` 推断字符串固定 varchar(200)，长 UTF-8 值按字节截断产生畸形字节（org_name 900 字节 → 198 字节），post-import ALTER 无法修复已截断数据 | `-c` 推断在长文本表上静默截断，破坏 utf8mb4 插入 |
 | institution_survey 去重分组键（ref #139，F3 修复） | HEX(org_name) 仅按机构 / 完整复合键 | `GROUP BY s, d, gk`（s/d 为已派生 symbol/date，gk=HEX(org_name)），列用 MAX() 重新派生 | F3 实证：仅按 org 分组把同机构不同 symbol/date 的事件坍缩成一行（长信基金 484 事件 → 1 行，全表 293916 行 → 40115 行，丢失 86%）；复合键在保留去重同时保留每个 (symbol, survey_date, org) 事件；实测 Dolt 2.2.3 对中文列 GROUP BY 无 bug（无需纯 ASCII 键） | 仅按 org 分组破坏事件粒度，是静默数据丢失 |
 
+| backtest_result 表结构（ref #154） | 存每日持仓明细 / 只存每日净值 | PK(trade_date) + strategy_nav/benchmark_nav/update_date | 净值曲线足以支撑绩效复盘；明细体积大且可重算 | 明细持久化无查询需求；全表 DELETE + `dolt table import -a` 单快照替换幂等 |
