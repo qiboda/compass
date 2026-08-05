@@ -1,7 +1,7 @@
 //! SEPA quantitative backtest engine (issue #154).
 //!
 //! Replays the five-module scoring engine day by day via
-//! [`run_sepa`](super::run_sepa) over a historical window, simulates a
+//! [`run_sepa`] over a historical window, simulates a
 //! TOP-N equal-weight portfolio with N-trading-day rebalancing and a
 //! per-side transaction cost, and compares its equity curve against a
 //! market-cap top-300 equal-weight benchmark proxy.
@@ -10,7 +10,7 @@
 //! they are fully testable offline. Return conventions are locked to
 //! avoid look-ahead and `NaN` propagation (see module-level tests).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
 use compass_core::data::parquet::ParquetReader;
@@ -162,28 +162,24 @@ fn holdings_return(
             .get(&row.symbol)
             .and_then(|m| m.get(date))
             .copied()
+            .filter(|r| r.is_finite())
         {
-            if ret.is_finite() {
-                sum += ret;
-                count += 1;
-            }
+            sum += ret;
+            count += 1;
         }
     }
-    if count == 0 {
-        0.0
-    } else {
-        sum / count as f64
-    }
+    if count == 0 { 0.0 } else { sum / count as f64 }
 }
 
 /// Compute the market-cap top-300 equal-weight benchmark daily returns.
 ///
-/// On each date, market cap = `total_share × close` (both must be finite and
-/// > 0); the top 300 (or fewer) are equal-weighted and the day's return is
-/// the mean of their adjclose day-over-day returns (non-finite skipped).
-/// Membership is decided by that day's close market cap — a documented mild
-/// look-ahead inherent to index proxies (locked convention, recorded in
-/// `kb/design/backtest.md`). Days with no constituents yield return 0.
+/// On each date, market cap = `total_share × close` (both must be finite
+/// and greater than 0); the top 300 (or fewer) are equal-weighted and the
+/// day's return is the mean of their adjclose day-over-day returns
+/// (non-finite skipped). Membership is decided by that day's close market
+/// cap — a documented mild look-ahead inherent to index proxies (locked
+/// convention, recorded in `kb/design/backtest.md`). Days with no
+/// constituents yield return 0.
 pub fn compute_benchmark_returns(
     bars_by_symbol: &HashMap<String, Vec<&CrossSectionBar>>,
     basics_by_symbol: &HashMap<String, &StockBasic>,
@@ -259,7 +255,7 @@ pub struct BacktestResult {
 }
 
 /// Run a backtest over `[start..end]` by replaying
-/// [`run_sepa`](super::run_sepa) per trading day.
+/// [`run_sepa`] per trading day.
 ///
 /// Calendar: distinct trading dates from
 /// `fetch_cross_section(start - 1 day, end)` (ascending). `start - 1` (or
@@ -283,17 +279,25 @@ pub fn run_backtest(
         None => latest.ok_or_else(|| ScreenerError::Data(no_latest_data_error()))?,
     };
     if params.start > end {
-        return Err(ScreenerError::Data(start_after_end_error(params.start, end)));
+        return Err(ScreenerError::Data(start_after_end_error(
+            params.start,
+            end,
+        )));
     }
-    if let Some(l) = latest {
-        if params.start > l {
-            return Err(ScreenerError::Data(start_after_data_error(params.start, l)));
-        }
+    if let Some(l) = latest
+        && params.start > l
+    {
+        return Err(ScreenerError::Data(start_after_data_error(params.start, l)));
     }
 
     // Calendar from the day before start (for day-1 returns).
     let cal_start = params.start - chrono::Duration::days(1);
     let all_bars = reader.fetch_cross_section(cal_start, end)?;
+    // Real parquet data occasionally carries duplicate rows for the same
+    // symbol and date (e.g. index symbols like 000905 mixing two sources);
+    // keeping the last row per (symbol, date) prevents cross-source
+    // day-over-day returns that would otherwise be absurdly large.
+    let all_bars = dedup_bars(all_bars);
     let calendar: Vec<NaiveDate> = all_bars
         .iter()
         .map(|b| b.trade_date)
@@ -304,7 +308,9 @@ pub fn run_backtest(
     // Per-day ranked rows via run_sepa (all calendar days, incl. the
     // initial position day). run_sepa's internal window is date-bounded so
     // this is point-in-time; empty rows degrade gracefully.
-    let query = SepaQuery { top_n: params.top_n };
+    let query = SepaQuery {
+        top_n: params.top_n,
+    };
     let mut sepa_datas: Vec<SepaData> = Vec::with_capacity(calendar.len());
     for &date in &calendar {
         sepa_datas.push(run_sepa(&query, reader, date)?);
@@ -325,13 +331,12 @@ pub fn run_backtest(
         for bar in series {
             let r = match prev {
                 None => 0.0, // first calendar day has return 0
-                Some(p) => {
-                    if p.adjclose.is_finite() && bar.adjclose.is_finite() && p.adjclose != 0.0 {
-                        bar.adjclose / p.adjclose - 1.0
-                    } else {
-                        0.0
-                    }
+                Some(p)
+                    if p.adjclose.is_finite() && bar.adjclose.is_finite() && p.adjclose != 0.0 =>
+                {
+                    bar.adjclose / p.adjclose - 1.0
                 }
+                Some(_) => 0.0,
             };
             m.insert(bar.trade_date, r);
             prev = Some(bar);
@@ -354,11 +359,8 @@ pub fn run_backtest(
     let bench_returns = compute_benchmark_returns(&bars_by_symbol, &basics_by_symbol, &calendar);
 
     // Strategy NAV per output date, plus benchmark NAV compounded from 1.0.
-    let nav_by_date: HashMap<NaiveDate, f64> = calendar
-        .iter()
-        .copied()
-        .zip(nav.iter().copied())
-        .collect();
+    let nav_by_date: HashMap<NaiveDate, f64> =
+        calendar.iter().copied().zip(nav.iter().copied()).collect();
     let mut bench_nav = 1.0;
     let mut bench_nav_by_date: HashMap<NaiveDate, f64> = HashMap::new();
     for &date in &calendar {
@@ -383,14 +385,28 @@ pub fn run_backtest(
 }
 
 /// Group bars by symbol preserving ascending date order.
-fn group_by_symbol<'a>(
-    bars: &'a [CrossSectionBar],
-) -> HashMap<String, Vec<&'a CrossSectionBar>> {
+fn group_by_symbol(bars: &[CrossSectionBar]) -> HashMap<String, Vec<&CrossSectionBar>> {
     let mut m: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
     for b in bars {
         m.entry(b.symbol.clone()).or_default().push(b);
     }
     m
+}
+
+/// Keep the last row per (symbol, date). Real parquet data occasionally
+/// carries duplicate rows for one symbol on one day (index-like symbols
+/// mixing two sources); deduplicating keeps day-over-day returns
+/// comparable. Input order is preserved for the surviving rows.
+fn dedup_bars(bars: Vec<CrossSectionBar>) -> Vec<CrossSectionBar> {
+    let mut seen: HashSet<(String, NaiveDate)> = HashSet::new();
+    let mut deduped: Vec<CrossSectionBar> = Vec::with_capacity(bars.len());
+    for bar in bars.into_iter().rev() {
+        if seen.insert((bar.symbol.clone(), bar.trade_date)) {
+            deduped.push(bar);
+        }
+    }
+    deduped.reverse();
+    deduped
 }
 
 /// Serialize the equity curve to CSV (header + one row per point).
@@ -431,7 +447,9 @@ fn start_after_end_error(start: NaiveDate, end: NaiveDate) -> DataError {
 }
 
 fn start_after_data_error(start: NaiveDate, latest: NaiveDate) -> DataError {
-    DataError::Parse(format!("backtest: start {start} is after latest data {latest}"))
+    DataError::Parse(format!(
+        "backtest: start {start} is after latest data {latest}"
+    ))
 }
 
 #[cfg(test)]
@@ -476,10 +494,7 @@ mod tests {
 
     /// Ranked daily input: (date, rows) borrowed from caller-owned `owned`
     /// day slices (rows already sorted by score desc).
-    fn ranked<'a>(
-        owned: &'a [Vec<SepaRow>],
-        dates: &[&str],
-    ) -> Vec<(NaiveDate, Vec<&'a SepaRow>)> {
+    fn ranked<'a>(owned: &'a [Vec<SepaRow>], dates: &[&str]) -> Vec<(NaiveDate, Vec<&'a SepaRow>)> {
         assert_eq!(owned.len(), dates.len());
         owned
             .iter()
@@ -522,8 +537,22 @@ mod tests {
         ];
         let days = ranked(&owned, &["2025-01-02", "2025-01-03", "2025-01-06"]);
         let rets = returns(&[
-            ("A", &[("2025-01-02", 0.0), ("2025-01-03", 0.10), ("2025-01-06", 0.05)]),
-            ("B", &[("2025-01-02", 0.0), ("2025-01-03", -0.05), ("2025-01-06", 0.15)]),
+            (
+                "A",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.10),
+                    ("2025-01-06", 0.05),
+                ],
+            ),
+            (
+                "B",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", -0.05),
+                    ("2025-01-06", 0.15),
+                ],
+            ),
         ]);
         let (nav, reb) = simulate_portfolio(&days, &rets, &params("2025-01-02", 2, 0.0));
         // d1: NAV 1.0 (cost 0). d2: mean(0.10, -0.05) = 0.025 → 1.025.
@@ -548,8 +577,22 @@ mod tests {
         ];
         let days = ranked(&owned, &["2025-01-02", "2025-01-03", "2025-01-06"]);
         let rets = returns(&[
-            ("A", &[("2025-01-02", 0.0), ("2025-01-03", 0.0), ("2025-01-06", 0.0)]),
-            ("B", &[("2025-01-02", 0.0), ("2025-01-03", 0.0), ("2025-01-06", 0.0)]),
+            (
+                "A",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.0),
+                    ("2025-01-06", 0.0),
+                ],
+            ),
+            (
+                "B",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.0),
+                    ("2025-01-06", 0.0),
+                ],
+            ),
         ]);
         let (nav, reb) = simulate_portfolio(&days, &rets, &params("2025-01-02", 2, 0.001));
         // d1: 1.0 * (1 - 0.001) = 0.999. d2: 0.999 (no return). d3: rebalance
@@ -570,10 +613,29 @@ mod tests {
             owned_rows(&[("A", 90.0), ("B", 80.0)]),
             owned_rows(&[("A", 90.0), ("B", 80.0)]),
         ];
-        let days = ranked(&owned, &["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"]);
+        let days = ranked(
+            &owned,
+            &["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"],
+        );
         let rets = returns(&[
-            ("A", &[("2025-01-02", 0.0), ("2025-01-03", 0.0), ("2025-01-06", 0.0), ("2025-01-07", 0.10)]),
-            ("B", &[("2025-01-02", 0.0), ("2025-01-03", 0.0), ("2025-01-06", 0.0), ("2025-01-07", 0.10)]),
+            (
+                "A",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.0),
+                    ("2025-01-06", 0.0),
+                    ("2025-01-07", 0.10),
+                ],
+            ),
+            (
+                "B",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.0),
+                    ("2025-01-06", 0.0),
+                    ("2025-01-07", 0.10),
+                ],
+            ),
         ]);
         // hold_days=3: rebalance at d4 only; d4 return credited (mean 0.10)
         // before the 2×cost → 0.999 * 1.10 * 0.998 = 1.0966... then tail ends.
@@ -594,8 +656,22 @@ mod tests {
         ];
         let days = ranked(&owned, &["2025-01-02", "2025-01-03", "2025-01-06"]);
         let rets = returns(&[
-            ("A", &[("2025-01-02", 0.0), ("2025-01-03", 0.05), ("2025-01-06", 0.0)]),
-            ("B", &[("2025-01-02", 0.0), ("2025-01-03", 0.05), ("2025-01-06", 0.0)]),
+            (
+                "A",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.05),
+                    ("2025-01-06", 0.0),
+                ],
+            ),
+            (
+                "B",
+                &[
+                    ("2025-01-02", 0.0),
+                    ("2025-01-03", 0.05),
+                    ("2025-01-06", 0.0),
+                ],
+            ),
         ]);
         let (nav, reb) = simulate_portfolio(&days, &rets, &params("2025-01-02", 5, 0.0));
         // d1: 1.0. d2 (empty day): holdings A/B return mean(0.05,0.05)=0.05
@@ -670,6 +746,24 @@ mod tests {
             volume: 0.0,
             amount: 0.0,
         }
+    }
+
+    /// Deduplication: duplicate (symbol, date) rows keep the last row.
+    #[test]
+    fn dedup_bars_keeps_last_row_per_symbol_date() {
+        let d1 = NaiveDate::from_ymd_opt(2025, 1, 2).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2025, 1, 3).unwrap();
+        let bars = vec![
+            mk_bar("A", d1, 10.0),
+            mk_bar("A", d1, 99.0),
+            mk_bar("A", d2, 11.0),
+            mk_bar("B", d1, 5.0),
+        ];
+        let deduped = dedup_bars(bars);
+        assert_eq!(deduped.len(), 3);
+        assert_eq!(deduped[0].adjclose, 99.0, "last row for (A, d1) wins");
+        assert_eq!(deduped[1].adjclose, 11.0);
+        assert_eq!(deduped[2].adjclose, 5.0);
     }
 
     fn mk_basic(symbol: &str, share: f64, list: NaiveDate) -> StockBasic {
@@ -767,6 +861,186 @@ mod tests {
         // d2 return = mean(0.10, 0.10) = 0.10 → 1.10.
         let (nav, _) = simulate_portfolio(&days, &rets, &params("2025-01-02", 5, 0.0));
         assert!((nav[1] - 1.10).abs() < 1e-12);
+    }
+    /// CSV serialization: header + rows, format `%Y-%m-%d`, ≤6 decimals.
+    #[test]
+    fn equity_csv_format() {
+        let pts = vec![
+            EquityPoint {
+                trade_date: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+                strategy_nav: 1.0,
+                benchmark_nav: 1.0,
+            },
+            EquityPoint {
+                trade_date: NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap(),
+                strategy_nav: 1.123456789,
+                benchmark_nav: 1.0005,
+            },
+        ];
+        let csv = equity_csv(&pts);
+        let lines: Vec<&str> = csv.trim().split('\n').collect();
+        assert_eq!(lines[0], "trade_date,strategy_nav,benchmark_nav");
+        assert_eq!(lines[1], "2025-01-02,1.0,1.0");
+        assert_eq!(lines[2], "2025-01-03,1.123457,1.000500");
+    }
+
+    /// Integration: run_backtest over a 10-trading-day fixture with 3
+    /// stocks; asserts points.len()==10 and points[0] numeric convention.
+    #[test]
+    fn run_backtest_integration() {
+        use compass_core::data::parquet::ParquetReader;
+        use duckdb::Connection;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let conn = Connection::open_in_memory().expect("duckdb");
+
+        // 10 trading days ending 2025-01-14 (weekday-only), 3 stocks with
+        // engineered closes so SEPA ranking is stable (A highest score).
+        // Prices rise ~1%/day so run_sepa's momentum/trend modules score
+        // every symbol positively.
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        let dates = [
+            "2024-12-30",
+            "2024-12-31",
+            "2025-01-02",
+            "2025-01-03",
+            "2025-01-06",
+            "2025-01-07",
+            "2025-01-08",
+            "2025-01-09",
+            "2025-01-10",
+            "2025-01-13",
+            "2025-01-14",
+        ];
+        for (i, d) in dates.iter().enumerate() {
+            for (sym, base) in [("600001", 10.0), ("600002", 20.0), ("600003", 30.0)] {
+                let close = base * (1.0 + 0.01 * i as f64);
+                conn.execute(
+                    "INSERT INTO daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    duckdb::params![
+                        sym,
+                        d,
+                        close - 0.01,
+                        close,
+                        close - 0.02,
+                        close,
+                        close,
+                        5e7,
+                        5e8
+                    ],
+                )
+                .expect("insert daily");
+            }
+        }
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_daily.parquet").display()
+        ))
+        .expect("copy daily");
+
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        )
+        .expect("create basic");
+        for (sym, name) in [("600001", "A"), ("600002", "B"), ("600003", "C")] {
+            conn.execute(
+                "INSERT INTO basic VALUES (?, ?, ?, '2024-01-01', NULL, '主板', ?, 1e9, '测试', NULL)",
+                duckdb::params![sym, name, "SH", name],
+            )
+            .expect("insert basic");
+        }
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_basic.parquet").display()
+        ))
+        .expect("copy basic");
+
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+        let params = BacktestParams {
+            start: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap()),
+            top_n: 2,
+            hold_days: 5,
+            cost: 0.0,
+        };
+        let result = run_backtest(&params, &reader).expect("backtest runs");
+        // 9 output days: 2025-01-02 .. 2025-01-14 (excl. initial day).
+        assert_eq!(result.points.len(), 9);
+        assert_eq!(
+            result.points[0].trade_date,
+            NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()
+        );
+        // Initial position built at 2024-12-31 close, first output NAV =
+        // (1-cost) * (1 + day-1 return); cost=0 → 1.0 * (1+r).
+        assert!(result.points[0].strategy_nav > 0.0);
+        assert!(result.points[0].benchmark_nav > 0.0);
+        assert!(result.metrics.cumulative_return > 0.0);
+    }
+
+    /// Integration: start > end and start after latest data both error.
+    #[test]
+    fn run_backtest_validation_errors() {
+        use compass_core::data::parquet::ParquetReader;
+        use duckdb::Connection;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let conn = Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        conn.execute(
+            "INSERT INTO daily VALUES ('600001', '2025-01-02', 10, 10, 10, 10, 10, 5e7, 5e8)",
+            duckdb::params![],
+        )
+        .expect("insert");
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_daily.parquet").display()
+        ))
+        .expect("copy");
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+
+        // start > end → Err.
+        let p1 = BacktestParams {
+            start: NaiveDate::parse_from_str("2025-02-01", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()),
+            ..BacktestParams::default()
+        };
+        assert!(run_backtest(&p1, &reader).is_err());
+
+        // start after latest data (explicit end given) → Err.
+        let p2 = BacktestParams {
+            start: NaiveDate::parse_from_str("2026-01-01", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2026-06-01", "%Y-%m-%d").unwrap()),
+            ..BacktestParams::default()
+        };
+        assert!(run_backtest(&p2, &reader).is_err());
+    }
+
+    /// Integration: missing parquet (empty fixture) with explicit end →
+    /// Ok with empty points (run_sepa degrades, no panic).
+    #[test]
+    fn run_backtest_empty_fixture_degrades() {
+        use compass_core::data::parquet::ParquetReader;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+        let params = BacktestParams {
+            start: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
+            end: Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap()),
+            top_n: 2,
+            hold_days: 5,
+            cost: 0.0,
+        };
+        let result = run_backtest(&params, &reader).expect("empty fixture degrades to Ok");
+        assert!(result.points.is_empty());
     }
 }
 
@@ -897,7 +1171,11 @@ fn period_stats(nav: &[f64], rebalance_indices: &[usize]) -> (f64, f64) {
     let pl = if losses == 0 {
         0.0
     } else {
-        let avg_win = if wins == 0 { 0.0 } else { win_sum / wins as f64 };
+        let avg_win = if wins == 0 {
+            0.0
+        } else {
+            win_sum / wins as f64
+        };
         let avg_loss = loss_sum / losses as f64;
         if avg_loss == 0.0 {
             0.0
@@ -928,167 +1206,3 @@ fn max_drawdown(nav: &[f64]) -> f64 {
     }
     max_dd
 }
-
-    /// CSV serialization: header + rows, format `%Y-%m-%d`, ≤6 decimals.
-    #[test]
-    fn equity_csv_format() {
-        let pts = vec![
-            EquityPoint {
-                trade_date: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
-                strategy_nav: 1.0,
-                benchmark_nav: 1.0,
-            },
-            EquityPoint {
-                trade_date: NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap(),
-                strategy_nav: 1.123456789,
-                benchmark_nav: 1.0005,
-            },
-        ];
-        let csv = equity_csv(&pts);
-        let lines: Vec<&str> = csv.trim().split('\n').collect();
-        assert_eq!(lines[0], "trade_date,strategy_nav,benchmark_nav");
-        assert_eq!(lines[1], "2025-01-02,1.0,1.0");
-        assert_eq!(lines[2], "2025-01-03,1.123457,1.000500");
-    }
-
-    /// Integration: run_backtest over a 10-trading-day fixture with 3
-    /// stocks; asserts points.len()==10 and points[0] numeric convention.
-    #[test]
-    fn run_backtest_integration() {
-        use compass_core::data::parquet::ParquetReader;
-        use duckdb::Connection;
-        use tempfile::tempdir;
-
-        let tmp = tempdir().expect("tempdir");
-        let conn = Connection::open_in_memory().expect("duckdb");
-
-        // 10 trading days ending 2025-01-14 (weekday-only), 3 stocks with
-        // engineered closes so SEPA ranking is stable (A highest score).
-        // Prices rise ~1%/day so run_sepa's momentum/trend modules score
-        // every symbol positively.
-        conn.execute_batch(
-            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
-        )
-        .expect("create daily");
-        let dates = [
-            "2024-12-30", "2024-12-31", "2025-01-02", "2025-01-03", "2025-01-06",
-            "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14",
-        ];
-        for (i, d) in dates.iter().enumerate() {
-            for (sym, base) in [("600001", 10.0), ("600002", 20.0), ("600003", 30.0)] {
-                let close = base * (1.0 + 0.01 * i as f64);
-                conn.execute(
-                    "INSERT INTO daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    duckdb::params![
-                        sym, d, close - 0.01, close, close - 0.02, close, close, 5e7, 5e8
-                    ],
-                )
-                .expect("insert daily");
-            }
-        }
-        conn.execute_batch(&format!(
-            "COPY daily TO '{}' (FORMAT PARQUET)",
-            tmp.path().join("stock_daily.parquet").display()
-        ))
-        .expect("copy daily");
-
-        conn.execute_batch(
-            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
-        )
-        .expect("create basic");
-        for (sym, name) in [("600001", "A"), ("600002", "B"), ("600003", "C")] {
-            conn.execute(
-                "INSERT INTO basic VALUES (?, ?, ?, '2024-01-01', NULL, '主板', ?, 1e9, '测试', NULL)",
-                duckdb::params![sym, name, "SH", name],
-            )
-            .expect("insert basic");
-        }
-        conn.execute_batch(&format!(
-            "COPY basic TO '{}' (FORMAT PARQUET)",
-            tmp.path().join("stock_basic.parquet").display()
-        ))
-        .expect("copy basic");
-
-        let reader = ParquetReader::new(tmp.path()).expect("reader");
-        let params = BacktestParams {
-            start: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
-            end: Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap()),
-            top_n: 2,
-            hold_days: 5,
-            cost: 0.0,
-        };
-        let result = run_backtest(&params, &reader).expect("backtest runs");
-        // 9 output days: 2025-01-02 .. 2025-01-14 (excl. initial day).
-        assert_eq!(result.points.len(), 9);
-        assert_eq!(
-            result.points[0].trade_date,
-            NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()
-        );
-        // Initial position built at 2024-12-31 close, first output NAV =
-        // (1-cost) * (1 + day-1 return); cost=0 → 1.0 * (1+r).
-        assert!(result.points[0].strategy_nav > 0.0);
-        assert!(result.points[0].benchmark_nav > 0.0);
-        assert!(result.metrics.cumulative_return > 0.0);
-    }
-
-    /// Integration: start > end and start after latest data both error.
-    #[test]
-    fn run_backtest_validation_errors() {
-        use compass_core::data::parquet::ParquetReader;
-        use duckdb::Connection;
-        use tempfile::tempdir;
-
-        let tmp = tempdir().expect("tempdir");
-        let conn = Connection::open_in_memory().expect("duckdb");
-        conn.execute_batch(
-            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
-        )
-        .expect("create daily");
-        conn.execute(
-            "INSERT INTO daily VALUES ('600001', '2025-01-02', 10, 10, 10, 10, 10, 5e7, 5e8)",
-            duckdb::params![],
-        )
-        .expect("insert");
-        conn.execute_batch(&format!(
-            "COPY daily TO '{}' (FORMAT PARQUET)",
-            tmp.path().join("stock_daily.parquet").display()
-        ))
-        .expect("copy");
-        let reader = ParquetReader::new(tmp.path()).expect("reader");
-
-        // start > end → Err.
-        let p1 = BacktestParams {
-            start: NaiveDate::parse_from_str("2025-02-01", "%Y-%m-%d").unwrap(),
-            end: Some(NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap()),
-            ..BacktestParams::default()
-        };
-        assert!(run_backtest(&p1, &reader).is_err());
-
-        // start after latest data (explicit end given) → Err.
-        let p2 = BacktestParams {
-            start: NaiveDate::parse_from_str("2026-01-01", "%Y-%m-%d").unwrap(),
-            end: Some(NaiveDate::parse_from_str("2026-06-01", "%Y-%m-%d").unwrap()),
-            ..BacktestParams::default()
-        };
-        assert!(run_backtest(&p2, &reader).is_err());
-    }
-
-    /// Integration: missing parquet (empty fixture) with explicit end →
-    /// Ok with empty points (run_sepa degrades, no panic).
-    #[test]
-    fn run_backtest_empty_fixture_degrades() {
-        use compass_core::data::parquet::ParquetReader;
-        use tempfile::tempdir;
-
-        let tmp = tempdir().expect("tempdir");
-        let reader = ParquetReader::new(tmp.path()).expect("reader");
-        let params = BacktestParams {
-            start: NaiveDate::parse_from_str("2025-01-02", "%Y-%m-%d").unwrap(),
-            end: Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap()),
-            top_n: 2,
-            hold_days: 5,
-            cost: 0.0,
-        };
-        let result = run_backtest(&params, &reader).expect("empty fixture degrades to Ok");
-        assert!(result.points.is_empty());
-    }

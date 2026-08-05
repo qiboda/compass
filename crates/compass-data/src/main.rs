@@ -699,14 +699,9 @@ compass_data_dir = "/custom/compass"
 
     #[test]
     fn cli_sepa_backtest_rejects_invalid_date() {
-        let cli = Cli::try_parse_from([
-            "compass-data",
-            "sepa",
-            "backtest",
-            "--start",
-            "not-a-date",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["compass-data", "sepa", "backtest", "--start", "not-a-date"])
+                .unwrap();
         // Parse succeeds at clap level; the date validation happens in run().
         match cli.command {
             Command::Sepa { cmd } => match cmd {

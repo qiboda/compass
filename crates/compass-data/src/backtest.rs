@@ -10,7 +10,7 @@ use std::path::Path;
 
 use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
-use compass_strategy::sepa::backtest::{equity_csv, run_backtest, BacktestParams};
+use compass_strategy::sepa::backtest::{BacktestParams, equity_csv, run_backtest};
 
 use crate::sepa::{dolt_import, dolt_sql, dolt_upsert_updates, fmt_double};
 
@@ -79,8 +79,14 @@ fn print_summary(result: &compass_strategy::sepa::backtest::BacktestResult) {
     println!("=== SEPA backtest summary ===");
     println!("window: {first} .. {last}");
     println!("rebalances: {}", m.rebalance_count);
-    println!("strategy cumulative return: {:.2}%", m.cumulative_return * 100.0);
-    println!("strategy annualized return: {:.2}%", m.annualized_return * 100.0);
+    println!(
+        "strategy cumulative return: {:.2}%",
+        m.cumulative_return * 100.0
+    );
+    println!(
+        "strategy annualized return: {:.2}%",
+        m.annualized_return * 100.0
+    );
     println!("win rate: {:.1}%", m.win_rate * 100.0);
     println!("profit/loss ratio: {:.2}", m.profit_loss_ratio);
     println!("max drawdown: {:.2}%", m.max_drawdown * 100.0);
@@ -142,7 +148,7 @@ mod tests {
     use std::process::Command;
 
     use chrono::NaiveDate;
-    use compass_strategy::sepa::backtest::{equity_csv, EquityPoint};
+    use compass_strategy::sepa::backtest::{EquityPoint, equity_csv};
 
     /// Serialise Dolt tests: dolt reads the process-global HOME, racing with
     /// main.rs's HOME-mutating tests (sepa.rs test convention).
@@ -179,9 +185,7 @@ mod tests {
     fn upsert_row(dolt_dir: &Path, table: &str) -> String {
         crate::import_dolt::run_dolt_sql_csv(
             dolt_dir,
-            &format!(
-                "SELECT last_report_date AS d FROM data_updates WHERE table_name = '{table}'"
-            ),
+            &format!("SELECT last_report_date AS d FROM data_updates WHERE table_name = '{table}'"),
         )
         .expect("upsert query")
     }
@@ -288,8 +292,17 @@ mod tests {
         )
         .expect("create daily");
         let dates = [
-            "2024-12-30", "2024-12-31", "2025-01-02", "2025-01-03", "2025-01-06",
-            "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14",
+            "2024-12-30",
+            "2024-12-31",
+            "2025-01-02",
+            "2025-01-03",
+            "2025-01-06",
+            "2025-01-07",
+            "2025-01-08",
+            "2025-01-09",
+            "2025-01-10",
+            "2025-01-13",
+            "2025-01-14",
         ];
         for (i, d) in dates.iter().enumerate() {
             for sym in ["600001", "600002", "600003"] {
@@ -297,7 +310,15 @@ mod tests {
                 conn.execute(
                     "INSERT INTO daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     duckdb::params![
-                        sym, d, close - 0.01, close, close - 0.02, close, close, 5e7, 5e8
+                        sym,
+                        d,
+                        close - 0.01,
+                        close,
+                        close - 0.02,
+                        close,
+                        close,
+                        5e7,
+                        5e8
                     ],
                 )
                 .expect("insert daily");
