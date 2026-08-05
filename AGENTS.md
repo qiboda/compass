@@ -85,7 +85,7 @@ Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成�
 **Test-first 不可妥协**：任何 bugfix 或 feature 变更必须从能复现问题的失败测试开始
 （RED），再做让它通过的修复（GREEN）。适用于 Python（`collectors/tests/`）、
 Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败测试是反模式 ——
-见 `kb/dev/reflections.md` 历史摩擦记录章节（test-first 教训）。
+见 `kb/dev/reflections-archive.md` 历史摩擦记录章节（test-first 教训）。
 
 ### HARD BLOCK
 
@@ -262,8 +262,7 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 **/reflect 必须读取本 session 对话记录（`session_read`）逐条提取用户纠正，
 逐字引用原话——不凭记忆，对话记录是客观存在的**（执行者会忘，对话不会忘）；
 同时用 git 命令客观验证流程（commit 分支归属、worktree 是否创建未用）。
-`friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `reflections.md` 末尾
-"历史摩擦记录"章节。
+`friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `kb/dev/reflections-archive.md` 归档文件。已融入流程的反思条目归档至 `kb/dev/reflections-archive.md`（主文件 `kb/dev/reflections.md` 仅保留活性条目）。
 
 ## 决策记录
 
@@ -316,7 +315,8 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、重置 |
 | `kb/dev/database.md` | 数据库开发信息 — Dolt 查询/同步/提交、Parquet/DuckDB 生成、布局 |
 | `kb/dev/toolchain.md` | 工具链问题排查卡 — 执行中遇到并解决的问题，按症状/根因/排查路径/修复/验证沉淀 |
-| `kb/dev/reflections.md` | 事后反思 — 做了什么、哪里出错、教训 + 历史摩擦记录（User corrections） |
+| `kb/dev/reflections.md` | 事后反思（活性条目）— 做了什么、哪里出错、教训（User corrections） |
+| `kb/dev/reflections-archive.md` | 反思归档 — 教训已融入流程/已被取代的历史条目 + 历史摩擦记录 |
 | `kb/user/index.md` | 用户总览 — Compass 是什么、快速开始、前置条件 |
 | `kb/user/gui.md` | 图表应用 — 界面、控件、数据流、股票代码 |
 | `kb/user/cli.md` | 数据管线 — import/import-compass/export/backup、工作流、排障 |

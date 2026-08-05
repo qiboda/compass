@@ -86,8 +86,8 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 各章节规则：
 - **What was done**：事实陈述，1-2 句话。不带主观评价。
 - **User corrections**：仅在用户纠正过 AI 时写（可选章节）——记录"用户纠正了什么"（决策过程）。
-  注意：`friction.md` 机制已移除（2026-08-01），本小节继承其职责。历史摩擦条目见文件末尾
-  "历史摩擦记录"章节。
+  注意：`friction.md` 机制已移除（2026-08-01），本小节继承其职责。历史摩擦条目见
+  `kb/dev/reflections-archive.md` 归档文件。
 - **What went wrong**：仅在确实出了问题时才写。如果没有问题，写 `**What went wrong**: No issues.` 或直接省略该章节。
 - **Lessons learned**：可操作的内容 — 下次具体要做出什么改变。不能泛泛而谈（如"更小心"）。至少一条。
 
@@ -196,14 +196,18 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 | 同一 issue 有多个 commit | 一条反思覆盖该批次的所有 commit |
 | 该 issue 已有反思条目 | 检查上一条的 ref — 如果重复，改为追加 "Updated: <date>" 注释 |
 | 教训无法固化为机制 | Process improvements 写 "None"——一次性教训，留在条目中即可 |
+| 旧条目教训已融入流程/已被取代 | 归档至 `kb/dev/reflections-archive.md`（整体移动，原文不改） |
 | 落实涉及代码/hook | 反思 agent 输出建议清单 → 主 agent 走 gate 建 issue；条目记录 "proposed (ref #N)" |
 | 趋势分析未发现模式 | 写 "No significant patterns observed." 作为唯一的趋势 bullet |
 
 ## 禁止事项
 
 - **删除或改写过去的反思条目** — 只能追加新条目。
-  **唯一例外**：追加退役标记——教训已融入流程的旧条目，在其后追加一行
-  `> retired: 已融入 <机制>（<date>）`，原文不得改动（对齐 AGENTS.md 的条目退役约定）
+  **归档替代退役标记**（ref #186）：教训已融入流程（AGENTS.md 规则、skill 步骤、
+  hook、回归测试、CI 门禁）或已被后续条目取代的旧条目，整体移至
+  `kb/dev/reflections-archive.md`（头部有归档说明，原文不得改动）。主文件
+  `kb/dev/reflections.md` 仅保留活性条目。归档时用脚本按 `## ` 标题切分，
+  逐条校验"原文每行都出现在新文件或归档中"，禁止手抄（防内容丢失）。
 - **趋势 bullet points 超过 3 条** — 硬性上限
 - **分析超过 10 条历史条目** — 硬性上限
 - **创建单独的趋势报告文件** — 所有内容写入 `kb/dev/reflections.md`
