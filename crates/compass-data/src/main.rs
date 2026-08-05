@@ -34,23 +34,30 @@ enum Command {
         #[arg(long)]
         output: Option<PathBuf>,
 
-        /// Max symbols (0 = all)
+        /// Max symbols (0 = all). WARNING: filters + overwrites the whole
+        /// stock_daily.parquet with the subset — not an incremental update.
         #[arg(long, default_value_t = 0)]
         limit: usize,
 
-        /// Stock symbols to import (comma-separated 6-digit codes, e.g. "000001,600519")
+        /// Stock symbols to import (comma-separated 6-digit codes, e.g. "000001,600519").
+        /// WARNING: filters + overwrites the whole stock_daily.parquet with
+        /// only these symbols — not an incremental update.
         #[arg(long)]
         symbols: Option<String>,
 
-        /// Start date (YYYYMMDD), inclusive
+        /// Start date (YYYYMMDD), inclusive. WARNING: filters + overwrites the
+        /// whole stock_daily.parquet with the date range — not incremental.
         #[arg(long)]
         start_date: Option<String>,
 
-        /// End date (YYYYMMDD), inclusive
+        /// End date (YYYYMMDD), inclusive. WARNING: filters + overwrites the
+        /// whole stock_daily.parquet with the date range — not incremental.
         #[arg(long)]
         end_date: Option<String>,
 
-        /// Incremental: only import symbols with tradedate >= since (YYYYMMDD)
+        /// Only export rows with tradedate >= since (YYYYMMDD). WARNING: this is
+        /// a filter that overwrites the whole stock_daily.parquet with the subset
+        /// — NOT an incremental append. For incremental imports use import-compass.
         #[arg(long)]
         since: Option<String>,
     },
@@ -569,6 +576,46 @@ compass_data_dir = "/custom/compass"
                 cmd: SepaCmd::Temperature
             }
         ));
+    }
+
+    // ==================================================================
+    // import 过滤参数帮助文本警示测试（ref #185）
+    // ==================================================================
+
+    /// import 的过滤参数（--symbols/--limit/--start-date/--end-date/--since）
+    /// 实际行为是「WHERE 过滤 + 原子覆盖整个 stock_daily.parquet」，不是增量。
+    /// 帮助文本必须标注覆盖警示，且不得再用误导性的 "Incremental" 字样
+    /// （ref #159 事故诱因正是 help 把 --since 写成 Incremental）。
+    #[test]
+    fn import_filter_flags_help_warns_overwrite() {
+        use clap::CommandFactory;
+
+        let mut cmd = Cli::command();
+        let import = cmd
+            .find_subcommand_mut("import")
+            .expect("import subcommand exists");
+
+        // 每个过滤参数的 help 都必须警告覆盖行为
+        let filter_flags = ["symbols", "limit", "start_date", "end_date", "since"];
+        for arg in import.get_arguments() {
+            let Some(long) = arg.get_long() else {
+                continue;
+            };
+            if filter_flags.contains(&long) {
+                let help = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
+                assert!(
+                    help.contains("overwrite"),
+                    "import --{long} help must warn about full-file overwrite, got: {help}"
+                );
+            }
+        }
+
+        // 全命令帮助文本不得再出现 "Incremental" 字样（import-compass 才是增量）
+        let full_help = import.render_long_help().to_string();
+        assert!(
+            !full_help.contains("Incremental"),
+            "import help must not describe filtering as incremental: {full_help}"
+        );
     }
 
     // ==================================================================

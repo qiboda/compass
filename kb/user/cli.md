@@ -32,13 +32,15 @@ cargo run --bin compass-data -- import [OPTIONS]
 |---|---|---|
 | `--dolt-dir` | 来自配置 `[dolt].investment_data_dir` | Dolt 数据库目录 |
 | `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
-| `--symbols` | （全部） | 逗号分隔的 6 位代码（如 `000001,600519`） |
-| `--limit` | `0`（全部） | 最大导入股票数量 |
-| `--start-date` | （最早） | 按起始日期过滤（YYYYMMDD） |
-| `--end-date` | （最晚） | 按截止日期过滤（YYYYMMDD） |
-| `--since` | （无） | 日期过滤：仅导出 tradedate >= since 的数据（YYYYMMDD）。**注意：非增量追加**——导入会覆盖整个 `stock_daily.parquet` 为过滤后的子集（`import` 总是全量直写） |
+| `--symbols` | （全部） | 逗号分隔的 6 位代码（如 `000001,600519`）。**⚠️ 过滤 + 覆盖**——parquet 将只剩这些符号的数据 |
+| `--limit` | `0`（全部） | 最大导入股票数量。**⚠️ 过滤 + 覆盖**——parquet 将只剩前 N 只股票 |
+| `--start-date` | （最早） | 按起始日期过滤（YYYYMMDD）。**⚠️ 过滤 + 覆盖**——parquet 将只剩该日期段 |
+| `--end-date` | （最晚） | 按截止日期过滤（YYYYMMDD）。**⚠️ 过滤 + 覆盖**——parquet 将只剩该日期段 |
+| `--since` | （无） | 仅导出 tradedate >= since 的数据（YYYYMMDD）。**⚠️ 过滤 + 覆盖全文件，非增量追加**——需增量请用 `import-compass` |
 
 导入过程通过 `dolt sql -r parquet`（直接二进制 Parquet）读取每只股票的行数据，写入单一的 `stock_daily.parquet` 文件。再次运行会重新导入完整数据集。
+
+**⚠️ 过滤参数不是增量**：`import` 是「全量直写」命令——任何过滤参数（`--symbols`/`--limit`/`--start-date`/`--end-date`/`--since`）都只是 WHERE 过滤查询后**整体覆盖** `stock_daily.parquet`，旧数据不保留。需要增量/merge 语义请用 `import-compass`。
 
 ### 输出结构
 
