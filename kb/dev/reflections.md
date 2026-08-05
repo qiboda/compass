@@ -41,6 +41,7 @@
 
 **Lessons learned**:
 1. 组件带动画（缩放/位移）时，kittest 点击必须在动画完成后进行——测试里显式回拨 `open_started`/`close_started`（pub 字段）推进动画，或改用 `run()` 跑完动画帧；写测试前先确认组件动画对命中测试的影响
+   > ⚠️ **已过时（ref #168/#171 取代）**：回拨时间戳 workaround 有残留竞态（慢 CI flaky），已根治——动画改用 egui 虚拟时间 `ctx.input(|i| i.time)`（f64 秒），测试用 `with_step_dt` + `run_steps(n)` 确定性推进，库内再无显式回拨（见 `kb/dev/toolchain.md` 排查卡与 `kb/dev/testing.md` §时间敏感陷阱）。
 2. 组件化重构中"状态归属"是隐藏的契约——排序状态从面板移到 DataTable 后，跨帧持久化要求组件不借用外部 token（值语义）；先检查组件构造参数的所有权再定面板结构
 3. 行为类测试的前置条件必须与实际渲染逻辑一致（侧边栏只渲染自选行、当前 symbol 是否在自选中）——写 kittest 前先在心里跑一遍 UI 数据流
 

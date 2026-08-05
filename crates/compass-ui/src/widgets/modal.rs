@@ -418,10 +418,7 @@ mod tests {
             "close() must enter the closing animation"
         );
         assert!(modal.borrow().close_started.is_some());
-        assert!(
-            modal.borrow().is_open(),
-            "still open while the fade runs"
-        );
+        assert!(modal.borrow().is_open(), "still open while the fade runs");
 
         // Once the fade completes (100 ms), show() flips is_open to false:
         // 11 × 10 ms steps > 100 ms, driven by egui virtual time (ref #171).
@@ -535,9 +532,7 @@ mod tests {
         modal.close(0.0);
         let close_started = modal.close_started.expect("close sets the timestamp");
         assert_eq!(modal.close_progress(close_started), 0.0);
-        assert!(
-            (modal.close_progress(close_started + 0.05) - 0.5).abs() < 0.001
-        );
+        assert!((modal.close_progress(close_started + 0.05) - 0.5).abs() < 0.001);
         assert_eq!(modal.close_progress(close_started + 0.1), 1.0);
     }
 
@@ -691,8 +686,10 @@ mod tests {
         assert!(!modal.borrow().is_open());
 
         modal.borrow_mut().open(1.0);
-        // Wait out the entry animation (150 ms scale) so hit-testing works:
-        // 16 × 10 ms steps > 150 ms (ref #171).
+        // Re-open at a later virtual timestamp (literal, ahead of the harness
+        // clock), so the entry animation stays frozen at progress 0. That does
+        // not affect the click below: the scale transform only shifts painted
+        // shapes, never the interaction rects. Steps just render deterministically.
         harness.run_steps(16);
         harness.get_by_label("Confirm").click();
         harness.run();
