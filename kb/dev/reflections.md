@@ -727,3 +727,34 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - **hook 链路次生摩擦反复出现**（ref #16 range / #95 rebase 误拒 / #97 词边界误报 / #119 正文示例误判 / #172 引用已合并 issue）：commit message 与 hook 正则/校验的交互是持续摩擦源——本次已将"ref #N 必须指向 OPEN issue"固化进 AGENTS.md，后续观察是否闭环
 - **"review 阶段才暴露可前置验证的问题"持续**（ref #139 数据路径未实测、ref #163 门槛基线未实测、本次覆盖率数字与权威源不符）：文档数字与权威源核对、plan 阶段实测应成为默认动作
 - **修复根因后排查卡同步遗漏**（本次 toolchain.md 卡标记根治，3 reviewer 独立指出）：hook/流程修复落地后应主动检查相关 toolchain.md 排查卡是否需标注"已根治"，而非等 review 抓
+
+## 2026-08-05 — ref #174/#175-#179 chart-ma-boll epic：MA/BOLL 叠加层 + 前复权
+
+**What was done**: 完成 epic #174 全部 5 个子任务（#175 compass-core indicators 纯函数、#176 fetch 层前复权、#177 IndicatorTokens、#178 GUI 渲染接入 8 线叠加+图例行+前复权 Tag、#179 docs 同步），10 commits 在 feat/chart-ma-boll worktree；两级 review（#178 层 + PR 级 5-agent 全 PASS）；补 evidence 落盘、plan 台账勾选、export 语义文档化。
+
+**User corrections**:
+1. "plan完成了？？看看handoff里有没有还没有完成的部分？" —— 我在 Todo 5 提交后即宣布"Plan 执行完毕"，用户质疑后核查发现 evidence 未落盘、台账 F1-F4/success criteria 未勾选、epic 两层审查第二层（PR 级完整 diff）未跑——"plan 完成"声明过早，未对照 plan Final verification wave 逐条核验。
+2. "evidence 文件 这个是谁要求的？" —— 质疑证据出处，促使核查 plan Verification strategy（`证据：.omo/evidence/task-<N>-*.txt`）——要求确实存在，是我执行遗漏而非多余要求。
+
+**What went wrong**:
+1. **过早宣布 plan 完成**（核心偏差）：Todo 5 commit 后直接报告"执行完毕"，未做 plan 级完成核验——evidence 目录根本不存在（plan Verification strategy 明确要求 task-1..5 落盘）、台账 F1-F4 仍为未勾选、PR 级完整 diff 审查未跑。用户两次质疑才暴露。
+2. **evidence 产物被 .gitignore 静默吞掉且无人检查**：`.omo/*` 默认忽略、放行列表只有 plans/designs——实现 agent 与主 agent 都未在交付时检查证据产出，直到 609d668 才补放行。
+3. **RED 测试预写断言数学错误**：qa skill 预写的 MA5 断言（17.0）与 fixture（closes 1..=20 → MA5(19)=mean(16..=20)=18.0）不符，GREEN 阶段由实现 agent 发现并修正——预写断言未与 fixture 数据数学自洽。
+4. **实现偏离已确认 design 细节，Context Mining 才抓出**：图例行初始实现未按 design §4（caption 标签 text_secondary + mono 值线色 + format_price 规则 + 1px 竖分隔线），59ddcf2 才修复——交付核查未对照 design 细节。
+5. **fetch 语义变更消费者审计不全**：plan 只分析 GUI 消费者（"不改 DataWriter::save_bars"），未识别 export 经 fetch_bars 间接受影响（export 现在烘焙前复权价、adjclose==close、丢失原始保真度）——PR 级 Context Mining 发现，cli.md 56eb3ac 文档化现状。
+
+**Lessons learned**:
+1. **"实现完成" ≠ "plan 完成"**：宣布 plan/epic 完成前必须对照 Final verification wave（F1-F4）逐条核验并回写台账——evidence 落盘、台账勾选、epic 两层审查是完成定义的一部分，不是可选项。
+2. **plan 要求落盘的产物（evidence）创建时即检查 .gitignore 放行**：`.omo/` 子目录入库前查放行规则，避免产物被 ignore 静默吞掉、交付时才发现。
+3. **qa skill 预写 RED 断言须与 fixture 数据数学自洽**：断言值先手工验算（closes 1..=20 的 MA5(19)=18.0 而非 17.0），避免 GREEN 阶段返工。
+4. **实现交付后主 agent 抽查与已确认 design/plan 的细节一致性**（视觉/格式规格逐条对照）——Context Mining 才发现的 design §4 偏差本可在交付核查捕获。
+5. **fetch 层全局语义变更需审计全部 DataProvider 消费者**（GUI/export/CLI/backtest），不只直接调用者——export 经 fetch_bars 间接受影响是典型盲点。
+
+**Process improvements**:
+- 已落实：`.gitignore` 放行 `.omo/evidence/`（609d668，与 plans/designs 同类过程归档）；`kb/user/cli.md` export 章节注明前复权输出（56eb3ac）
+- 建议固化（文档类可直接改，本次先记录）：AGENTS.md「收尾前必须核实实现存在」规则扩展至 plan/批次完成声明——宣布"plan 执行完毕"前必须核对 evidence 落盘、台账回写、epic 两层审查，未核即声明即过度声称（ref #119 同类教训的 epic 级重演）
+
+### Trends (last 10)
+- **"宣布完成"与"实际收尾"不一致反复出现**（ref #117 push 后漏 comment/close、ref #119 合并后反思被迫 reopen + 过度声称 #121/#122、本次 plan 完成声明过早）：收尾核验（evidence/台账/审查/comment）与完成声明的绑定多次断裂——应把"完成定义"写进流程而非依赖自觉
+- **可前置验证的问题在 review/用户质疑阶段才暴露**（ref #139 F3 六轮 review、ref #163 门槛未实测、ref #172 覆盖率数字、本次 evidence 缺失与 design §4 偏差）：交付前自验证（对照 plan/design 逐条 + 产物落盘检查）是系统性短板
+- **全局语义变更的间接消费者审计缺失**（本次 export 继承前复权、ref #160 数据丢失事故同类）：行为变更影响面分析应覆盖间接调用链，不只直接调用者

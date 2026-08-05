@@ -226,6 +226,12 @@ epic/issue（`ref #<N>`），不创建新 issue；issue 收尾时在完成 comme
 OPEN 并注明依赖就绪，绝不随 epic 一并关闭（ref #119 曾过度声称 #121/#122
 已落地，实际未实现，已发布更正）。
 
+**Plan/批次完成声明同理（ref #174 教训）**：宣布"plan 执行完毕"前必须逐条核对
+plan 的 Final verification wave（F1 合规审计 / F2 审查 / F3 测试+覆盖率 / F4 scope
+fidelity）并回写台账——evidence 落盘（`.omo/evidence/`）、台账勾选、epic 两层
+审查（子 issue 级 + PR 级完整 diff）是完成定义的一部分，不是可选项。"实现 commit
+全部提交" ≠ "plan 完成"；未核即声明即过度声称。
+
 **Epic close**: PR 合并到 master 后，先关闭所有 sub-issues，再关闭 epic。
 在 epic 上记录总结 comment 列出所有完成的 sub-issues。
 
