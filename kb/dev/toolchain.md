@@ -183,6 +183,18 @@
   `elapsed()`）——必须用 egui 虚拟时间（`ctx.input(|i| i.time)`）或注入时钟。
   慢 CI 上任何"重置时间戳再 run()"的 workaround 都有残留竞态
 
+
+- **第二实例（ref #171，已根治）**: `compass-ui widgets::modal` 与 toast 同根因——
+  产品代码 `open()`/`close()`/`show()` 用 `Instant::now()` 驱动动画，测试
+  4+4 处"重置时间戳"workaround（modal.rs 402/588/622/651 + main.rs 1746-47/
+  1960-61/2005-06/2021-22）。#168 排查路径逐字复用：modal 动画改 egui 虚拟
+  时间（`open(now: f64)`/`close(now: f64)` 显式收参），测试 harness 改
+  `with_step_dt(0.01)` + `run_steps(11)`（modal.rs）或直接删 workaround
+  依赖默认 `step_dt=0.25` 一 step 跨过动画（main.rs）。根治后全仓 `grep Instant`
+  仅剩 toast 同构字段已 f64 化——无墙钟动画残留。教训同 toast：#171 验证后
+  "重置时间戳"模式在库内已无实例
+
+
 ---
 
 ## GitHub CLI / Hook
@@ -265,3 +277,4 @@
   数据管线根因仍由 issue #181 跟踪）
 - **验证**: 全窗口 benchmark 从 296% → 101.7%，单日最大跳变从 +94% → +4.8%；
   新增 `benchmark_skips_absurd_returns` 测试锁定
+

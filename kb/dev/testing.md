@@ -290,10 +290,11 @@ compass-ui 的 dev-dependencies 必须同时包含 `eframe`（默认 features）
   - 若产品代码用 `Instant::now()` 驱动动画，慢 CI 上 `harness.run()` 的
     `wait_for_images` sleep（字体首载）可能让真实时间越过动画时长，导致
     状态提前推进、测试偶发失败（ref #155/#168）。
-  - **正确模式**：产品动画用 egui 虚拟时间（`ctx.input(|i| i.time)`），
-    测试用细粒度 `step_dt`（如 0.01s）+ `run_steps(n)` 精确跨过动画时长，
-    完全确定、与机器负载无关（toast 动画即此模式，ref #168）。
-  - 避免"重置时间戳为 `Instant::now()` 再 run()"的 workaround——有残留竞态。
+   - **正确模式**：产品动画用 egui 虚拟时间（`ctx.input(|i| i.time)`），
+     测试用细粒度 `step_dt`（如 0.01s）+ `run_steps(n)` 精确跨过动画时长，
+     完全确定、与机器负载无关（toast/modal 动画即此模式，ref #168/#171）。
+   - 避免"重置时间戳为 `Instant::now()` 再 run()"的 workaround——有残留竞态。
+     toast/modal 的全部实例已随 #168/#171 移除，库内再无该模式。
 - **限制**：egui_dock 0.20 tab 按钮不暴露 AccessKit label（raw `ui.interact` + TextShape），无法 `get_by_label` 定位 —— tab 切换测试用程序化 `DockState::set_active_tab`，断言 tab 内容 widget。
 
 ### Python 网络 mock（stub AsyncSession）
