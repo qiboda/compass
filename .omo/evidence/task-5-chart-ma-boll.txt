@@ -1,0 +1,33 @@
+Task 5 (C5) — docs 同步（kb/ + design 公式更正）
+================================================
+Issue:   #179
+Commit:  81b4430 docs: MA/BOLL 叠加层 + 前复权设计同步（ui.md/data-providers.md/design 更正）
+Plan:    .omo/plans/chart-ma-boll.md Todo 5
+验收:    ui.md 设计要点/决策记录、data-providers.md 前复权说明、
+         design §6 公式更正标注；git diff 无意外文件
+
+验证命令与输出（2026-08-05 回放）:
+-------------------------------------
+$ grep -c "MA/BOLL\|前复权" kb/design/ui.md
+  7（图表章节 + 设计变更记录 + 决策记录表含本 feature 关键行）
+
+$ grep -c "factor" kb/design/data-providers.md
+  12（前复权小节 factor_i = adjclose_i/close_i + 决策记录行）
+
+$ grep -c "更正标注" .omo/designs/chart-ma-boll.md
+  1（§6 公式更正标注：scale_i=adjclose_latest/adjclose_i → factor_i=adjclose_i/close_i）
+
+$ grep -c "## 决策记录" kb/design/ui.md kb/design/data-providers.md
+  kb/design/ui.md:1
+  kb/design/data-providers.md:1
+  （Step 5c 决策记录章节存在）
+
+$ git diff --name-only 81b4430~1 81b4430
+  .omo/designs/chart-ma-boll.md
+  .omo/plans/chart-ma-boll.md
+  kb/design/data-providers.md
+  kb/design/ui.md
+  kb/user/gui.md
+  （仅预期 5 个文档文件，无意外变更）
+
+结论: PASS — 三个目标文件更新到位 + plan 台账更新，无意外文件变更。

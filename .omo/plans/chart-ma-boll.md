@@ -125,21 +125,21 @@ Your next move: 已批准。执行在独立 worker session（`$start-work`）。
 
 ## Final verification wave
 > Runs in parallel after ALL todos. ALL must APPROVE. Surface results and wait for the user's explicit okay before declaring complete.
-- [ ] F1. Plan compliance audit — 5 todos 全 done、验收标准逐条核验、commit message 含 `ref #<sub-N>`
-- [ ] F2. Code quality review — `/review-work` 5 并行 agent（goal/quality/security/QA/context）全过；lsp_diagnostics 干净；无类型抑制/空 catch
-- [ ] F3. Real manual QA — `cargo test` 全 workspace 绿 + `cargo build` 成功；覆盖率达标的 `scripts/check-coverage.sh` 输出
-- [ ] F4. Scope fidelity — 对照 Must NOT have 逐条核查（无 MACD/无参数控件/无存储/无填充/无 fork 变更/无 apply_to_chart 签名扩展）
+- [x] F1. Plan compliance audit — 5 todos 全 done、验收标准逐条核验、commit message 含 `ref #<sub-N>`
+- [x] F2. Code quality review — `/review-work` 5 并行 agent（goal/quality/security/QA/context）全过；lsp_diagnostics 干净；无类型抑制/空 catch
+- [x] F3. Real manual QA — `cargo test` 全 workspace 绿 + `cargo build` 成功；覆盖率达标的 `scripts/check-coverage.sh` 输出
+- [x] F4. Scope fidelity — 对照 Must NOT have 逐条核查（无 MACD/无参数控件/无存储/无填充/无 fork 变更/无 apply_to_chart 签名扩展）
 
 ## Commit strategy
 - 每 todo 一个 commit（epic 工作流：一个 epic = 一个 PR = 多个 commit，每个 commit 引用子 issue `ref #<sub-N>`）
 - push 前 rebase origin/master；push 前用户确认；push 后反思 commit（/reflect）+ 追加完成 comment + 关闭子 issues + 关闭 epic（issue-workflow 阶段 4）
 
 ## Success criteria
-- [ ] K 线前复权显示（OHLC 全缩放）+ 工具栏「前复权」Tag
-- [ ] MA 5/10/60/120/250 五线 + BOLL(20,2) 三线叠加显示（暗/亮两套主题 8 色可辨）
-- [ ] 图例行左上第二行（值 mono + 线色 + 85% chip，暖机显示 —）
-- [ ] 指标实时计算不存储；缓存指纹 (symbol, len, 首末 time) 无碰撞
-- [ ] 暖机逐线独立（MA5 bar 5 起画、MA250 bar 249 起画）
-- [ ] 1w/1M 先缩放后聚合（除权日周线高低点准确）
-- [ ] 全 workspace 测试绿、覆盖率达标（core 95% / compass 80%）、clippy/doc 干净
-- [ ] docs 同步 + 决策记录完整
+- [x] K 线前复权显示（OHLC 全缩放）+ 工具栏「前复权」Tag
+- [x] MA 5/10/60/120/250 五线 + BOLL(20,2) 三线叠加显示（暗/亮两套主题 8 色可辨）
+- [x] 图例行左上第二行（值 mono + 线色 + 85% chip，暖机显示 —）
+- [x] 指标实时计算不存储；缓存指纹 (symbol, len, 首末 time) 无碰撞
+- [x] 暖机逐线独立（MA5 bar 5 起画、MA250 bar 249 起画）
+- [x] 1w/1M 先缩放后聚合（除权日周线高低点准确）
+- [x] 全 workspace 测试绿、覆盖率达标（core 95% / compass 80%）、clippy/doc 干净
+- [x] docs 同步 + 决策记录完整

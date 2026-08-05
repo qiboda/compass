@@ -1,0 +1,41 @@
+Task 4 (C3) — GUI 渲染接入（8 线 Indicator + 图例行 + 前复权 Tag）
+=================================================================
+Issue:   #178
+Commits: 6c8daee feat(gui): 图表 MA/BOLL 叠加层 + 图例行 + 前复权 Tag
+         59ddcf2 fix(ui): 图例行对齐 design §4 + 指纹加 close 守卫
+Plan:    .omo/plans/chart-ma-boll.md Todo 4
+验收:    kittest 全绿（8 线渲染不 panic、切标的同指纹重算、空 bars EmptyState、
+         Tag 存在）；clippy/doc 干净；compass 覆盖率 ≥80%
+
+验证命令与输出（2026-08-05 回放）:
+-------------------------------------
+$ cargo test -p compass citizens::chart
+  test citizens::chart::tests::new_creates_citizen_with_correct_id ... ok
+  test citizens::chart::tests::show_empty_bars_renders_empty_state ... ok
+  test citizens::chart::tests::show_empty_bars_no_panic ... ok
+  test citizens::chart::tests::show_with_bars_computes_ma_and_boll_values ... ok
+  test citizens::chart::tests::show_with_bars_renders_chart_not_empty_state ... ok
+  test citizens::chart::tests::show_recomputes_indicator_values_on_symbol_change_same_fingerprint ... ok
+  test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo test -p compass render_toolbar_renders_adjusted_price_tag
+  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo test -p compass
+  test result: ok. 121 passed; 0 failed; 0 ignored; 0 measured
+
+$ cargo clippy -p compass --all-targets
+  0 warnings
+
+$ cargo doc -p compass --no-deps
+  0 warnings（missing_docs gate 干净）
+
+覆盖率（scripts/check-coverage.sh，全 workspace 报告节选）:
+  OK: compass line coverage 90.58%  (≥ 80% 门槛 ✓)
+
+手动数学核验（测试断言值）:
+  series(start,1.0,20) → closes 1..=20: MA5(19)=mean(16..=20)=18.0,
+  MA10(19)=mean(11..=20)=15.5, BOLL mid=10.5, 总体方差=33.25（Σx²=2870/20−110.25）;
+  切标的 closes 101..=110 → MA5(9)=mean(106..=110)=108.0（防缓存碰撞）
+
+结论: PASS — 全部验收标准达成。
