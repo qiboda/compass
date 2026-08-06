@@ -97,8 +97,9 @@ push 前按顺序执行：
 5. **Python 检查**（若存在 `collectors/pyproject.toml`）：`uv run ruff check *.py tests/` + `uv run pytest tests/ -q`
 
 > **CI 门槛在 merge 侧，不在 push 侧（ref #172）**：master 的 branch protection
-> 强制 9 个 required status checks（Build/Clippy/Format/Docs/Bench (compile)/
-> Test (nextest)/Coverage (llvm-cov)/Python Lint/Python Test，strict=true）——
+> 强制 4 个 required status checks（Rust (fmt + build + clippy + docs + nextest +
+> coverage)/Bench (compile)/Python Lint/Python Test，strict=true，ref #194 合并
+> 6→2 job 后同步）——
 > PR 的 CI 未全绿 merge 按钮直接禁用。pre-push hook **不再检查 master CI 状态**
 > （曾导致死锁：master CI 失败时，修复它的 PR 无法 push）。branch protection
 > 只限制 merge，不拦 master 直推（docs/lint/typo/反思类直推照常，未启用
@@ -316,19 +317,31 @@ cargo clippy -- -D warnings             # strict lint
 
 ### CI 缓存策略（rust-cache）
 
-CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save** 策略：
+CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save + 分组缓存**策略：
 
 ```yaml
 - uses: Swatinem/rust-cache@v2
   with:
     save-if: ${{ github.ref == 'refs/heads/master' }}
-    prefix-key: ${{ github.job }}   # 各 job 缓存独立
+    prefix-key: ${{ github.job }}   # 每组 job 缓存独立
 ```
 
 - **master**：每次 push 更新缓存（key 含 `Cargo.lock` hash，锁文件不变则命中旧缓存）
 - **分支**：只 restore（GitHub cache 自动 fallback 到默认分支命中 master 条目），不写自己的缓存——避免短命分支产生孤儿缓存（7 天 LRU 淘汰前无人复用）
 - **锁文件变化**（如 PR 加依赖）：key 变 → miss → 全量编译（依赖集变了，缓存无意义）
 - `save-if: false` 时 **restore 仍生效**（Swatinem/rust-cache 语义），仅跳过 save
+
+**分组缓存（ref #194）**：6 个 Rust job 合并为 1 个 + bench 独立，缓存从
+6 份（~10GB）降为 2 份（~3GB）：
+
+- `rust`：fmt + build + clippy + docs + nextest + coverage 顺序执行（同一
+  target 累积，save 一次）
+- `bench-check`：独立（release profile）
+
+组内顺序执行 → 无并行覆盖；组间独立 key → 无竞争。**禁止**所有 job 共享
+同一 key（#14 事故：并行覆盖缓存 → 下一 run 恢复不兼容产物全部重编译）。
+保持 rust-cache 默认 `add-rust-environment-hash-key`——cargo.lock 变化时
+内置 restoreKey 前缀匹配仍能复用旧缓存增量编译。
 
 历史：`572e688` 曾用 `save-if: true`（分支自缓存提速），因短命分支孤儿缓存浪费回退为仅 master save（`d55eead`, ref #89）。
 

@@ -1,10 +1,10 @@
-# Plan — fix/ci-hooks（#182 + #184）
+# Plan — fix/ci-hooks（#182 + #184 + #194）
 
 ## 背景
 
-Worktree `fix/ci-hooks` 处理三个 CI 相关 open issues。**#189 已由 master 直推完成**
-（`523e615`，排查卡固化），本 session 已补收尾（comment + close），不在本 PR 范围。
-本 PR 处理 #182 与 #184，各一个 commit。
+Worktree `fix/ci-hooks` 处理四个 CI 相关 open issues。**#189 已由 master 直推完成**
+（`523e615`，排查卡固化），已补收尾（comment + close），不在本 PR 范围。
+本 PR 处理 #182、#184、#194，各一个 commit（#184 有 review 驱动的追加修复 commits）。
 
 ## 范围
 
@@ -12,6 +12,7 @@ Worktree `fix/ci-hooks` 处理三个 CI 相关 open issues。**#189 已由 maste
 |---|---|---|---|
 | #184 | write_back_result temp CSV 竞争修复（test-first）+ **sepa.rs 同类竞争一并修复** | `crates/compass-data/src/backtest.rs` `crates/compass-data/src/sepa.rs` | fix |
 | #182 | pre-commit hook 追加 `cargo fmt --check` | `.githooks/pre-commit` | chore |
+| #194 | 合并 Rust job + 分组缓存（6 份缓存 → 3 份） | `.github/workflows/ci.yml` `kb/dev/process.md` | chore |
 
 > **范围扩展（review 后用户批准）**：Context 审查发现 sepa.rs `write_back` 用同一
 > `compass_sepa_writeback` 目录 + 固定 `{date}_{file}` 路径（6+ 测试同日期并发写），
@@ -67,9 +68,34 @@ fi
 
 - commit 1：`fix(data): write_back_result temp CSV 路径加唯一后缀消除测试竞争` `ref #184`
 - commit 2：`chore(hooks): pre-commit 追加 cargo fmt --check 拦截未格式化代码` `ref #182`
+- commit 3（#184 review 修复）：`fix(data): temp 文件 O_EXCL + stage_csv 共享 helper + 清理` `ref #184`
+- commit 4（#194）：`chore(ci): 合并 Rust job + 分组缓存（6→3 份）` `ref #194`
+
+## 批次 3 — #194 CI job 合并 + 分组缓存
+
+**问题**：GitHub Actions 缓存逼近 10GB 上限（9.53GB）。6 个 Rust job 各自
+`prefix-key: ${{ github.job }}` → 6 份独立缓存（~10GB），同一 target 存 6 遍。
+
+**方案**（用户已确认）：
+- 合并为 1 个 Rust job + bench 独立：
+  - `rust`：fmt + build + clippy + docs + nextest + coverage 顺序执行
+    （同一 target 累积，save 一次；保留 Dolt + nextest + cargo-llvm-cov 安装）
+  - bench 保留独立（release profile）
+- 缓存 6 份 → 2 份（rust / bench）
+- 保留 `save-if: master`；组内顺序执行无并行覆盖，组间独立 key 无竞争（ref #14 不重演）
+- 保持 rust-cache 默认 add-rust-environment-hash-key（cargo.lock 变化时内置 restoreKey 前缀匹配仍复用旧缓存）
+
+**测试策略**（CI 配置无法写失败测试）：push 分支触发 CI 观察；本地验证合并后
+cargo 命令顺序执行正确性。
+
+**验证**：master CI 全绿 + 缓存占用下降 + branch protection 同步（4 个新 check）。
+
+> **方案迭代（用户两次确认）**：初始方案为 rust-check/rust-test 两组 + bench 独立
+> （3 份缓存）；用户确认 fmt 并入 rust-check 后改为单 rust job + bench 独立
+> （2 份缓存）。branch protection required checks 从 9 个旧名同步为 4 个新名。
 
 ## 收尾
 
 - commit 后各跑 /review-work（2 轮上限）
 - 用户确认 push → /reflect 反思 commit → push → PR
-- merge 后 issue 收尾：#184 comment（含自愈事实+隐患修复）、#182 comment，然后 close
+- merge 后 issue 收尾：#184 comment（含自愈事实+隐患修复）、#182 comment、#194 comment，然后 close

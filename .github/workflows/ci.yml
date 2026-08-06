@@ -13,61 +13,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build
+  rust:
+    name: Rust (fmt + build + clippy + docs + nextest + coverage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
+          components: clippy, rustfmt, llvm-tools
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
-      - run: cargo build --verbose
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
-          prefix-key: ${{ github.job }}
-      - run: cargo clippy -- -D warnings
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: rustfmt
       - run: cargo fmt --check
-
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
-          prefix-key: ${{ github.job }}
+      - run: cargo build --verbose
+      - run: cargo clippy -- -D warnings
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+      - name: Install Dolt
+        run: |
+          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
+          tar -xzf /tmp/dolt.tar.gz -C /tmp
+          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
+          dolt version
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Collect coverage
+        run: |
+          mkdir -p target/llvm-cov
+          cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
+      - name: "Enforce coverage gate (per-crate thresholds: data/core 95%, others 80%)"
+        run: bash scripts/check-coverage.sh target/llvm-cov/coverage.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: target/llvm-cov/
 
   bench-check:
     name: Bench (compile)
@@ -82,56 +65,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
       - run: cargo bench --no-run
-
-  nextest:
-    name: Test (nextest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
-          prefix-key: ${{ github.job }}
-      - name: Install Dolt
-        run: |
-          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
-          tar -xzf /tmp/dolt.tar.gz -C /tmp
-          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
-          dolt version
-      - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run
-
-  coverage:
-    name: Coverage (llvm-cov)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: llvm-tools
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
-          prefix-key: ${{ github.job }}
-      - name: Install Dolt
-        run: |
-          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
-          tar -xzf /tmp/dolt.tar.gz -C /tmp
-          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
-          dolt version
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Collect coverage
-        run: cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
-      - name: "Enforce coverage gate (per-crate thresholds: data/core 95%, others 80%)"
-        run: bash scripts/check-coverage.sh target/llvm-cov/coverage.json
-      - uses: actions/upload-artifact@v7
-        with:
-          name: coverage-report
-          path: target/llvm-cov/
 
   python-lint:
     name: Python Lint
