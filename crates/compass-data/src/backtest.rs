@@ -7,6 +7,7 @@
 
 use std::error::Error;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
@@ -131,7 +132,14 @@ fn write_back_result(
 
     let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
     std::fs::create_dir_all(&temp_dir)?;
-    let path = temp_dir.join(format!("{end}_backtest_result.csv"));
+    // Unique per process + call — parallel test runs raced on a shared
+    // `{end}_backtest_result.csv` path (ref #184); keep the suffix.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let path = temp_dir.join(format!(
+        "{end}_backtest_result_{}_{}.csv",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&path, &csv)?;
     dolt_import(dolt_dir, "backtest_result", &path)?;
     let row_count = csv.lines().count() - 1;
@@ -246,6 +254,48 @@ mod tests {
         let end = NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap();
         write_back_result(dir.path(), &[], end).expect("empty ok");
         assert_eq!(table_count(dir.path(), "backtest_result"), 0);
+    }
+
+    /// Regression (ref #184): two write-back runs sharing the same `end`
+    /// must produce distinct temp CSV files. The old fixed path
+    /// `{end}_backtest_result.csv` raced under nextest parallelism — a
+    /// second run could overwrite the CSV while the first was importing it.
+    #[test]
+    fn write_back_result_temp_file_unique_per_run() {
+        let _lock = dolt_guard();
+        let dir1 = tempfile::tempdir().expect("tempdir1");
+        let dir2 = tempfile::tempdir().expect("tempdir2");
+        setup_dolt(dir1.path());
+        setup_dolt(dir2.path());
+
+        // Given stale files from earlier runs of this test exist, count
+        // only this test's runs after the two writes below.
+        let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+        if let Ok(rd) = std::fs::read_dir(&temp_dir) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("2025-06-30_backtest_result") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+
+        let pts = points_fixture();
+        let end = NaiveDate::parse_from_str("2025-06-30", "%Y-%m-%d").unwrap();
+        write_back_result(dir1.path(), &pts, end).expect("first write");
+        write_back_result(dir2.path(), &pts, end).expect("second write");
+
+        let files = std::fs::read_dir(&temp_dir)
+            .expect("read temp dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("2025-06-30_backtest_result"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files.len(),
+            2,
+            "two runs with the same end must use distinct temp files, got: {files:?}"
+        );
     }
 
     /// Full-table replace: a second write with a narrower curve leaves only
