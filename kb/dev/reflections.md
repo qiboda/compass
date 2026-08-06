@@ -301,3 +301,26 @@
 - **review 驱动修复循环持续有效**（ref #139 六轮 review、本次 2 轮）：独立 QA lane 能发现实现者自查遗漏（fmt 违规、失真注释、陈旧文档）——review 独立性是质量防线，不可省略
 - **同根因模式复用成效**（toast #168 → modal #171）：排查卡 + 决策记录 + 测试模式的先例复用使本次修复风险低、周期短——工具链排查卡沉淀是跨 issue 复利
 
+
+## 2026-08-06 — ref #190 Dolt compass_data 数据变更约束强化（backtest_result 写回未提交）
+
+**What was done**: 用户发现 `compass_data` Dolt 仓库 `backtest_result` 384 行 + `data_updates` 登记滞留工作区一天未提交（来源：2026-08-05 `sepa backtest` 运行）。手动提交并推送（Dolt `v3guc39`），并强化 AGENTS.md + kb/dev/database.md 约束：从"每次数据修改"扩为"任何路径修改该库（含 CLI/程序写回如 `sepa backtest`）必须及时 commit & push，写库后立即收尾，`dolt status` 非干净即流程违规"（GitHub `21bbfdf`）。
+
+**User corrections**（逐字引用对话记录）:
+1. "选1，然后需要加一个项目书约束，修改compass_data数据库，需要及时提交和push。" —— 用户选手动提交的同时明确要求**固化项目书约束**，而非一次性清理了事——我的选项把"手动提交"与"修代码自动 commit"分开，用户要求至少先落到规则层。
+
+**What went wrong**:
+1. **程序写回路径无 Dolt commit 收尾**：`crates/compass-data/src/backtest.rs` `write_back_result()`（line 106-140）只做 DDL → DELETE → `dolt table import -a` → `data_updates` upsert，全程无 `dolt commit`/`dolt push`——backtest_result 384 行滞留工作区一天。AGENTS.md 已有"每次数据修改（import、re-import、schema 变更、data_updates 更新）都必须提交并推送"规则，但**枚举式列举漏掉了 CLI/程序写回路径**，规则未被执行。
+2. **规则覆盖盲区**：现有规则以 import/采集等"人操作的命令"为对象，未显式覆盖"Rust/Python 程序向 compass_data 写表"（sepa backtest 写回、未来其他 CLI 写回）——程序写完后 session 自然结束，没有 commit 步骤就永远不提交。
+
+**Lessons learned**:
+1. **写库路径必须与 commit & push 绑定为同一收尾动作**：任何向 `compass_data` 写数据的路径（命令或程序）完成后必须立即 `dolt commit` + `dolt push`，禁止"先写数据、以后再说"——程序写回路径尤其危险，session 结束即失忆。已固化为 AGENTS.md 强制规则 + `dolt status` 干净度检查。
+2. **规则的对象枚举要覆盖非人操作路径**：数据变更规则不能只列"import/采集/schema"等人执行命令，CLI/程序写回（`sepa backtest` → `backtest_result`）同样是数据修改——规则应写"任何路径修改该库"而非穷举。
+
+**Process improvements**:
+- 已落实：AGENTS.md「compass_data Dolt 仓库 — 每次数据变更后 commit & push（所有路径）」章节重写（含程序写回路径同 session 收尾 + `dolt status` 验证 + 违规记录 reflections）；`kb/dev/database.md`「compass_data 提交推送」同步（`21bbfdf`，ref #190）
+- 建议（代码类，未排期）：`sepa backtest` CLI 的 `write_back_result()` 内置 Dolt commit 收尾（同 `sepa_daily.sh` 模式）——走 gate 建 issue 时评估
+
+### Trends (last 10)
+- **「文档已固化但未遵守」模式第四次出现**（ref #96 → #104 → #171 fmt 三件套 → 本次 Dolt 写回无 commit）：AGENTS.md 规则写入 ≠ 行为固化——本次规则已扩为"任何路径 + 程序写回"，但真正的兜底是 CLI 内置 commit（同 #182 pre-commit hook 思路：执行侧硬钩子而非文档约束）
+- **数据管线写库后未及时收尾反复出现**（ref #139 F3 双段 Dolt commit 依赖手动、ref #190 本次 backtest_result 滞留）：Dolt 数据变更的 commit+push 收尾是 agent 流程薄弱点——程序写回路径应内置 commit 或在流程中强制同 session 收尾
