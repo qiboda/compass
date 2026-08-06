@@ -371,18 +371,28 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 
 **Priority**: Dolt `investment_data` (local) 是主数据源。GUI 数据访问全部本地 — 无在线回退。
 
-### compass_data Dolt 仓库 — 每次数据变更后 commit & push
+### compass_data Dolt 仓库 — 每次数据变更后 commit & push（所有路径）
 
 `/data/compass-data/compass_data` 是 Dolt 仓库（remote:
-`doltremoteapi.dolthub.com/skwy/compass_data`）。**每次数据修改**（import、re-import、
-schema 变更、data_updates 更新）都必须提交并推送到 remote：
+`doltremoteapi.dolthub.com/skwy/compass_data`）。**任何路径修改该库**
+（import、re-import、schema 变更、data_updates 更新、SEPA 采集、CLI/程序
+写回如 `sepa backtest` 的 `backtest_result`）都必须**及时**提交并推送——写库
+操作完成后立即收尾，禁止让数据滞留工作区留待"以后再说"（ref #190 教训：
+`sepa backtest` 写回后未 commit，backtest_result 384 行滞留工作区一天）：
 
 ```sh
 cd /data/compass-data/compass_data
-dolt add <table>...        # or `dolt add .`
-dolt commit -m "feat: ..." # describe the data change
+dolt status                            # 确认变更范围
+dolt add <table>...                    # or `dolt add .`
+dolt commit -m "feat: ..."             # describe the data change
 dolt push origin main
+dolt status                            # 确认工作区干净、与 origin 同步
 ```
+
+**程序写回路径同样受约束**：任何 Rust/Python 代码向 `compass_data` 写表
+后，流程必须在同一 session 内执行 `dolt commit` + `dolt push`（手动命令
+或内置到 CLI 的收尾步骤），不得只写数据不提交。`dolt status` 非干净
+（working tree 有变更）即视为流程违规，在 reflections 中记录。
 
 完整 Dolt 操作指南（含跨库查询示例、investment_data 同步流程）见 `kb/dev/database.md`。
 

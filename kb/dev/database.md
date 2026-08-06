@@ -86,14 +86,22 @@ dolt log --oneline master..skwy/master   # 非空 = fork 领先（不应发生�
 ## compass_data 提交推送
 
 自有数据每次修改后（import-compass、SEPA 采集、schema 变更、data_updates
-更新）都必须提交并推送：
+更新、CLI/程序写回如 `sepa backtest` 的 `backtest_result`）都必须**及时**
+提交并推送——写库完成后立即收尾，禁止数据滞留工作区（ref #190 教训：
+`sepa backtest` 写回后未 commit，backtest_result 384 行滞留一天）：
 
 ```sh
 cd /data/compass-data/compass_data
+dolt status                            # 确认变更范围
 dolt add <table>...        # or `dolt add .`
 dolt commit -m "feat: ..." # describe the data change
 dolt push origin main
+dolt status                            # 确认工作区干净、与 origin 同步
 ```
+
+**程序写回路径同样受约束**：任何 Rust/Python 代码向 `compass_data` 写表
+后，流程必须在同一 session 内执行 `dolt commit` + `dolt push`（手动命令或
+内置到 CLI 的收尾步骤），不得只写数据不提交。
 
 ## Parquet / DuckDB 生成
 
