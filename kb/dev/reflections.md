@@ -324,3 +324,29 @@
 ### Trends (last 10)
 - **「文档已固化但未遵守」模式第四次出现**（ref #96 → #104 → #171 fmt 三件套 → 本次 Dolt 写回无 commit）：AGENTS.md 规则写入 ≠ 行为固化——本次规则已扩为"任何路径 + 程序写回"，但真正的兜底是 CLI 内置 commit（同 #182 pre-commit hook 思路：执行侧硬钩子而非文档约束）
 - **数据管线写库后未及时收尾反复出现**（ref #139 F3 双段 Dolt commit 依赖手动、ref #190 本次 backtest_result 滞留）：Dolt 数据变更的 commit+push 收尾是 agent 流程薄弱点——程序写回路径应内置 commit 或在流程中强制同 session 收尾
+
+## 2026-08-06 — ref #184/#182 CI hooks：pre-commit fmt 落地 + temp 竞争根治（#189 收尾）
+
+**What was done**: fix/ci-hooks worktree 处理三个 CI issues：#189（GIT_EDITOR=true 排查卡）确认已由 master 直推 `523e615` 完成、补收尾（comment + close）；#184 temp CSV 竞争修复（test-first RED → 唯一后缀 GREEN，后续 review 驱动扩展为共享 `stage_csv` helper + O_EXCL 防 symlink + import 后 `remove_file` 清理，sepa.rs 同类竞争一并修复）；#182 pre-commit 追加 `cargo fmt --check`（#171 反思排期项落地）。5 commits，2 轮 review（10 次审查）全 PASS 无 blocking。
+
+**User corrections**（逐字引用对话记录）:
+1. "本 PR 顺带修复 (Recommended)" —— 用户确认 Context review 发现的 sepa.rs 同类竞争纳入本 PR（超出原 plan 范围，用户批准扩展）。
+2. "一并清理 + 重构测试" —— 用户未采纳我的"保持现状"推荐，选择同时清理 temp 文件并重构回归测试（接受 Goal/CodeQuality 的 MINOR 发现）。
+
+**What went wrong**:
+1. **commit-msg 拒绝：正文引用已关闭 issue 需用 #N 不带 ref 前缀**（ref #119/#172 教训再犯）：`7084d16` 首次 commit 时正文叙述性提及已关闭的 #154 却写了 `ref #154`，commit-msg hook 当场拒绝。AGENTS.md 已有明文规则（"叙述性提及已关闭/合并 issue 时，用 #N 不带 ref 前缀"），执行时未遵守——「文档已固化但未遵守」模式第五次出现（#96 → #104 → #171 → #190 → 本次）。
+2. **review 的修复建议存在隐藏冲突**：Goal/CodeQuality agent 建议 `dolt_import` 后 `remove_file` 清理 temp 文件，但未发现该建议会破坏回归测试 `files.len()==2` 断言（数残留文件验证唯一性）——两 agent 均未察觉，我在实施前识别出该冲突并向用户提出。若盲目采纳会引入测试空洞。
+3. **security review 的 create_new 建议与回归测试交互**：O_EXCL 修复与 `files.len()==2` 断言兼容，但共享 helper 提取后两处调用（backtest/sepa）语义需一致——通过统一 `stage_csv` + 显式契约文档化解。
+
+**Lessons learned**:
+1. **commit message 正文引用已关闭 issue 时一律 `#N` 不带 `ref` 前缀**——commit-msg hook 是硬钩子但只拦截"提交后"，写 message 时就要遵守；引用历史 issue 讲解背景时先确认其状态再决定前缀（#119 正文示例误判、#172 正文引用已合并、本次 #154 三重教训）。
+2. **采纳 review agent 建议前先核对与既有测试断言的交互**：remove_file 建议与 files.len()==2 断言的冲突是隐藏依赖，agent 不会自动察觉——实现者必须验证"建议的修复是否破坏现有测试的观测点"，必要时向用户提出而非盲目执行。
+3. **共享 helper 提取的时机**：sepa.rs 同类竞争（Context agent 发现）与 backtest.rs 原 bug 完全同根因，一次性提取 `stage_csv` 解决两处——review 发现同类问题时，优先评估"共享修复"而非"逐点补丁"。
+
+**Process improvements**:
+- 已落实：#182 pre-commit `cargo fmt --check`（#171 反思排期项，本 session 落地为 hook 硬钩子）；`stage_csv` helper + O_EXCL + remove_file（代码级，含唯一性直接单测）
+- proposed（代码类，未排期）：`stage_csv` 的 `f.write_all` 失败时清理已创建文件（ENOSPC 边界）；目录级 symlink 变体（攻击者预建 `compass_sepa_writeback` 为 symlink）加固——单用户开发机可接受，如需要走 gate 建 issue
+
+### Trends (last 10)
+- **「文档已固化但未遵守」模式第五次出现**（ref #96 → #104 → #171 fmt → #190 Dolt → 本次 commit-msg ref 前缀）：AGENTS.md 明文规则（叙述性提及已关闭 issue 用 #N）执行时未遵守，被 commit-msg hook 硬拦截——文档规则必须配套执行侧硬钩子（本次 #182 的 fmt hook 正是该模式的正向固化：从文档规则升级为 pre-commit 硬钩子）
+- **review 驱动的同类问题发现 → 共享修复**（ref #139 六轮、#171 两轮、本次两轮）：Context agent 发现的 sepa.rs 竞争与 backtest.rs 原 bug 同根因，一次提取共享 helper 解决两处——review 的价值不只是抓 bug，还在于发现"修一个留一个"的同类风险
