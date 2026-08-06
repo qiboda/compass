@@ -6,6 +6,7 @@
 //! (full-table DELETE + `dolt table import -a`), registering `data_updates`.
 
 use std::error::Error;
+use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -133,14 +134,29 @@ fn write_back_result(
     let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
     std::fs::create_dir_all(&temp_dir)?;
     // Unique per process + call — parallel test runs raced on a shared
-    // `{end}_backtest_result.csv` path (ref #184); keep the suffix.
+    // `{end}_backtest_result.csv` path (ref #184). create_new (O_EXCL)
+    // also refuses symlinks planted by another local user in the shared
+    // temp dir; EEXIST (PID reuse + stale file) bumps the sequence.
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let path = temp_dir.join(format!(
-        "{end}_backtest_result_{}_{}.csv",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&path, &csv)?;
+    let path = loop {
+        let candidate = temp_dir.join(format!(
+            "{end}_backtest_result_{}_{}.csv",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut f) => {
+                f.write_all(csv.as_bytes())?;
+                break candidate;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    };
     dolt_import(dolt_dir, "backtest_result", &path)?;
     let row_count = csv.lines().count() - 1;
     dolt_upsert_updates(dolt_dir, "backtest_result", today, end, row_count)?;
