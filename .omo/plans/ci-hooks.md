@@ -10,8 +10,14 @@ Worktree `fix/ci-hooks` 处理三个 CI 相关 open issues。**#189 已由 maste
 
 | # | 变更 | 文件 | 类型 |
 |---|---|---|---|
-| #184 | write_back_result temp CSV 竞争修复（test-first） | `crates/compass-data/src/backtest.rs` | fix |
+| #184 | write_back_result temp CSV 竞争修复（test-first）+ **sepa.rs 同类竞争一并修复** | `crates/compass-data/src/backtest.rs` `crates/compass-data/src/sepa.rs` | fix |
 | #182 | pre-commit hook 追加 `cargo fmt --check` | `.githooks/pre-commit` | chore |
+
+> **范围扩展（review 后用户批准）**：Context 审查发现 sepa.rs `write_back` 用同一
+> `compass_sepa_writeback` 目录 + 固定 `{date}_{file}` 路径（6+ 测试同日期并发写），
+> 与 #184 同根因。用户决策：本 PR 顺带修复——提取共享 `stage_csv` helper
+> （PID+seq 唯一后缀 + O_EXCL 防 symlink + EEXIST 重试），backtest/sepa 两处统一使用，
+> import 后 `remove_file` 清理 temp 文件。回归测试相应重构为「清理契约 + 数据正确性」。
 
 ## 任务批次
 

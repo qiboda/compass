@@ -6,15 +6,13 @@
 //! (full-table DELETE + `dolt table import -a`), registering `data_updates`.
 
 use std::error::Error;
-use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
 use compass_strategy::sepa::backtest::{BacktestParams, equity_csv, run_backtest};
 
-use crate::sepa::{dolt_import, dolt_sql, dolt_upsert_updates, fmt_double};
+use crate::sepa::{dolt_import, dolt_sql, dolt_upsert_updates, fmt_double, stage_csv};
 
 /// `backtest_result` DDL: daily equity curve, PK on trade_date (aligned with
 /// the `market_temperature` single-date-table convention).
@@ -131,33 +129,10 @@ fn write_back_result(
         ));
     }
 
-    let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
-    std::fs::create_dir_all(&temp_dir)?;
-    // Unique per process + call — parallel test runs raced on a shared
-    // `{end}_backtest_result.csv` path (ref #184). create_new (O_EXCL)
-    // also refuses symlinks planted by another local user in the shared
-    // temp dir; EEXIST (PID reuse + stale file) bumps the sequence.
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let path = loop {
-        let candidate = temp_dir.join(format!(
-            "{end}_backtest_result_{}_{}.csv",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(mut f) => {
-                f.write_all(csv.as_bytes())?;
-                break candidate;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e.into()),
-        }
-    };
-    dolt_import(dolt_dir, "backtest_result", &path)?;
+    let path = stage_csv(&format!("{end}_backtest_result"), &csv)?;
+    let import = dolt_import(dolt_dir, "backtest_result", &path);
+    let _ = std::fs::remove_file(&path);
+    import?;
     let row_count = csv.lines().count() - 1;
     dolt_upsert_updates(dolt_dir, "backtest_result", today, end, row_count)?;
     Ok(())
@@ -273,19 +248,20 @@ mod tests {
     }
 
     /// Regression (ref #184): two write-back runs sharing the same `end`
-    /// must produce distinct temp CSV files. The old fixed path
-    /// `{end}_backtest_result.csv` raced under nextest parallelism — a
-    /// second run could overwrite the CSV while the first was importing it.
+    /// must not race on a shared temp CSV path, and must clean up their
+    /// staged files. The old fixed path `{end}_backtest_result.csv` raced
+    /// under nextest parallelism — a second run could overwrite the CSV
+    /// while the first was importing it.
     #[test]
-    fn write_back_result_temp_file_unique_per_run() {
+    fn write_back_result_stages_and_cleans_temp_file() {
         let _lock = dolt_guard();
         let dir1 = tempfile::tempdir().expect("tempdir1");
         let dir2 = tempfile::tempdir().expect("tempdir2");
         setup_dolt(dir1.path());
         setup_dolt(dir2.path());
 
-        // Given stale files from earlier runs of this test exist, count
-        // only this test's runs after the two writes below.
+        // Given stale files from earlier runs of this test exist, remove
+        // them so the post-condition below counts only this test's runs.
         let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
         if let Ok(rd) = std::fs::read_dir(&temp_dir) {
             for e in rd.flatten() {
@@ -301,17 +277,24 @@ mod tests {
         write_back_result(dir1.path(), &pts, end).expect("first write");
         write_back_result(dir2.path(), &pts, end).expect("second write");
 
-        let files = std::fs::read_dir(&temp_dir)
+        // When two runs share an end date, both must import their data and
+        // leave no staged temp CSV behind (unique names + post-import
+        // cleanup; the old shared path left one file and raced).
+        let leftovers = std::fs::read_dir(&temp_dir)
             .expect("read temp dir")
             .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.starts_with("2025-06-30_backtest_result"))
-            .collect::<Vec<_>>();
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("2025-06-30_backtest_result")
+            })
+            .count();
         assert_eq!(
-            files.len(),
-            2,
-            "two runs with the same end must use distinct temp files, got: {files:?}"
+            leftovers, 0,
+            "staged temp CSVs must be removed after import, got {leftovers} leftover(s)"
         );
+        assert_eq!(table_count(dir1.path(), "backtest_result"), 2);
+        assert_eq!(table_count(dir2.path(), "backtest_result"), 2);
     }
 
     /// Full-table replace: a second write with a narrower curve leaves only

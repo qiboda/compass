@@ -8,8 +8,10 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
@@ -375,8 +377,6 @@ fn write_back(
 
     // Stage CSVs to temp files and append-import (per-table: skip when a
     // table legitimately has no rows, e.g. no concept memberships).
-    let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
-    std::fs::create_dir_all(&temp_dir)?;
     let staged: [(&str, &str, &str); 5] = [
         ("technical_factor", &tech_csv, "technical_factor.csv"),
         ("industry_factor", &ind_csv, "industry_factor.csv"),
@@ -392,9 +392,10 @@ fn write_back(
             info!(table, date = %data.date, "no rows to write back");
             continue;
         }
-        let path = temp_dir.join(format!("{date}_{file}"));
-        std::fs::write(&path, csv)?;
-        dolt_import(dolt_dir, table, &path)?;
+        let path = stage_csv(&format!("{date}_{file}"), csv)?;
+        let import = dolt_import(dolt_dir, table, &path);
+        let _ = std::fs::remove_file(&path);
+        import?;
         let row_count = csv.lines().count() - 1;
         dolt_upsert_updates(dolt_dir, table, today, date, row_count)?;
         info!(
@@ -441,6 +442,40 @@ pub(crate) fn dolt_import(dolt_dir: &Path, table: &str, csv: &Path) -> Result<()
         return Err(format!("dolt import {table} failed: {stderr}{stdout}").into());
     }
     Ok(())
+}
+
+/// Stage a CSV into a unique temp file under `compass_sepa_writeback`,
+/// returning the created path. The caller must `remove_file` the path
+/// after `dolt_import` (shared by `write_back` and backtest write-back).
+///
+/// Uniqueness: PID + per-process atomic sequence keep paths distinct
+/// across nextest processes and within one process (ref #184 — a fixed
+/// `{date}_{table}.csv` path raced between parallel test runs). `create_new`
+/// (O_EXCL) refuses symlinks another local user could plant in the shared
+/// temp dir; EEXIST (PID reuse + stale file) bumps the sequence and retries.
+pub(crate) fn stage_csv(stem: &str, csv: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+    std::fs::create_dir_all(&temp_dir)?;
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let candidate = temp_dir.join(format!(
+            "{stem}_{}_{}.csv",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut f) => {
+                f.write_all(csv.as_bytes())?;
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 /// Upsert the data_updates row for one compute table.
