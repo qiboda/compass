@@ -534,6 +534,21 @@ mod tests {
             .expect("parse count")
     }
 
+    /// Regression (ref #184): stage_csv must hand out a distinct path per
+    /// call even for the same stem — the old fixed `{end}_backtest_result.csv`
+    /// path raced between parallel nextest processes.
+    #[test]
+    fn stage_csv_returns_distinct_paths_per_call() {
+        let stem = "unit_test_stage_csv";
+        let p1 = stage_csv(stem, "a,b\n1,2\n").expect("first stage");
+        let p2 = stage_csv(stem, "a,b\n3,4\n").expect("second stage");
+        assert_ne!(p1, p2, "same stem must not collide, got {p1:?} and {p2:?}");
+        assert_eq!(std::fs::read_to_string(&p1).expect("read p1"), "a,b\n1,2\n");
+        assert_eq!(std::fs::read_to_string(&p2).expect("read p2"), "a,b\n3,4\n");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
     // -----------------------------------------------------------------------
     // Parquet fixture (minimal: daily + basic + one concept member; the rest
     // of the SEPA tables stay absent — run_sepa degrades them to empty vecs)
