@@ -2,17 +2,28 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-/// Strip SH/SZ/BJ prefix from symbol, returning the 6-digit code.
-fn strip_prefix(symbol: &str) -> &str {
-    if let Some(rest) = symbol.strip_prefix("SH") {
-        rest
-    } else if let Some(rest) = symbol.strip_prefix("SZ") {
-        rest
-    } else if let Some(rest) = symbol.strip_prefix("BJ") {
-        rest
-    } else {
-        symbol
+/// Normalize a `--symbols` filter value to Dolt-native prefixed symbols.
+///
+/// Each comma-separated entry may be Dolt-native (`SH600519`) or dot form
+/// (`sz.600519`); both are normalized to the canonical prefixed form so they
+/// match the prefixed `symbol` column. Bare 6-digit codes are rejected (D9,
+/// ref #181).
+fn normalize_symbol_filter(filter: &str) -> Result<String, String> {
+    let mut normalized = Vec::new();
+    for part in filter.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (exchange, code) = compass_core::data::symbol::parse_explicit_prefix(part);
+        if exchange.is_empty() {
+            return Err(format!(
+                "--symbols entry '{part}' is not exchange-prefixed; use e.g. SH600519 or sz.600519"
+            ));
+        }
+        normalized.push(format!("{exchange}{code}"));
     }
+    Ok(normalized.join(","))
 }
 
 /// Run `dolt sql -r csv` and return the CSV output as a string.
@@ -57,13 +68,14 @@ pub fn run_dolt_sql_parquet(dolt_dir: &Path, query: &str) -> Result<Vec<u8>, Str
     Ok(output.stdout)
 }
 
-/// Filter symbols by 6-digit codes. `filter` is comma-separated (e.g. "000001,600519").
-/// Matches against full Dolt symbols (e.g. "SZ000001", "SH600519") by stripping prefix.
+/// Filter symbols by exact Dolt-native symbol (e.g. "SZ000001"). `filter` is
+/// comma-separated prefixed symbols; entries must already be normalized to
+/// Dolt-native form by [`normalize_symbol_filter`].
 fn filter_symbols(symbols: Vec<String>, filter: &str) -> Vec<String> {
     let wanted: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
     symbols
         .into_iter()
-        .filter(|s| wanted.iter().any(|w| strip_prefix(s) == *w))
+        .filter(|s| wanted.iter().any(|w| s == *w))
         .collect()
 }
 
@@ -78,6 +90,13 @@ pub fn run(
     since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&output)?;
+
+    // Validate + normalize --symbols at entry: dot form ("sz.600519") becomes
+    // Dolt-native ("SZ600519"), bare 6-digit codes are rejected (D9, ref #181).
+    let symbols_filter = match symbols_filter {
+        Some(filter) => Some(normalize_symbol_filter(filter)?),
+        None => None,
+    };
 
     // ------------------------------------------------------------------
     // 1. Migration detection: warn if legacy stock_daily/ directory exists
@@ -107,7 +126,7 @@ pub fn run(
         .map(|l| l.to_string())
         .collect();
 
-    let symbols = if let Some(filter) = symbols_filter {
+    let symbols = if let Some(filter) = &symbols_filter {
         filter_symbols(symbols, filter)
     } else {
         symbols
@@ -136,14 +155,11 @@ pub fn run(
         where_parts.push(format!("tradedate >= '{since_date}'"));
     }
 
-    // --symbols: filter by 6-digit code (strip prefix for comparison)
-    if let Some(filter) = symbols_filter {
+    // --symbols: filter by exact Dolt-native symbol (dot form normalized above)
+    if let Some(filter) = &symbols_filter {
         let codes: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
         let quoted: Vec<String> = codes.iter().map(|c| format!("'{c}'")).collect();
-        where_parts.push(format!(
-            "CASE WHEN LEFT(symbol,2) IN ('SH','SZ','BJ') THEN SUBSTRING(symbol,3) ELSE symbol END IN ({})",
-            quoted.join(",")
-        ));
+        where_parts.push(format!("symbol IN ({})", quoted.join(",")));
     }
 
     // --start-date / --end-date
@@ -176,8 +192,7 @@ pub fn run(
     };
 
     let query = format!(
-        "SELECT CASE WHEN LEFT(symbol,2) IN ('SH','SZ','BJ') THEN SUBSTRING(symbol,3) ELSE symbol END AS symbol, \
-         tradedate, open, high, low, close, adjclose, volume, amount \
+        "SELECT symbol, tradedate, open, high, low, close, adjclose, volume, amount \
          FROM final_a_stock_eod_price \
          {where_clause} \
          ORDER BY symbol, tradedate \
@@ -194,12 +209,12 @@ pub fn run(
     std::fs::rename(&tmp_path, &final_path)?;
 
     // ------------------------------------------------------------------
-    // 4. Generate symbols.txt (strip prefixes, sorted alphabetically)
+    // 4. Generate symbols.txt (Dolt-native prefixed symbols, sorted)
     // ------------------------------------------------------------------
     let symbols_txt_path = output.join("stock_daily.symbols.txt");
-    let mut sorted_codes: Vec<&str> = symbols.iter().map(|s| strip_prefix(s)).collect();
-    sorted_codes.sort();
-    std::fs::write(&symbols_txt_path, sorted_codes.join("\n"))?;
+    let mut sorted_symbols = symbols.clone();
+    sorted_symbols.sort();
+    std::fs::write(&symbols_txt_path, sorted_symbols.join("\n"))?;
 
     // ------------------------------------------------------------------
     // 5. Get row count for summary
@@ -293,30 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn strip_prefix_removes_sh() {
-        assert_eq!(strip_prefix("SH600519"), "600519");
-        assert_eq!(strip_prefix("SH688001"), "688001");
-    }
-
-    #[test]
-    fn strip_prefix_removes_sz() {
-        assert_eq!(strip_prefix("SZ000001"), "000001");
-        assert_eq!(strip_prefix("SZ300750"), "300750");
-    }
-
-    #[test]
-    fn strip_prefix_removes_bj() {
-        assert_eq!(strip_prefix("BJ830799"), "830799");
-    }
-
-    #[test]
-    fn strip_prefix_passthrough_unknown() {
-        assert_eq!(strip_prefix("000001"), "000001");
-        assert_eq!(strip_prefix("600519"), "600519");
-        assert_eq!(strip_prefix(""), "");
-    }
-
-    #[test]
     fn run_dolt_sql_csv_returns_error_for_nonexistent_dir() {
         let result = run_dolt_sql_csv(std::path::Path::new("/nonexistent/dolt/dir"), "SELECT 1");
         assert!(result.is_err());
@@ -401,14 +392,14 @@ mod tests {
     #[test]
     fn filter_symbols_matches_sz_code() {
         let input = vec!["SZ000001".into(), "SH600519".into(), "SZ300750".into()];
-        let result = filter_symbols(input, "000001");
+        let result = filter_symbols(input, "SZ000001");
         assert_eq!(result, vec!["SZ000001"]);
     }
 
     #[test]
     fn filter_symbols_matches_sh_code() {
         let input = vec!["SZ000001".into(), "SH600519".into()];
-        let result = filter_symbols(input, "600519");
+        let result = filter_symbols(input, "SH600519");
         assert_eq!(result, vec!["SH600519"]);
     }
 
@@ -420,29 +411,71 @@ mod tests {
             "SZ300750".into(),
             "BJ830799".into(),
         ];
-        let result = filter_symbols(input, "000001,600519");
+        let result = filter_symbols(input, "SZ000001,SH600519");
         assert_eq!(result, vec!["SZ000001", "SH600519"]);
     }
 
     #[test]
     fn filter_symbols_handles_spaces_in_filter() {
         let input = vec!["SZ000001".into(), "SH600519".into()];
-        let result = filter_symbols(input, " 000001 , 600519 ");
+        let result = filter_symbols(input, " SZ000001 , SH600519 ");
         assert_eq!(result, vec!["SZ000001", "SH600519"]);
     }
 
     #[test]
     fn filter_symbols_returns_empty_on_no_match() {
         let input = vec!["SZ000001".into(), "SH600519".into()];
-        let result = filter_symbols(input, "999999");
+        let result = filter_symbols(input, "SH999999");
         assert!(result.is_empty());
     }
 
     #[test]
     fn filter_symbols_returns_empty_on_empty_input() {
         let input: Vec<String> = vec![];
-        let result = filter_symbols(input, "000001");
+        let result = filter_symbols(input, "SZ000001");
         assert!(result.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // normalize_symbol_filter tests (--symbols input validation, D9)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn normalize_symbol_filter_keeps_dolt_native() {
+        assert_eq!(normalize_symbol_filter("SH600519").unwrap(), "SH600519");
+        assert_eq!(normalize_symbol_filter("BJ830799").unwrap(), "BJ830799");
+    }
+
+    #[test]
+    fn normalize_symbol_filter_dot_to_native() {
+        assert_eq!(normalize_symbol_filter("sz.600519").unwrap(), "SZ600519");
+        // Dot form and Dolt-native must normalize identically (Oracle F3):
+        // same filter results either way.
+        assert_eq!(
+            normalize_symbol_filter("sz.600519").unwrap(),
+            normalize_symbol_filter("SZ600519").unwrap()
+        );
+    }
+
+    #[test]
+    fn normalize_symbol_filter_case_insensitive() {
+        assert_eq!(normalize_symbol_filter("sz000001").unwrap(), "SZ000001");
+        assert_eq!(normalize_symbol_filter("sh.600519").unwrap(), "SH600519");
+    }
+
+    #[test]
+    fn normalize_symbol_filter_rejects_bare_code() {
+        assert!(normalize_symbol_filter("600519").is_err());
+        assert!(normalize_symbol_filter("000001").is_err());
+        assert!(normalize_symbol_filter("SZ000001,600519").is_err());
+    }
+
+    #[test]
+    fn normalize_symbol_filter_multiple_entries() {
+        assert_eq!(
+            normalize_symbol_filter("SZ000905, sh.000905").unwrap(),
+            "SZ000905,SH000905"
+        );
     }
 
     #[test]
@@ -533,7 +566,7 @@ mod tests {
             dolt_tmp.path().to_path_buf(),
             output_tmp.path().to_path_buf(),
             0,
-            Some("000001"),
+            Some("SZ000001"),
             None,
             None,
             None,
@@ -555,7 +588,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("count");
-        assert_eq!(count, 1, "should only contain 000001");
+        assert_eq!(count, 1, "should only contain SZ000001");
 
         let symbols: Vec<String> = duck
             .prepare(&format!(
@@ -567,7 +600,129 @@ mod tests {
             .unwrap()
             .filter_map(|r| r.ok())
             .collect();
-        assert_eq!(symbols, vec!["000001"]);
+        assert_eq!(symbols, vec!["SZ000001"]);
+    }
+
+    #[test]
+    fn run_rejects_bare_symbol_filter() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        let result = run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            Some("000001"),
+            None,
+            None,
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "bare 6-digit --symbols input must be rejected (D9)"
+        );
+    }
+
+    /// Regression for #181: SH000905 (index) and SZ000905 (stock) share the
+    /// same bare code; import used to strip prefixes, merging both rows into
+    /// a single bare "000905" row. Dolt-native prefixed symbols must survive
+    /// import as distinct rows with no (symbol, tradedate) duplicates.
+    #[test]
+    fn run_preserves_colliding_sh_sz_symbols() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SH000905', '2024-01-02', 4900, 4950, 4880, 4920, 4920, 3000, 0), \
+             ('SZ000905', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("run");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+
+        let symbols: Vec<String> = duck
+            .prepare(&format!(
+                "SELECT DISTINCT symbol FROM read_parquet('{}') WHERE symbol IN ('SH000905','SZ000905') ORDER BY symbol",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(symbols, vec!["SH000905", "SZ000905"]);
+
+        let dup_count: usize = duck
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM (SELECT symbol, tradedate FROM read_parquet('{}') GROUP BY 1,2 HAVING COUNT(*)>1)",
+                    parquet.display()
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .expect("dup count");
+        assert_eq!(dup_count, 0, "no (symbol, tradedate) duplicates");
+    }
+
+    #[test]
+    fn run_filters_by_symbols_dot_form_normalized() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ600519', '2024-01-02', 99, 101, 98, 100, 100, 2000, 0), \
+             ('SH600519', '2024-01-02', 99, 101, 98, 100, 100, 2000, 0)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            Some("sz.600519"),
+            None,
+            None,
+            None,
+        )
+        .expect("run with dot-form --symbols");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+        let symbols: Vec<String> = duck
+            .prepare(&format!(
+                "SELECT DISTINCT symbol FROM read_parquet('{}') ORDER BY symbol",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(symbols, vec!["SZ600519"]);
     }
 
     #[test]
