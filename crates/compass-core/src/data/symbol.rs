@@ -13,21 +13,50 @@
 ///
 /// Returns `("", code)` if no prefix is found.
 pub fn parse_explicit_prefix(code: &str) -> (&str, &str) {
-    if code.len() >= 3 && code[..3].eq_ignore_ascii_case("sh.") {
+    if code.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("sh.")) {
         ("SH", &code[3..])
-    } else if code.len() >= 3 && code[..3].eq_ignore_ascii_case("sz.") {
+    } else if code.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("sz.")) {
         ("SZ", &code[3..])
-    } else if code.len() >= 3 && code[..3].eq_ignore_ascii_case("bj.") {
+    } else if code.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bj.")) {
         ("BJ", &code[3..])
-    } else if code.len() >= 2 && code[..2].eq_ignore_ascii_case("SH") {
+    } else if code.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("SH")) {
         ("SH", &code[2..])
-    } else if code.len() >= 2 && code[..2].eq_ignore_ascii_case("SZ") {
+    } else if code.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("SZ")) {
         ("SZ", &code[2..])
-    } else if code.len() >= 2 && code[..2].eq_ignore_ascii_case("BJ") {
+    } else if code.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("BJ")) {
         ("BJ", &code[2..])
     } else {
         ("", code)
     }
+}
+
+/// Infer the exchange prefix for a legacy unprefixed 6-digit code
+/// (pre-D10 data, mirroring the pre-D9 heuristic: 6→SH, 8→BJ, 92→BJ,
+/// else→SZ). Non-digit or non-6-digit values return `None`.
+pub fn infer_exchange_prefix(code: &str) -> Option<&'static str> {
+    if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
+        if code.starts_with('6') {
+            Some("SH")
+        } else if code.starts_with('8') || code.starts_with("92") {
+            Some("BJ")
+        } else {
+            Some("SZ")
+        }
+    } else {
+        None
+    }
+}
+
+/// Exchange code from a symbol's explicit prefix, falling back to the
+/// legacy bare-code shape heuristic for pre-migration data.
+pub fn exchange_of_symbol(symbol: &str) -> &str {
+    let (exchange, _) = parse_explicit_prefix(symbol);
+    if !exchange.is_empty() {
+        return exchange;
+    }
+    // Bare-code fallback delegates to the full shape heuristic (6→SH,
+    // 8/92→BJ, else→SZ) so the two can never drift.
+    infer_exchange_prefix(symbol).unwrap_or("SZ")
 }
 
 #[cfg(test)]
@@ -61,5 +90,37 @@ mod tests {
     fn parse_explicit_prefix_bare_code_returns_empty() {
         assert_eq!(parse_explicit_prefix("000001"), ("", "000001"));
         assert_eq!(parse_explicit_prefix("600519"), ("", "600519"));
+    }
+
+    #[test]
+    fn parse_explicit_prefix_non_ascii_does_not_panic() {
+        // Multi-byte UTF-8 must not be byte-sliced mid-char (regression:
+        // `code[..2]`/`code[..3]` panicked on non-char-boundary indices,
+        // crashing GUI startup when a user config carries a stock name).
+        assert_eq!(parse_explicit_prefix("平安银行"), ("", "平安银行"));
+        assert_eq!(parse_explicit_prefix("贵"), ("", "贵"));
+        // An ASCII prefix before a name still parses without panic.
+        assert_eq!(parse_explicit_prefix("SZ平安"), ("SZ", "平安"));
+        assert_eq!(parse_explicit_prefix("SH平"), ("SH", "平"));
+    }
+
+    #[test]
+    fn exchange_of_symbol_explicit_prefix_wins() {
+        assert_eq!(exchange_of_symbol("SZ000001"), "SZ");
+        assert_eq!(exchange_of_symbol("sh600519"), "SH");
+        assert_eq!(exchange_of_symbol("BJ830799"), "BJ");
+    }
+
+    #[test]
+    fn exchange_of_symbol_bare_code_shape_fallback() {
+        // Legacy pre-migration bare codes use the shape heuristic.
+        assert_eq!(exchange_of_symbol("600519"), "SH");
+        assert_eq!(exchange_of_symbol("830799"), "BJ");
+        assert_eq!(
+            exchange_of_symbol("920001"),
+            "BJ",
+            "92-prefixed codes are BJ"
+        );
+        assert_eq!(exchange_of_symbol("000001"), "SZ");
     }
 }

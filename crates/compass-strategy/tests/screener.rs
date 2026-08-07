@@ -284,6 +284,69 @@ fn exchange_filter_92_prefix_is_bj() {
 }
 
 #[test]
+fn exchange_filter_lowercase_prefix_is_case_insensitive() {
+    // parse_explicit_prefix accepts lowercase prefixes; the strategy layer
+    // must derive SH from "sh600519" instead of classifying it SZ.
+    let stocks = vec![
+        TestStock {
+            symbol: "sh600519",
+            name: "贵州茅台",
+            industry: Some("白酒"),
+            board: Some("主板"),
+            list_date: Some("2001-08-27"),
+            delist_date: None,
+            total_share: Some(1.0e10),
+            bars: daily_series("2026-07-28", &[10.0; 5], 1000.0),
+        },
+        stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0)),
+    ];
+    let (_tmp, reader) = build_fixture(&stocks);
+
+    let q = ScreenerQuery {
+        exchanges: vec!["SH".to_string()],
+        ..ScreenerQuery::default()
+    };
+    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    assert_eq!(res.rows.len(), 1);
+    assert_eq!(
+        res.rows[0].symbol, "sh600519",
+        "lowercase-prefixed symbol must be classified SH"
+    );
+}
+
+#[test]
+fn exchange_filter_bare_code_falls_back_to_shape_heuristic() {
+    // Pre-migration bare parquet: 6xxxxx derives SH, matching the GUI's
+    // legacy fallback (F2: strategy layer previously dropped it and
+    // classified 600519 as SZ, dropping it from the SH filter).
+    let stocks = vec![
+        TestStock {
+            symbol: "600519",
+            name: "贵州茅台",
+            industry: Some("白酒"),
+            board: Some("主板"),
+            list_date: Some("2001-08-27"),
+            delist_date: None,
+            total_share: Some(1.0e10),
+            bars: daily_series("2026-07-28", &[10.0; 5], 1000.0),
+        },
+        stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0)),
+    ];
+    let (_tmp, reader) = build_fixture(&stocks);
+
+    let q = ScreenerQuery {
+        exchanges: vec!["SH".to_string()],
+        ..ScreenerQuery::default()
+    };
+    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    assert_eq!(res.rows.len(), 1);
+    assert_eq!(
+        res.rows[0].symbol, "600519",
+        "bare 6xxxxx code must derive SH via the legacy shape heuristic"
+    );
+}
+
+#[test]
 fn list_years_filter_and_missing_list_date_excluded() {
     let stocks = vec![
         TestStock {

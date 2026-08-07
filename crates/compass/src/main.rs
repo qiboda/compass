@@ -8,7 +8,9 @@ use serde::Deserialize;
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
-use compass_core::data::symbol::parse_explicit_prefix;
+use compass_core::data::symbol::{
+    exchange_of_symbol, infer_exchange_prefix, parse_explicit_prefix,
+};
 use compass_core::model::{AppConfig, WatchlistConfig};
 use compass_types::ScreenerQuery;
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
@@ -271,23 +273,6 @@ fn load_config() -> FullConfig {
     }
 }
 
-/// Infer the exchange prefix for a legacy unprefixed 6-digit code (D10 migration,
-/// mirroring the pre-D9 heuristic: 6→SH, 8→BJ, 92→BJ, else→SZ). Non-digit
-/// or non-6-digit values return `None` and are left untouched.
-fn infer_exchange_prefix(code: &str) -> Option<&'static str> {
-    if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
-        if code.starts_with('6') {
-            Some("SH")
-        } else if code.starts_with('8') || code.starts_with("92") {
-            Some("BJ")
-        } else {
-            Some("SZ")
-        }
-    } else {
-        None
-    }
-}
-
 /// Normalize a legacy config symbol to the canonical exchange-prefixed form
 /// (D10): dot forms (`sh.000001`) and prefixed forms canonicalize to the
 /// uppercase native form (`SH000001`); unprefixed 6-digit codes get the
@@ -452,22 +437,6 @@ fn save_watchlist_config(symbols: &[String]) -> Result<(), String> {
     }
     std::fs::write(&config_path, serialized)
         .map_err(|e| format!("failed to write config.toml: {e}"))
-}
-
-/// Exchange code from a symbol's explicit prefix, falling back to the
-/// legacy bare-code shape heuristic for pre-migration data.
-fn exchange_of_symbol(symbol: &str) -> &str {
-    let (exchange, _) = parse_explicit_prefix(symbol);
-    if !exchange.is_empty() {
-        return exchange;
-    }
-    if symbol.starts_with('6') {
-        "SH"
-    } else if symbol.starts_with('8') {
-        "BJ"
-    } else {
-        "SZ"
-    }
 }
 
 /// Projection mapping `StockBasic` rows into the searchable dropdown's fields.

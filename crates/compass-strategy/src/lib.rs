@@ -116,14 +116,11 @@ fn screen_symbol(
     }
     if !query.exchanges.is_empty() {
         // Exchange derived from the symbol's explicit prefix (the
-        // StockBasic.exchange column was removed, issue #181).
-        let exchange = if basic.symbol.starts_with("SH") {
-            "SH"
-        } else if basic.symbol.starts_with("BJ") {
-            "BJ"
-        } else {
-            "SZ"
-        };
+        // StockBasic.exchange column was removed, issue #181), falling
+        // back to the legacy bare-code shape heuristic for pre-migration
+        // data — same policy as the GUI layer (parse_explicit_prefix is
+        // case-insensitive by construction).
+        let exchange = compass_core::data::symbol::exchange_of_symbol(&basic.symbol);
         if !query.exchanges.iter().any(|e| e == exchange) {
             return Ok(None);
         }

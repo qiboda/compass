@@ -971,9 +971,11 @@ fn is_filtered(
     if market_latest.is_some_and(|m| m - latest.trade_date > Duration::days(SUSPEND_CAL_DAYS)) {
         return true;
     }
-    // Exchange derived inline from the symbol's explicit prefix
+    // Exchange derived from the symbol's explicit prefix
     // (StockBasic.exchange was removed): BJ (北交所) stocks are hard-filtered.
-    basic.symbol.starts_with("BJ")
+    // parse_explicit_prefix is case-insensitive; the bare-code fallback
+    // keeps legacy pre-migration 8xxxxx codes classified BJ.
+    compass_core::data::symbol::exchange_of_symbol(&basic.symbol) == "BJ"
 }
 
 /// Score one symbol into a row (filters already applied by the caller).
@@ -1493,6 +1495,18 @@ mod tests {
         assert!(
             is_filtered(&mk_basic("BJ830001"), &refs, now, Some(now)),
             "BJ prefix must be hard-filtered"
+        );
+        assert!(
+            is_filtered(&mk_basic("bj830001"), &refs, now, Some(now)),
+            "lowercase BJ prefix must be hard-filtered (case-insensitive)"
+        );
+        assert!(
+            is_filtered(&mk_basic("830001"), &refs, now, Some(now)),
+            "legacy bare 8xxxxx must fall back to BJ and be hard-filtered"
+        );
+        assert!(
+            !is_filtered(&mk_basic("600519"), &refs, now, Some(now)),
+            "legacy bare 6xxxxx must fall back to SH and pass"
         );
         assert!(
             !is_filtered(&mk_basic("SH600519"), &refs, now, Some(now)),

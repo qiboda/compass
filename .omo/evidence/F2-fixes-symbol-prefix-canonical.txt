@@ -1,0 +1,97 @@
+F2-fixes — issue #181 (symbol prefix canonicalization) code-quality review fixes
+
+Branch: fix/symbol-prefix-canonical | Commit: fix(core,gui,strategy): prevent
+parse_explicit_prefix panic on non-ASCII, align exchange derivation (ref #181)
+Scope: 3 F2 findings (1 blocking + 2 optional). RED-first regression tests.
+
+=== Finding 1 (BLOCKING) — parse_explicit_prefix panics on non-ASCII ===
+
+File: crates/compass-core/src/data/symbol.rs (parse_explicit_prefix)
+Root cause: byte-slicing code[..3]/code[..2] without char-boundary checks;
+eq_ignore_ascii_case branches panicked ("end byte index 2 is not a char
+boundary") on multi-byte UTF-8. New exposure: main.rs migrate_legacy_config
+runs at every GUI startup over user-editable ~/.config/compass/config.toml —
+default_symbol = "贵州茅台" (stock name pasted) crashed the GUI instead of
+load_config's graceful-degradation contract.
+
+FIX: code.get(..3)/code.get(..2) (Option — None on non-char-boundary →
+treated as no prefix; length check subsumed by get). Return-slice safety
+follows: get(..n) Some implies n is a char boundary.
+
+RED evidence (before fix):
+  $ cargo test -p compass-core parse_explicit_prefix_non_ascii
+  thread '...parse_explicit_prefix_non_ascii_does_not_panic' panicked at
+  crates/compass-core/src/data/symbol.rs:22:38:
+  end byte index 2 is not a char boundary; it is inside '平' (bytes 0..3 of string)
+  test result: FAILED. 0 passed; 1 failed
+GREEN (after fix):
+  test data::symbol::tests::parse_explicit_prefix_non_ascii_does_not_panic ... ok
+  Assertions: ("平安银行") → ("", "平安银行"); ("贵") → ("", "贵");
+  ("SZ平安") → ("SZ", "平安"); ("SH平") → ("SH", "平"). No panic anywhere.
+
+=== Finding 2 — exchange_of_symbol legacy fallback missing 92→BJ ===
+
+File: moved to crates/compass-core/src/data/symbol.rs (was main.rs:459-471)
+Root cause: bare-code fallback had only 6→SH, 8→BJ, else→SZ; the canonical
+D10 heuristic (infer_exchange_prefix: 6→SH, 8/92→BJ, else→SZ) had 92→BJ.
+Legacy bare "920001" displayed "SZ | 920001".
+
+FIX: exchange_of_symbol now delegates the bare fallback to
+infer_exchange_prefix(...).unwrap_or("SZ") — single heuristic, cannot drift.
+
+RED evidence (before fix):
+  exchange_of_symbol_bare_code_shape_fallback ... FAILED
+  assertion `left == right` failed: 92-prefixed codes are BJ
+    left: "SZ" / right: "BJ"
+GREEN (after fix):
+  assert_eq!(exchange_of_symbol("920001"), "BJ") ok
+  Also: "600519"→SH, "830799"→BJ, "000001"→SZ, "sh600519"→SH,
+  "SZ000001"→SZ, "BJ830799"→BJ (explicit-prefix tests).
+
+=== Finding 3 — strategy-layer exchange derivation diverges ===
+
+Files: crates/compass-strategy/src/lib.rs:120-126 (screen_symbol exchanges
+filter), crates/compass-strategy/src/sepa/scoring.rs:976 (BJ hard filter)
+Root cause: case-sensitive starts_with("SH"/"BJ") + NO legacy bare-code
+fallback → lowercase "sh600519" derived SZ; pre-migration bare parquet
+screener SH filter dropped 600519 (classified SZ) and SEPA BJ hard filter
+let legacy 8xxxxx into ranking; GUI and strategy disagreed.
+
+FIX (policy: reuse parse_explicit_prefix + retain GUI-matching bare-code
+fallback — pre-migration bare data IS supported at the strategy layer,
+same 6→SH / 8,92→BJ / else→SZ policy as exchange_of_symbol):
+  - lib.rs: exchange = compass_core::data::symbol::exchange_of_symbol(&basic.symbol)
+  - scoring.rs: exchange_of_symbol(&basic.symbol) == "BJ"
+  - Both sites case-insensitive by construction (parse_explicit_prefix),
+    fallback aligned with GUI via the shared compass-core helper.
+
+RED evidence (before fix):
+  exchange_filter_lowercase_prefix_is_case_insensitive ... FAILED (0 != 1)
+  exchange_filter_bare_code_falls_back_to_shape_heuristic ... FAILED (0 != 1)
+  bj_filter_derives_exchange_from_symbol_prefix ... FAILED
+GREEN (after fix):
+  test exchange_filter_lowercase_prefix_is_case_insensitive ... ok
+  test exchange_filter_bare_code_falls_back_to_shape_heuristic ... ok
+  test bj_filter_derives_exchange_from_symbol_prefix ... ok
+  (now asserts: "bj830001" filtered, bare "830001" filtered as BJ, bare
+  "600519" passes as SH — legacy 8xxxxx kept out of ranking)
+
+=== Gates (all after fixes) ===
+
+- cargo test --workspace: PASS — 672 passed, 0 failed (667 before + 5 new)
+- cargo clippy --workspace --all-targets -- -D warnings: PASS (EXIT=0)
+- cargo fmt --check: PASS (after `cargo fmt` of one test assert line)
+- lsp_diagnostics: no errors on symbol.rs / lib.rs / scoring.rs
+- grep: no byte-slicing panic path remains in parse_explicit_prefix
+  (all 6 slice sites now code.get(..2)/code.get(..3))
+
+=== Scope discipline ===
+
+- No other behavior changed: parse_explicit_prefix semantics identical for
+  ASCII inputs; main.rs exchange_of_symbol/infer_exchange_prefix moved to
+  compass-core (same bodies, +92→BJ in the shared fallback); scoring logic
+  untouched beyond exchange derivation; no new dependencies; no kb/ doc
+  changes; no Dolt data touched; plan not modified.
+- Refactor note: main.rs local infer_exchange_prefix + exchange_of_symbol
+  deleted in favor of the compass-core imports (single source of truth;
+  the "can't drift" property is now structural, not by convention).
