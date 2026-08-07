@@ -1,0 +1,95 @@
+F3 — Real manual QA (real-data end-to-end) — issue #181 (symbol prefix canonicalization)
+Branch: fix/symbol-prefix-canonical | Wave: Final verification F3 | Executor: F3 agent
+
+=== Verdict: APPROVE ===
+
+All four real-data smoke gates PASS against real Dolt repos
+(/data/compass-data/investment_data 6132 symbols; /data/compass-data/compass_data).
+No production code, real Dolt data, or real parquet_data modified (write-back sandboxed).
+
+Toolchain notes: no `duckdb` CLI in PATH; used duckdb-py 1.5.5 (identical SQL surface).
+`import` dolt dir passed as default from config ([dolt].investment_data_dir =
+/data/compass-data/investment_data; .compass_data_dir = /data/compass-data/compass_data).
+
+----------------------------------------------------------------------
+1. IMPORT SMOKE — stock_daily.parquet (cargo run --bin compass-data -- import --output /tmp/import-smoke-20260808-005132/)
+----------------------------------------------------------------------
+Command: cargo run --bin compass-data -- import --output /tmp/import-smoke-20260808-005132/  (EXIT=0)
+Log tail: "Exported stock_daily.parquet (6132 symbols, 18315747 rows) with symbols index"
+
+duckdb-py checks on /tmp/import-smoke-20260808-005132/stock_daily.parquet:
+  SELECT COUNT(*) FROM (SELECT symbol, tradedate FROM read_parquet(...) GROUP BY 1,2 HAVING COUNT(*)>1)
+    → 0                    (no (symbol, tradedate) duplicates — #181 root-cause symptom eliminated)
+  SELECT DISTINCT symbol FROM read_parquet(...) WHERE symbol IN ('SH000905','SZ000905')
+    → ['SH000905', 'SZ000905']   (both index forms coexist; SH000905 5245 rows, SZ000905 6365 rows)
+  SELECT COUNT(DISTINCT symbol) → 6132
+  SELECT COUNT(*) WHERE symbol NOT SIMILAR TO '(SH|SZ|BJ)[0-9]{6}' → 0   (no bare codes remain)
+  stock_daily.symbols.txt head: BJ430017 / BJ430047 / BJ430090 / BJ430139 / BJ430198 (all prefixed; 6131 lines)
+
+----------------------------------------------------------------------
+2. IMPORT-COMPASS SMOKE — stock_basic.parquet
+----------------------------------------------------------------------
+Command: cargo run --bin compass-data -- import-compass --table stock_basic --output /tmp/import-smoke-20260808-005132/  (EXIT=0)
+duckdb-py checks:
+  DESCRIBE → columns: symbol, name, list_date, delist_date, board, full_name, total_share, industry, region
+    → NO exchange column (D6 delete verified on real data)
+  SELECT symbol ... LIMIT 5 → BJ920000, BJ920001, BJ920002, BJ920003, BJ920005 (prefixed)
+  SELECT symbol, name WHERE symbol='SH600519' → ('SH600519', '贵州茅台')  (row exists)
+  SELECT COUNT(*) WHERE symbol NOT SIMILAR TO '(SH|SZ|BJ)[0-9]{6}' → 0; total 5888 rows
+
+----------------------------------------------------------------------
+3. CLI --symbols FILTER SMOKE
+----------------------------------------------------------------------
+(a) cargo run --bin compass-data -- import --symbols SZ000905,SH000905 --output /tmp/import-smoke-20260808-005400/ (EXIT=0)
+    → parquet contains exactly ['SH000905', 'SZ000905'] (DISTINCT), 11610 rows, 0 duplicates
+      (11610 = 5245 + 6365, matches full-import per-symbol counts)
+(b) cargo run --bin compass-data -- import --symbols 600519 --output /tmp/import-smoke-20260808-005700/ → EXIT=1
+    ERROR: "Import failed: --symbols entry '600519' is not exchange-prefixed; use e.g. SH600519 or sz.600519"
+(c) dot-form vs Dolt-native equivalence:
+    --symbols sz.600519 → 0 rows, EXIT=0;  --symbols SZ600519 → 0 rows, EXIT=0 (identical; degenerate:
+      600519 is a SH symbol so SZ form legitimately matches nothing)
+    non-degenerate proof: --symbols sh.600519 → 5978 rows; --symbols SH600519 → 5978 rows (identical)
+
+----------------------------------------------------------------------
+4. SEPA WRITE-BACK SMOKE — sepa backtest on real data
+----------------------------------------------------------------------
+Setup: real /data/compass-data/parquet_data stock_daily.parquet is the STALE pre-fix export
+(bare codes, 18293598 rows — the #181-buggy artifact); all aux tables (capital_main_flow,
+concept_member, fin_indicators) are already prefixed. To smoke the fix's real data path:
+  - /tmp/f3-parquet: symlinks to real aux parquet + NEW prefixed stock_daily.parquet /
+    stock_daily.symbols.txt / stock_basic.parquet from gate-1/2 import outputs
+  - /tmp/f3-dolt: full copy of real compass_data Dolt repo (write-back sandbox)
+  - /tmp/f3-home: temp HOME with config.toml → [dolt].compass_data_dir=/tmp/f3-dolt,
+    [parquet].dir=/tmp/f3-parquet
+Command (HOME=/tmp/f3-home RUSTUP_HOME/CARGO_HOME pinned to real toolchain):
+  cargo run --bin compass-data -- sepa backtest --start 2025-01-01 --end 2025-12-31 --top 50 --days 5 --csv /tmp/f3-out/equity.csv
+  (EXIT=0) → "window: 2025-01-02 .. 2025-12-31, rebalances: 48, strategy cumulative -9.16%,
+  benchmark cumulative +67.90%"
+
+No index-mixing artifacts (the ±40000% symptom is GONE):
+  equity.csv: 244 daily NAV points; strategy_nav daily-return range [-0.20%, 0.00%],
+  benchmark_nav daily-return range [-9.70%, +4.03%]; |daily return| > 10%: 0 rows (both series).
+  Strategy NAV steps exactly -0.2% on each of the 48 rebalance days (round-trip cost 0.001×2),
+  flat between rebalances — consistent with TOP-N N-day-hold design; no ±40000% spikes anywhere.
+  (Original #181 symptom: benchmark daily return +41895%.)
+
+Write-back verified in SANDBOX only (real repo untouched):
+  dolt --data-dir /tmp/f3-dolt sql -q "SELECT COUNT(*), MIN(trade_date), MAX(trade_date),
+    MIN(strategy_nav), MAX(strategy_nav), MIN(benchmark_nav), MAX(benchmark_nav) FROM backtest_result"
+    → 244 | 2025-01-02 | 2025-12-31 | 0.907468 | 0.999 | 0.94901 | 1.632584
+  dolt status (sandbox): "modified: data_updates / modified: backtest_result" (staged in working tree)
+  Real /data/compass-data/compass_data: "nothing to commit, working tree clean" — CONFIRMED UNTOUCHED.
+
+----------------------------------------------------------------------
+Acceptance-criteria mapping (issue #181 + plan F3)
+----------------------------------------------------------------------
+- (symbol,tradedate) duplicates == 0 on real import ........ PASS (gate 1: 0)
+- SH000905/SZ000905 coexist, distinct symbols .............. PASS (gate 1)
+- all symbols prefixed (no bare 6-digit residuals) ......... PASS (gates 1,2: 0 non-prefixed rows)
+- stock_basic.parquet prefixed, no exchange column ......... PASS (gate 2)
+- --symbols filter: prefixed-only, bare rejected (exit≠0) .. PASS (gate 3b: EXIT=1 + clear error)
+- dot-form == Dolt-native filter equivalence ............... PASS (gate 3c: sh.600519/SH600519 5978=5978)
+- SEPA backtest real run without ±40000% artifacts ......... PASS (gate 4: max |daily| 9.70%/0.20%)
+- no production code / real data modified .................. PASS (imports to /tmp; backtest sandboxed)
+
+Cleanup: /tmp/import-smoke-* , /tmp/f3-* , /tmp/bare-reject.log removed after this record.

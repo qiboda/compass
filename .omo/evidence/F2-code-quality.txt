@@ -1,0 +1,152 @@
+F2 — Code-quality review — issue #181 (symbol prefix canonicalization, 7 commits)
+Branch: fix/symbol-prefix-canonical | Reviewer scope: git diff e6fd6b2..HEAD (fec8781, 2f93fd6, 73422c7, 6cce7c4, 799f811, 5992017, 5b68b84)
+
+=== Verdict: CHANGES_REQUESTED ===
+
+One correctness defect (panic on non-ASCII input, newly exposed at the config-migration
+startup path) + two minor cross-layer consistency findings. Minimal fix set below.
+
+=== Findings ===
+
+[1] MEDIUM — parse_explicit_prefix panics on multi-byte UTF-8 input
+    crates/compass-core/src/data/symbol.rs:16-27 (byte-slicing code[..3] / code[..2]
+    without char-boundary checks; eq_ignore_ascii_case branches)
+    New exposure: crates/compass/src/main.rs:283 normalize_config_symbol →
+    migrate_legacy_config (main.rs:296) runs at every startup on user-editable
+    ~/.config/compass/config.toml values.
+    Repro (standalone, same function body): parse_explicit_prefix("平安银行") and
+    parse_explicit_prefix("贵") both PANIC ("end byte index 2 is not a char boundary").
+    A config such as default_symbol = "贵州茅台" (stock name pasted in) crashes the
+    GUI at startup instead of load_config's promised graceful fallback (the value
+    previously flowed to validate_symbol which returned a clean DataError).
+    Fix: use code.get(..3)/code.get(..2) (Option) or strip_prefix-based matching;
+    add a non-ASCII regression test to the symbol.rs test module.
+
+[2] LOW — exchange_of_symbol legacy fallback missing 92→BJ rule
+    crates/compass/src/main.rs:459-471 (only 6→SH, 8→BJ, else→SZ) vs the canonical
+    D10 heuristic in infer_exchange_prefix (main.rs:277-285: 6→SH, 8/92→BJ, else→SZ)
+    and kb/design/symbols.md. Legacy bare "920001" in un-migrated parquet displays
+    "SZ | 920001" (display-only, transitional data).
+    Fix: delegate the bare fallback to infer_exchange_prefix(symbol).unwrap_or("SZ")
+    or add a starts_with("92") branch so the two heuristics can't drift.
+
+[3] LOW — strategy-layer exchange derivation diverges from GUI layer and parser
+    crates/compass-strategy/src/lib.rs:120-126 (screen_symbol exchanges filter) and
+    crates/compass-strategy/src/sepa/scoring.rs:976 (BJ hard filter) use case-sensitive
+    starts_with("SH"/"BJ") with NO legacy bare-code fallback, while
+    main.rs exchange_of_symbol keeps a fallback and parse_explicit_prefix is
+    deliberately case-insensitive (symbol.rs tests assert lowercase acceptance).
+    Consequences: (a) lowercase-prefixed symbols ("sh600519") mis-derive as SZ at the
+    strategy layer (validate_symbol blocks them at the data layer, so defense-in-depth
+    only); (b) on pre-migration bare parquet the screener SH filter drops 600519
+    (classified SZ) and the SEPA BJ hard filter lets legacy bare 8xxxxx into ranking,
+    while the GUI displays both correctly — the three layers disagree on whether bare
+    data is supported (cli.md documents re-import as required, Metis B9).
+    Fix: reuse parse_explicit_prefix at both strategy sites (case-insensitive by
+    construction) and either restore the bare fallback for symmetry with the GUI or
+    state explicitly in cli.md/symbols.md that the strategy layer requires re-imported
+    prefixed data.
+
+=== Gate results ===
+
+- cargo test --workspace: PASS — 667 tests, 16 test binaries, 0 failures (EXIT=0)
+- cargo clippy --workspace --all-targets -- -D warnings: PASS (EXIT=0, 0 warnings)
+- cargo fmt --check: PASS (EXIT=0)
+- No unwrap()/panic! in production code of any changed file (grep-verified; all
+  unwrap uses are inside #[cfg(test)]).
+- No type-error suppression; no silent Err(_) => {} swallows; only `as` cast is a
+  test-fixture Duration::days(300 - k as i64).
+- Coverage: no live-code tests deleted — removed tests covered only deleted functions
+  (to_exchange/to_ts_code/Exchange enum/strip_prefix). New tests cover all new
+  behavior: parse_explicit_prefix case-insensitivity (symbol.rs), normalize_symbol_filter
+  + bare rejection + dot normalization (import_dolt.rs), SH000905/SZ000905 collision
+  regression (import_dolt.rs, tests/sepa.rs dual-bar), D10 migration incl. 920001→BJ,
+  830799→BJ, sh.000001→SH, write-back failure path, no-migration path (main.rs), D11
+  three-spelling acceptance (searchable_dropdown.rs unit + kittest), SEPA write-back
+  prefixed literals + no SHSZ000001 garbage (sepa.rs), thermometer index-symbol
+  invariance (temperature.rs), exchange-column absence in stock_basic parquet
+  (import_compass.rs). No coverage regression expected for the 95% thresholds.
+- Commit discipline: all 7 commits carry "ref #181"; commits are atomic
+  (one logical unit each); test-first RED evidence documented in commit messages
+  (e.g. "RED-first: query for SH600519 failed with QueryReturnedNoRows", "prefixed
+  fixtures make filter_bj_exchange RED without it").
+- kb/ spot-check: symbols.md no bare-code canonical claims (D9 deprecation annotated,
+  to_ts_code removal stated); architecture.md bare-input claim replaced with
+  explicit-prefix input (D9/D10); config.md examples prefixed + D10 migration section;
+  cli.md --symbols prefixed-only + re-import note; data-providers.md stock_basic layout
+  matches actual 9-column export (verified against import_compass.rs SELECT).
+  Nit (pre-existing, not in this diff): kb/user/gui.md:59 toast example
+  "Data loaded: sh.600519" is a stale dot-form string — optional follow-up.
+
+=== Minimal fix set for CHANGES_REQUESTED ===
+
+1. crates/compass-core/src/data/symbol.rs:16-27 — replace byte slices with
+   get(..3)/get(..2) or strip_prefix; add non-ASCII regression test. (blocking)
+2. crates/compass/src/main.rs:459-471 — add 92→BJ to exchange_of_symbol fallback
+   (or delegate to infer_exchange_prefix). (optional, one line)
+3. crates/compass-strategy/src/lib.rs:120-126 + crates/compass-strategy/src/sepa/
+   scoring.rs:976 — derive via parse_explicit_prefix (case-insensitive). (optional)
+
+Verdict recorded by F2 reviewer. All other F2 criteria pass (gates, discipline,
+test quality, docs consistency).
+
+=== RE-VERIFICATION of commit 555bb70 (fixes for F2 findings) — Verdict: APPROVE ===
+
+Re-reviewed git show 555bb70 in full (6 files: symbol.rs +73/-..., lib.rs, scoring.rs,
+main.rs, tests/screener.rs, evidence). Per-finding resolution:
+
+[1] BLOCKING — parse_explicit_prefix non-ASCII panic: RESOLVED.
+    symbol.rs:16-27 now uses code.get(..3)/code.get(..2) with is_some_and guards; the
+    remaining &code[3..]/&code[2..] end-slices are reachable only after an ASCII
+    prefix matched (eq_ignore_ascii_case on a boundary-valid slice => prefix is pure
+    ASCII => byte 2/3 is a guaranteed char boundary). No panic path. Regression test
+    parse_explicit_prefix_non_ascii_does_not_panic covers "平安银行" / "贵" / "SZ平安" /
+    "SH平" (all return without panic; prefix forms still parse). grep confirms the only
+    remaining "code[..2]" text is inside a comment (symbol.rs:98).
+
+[2] MINOR — exchange_of_symbol missing 92→BJ: RESOLVED (single-source heuristic).
+    exchange_of_symbol moved to compass-core/src/data/symbol.rs:52; bare fallback
+    delegates to infer_exchange_prefix (symbol.rs:36, 6→SH / 8,92→BJ / else→SZ) so the
+    two cannot drift. Tests: exchange_of_symbol("920001") == "BJ", "830799"→BJ,
+    "600519"→SH, "000001"→SZ. main.rs no longer contains any shape-heuristic copy
+    (grep for starts_with('6')/('8')/("92") in main.rs/lib.rs/scoring.rs: zero matches;
+    main.rs imports {exchange_of_symbol, infer_exchange_prefix, parse_explicit_prefix}).
+
+[3] MINOR — strategy-layer case-sensitive / bare-fallback divergence: RESOLVED.
+    lib.rs:123 screen_symbol exchange filter and scoring.rs:978 BJ hard filter both
+    reuse compass_core::data::symbol::exchange_of_symbol — case-insensitive by
+    construction (parse_explicit_prefix) + legacy bare fallback matching the GUI.
+    New tests: screener integration exchange_filter_lowercase_prefix_is_case_insensitive
+    ("sh600519"→SH) and exchange_filter_bare_code_falls_back_to_shape_heuristic
+    (bare "600519"→SH); scoring.rs is_filtered tests for lowercase "bj830001"→filtered,
+    bare "830001"→BJ hard-filtered, bare "600519"→SH passes.
+
+SCOPE COMPLIANCE (不复活 to_exchange / D9 constraint): COMPLIANT.
+    All production call sites of the shared helpers, verified by grep:
+    - exchange_of_symbol: lib.rs:123 (screener exchange classification of an existing
+      StockBasic), scoring.rs:978 (SEPA BJ hard filter), main.rs:450 (dropdown display
+      exemption), main.rs:840 (sidebar display exemption). All classify/display symbols
+      already in the pipeline — none accepts user input or builds query keys.
+    - infer_exchange_prefix: symbol.rs:59 (exchange_of_symbol internal fallback) and
+      main.rs:289 (normalize_config_symbol — the D10 config auto-migration path, which
+      the plan explicitly permits as an inlined migration heuristic).
+    - Data-access boundary intact: validate_symbol (parquet.rs:34) unchanged and still
+      rejects bare/dot/lowercase at all three fetch/get call sites (parquet.rs:128/266/
+      342); the strategy layer classifies only after parquet read, never before.
+    - to_exchange / to_ts_code were NOT resurrected; the helpers are documented as
+      display-exemption + migration fallback only.
+
+GATES (post-fix, all green):
+    - cargo test --workspace: PASS — 672 tests / 16 binaries, 0 failures (EXIT=0;
+      5 new regression tests added by 555bb70)
+    - cargo clippy --workspace --all-targets -- -D warnings: PASS (EXIT=0)
+    - cargo fmt --check: PASS (EXIT=0)
+    - lsp_diagnostics on crates/compass-core/src/data/symbol.rs: no diagnostics
+    - No new issues introduced by the move: main.rs diff is pure deletion (helper
+      removal + import update); strategy diff is one-line call-site replacement each;
+      no new unwrap/panic in production; no test deletions.
+
+VERDICT: APPROVE — all 3 F2 findings resolved with RED-first regression tests;
+scope constraint honored; full workspace gates green.
+
+(Re-verification performed by F2 reviewer after 555bb70, appended 2026-08-08.)
