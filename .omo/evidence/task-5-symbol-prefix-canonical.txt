@@ -1,0 +1,57 @@
+# Task 5 — SEPA CLI 写回测试核对（symbol-prefix-canonical, ref #181）
+
+Date: 2026-08-08
+Worktree: /data/codes/compass/.worktrees/symbol-prefix-canonical (branch fix/symbol-prefix-canonical, base 6cce7c4)
+
+## Verification (Task 1 sync check — plan L110-115)
+
+All three Task 1 claimed sync points CONFIRMED present in crates/compass-data/src/sepa.rs:
+
+1. **build_fixture fixture symbols prefixed** (L528-547): `"SZ000001"` / `"SH600001"` / `"SH600002"`
+   (originally bare 000001/600001/600002). concept_member fixture also prefixed (L595: 'SZ000001').
+2. **Write-back symbol-value assertions** (L680-693): `run_score_writes_five_tables_and_prints_table`
+   queries `SELECT symbol FROM final_score WHERE trade_date = ...` and asserts
+   `vec!["SH600001", "SH600002", "SZ000001"]` with comment "Written symbols must be the
+   exchange-prefixed forms — never a double-prefixed "SHSZ000001"-style artifact".
+3. **format_top_table display assertions** (L610-664): `format_top_table_has_header_and_ranked_rows`
+   uses prefixed SepaRow symbols, asserts `table.contains("SZ000001")`.
+4. **Production state**: `exchange_prefixes` deleted, `symbol_csv` = pass-through
+   `|symbol: &str| symbol.to_string()` (L244) with #181 comment. No production changes made in Task 5.
+
+## RED found & fixed (this task)
+
+Initial gate `cargo test -p compass-data sepa`: **5 failures** (root cause one assertion panic +
+4 PoisonError cascade from ENV_MUTEX poisoned by the panicking test).
+
+Root cause — sepa.rs:705 `run_score_writes_five_tables_and_prints_table`:
+```
+assertion `left == right` failed
+  left: 1
+ right: 0
+```
+stale `industry_factor` count == 0 with comment "0 until Task 4 lands prefix-key memberships".
+Task 4 (6cce7c4) landed prefix-key memberships → fixture's single "AI概念" concept_member row for
+SZ000001 now joins → industry_factor has 1 row. Fix (test-only, per plan Task 5 "按 RED 补齐"):
+
+- L702-708: `industry_factor` count 0 → 1, comment updated to fixture-derived invariant.
+- L715-722: removed stale "industry_factor is absent ... until Task 4 restores the membership join"
+  comment + dropped `.filter(|t| **t != "industry_factor")` so the data_updates table check now
+  covers all 5 COMPUTE_TABLES (industry_factor gets a data_updates upsert since it now has rows).
+
+No production code touched (Task 1 already handled sepa.rs production paths).
+
+## Final gate results
+
+- `cargo test -p compass-data sepa` → 19 passed; 0 failed (poison cascade gone)
+- `cargo test -p compass-data` → 51 + 55 passed; 0 failed
+- `cargo clippy -p compass-data -- -D warnings` → clean
+- `cargo fmt --check` → clean
+- `grep -n "exchange_prefixes\|unwrap_or(\"SH\")" crates/compass-data/src/sepa.rs` → no matches (exit 1)
+- Write-back assertion prefixed literals: `vec!["SH600001", "SH600002", "SZ000001"]` at sepa.rs:691
+
+## Conclusion
+
+Task 1's test sync was **mostly complete** (all 3 claimed points confirmed); one cross-task
+leftover was found: the industry_factor count/data_updates assertions were left stale pending
+Task 4's membership join, which has now landed — fixed in this task (test-only, 5 insertions /
+7 deletions).

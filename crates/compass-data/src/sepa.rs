@@ -801,12 +801,11 @@ mod tests {
             dolt_count(dolt_tmp.path(), "capital_factor", "2026-07-31"),
             3
         );
-        // 0 until Task 4 lands prefix-key memberships: the fixture's prefixed
-        // concept_member row cannot join a prefixed SepaRow while the engine
-        // still strips membership prefixes to bare codes.
+        // The fixture's single "AI概念" membership for SZ000001 joins the
+        // prefixed SepaRow (Task 4 prefix-key memberships) → exactly 1 row.
         assert_eq!(
             dolt_count(dolt_tmp.path(), "industry_factor", "2026-07-31"),
-            0
+            1
         );
         assert_eq!(
             dolt_count(dolt_tmp.path(), "market_temperature", "2026-07-31"),
@@ -814,14 +813,13 @@ mod tests {
         );
 
         // data_updates carries a row per compute table with the CLI source.
-        // industry_factor is absent: its 0-row CSV is skipped (see the count
-        // assertion above) until Task 4 restores the membership join.
+        // data_updates carries a row per compute table with the CLI source.
         let csv = crate::import_dolt::run_dolt_sql_csv(
             dolt_tmp.path(),
             "SELECT table_name, source, last_report_date FROM data_updates ORDER BY table_name",
         )
         .expect("data_updates query");
-        for table in COMPUTE_TABLES.iter().filter(|t| **t != "industry_factor") {
+        for table in COMPUTE_TABLES {
             assert!(csv.contains(table), "data_updates missing {table}: {csv}");
         }
         assert!(csv.contains("compass-data sepa"), "source: {csv}");
