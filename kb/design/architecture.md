@@ -240,23 +240,25 @@ DuckDB 的 C API 是同步的。所有 DuckDB 查询都在
 
 ## 数据管线：从用户点击到图表
 
-当您输入 `600519`、选择 `1d` 并点击 "Fetch" 时，发生以下流程：
+当您在输入框搜索 `600519`（或 `SH600519`/`sh.600519`，D11 自由文本）、
+选择 `1d` 并点击 "Fetch" 时（提交值规范化为带前缀的 `SH600519`），
+发生以下流程：
 
 ```
 UI (CompassApp::ui)
   │  user clicks "Fetch" button
-  │  state.symbol.set("600519")
+  │  state.symbol.set("SH600519")
   │  state.timeframe.set("1d")
   │  dispatcher::handle(AppMessage::FetchBars, state, work_signal)
   │    state.loading.set(true)
-  │    work_signal.send(FetchRequest { symbol:"600519", timeframe:"1d", ... })
+  │    work_signal.send(FetchRequest { symbol:"SH600519", timeframe:"1d", ... })
   │
   ▼
 AsyncDispatcher (tokio runtime)
   │  work_slot receives FetchRequest
   │
   ▼
-DuckDbProvider::fetch_bars("600519", "1d", start, end)
+DuckDbProvider::fetch_bars("SH600519", "1d", start, end)
   │
   ├─ 1. Query in-memory stock_daily table → cache hit? Return bars.
   │
@@ -415,7 +417,9 @@ GUI 通过 `DuckDbProvider`（内存 DuckDB，缓存未命中时用 `read_parque
 Compass 中的每只股票由其带交易所前缀的 Dolt-native 符号标识：
 `"SZ000001"`、`"SH600519"`、`"BJ836149"`。2 字母前缀（SZ/SH/BJ）是规范
 标识符的一部分——它出现在 Parquet 文件名中、数据库列中以及 API 中。
-为方便使用，接受裸 6 位数字输入，并通过交易所推断解析。
+输入层（CLI `--symbols`、GUI 提交、配置）只接受显式前缀输入——不带前缀的
+代码一律拒绝（D9）；旧配置中的裸码值在加载时自动迁移补前缀（D10）。
+GUI 搜索框接受自由文本（D11），但选中/提交值规范化为前缀形式。
 
 旧版 `ts_code` 格式（`"000001.SZ"`）已废弃，因为它将标识与元数据混在一起：
 交易所已经可以从代码区间推断，后缀是冗余的。
@@ -437,7 +441,7 @@ investment_data_dir = "/data/compass-data/investment_data"
 compass_data_dir = "/data/compass-data/compass_data"
 
 [app]
-default_symbol = "000001"     # what to show on startup
+default_symbol = "SZ000001"     # what to show on startup
 default_timeframe = "1d"
 ```
 

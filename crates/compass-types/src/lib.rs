@@ -197,7 +197,7 @@ impl Default for ScreenerQuery {
 /// One result row of a screener run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScreenerRow {
-    /// Bare 6-digit stock code.
+    /// Exchange-prefixed stock symbol (e.g. "SZ000001").
     pub symbol: String,
     /// Chinese display name.
     pub name: String,

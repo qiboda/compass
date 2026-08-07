@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// Info returned by symbol search (code + display name).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolInfo {
-    /// 6-digit stock code (e.g. "000001").
+    /// Exchange-prefixed stock symbol (e.g. "SZ000001").
     pub code: String,
     /// Chinese display name (e.g. "平安银行").
     pub name: String,
@@ -239,7 +239,7 @@ pub struct AdjFactor {
 pub enum Cmd {
     /// Fetch OHLCV bars for a symbol/timeframe/date-range.
     FetchBars {
-        /// 6-digit stock code.
+        /// Exchange-prefixed stock symbol (e.g. "SZ000001").
         symbol: String,
         /// Timeframe string (e.g. "1d", "1w").
         timeframe: String,
@@ -363,7 +363,7 @@ fn default_theme() -> String {
 /// section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WatchlistConfig {
-    /// Bare 6-digit symbols in display order (sorted ascending on save).
+    /// Exchange-prefixed symbols in display order (sorted ascending on save).
     #[serde(default)]
     pub symbols: Vec<String>,
 }

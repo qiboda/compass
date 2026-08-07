@@ -32,7 +32,7 @@ cargo run --bin compass-data -- import [OPTIONS]
 |---|---|---|
 | `--dolt-dir` | 来自配置 `[dolt].investment_data_dir` | Dolt 数据库目录 |
 | `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
-| `--symbols` | （全部） | 逗号分隔的 6 位代码（如 `000001,600519`）。**⚠️ 过滤 + 覆盖**——parquet 将只剩这些符号的数据 |
+| `--symbols` | （全部） | 逗号分隔的带前缀代码（如 `SH600519,SZ000001`）。**仅接受带前缀输入**——裸 6 位码（如 `600519`）报错拒绝（D9）；`sh.600519` 等 dot 形式自动规范化为前缀。**⚠️ 过滤 + 覆盖**——parquet 将只剩这些符号的数据 |
 | `--limit` | `0`（全部） | 最大导入股票数量。**⚠️ 过滤 + 覆盖**——parquet 将只剩前 N 只股票 |
 | `--start-date` | （最早） | 按起始日期过滤（YYYYMMDD）。**⚠️ 过滤 + 覆盖**——parquet 将只剩该日期段 |
 | `--end-date` | （最晚） | 按截止日期过滤（YYYYMMDD）。**⚠️ 过滤 + 覆盖**——parquet 将只剩该日期段 |
@@ -53,14 +53,18 @@ parquet_data/
 
 `stock_daily.parquet` 中的 `symbol` 列存储 Dolt 原生的股票代码格式（如 `SZ000001`、`SH600519`）。共享同一 6 位代码的股票（SZ）和指数（SH）通过交易所前缀区分。
 
+> **⚠️ 符号前缀规范化（issue #181）后需重新 import + export**：旧版 `compass.duckdb`
+> 中的裸码数据在前缀化查询下会查空（Metis B9 实测）。升级后请重新运行
+> `import` + `export` 让 DuckDB 数据以带前缀形式生效。
+
 ### 示例
 
 ```sh
 # 全量导入（全部 6000+ 只股票，约 1 小时）
 cargo run --bin compass-data -- import
 
-# 导入指定股票
-cargo run --bin compass-data -- import --symbols 000001,600519
+# 导入指定股票（仅接受带前缀代码；裸码如 000001 会报错）
+cargo run --bin compass-data -- import --symbols SZ000001,SH600519
 
 # 带日期过滤的导入
 cargo run --bin compass-data -- import --start-date 20200101 --end-date 20250721

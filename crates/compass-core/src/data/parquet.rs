@@ -390,7 +390,7 @@ impl ParquetReader {
 
     /// Load all rows from `stock_basic.parquet`.
     ///
-    /// Returns the full stock list (symbol, name, exchange) for use in
+    /// Returns the full stock list (symbol, name) for use in
     /// the GUI symbol picker. If `stock_basic.parquet` doesn't exist,
     /// returns an empty vec.
     pub fn load_all_stock_basics(&self) -> Result<Vec<StockBasic>, DataError> {

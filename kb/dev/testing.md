@@ -28,8 +28,8 @@ cargo test --test integration_test      # integration tests only
 
 ```rust
 #[rstest]
-#[case("000001", "1d")]
-#[case("600519", "1w")]
+#[case("SZ000001", "1d")]
+#[case("SH600519", "1w")]
 #[tokio::test]
 async fn test_name(#[case] symbol: &str, #[case] timeframe: &str) {
     // test body
@@ -224,7 +224,7 @@ Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可
 3. 启用 `tracy` feature 运行 Compass：
    ```sh
    cargo run --bin compass --features tracy
-   # or: cargo run --bin compass-data --features tracy -- import --symbols 000001
+   # or: cargo run --bin compass-data --features tracy -- import --symbols SH600519
    ```
 
 ### 工作原理

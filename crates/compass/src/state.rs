@@ -9,7 +9,7 @@ use egui_mobius_reactive::Dynamic;
 /// them to widgets automatically. Callers read/write via
 /// `get()`, `set()`, and `subscribe()`.
 pub struct SharedState {
-    /// Currently displayed stock symbol (e.g. "000001", "600519").
+    /// Currently displayed stock symbol (e.g. "SZ000001", "SH600519").
     pub symbol: Dynamic<String>,
     /// Current timeframe (e.g. "1d", "1w", "1M").
     pub timeframe: Dynamic<String>,
@@ -36,7 +36,7 @@ pub struct SharedState {
     pub sepa_loading: Dynamic<bool>,
     /// Last SEPA error message, if any.
     pub sepa_error: Dynamic<Option<String>>,
-    /// Watchlist (自选股) — bare 6-digit symbols in display order.
+    /// Watchlist (自选股) — exchange-prefixed symbols in display order.
     pub watchlist: Dynamic<Vec<String>>,
 }
 

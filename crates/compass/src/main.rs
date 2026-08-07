@@ -720,9 +720,9 @@ impl eframe::App for CompassApp {
             self.last_sepa_loading = current_sepa_loading;
 
             // Reverse-sync: when the symbol changed (e.g. a screener row
-            // click), reflect it in the StockPicker — but only for bare
-            // 6-digit codes; prefixed toolbar symbols must not clobber the
-            // picker's exchange state.
+            // click), reflect it in the StockPicker — but only when the new
+            // symbol is a valid exchange-prefixed code (D9); bare or
+            // malformed values are ignored.
             self.sync_picker_from_symbol();
 
             dispatcher::drain_citizen(&mut self.dispatcher, &self.shared_state);

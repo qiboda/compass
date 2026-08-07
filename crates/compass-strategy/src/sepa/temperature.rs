@@ -41,8 +41,9 @@ const TEMP_LIMIT_UP_PCT: f64 = 9.8;
 /// Compute the market thermometer from per-symbol bar series and stock
 /// metadata.
 ///
-/// `bars_by_symbol` must be keyed by bare 6-digit codes with series in
-/// ascending `trade_date` order; `basics_by_symbol` keyed the same way (the
+/// `bars_by_symbol` must be keyed by exchange-prefixed symbols (e.g.
+/// `SH600519`) with series in ascending `trade_date` order;
+/// `basics_by_symbol` keyed the same way (the
 /// exact shape produced by grouping
 /// [`ParquetReader::fetch_cross_section`](compass_core::data::parquet::ParquetReader::fetch_cross_section)
 /// and
