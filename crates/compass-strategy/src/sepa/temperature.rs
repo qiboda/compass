@@ -443,4 +443,40 @@ mod tests {
         assert!((tm.score - (15.0 / 80.0 + 1.0e8 / 1e12 / 1.2 * 15.0 + 10.0)).abs() < 1e-9);
         assert_eq!(tm.position, "0%-20%");
     }
+
+    /// An index-like symbol (SH000905) with bars but no basics row must not
+    /// change the score: it cannot enter the cap-ranked proxies (built from
+    /// basics only) and a single bar with zero amount leaves the breadth
+    /// counters (s3/s4/s5) untouched (issue #181 index-code collision).
+    #[test]
+    fn index_symbol_without_basics_does_not_change_score() {
+        let market = build_market(2000, |_| 10.0, 1.0e9);
+        let (bars, basics) = refs(&market);
+        let baseline = compute_market_thermometer(&bars, &basics);
+
+        let mut bars2 = market.bars.clone();
+        bars2.insert(
+            "SH000905".to_string(),
+            vec![CrossSectionBar {
+                symbol: "SH000905".to_string(),
+                trade_date: END,
+                open: 4000.0,
+                high: 4000.0,
+                low: 4000.0,
+                adjclose: 4000.0,
+                close: 4000.0,
+                volume: 0.0,
+                amount: 0.0,
+            }],
+        );
+        let bars2_refs: HashMap<String, Vec<&CrossSectionBar>> = bars2
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().collect()))
+            .collect();
+        let with_index = compute_market_thermometer(&bars2_refs, &basics);
+        assert_eq!(with_index.score, baseline.score, "score must be identical");
+        assert_eq!(with_index.position, baseline.position);
+        assert_eq!(with_index.position_pct, baseline.position_pct);
+        assert_eq!(with_index.indicators, baseline.indicators);
+    }
 }

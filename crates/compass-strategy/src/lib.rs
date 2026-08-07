@@ -115,7 +115,15 @@ fn screen_symbol(
         return Ok(None);
     }
     if !query.exchanges.is_empty() {
-        let exchange = exchange_of(basic.symbol.as_str());
+        // Exchange derived from the symbol's explicit prefix (the
+        // StockBasic.exchange column was removed, issue #181).
+        let exchange = if basic.symbol.starts_with("SH") {
+            "SH"
+        } else if basic.symbol.starts_with("BJ") {
+            "BJ"
+        } else {
+            "SZ"
+        };
         if !query.exchanges.iter().any(|e| e == exchange) {
             return Ok(None);
         }
@@ -210,17 +218,6 @@ fn screen_symbol(
         market_cap,
         industry,
     }))
-}
-
-/// Infer exchange from the bare code: 6→SH, 8/92→BJ, else SZ.
-fn exchange_of(symbol: &str) -> &'static str {
-    if symbol.starts_with('6') {
-        "SH"
-    } else if symbol.starts_with('8') || symbol.starts_with("92") {
-        "BJ"
-    } else {
-        "SZ"
-    }
 }
 
 /// Simple moving average of the last `n` adjusted closes.

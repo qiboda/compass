@@ -258,7 +258,7 @@ pub struct SepaDetails {
 /// One SEPA result row (one ranked stock).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SepaRow {
-    /// Bare 6-digit stock code.
+    /// Exchange-prefixed stock code (e.g. `SH600519`, `SZ000001`).
     pub symbol: String,
     /// Chinese display name.
     pub name: String,

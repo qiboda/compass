@@ -941,9 +941,12 @@ mod tests {
         create_test_stock_daily_parquet(
             &tmp,
             &[
-                ("000001", &[("2024-01-02", 10.0), ("2024-01-03", 10.5)]),
-                ("600519", &[("2024-01-02", 1500.0), ("2024-01-03", 1520.0)]),
-                ("920992", &[("2024-01-02", 8.0)]),
+                ("SZ000001", &[("2024-01-02", 10.0), ("2024-01-03", 10.5)]),
+                (
+                    "SH600519",
+                    &[("2024-01-02", 1500.0), ("2024-01-03", 1520.0)],
+                ),
+                ("BJ920992", &[("2024-01-02", 8.0)]),
             ],
         );
 
@@ -956,27 +959,38 @@ mod tests {
             .expect("fetch cross section");
 
         assert_eq!(bars.len(), 5, "all market rows within range");
-        // Ordered by symbol, then trade_date.
-        assert_eq!(bars[0].symbol, "000001");
+        // Ordered by symbol (BJ < SH < SZ), then trade_date.
+        assert_eq!(bars[0].symbol, "BJ920992");
         assert_eq!(
             bars[0].trade_date,
             NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
         );
-        assert_eq!(bars[0].adjclose, 10.0);
-        assert_eq!(bars[0].close, 10.0);
+        assert_eq!(bars[0].adjclose, 8.0);
+        assert_eq!(bars[0].close, 8.0);
         assert_eq!(bars[0].volume, 1000.0);
         // Fixture derives OHLC from close: open=close-1, high=close+1, low=close-0.5.
-        assert_eq!(bars[0].open, 9.0);
-        assert_eq!(bars[0].high, 11.0);
-        assert_eq!(bars[0].low, 9.5);
+        assert_eq!(bars[0].open, 7.0);
+        assert_eq!(bars[0].high, 9.0);
+        assert_eq!(bars[0].low, 7.5);
         assert_eq!(bars[0].amount, 0.0);
+        assert_eq!(bars[1].symbol, "SH600519");
         assert_eq!(
             bars[1].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
+        );
+        assert_eq!(bars[1].adjclose, 1500.0);
+        assert_eq!(
+            bars[3].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
+        );
+        assert_eq!(bars[3].symbol, "SZ000001");
+        assert_eq!(bars[3].adjclose, 10.0);
+        assert_eq!(
+            bars[4].trade_date,
             NaiveDate::from_ymd_opt(2024, 1, 3).expect("date")
         );
-        assert_eq!(bars[1].adjclose, 10.5);
-        assert_eq!(bars[4].symbol, "920992");
-        assert_eq!(bars[4].adjclose, 8.0);
+        assert_eq!(bars[4].symbol, "SZ000001");
+        assert_eq!(bars[4].adjclose, 10.5);
     }
 
     #[test]

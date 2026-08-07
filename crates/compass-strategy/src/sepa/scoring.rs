@@ -26,7 +26,6 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{Duration, NaiveDate};
 use compass_core::data::parquet::ParquetReader;
-use compass_core::data::symbol::parse_explicit_prefix;
 use compass_core::model::{
     BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow,
     InstitutionSurveyRow, StockBasic,
@@ -75,10 +74,9 @@ const SUSPEND_CAL_DAYS: i64 = 7; // ≈ 5 trading days
 /// score (NaN-safe), truncate to `query.top_n` (default 50) and assemble
 /// ranked [`SepaRow`]s with per-module [`SepaFactor`] breakdowns.
 ///
-/// Symbols are normalized to bare 6-digit codes via
-/// [`parse_explicit_prefix`]; theme names come from `fetch_concept_member`
-/// grouped by symbol. Missing SEPA parquet files degrade to empty vecs —
-/// their modules score 0 without a panic.
+/// Symbols are exchange-prefixed (`SH600519`); theme names come from
+/// `fetch_concept_member` grouped by symbol. Missing SEPA parquet files
+/// degrade to empty vecs — their modules score 0 without a panic.
 /// Pre-fetched SEPA scoring window (full range, sliced per-day by
 /// [`score_sepa`]). Fetching once and scoring many days avoids re-reading
 /// the parquet files for every backtest day (the original per-day
@@ -217,7 +215,7 @@ pub(crate) fn score_sepa(
     let members = &window.members;
     let slice_ms = started.elapsed().as_millis();
 
-    // --- Group raw rows by bare symbol (run_screener shape) -----------------
+    // --- Group raw rows by exchange-prefixed symbol ------------------------
     let basics_by_symbol: HashMap<String, &StockBasic> =
         basics.iter().map(|b| (b.symbol.clone(), b)).collect();
     let mut bars_by_symbol: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
@@ -228,11 +226,11 @@ pub(crate) fn score_sepa(
             .push(bar);
     }
 
-    // Membership rows carry exchange-prefixed symbols → group by bare code.
+    // Membership rows carry exchange-prefixed symbols → group by prefixed
+    // symbol (the same key format as bars and basics).
     let mut memberships: HashMap<String, Vec<&ConceptMember>> = HashMap::new();
     for m in members {
-        let bare = parse_explicit_prefix(&m.symbol).1;
-        memberships.entry(bare.to_string()).or_default().push(m);
+        memberships.entry(m.symbol.clone()).or_default().push(m);
     }
 
     // Concept display names per symbol (deduped, sorted).
@@ -315,10 +313,7 @@ pub(crate) fn score_sepa(
     // have flow data.
     let mut flow_group: HashMap<String, Vec<&CapitalMainFlow>> = HashMap::new();
     for f in flows.iter().copied() {
-        flow_group
-            .entry(parse_explicit_prefix(&f.symbol).1.to_string())
-            .or_default()
-            .push(f);
+        flow_group.entry(f.symbol.clone()).or_default().push(f);
     }
     let mut flow_5d: HashMap<String, f64> = HashMap::new();
     for (bare, rows) in &flow_group {
@@ -339,25 +334,21 @@ pub(crate) fn score_sepa(
 
     let mut institution_buy: HashSet<String> = HashSet::new();
     for d in dragons.iter().copied() {
-        let bare = parse_explicit_prefix(&d.symbol).1;
         if d.institution_flag == Some(1) && d.net_amount.unwrap_or(0.0) > 0.0 {
-            institution_buy.insert(bare.to_string());
+            institution_buy.insert(d.symbol.clone());
         }
     }
 
     let mut surveyed: HashSet<String> = HashSet::new();
     for s in surveys.iter().copied() {
-        surveyed.insert(parse_explicit_prefix(&s.symbol).1.to_string());
+        surveyed.insert(s.symbol.clone());
     }
 
     // Block-trade ±5 adjustment from the last 5 rows per symbol: a discount
     // (>2%) adds, a premium (>2%) subtracts.
     let mut block_group: HashMap<String, Vec<&BlockTradeRow>> = HashMap::new();
     for b in blocks.iter().copied() {
-        block_group
-            .entry(parse_explicit_prefix(&b.symbol).1.to_string())
-            .or_default()
-            .push(b);
+        block_group.entry(b.symbol.clone()).or_default().push(b);
     }
     let mut block_adj: HashMap<String, f64> = HashMap::new();
     for (bare, rows) in &block_group {
@@ -509,8 +500,7 @@ fn board_momentums(
 ) -> HashMap<String, BoardMomentums> {
     let mut out: HashMap<String, BoardMomentums> = HashMap::new();
     for m in members {
-        let bare = parse_explicit_prefix(&m.symbol).1;
-        let Some(series) = bars_by_symbol.get(bare) else {
+        let Some(series) = bars_by_symbol.get(m.symbol.as_str()) else {
             continue;
         };
         let entry = out.entry(m.concept_code.clone()).or_insert(BoardMomentums {
@@ -981,26 +971,9 @@ fn is_filtered(
     if market_latest.is_some_and(|m| m - latest.trade_date > Duration::days(SUSPEND_CAL_DAYS)) {
         return true;
     }
-    exchange_of(basic) == "BJ"
-}
-
-/// Exchange derived from the symbol's explicit prefix (SH/SZ/BJ), falling
-/// back to the legacy bare-code shape heuristic (6 → SH, 8/92 → BJ, else SZ)
-/// for data that predates the prefix-canonical convention (issue #181).
-fn exchange_of(basic: &StockBasic) -> &str {
-    if basic.symbol.starts_with("SH") {
-        "SH"
-    } else if basic.symbol.starts_with("SZ") {
-        "SZ"
-    } else if basic.symbol.starts_with("BJ") {
-        "BJ"
-    } else if basic.symbol.starts_with('6') {
-        "SH"
-    } else if basic.symbol.starts_with('8') || basic.symbol.starts_with("92") {
-        "BJ"
-    } else {
-        "SZ"
-    }
+    // Exchange derived inline from the symbol's explicit prefix
+    // (StockBasic.exchange was removed): BJ (北交所) stocks are hard-filtered.
+    basic.symbol.starts_with("BJ")
 }
 
 /// Score one symbol into a row (filters already applied by the caller).
@@ -1486,8 +1459,26 @@ mod tests {
     }
 
     #[test]
-    fn exchange_of_derives_from_symbol_prefix_or_shape() {
-        let basic = |symbol: &str| StockBasic {
+    fn bj_filter_derives_exchange_from_symbol_prefix() {
+        // StockBasic.exchange was removed; the BJ hard filter derives the
+        // exchange from the symbol's prefix. A prefixed BJ symbol must be
+        // filtered while SH/SZ prefixed symbols pass.
+        let now = NaiveDate::parse_from_str("2026-07-31", "%Y-%m-%d").expect("date");
+        let series: Vec<CrossSectionBar> = (0..300)
+            .map(|k| CrossSectionBar {
+                symbol: "SH600519".to_string(),
+                trade_date: now - Duration::days(300 - k as i64),
+                open: 10.0,
+                high: 10.1,
+                low: 9.9,
+                adjclose: 10.0,
+                close: 10.0,
+                volume: 1.0e6,
+                amount: 5.0e8,
+            })
+            .collect();
+        let refs: Vec<&CrossSectionBar> = series.iter().collect();
+        let mk_basic = |symbol: &str| StockBasic {
             symbol: symbol.to_string(),
             name: "S".to_string(),
             area: None,
@@ -1496,17 +1487,21 @@ mod tests {
             board: None,
             full_name: None,
             total_share: None,
-            list_date: None,
+            list_date: Some(now - Duration::days(3650)),
             delist_date: None,
         };
-        assert_eq!(exchange_of(&basic("SZ000001")), "SZ");
-        assert_eq!(exchange_of(&basic("SH600519")), "SH");
-        assert_eq!(exchange_of(&basic("BJ830001")), "BJ");
-        // Legacy bare-code fallback for pre-migration data.
-        assert_eq!(exchange_of(&basic("000001")), "SZ");
-        assert_eq!(exchange_of(&basic("600519")), "SH");
-        assert_eq!(exchange_of(&basic("830001")), "BJ");
-        assert_eq!(exchange_of(&basic("920001")), "BJ");
+        assert!(
+            is_filtered(&mk_basic("BJ830001"), &refs, now, Some(now)),
+            "BJ prefix must be hard-filtered"
+        );
+        assert!(
+            !is_filtered(&mk_basic("SH600519"), &refs, now, Some(now)),
+            "SH prefix must pass"
+        );
+        assert!(
+            !is_filtered(&mk_basic("SZ000001"), &refs, now, Some(now)),
+            "SZ prefix must pass"
+        );
     }
 
     #[test]

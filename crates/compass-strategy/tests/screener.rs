@@ -24,7 +24,6 @@ struct TestStock {
     name: &'static str,
     industry: Option<&'static str>,
     board: Option<&'static str>,
-    exchange: Option<&'static str>,
     list_date: Option<&'static str>,
     delist_date: Option<&'static str>,
     total_share: Option<f64>,
@@ -66,16 +65,15 @@ fn build_fixture(stocks: &[TestStock]) -> (tempfile::TempDir, ParquetReader) {
     .expect("copy daily");
 
     conn.execute_batch(
-        "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
     )
     .expect("create basic");
     for s in stocks {
         conn.execute(
-            "INSERT INTO basic VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO basic VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
             duckdb::params![
                 s.symbol,
                 s.name,
-                s.exchange,
                 s.list_date,
                 s.delist_date,
                 s.board,
@@ -130,11 +128,10 @@ fn rising_series(end: &str, volume: f64) -> Vec<TestBar> {
 
 fn stock_000001(bars: Vec<TestBar>) -> TestStock {
     TestStock {
-        symbol: "000001",
+        symbol: "SZ000001",
         name: "平安银行",
         industry: Some("银行"),
         board: Some("主板"),
-        exchange: Some("SZ"),
         list_date: Some("1991-04-03"),
         delist_date: None,
         total_share: Some(1.0e10),
@@ -147,11 +144,10 @@ fn empty_query_returns_market_sorted_by_cap() {
     let stocks = vec![
         stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0)),
         TestStock {
-            symbol: "600519",
+            symbol: "SH600519",
             name: "贵州茅台",
             industry: Some("白酒"),
             board: Some("主板"),
-            exchange: Some("SH"),
             list_date: Some("2001-08-27"),
             delist_date: None,
             total_share: Some(1_256_197_800.0), // ~12.56亿股
@@ -163,8 +159,8 @@ fn empty_query_returns_market_sorted_by_cap() {
     let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
     // 平安 194亿×10 = 1940亿；茅台 12.56亿×1500 = 18840亿 → 茅台第一
     assert_eq!(res.rows.len(), 2);
-    assert_eq!(res.rows[0].symbol, "600519");
-    assert_eq!(res.rows[1].symbol, "000001");
+    assert_eq!(res.rows[0].symbol, "SH600519");
+    assert_eq!(res.rows[1].symbol, "SZ000001");
     assert_eq!(res.total, 2);
 }
 
@@ -173,11 +169,10 @@ fn delisted_stock_excluded_by_default_and_included_when_disabled() {
     let stocks = vec![
         stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0)),
         TestStock {
-            symbol: "000004",
+            symbol: "SZ000004",
             name: "国华退",
             industry: Some("医药"),
             board: Some("主板"),
-            exchange: Some("SZ"),
             list_date: Some("1991-01-01"),
             delist_date: Some("2026-07-14"),
             total_share: Some(1.0e9),
@@ -188,7 +183,7 @@ fn delisted_stock_excluded_by_default_and_included_when_disabled() {
 
     let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "delisted excluded by default");
-    assert_eq!(res.rows[0].symbol, "000001");
+    assert_eq!(res.rows[0].symbol, "SZ000001");
 
     let q = ScreenerQuery {
         exclude_delisted: false,
@@ -203,11 +198,10 @@ fn basics_without_bars_is_excluded() {
     let stocks = vec![
         stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0)),
         TestStock {
-            symbol: "301677",
+            symbol: "SZ301677",
             name: "C欣兴工具",
             industry: Some("机械"),
             board: Some("创业板"),
-            exchange: Some("SZ"),
             list_date: Some("2025-06-01"),
             delist_date: None,
             total_share: Some(1.0e8),
@@ -218,7 +212,7 @@ fn basics_without_bars_is_excluded() {
 
     let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "basics-without-bars must be excluded");
-    assert_eq!(res.rows[0].symbol, "000001");
+    assert_eq!(res.rows[0].symbol, "SZ000001");
     assert_eq!(res.total, 1, "excluded symbols must not count toward total");
 }
 
@@ -227,22 +221,20 @@ fn industry_filter_or_semantics() {
     let stocks = vec![
         stock_000001(daily_series("2026-07-28", &[10.0; 5], 1000.0)),
         TestStock {
-            symbol: "600519",
+            symbol: "SH600519",
             name: "贵州茅台",
             industry: Some("白酒"),
             board: Some("主板"),
-            exchange: Some("SH"),
             list_date: Some("2001-08-27"),
             delist_date: None,
             total_share: Some(1.0e10),
             bars: daily_series("2026-07-28", &[1500.0; 5], 1000.0),
         },
         TestStock {
-            symbol: "600000",
+            symbol: "SH600000",
             name: "浦发银行",
             industry: Some("银行"),
             board: Some("主板"),
-            exchange: Some("SH"),
             list_date: Some("1999-11-10"),
             delist_date: None,
             total_share: Some(1.0e10),
@@ -266,11 +258,10 @@ fn industry_filter_or_semantics() {
 fn exchange_filter_92_prefix_is_bj() {
     let stocks = vec![
         TestStock {
-            symbol: "920992",
+            symbol: "BJ920992",
             name: "中科美菱",
             industry: Some("医疗"),
             board: Some("北交所"),
-            exchange: Some("BJ"),
             list_date: Some("2023-01-01"),
             delist_date: None,
             total_share: Some(1.0e8),
@@ -286,29 +277,30 @@ fn exchange_filter_92_prefix_is_bj() {
     };
     let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1);
-    assert_eq!(res.rows[0].symbol, "920992", "92xxxx must be classified BJ");
+    assert_eq!(
+        res.rows[0].symbol, "BJ920992",
+        "BJ-prefixed must be classified BJ"
+    );
 }
 
 #[test]
 fn list_years_filter_and_missing_list_date_excluded() {
     let stocks = vec![
         TestStock {
-            symbol: "600519",
+            symbol: "SH600519",
             name: "贵州茅台",
             industry: Some("白酒"),
             board: Some("主板"),
-            exchange: Some("SH"),
             list_date: Some("2001-08-27"),
             delist_date: None,
             total_share: Some(1.0e10),
             bars: daily_series("2026-07-28", &[1500.0; 5], 1000.0),
         },
         TestStock {
-            symbol: "000001",
+            symbol: "SZ000001",
             name: "平安银行",
             industry: Some("银行"),
             board: Some("主板"),
-            exchange: Some("SZ"),
             list_date: None,
             delist_date: None,
             total_share: Some(1.0e10),
@@ -323,18 +315,17 @@ fn list_years_filter_and_missing_list_date_excluded() {
     };
     let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "≥10y passes; NULL list_date excluded");
-    assert_eq!(res.rows[0].symbol, "600519");
+    assert_eq!(res.rows[0].symbol, "SH600519");
 }
 
 #[test]
 fn market_cap_filter_uses_yi_units_and_missing_total_share_excluded() {
     let stocks = vec![
         TestStock {
-            symbol: "600519",
+            symbol: "SH600519",
             name: "贵州茅台",
             industry: Some("白酒"),
             board: Some("主板"),
-            exchange: Some("SH"),
             list_date: Some("2001-08-27"),
             delist_date: None,
             total_share: Some(1_256_197_800.0), // 12.56亿股 × 1500 = 18840亿
@@ -351,7 +342,7 @@ fn market_cap_filter_uses_yi_units_and_missing_total_share_excluded() {
     };
     let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "only 茅台 cap 18840亿 in range");
-    assert_eq!(res.rows[0].symbol, "600519");
+    assert_eq!(res.rows[0].symbol, "SH600519");
     assert!(
         (res.rows[0].market_cap - 18_842.97).abs() < 1.0,
         "cap in 亿: {}",
@@ -543,13 +534,12 @@ fn volume_boundary_exactly_3n_bars_computes() {
 fn total_capped_at_100_rows() {
     let mut stocks: Vec<TestStock> = Vec::new();
     for i in 0..120 {
-        let symbol = format!("{:06}", 300000 + i).leak();
+        let symbol = format!("SZ{:06}", 300000 + i).leak();
         stocks.push(TestStock {
             symbol,
             name: "测试股",
             industry: Some("测试"),
             board: Some("创业板"),
-            exchange: Some("SZ"),
             list_date: Some("2020-01-01"),
             delist_date: None,
             total_share: Some(1.0e9),

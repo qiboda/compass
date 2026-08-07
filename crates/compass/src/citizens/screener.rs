@@ -638,9 +638,9 @@ mod tests {
         let (mut panel, shared) = panel_with_form();
         shared.screener_total.set(3);
         shared.screener_result.set(vec![
-            sample_row("000001", "平安银行", 100.0),
-            sample_row("600519", "贵州茅台", 200.0),
-            sample_row("000002", "万科A", 50.0),
+            sample_row("SZ000001", "平安银行", 100.0),
+            sample_row("SH600519", "贵州茅台", 200.0),
+            sample_row("SZ000002", "万科A", 50.0),
         ]);
         let (run_signal, work_signal) = signals();
         let industries: Vec<String> = Vec::new();
@@ -674,7 +674,7 @@ mod tests {
         shared.screener_total.set(1);
         shared
             .screener_result
-            .set(vec![sample_row("000001", "平安银行", 0.0)]);
+            .set(vec![sample_row("SZ000001", "平安银行", 0.0)]);
         let (run_signal, work_signal) = signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
@@ -687,9 +687,9 @@ mod tests {
 
     #[test]
     fn row_cells_map_screener_row_to_data_cells() {
-        let cells = ScreenerPanel::row_cells(&sample_row("600519", "贵州茅台", 200.0));
+        let cells = ScreenerPanel::row_cells(&sample_row("SH600519", "贵州茅台", 200.0));
         assert_eq!(cells.len(), 6);
-        assert_eq!(cells[0], DataCell::Text("600519".to_string()));
+        assert_eq!(cells[0], DataCell::Text("SH600519".to_string()));
         assert_eq!(
             cells[2],
             DataCell::Price {
@@ -713,11 +713,11 @@ mod tests {
         let shared = SharedState::new("000001", "1d");
         // The work slot must stay alive so the signal send succeeds.
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
-        let rows = vec![sample_row("600519", "贵州茅台", 200.0)];
+        let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
 
         dispatch_row_fetch(&shared, &work_signal, &rows, 0);
 
-        assert_eq!(shared.symbol.get(), "600519");
+        assert_eq!(shared.symbol.get(), "SH600519");
         assert!(
             shared.loading.get(),
             "row click must dispatch a FetchBars request"
@@ -728,7 +728,7 @@ mod tests {
     fn dispatch_row_fetch_ignores_out_of_range_index() {
         let shared = SharedState::new("000001", "1d");
         let (_, work_signal) = signals();
-        let rows = vec![sample_row("600519", "贵州茅台", 200.0)];
+        let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
 
         dispatch_row_fetch(&shared, &work_signal, &rows, 5);
 

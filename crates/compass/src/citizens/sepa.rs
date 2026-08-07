@@ -651,9 +651,9 @@ mod tests {
     fn sample_data() -> SepaData {
         SepaData {
             rows: vec![
-                sample_row(1, "600519", "贵州茅台"),
-                sample_row(2, "300750", "宁德时代"),
-                sample_row(3, "000001", "平安银行"),
+                sample_row(1, "SH600519", "贵州茅台"),
+                sample_row(2, "SZ300750", "宁德时代"),
+                sample_row(3, "SZ000001", "平安银行"),
             ],
             thermometer: MarketThermometer {
                 score: 72.0,
@@ -812,7 +812,7 @@ mod tests {
             crate::dispatcher::dispatch_symbol_fetch(&shared, &work_signal, &row.symbol);
         }
 
-        assert_eq!(shared.symbol.get(), "600519");
+        assert_eq!(shared.symbol.get(), "SH600519");
         assert!(
             shared.loading.get(),
             "row click must dispatch a FetchBars request"
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn row_cells_map_sepa_row_to_twelve_cells() {
-        let cells = SepaPanel::row_cells(&sample_row(1, "600519", "贵州茅台"));
+        let cells = SepaPanel::row_cells(&sample_row(1, "SH600519", "贵州茅台"));
         assert_eq!(cells.len(), 12);
         assert_eq!(cells[0], DataCell::Rank(1));
         assert_eq!(
