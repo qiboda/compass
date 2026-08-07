@@ -12,7 +12,7 @@ use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
 use compass_strategy::sepa::backtest::{BacktestParams, equity_csv, run_backtest};
 
-use crate::sepa::{dolt_import, dolt_sql, dolt_upsert_updates, fmt_double};
+use crate::sepa::{dolt_import, dolt_sql, dolt_upsert_updates, fmt_double, stage_csv};
 
 /// `backtest_result` DDL: daily equity curve, PK on trade_date (aligned with
 /// the `market_temperature` single-date-table convention).
@@ -129,11 +129,10 @@ fn write_back_result(
         ));
     }
 
-    let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
-    std::fs::create_dir_all(&temp_dir)?;
-    let path = temp_dir.join(format!("{end}_backtest_result.csv"));
-    std::fs::write(&path, &csv)?;
-    dolt_import(dolt_dir, "backtest_result", &path)?;
+    let path = stage_csv(&format!("{end}_backtest_result"), &csv)?;
+    let import = dolt_import(dolt_dir, "backtest_result", &path);
+    let _ = std::fs::remove_file(&path);
+    import?;
     let row_count = csv.lines().count() - 1;
     dolt_upsert_updates(dolt_dir, "backtest_result", today, end, row_count)?;
     Ok(())
@@ -246,6 +245,56 @@ mod tests {
         let end = NaiveDate::parse_from_str("2025-01-03", "%Y-%m-%d").unwrap();
         write_back_result(dir.path(), &[], end).expect("empty ok");
         assert_eq!(table_count(dir.path(), "backtest_result"), 0);
+    }
+
+    /// Regression (ref #184): two write-back runs sharing the same `end`
+    /// must not race on a shared temp CSV path, and must clean up their
+    /// staged files. The old fixed path `{end}_backtest_result.csv` raced
+    /// under nextest parallelism — a second run could overwrite the CSV
+    /// while the first was importing it.
+    #[test]
+    fn write_back_result_stages_and_cleans_temp_file() {
+        let _lock = dolt_guard();
+        let dir1 = tempfile::tempdir().expect("tempdir1");
+        let dir2 = tempfile::tempdir().expect("tempdir2");
+        setup_dolt(dir1.path());
+        setup_dolt(dir2.path());
+
+        // Given stale files from earlier runs of this test exist, remove
+        // them so the post-condition below counts only this test's runs.
+        let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+        if let Ok(rd) = std::fs::read_dir(&temp_dir) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with("2025-06-30_backtest_result") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+
+        let pts = points_fixture();
+        let end = NaiveDate::parse_from_str("2025-06-30", "%Y-%m-%d").unwrap();
+        write_back_result(dir1.path(), &pts, end).expect("first write");
+        write_back_result(dir2.path(), &pts, end).expect("second write");
+
+        // When two runs share an end date, both must import their data and
+        // leave no staged temp CSV behind (unique names + post-import
+        // cleanup; the old shared path left one file and raced).
+        let leftovers = std::fs::read_dir(&temp_dir)
+            .expect("read temp dir")
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("2025-06-30_backtest_result")
+            })
+            .count();
+        assert_eq!(
+            leftovers, 0,
+            "staged temp CSVs must be removed after import, got {leftovers} leftover(s)"
+        );
+        assert_eq!(table_count(dir1.path(), "backtest_result"), 2);
+        assert_eq!(table_count(dir2.path(), "backtest_result"), 2);
     }
 
     /// Full-table replace: a second write with a narrower curve leaves only

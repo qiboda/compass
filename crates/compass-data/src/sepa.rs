@@ -8,8 +8,10 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{NaiveDate, Utc};
 use compass_core::data::parquet::ParquetReader;
@@ -375,8 +377,6 @@ fn write_back(
 
     // Stage CSVs to temp files and append-import (per-table: skip when a
     // table legitimately has no rows, e.g. no concept memberships).
-    let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
-    std::fs::create_dir_all(&temp_dir)?;
     let staged: [(&str, &str, &str); 5] = [
         ("technical_factor", &tech_csv, "technical_factor.csv"),
         ("industry_factor", &ind_csv, "industry_factor.csv"),
@@ -392,9 +392,10 @@ fn write_back(
             info!(table, date = %data.date, "no rows to write back");
             continue;
         }
-        let path = temp_dir.join(format!("{date}_{file}"));
-        std::fs::write(&path, csv)?;
-        dolt_import(dolt_dir, table, &path)?;
+        let path = stage_csv(&format!("{date}_{file}"), csv)?;
+        let import = dolt_import(dolt_dir, table, &path);
+        let _ = std::fs::remove_file(&path);
+        import?;
         let row_count = csv.lines().count() - 1;
         dolt_upsert_updates(dolt_dir, table, today, date, row_count)?;
         info!(
@@ -441,6 +442,40 @@ pub(crate) fn dolt_import(dolt_dir: &Path, table: &str, csv: &Path) -> Result<()
         return Err(format!("dolt import {table} failed: {stderr}{stdout}").into());
     }
     Ok(())
+}
+
+/// Stage a CSV into a unique temp file under `compass_sepa_writeback`,
+/// returning the created path. The caller must `remove_file` the path
+/// after `dolt_import` (shared by `write_back` and backtest write-back).
+///
+/// Uniqueness: PID + per-process atomic sequence keep paths distinct
+/// across nextest processes and within one process (ref #184 — a fixed
+/// `{date}_{table}.csv` path raced between parallel test runs). `create_new`
+/// (O_EXCL) refuses symlinks another local user could plant in the shared
+/// temp dir; EEXIST (PID reuse + stale file) bumps the sequence and retries.
+pub(crate) fn stage_csv(stem: &str, csv: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+    std::fs::create_dir_all(&temp_dir)?;
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let candidate = temp_dir.join(format!(
+            "{stem}_{}_{}.csv",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut f) => {
+                f.write_all(csv.as_bytes())?;
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 /// Upsert the data_updates row for one compute table.
@@ -497,6 +532,73 @@ mod tests {
             .nth(1)
             .and_then(|l| l.parse::<i64>().ok())
             .expect("parse count")
+    }
+
+    /// Regression (ref #184): stage_csv must hand out a distinct path per
+    /// call even for the same stem — the old fixed `{end}_backtest_result.csv`
+    /// path raced between parallel nextest processes.
+    #[test]
+    fn stage_csv_returns_distinct_paths_per_call() {
+        let stem = "unit_test_stage_csv";
+        let p1 = stage_csv(stem, "a,b\n1,2\n").expect("first stage");
+        let p2 = stage_csv(stem, "a,b\n3,4\n").expect("second stage");
+        assert_ne!(p1, p2, "same stem must not collide, got {p1:?} and {p2:?}");
+        assert_eq!(std::fs::read_to_string(&p1).expect("read p1"), "a,b\n1,2\n");
+        assert_eq!(std::fs::read_to_string(&p2).expect("read p2"), "a,b\n3,4\n");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    /// Occupied candidate names must be skipped: create_new fails with
+    /// EEXIST (stale file / PID reuse), the sequence bumps, and the call
+    /// lands on a fresh path. Obstacles are placed with create_new so a
+    /// parallel test's staged file is never clobbered.
+    #[test]
+    fn stage_csv_retries_when_candidate_exists() {
+        let stem = "unit_test_stage_csv_retry";
+        let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let pid = std::process::id();
+        let mut obstacles = Vec::new();
+        for seq in 0..1024 {
+            let p = temp_dir.join(format!("{stem}_{pid}_{seq}.csv"));
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&p)
+            {
+                let _ = f.write_all(b"occupied");
+                obstacles.push(p);
+            }
+        }
+        // Whatever the shared counter holds (< 1024 stage_csv calls in this
+        // process), the next call hits an obstacle and retries past the range.
+        let p1 = stage_csv(stem, "a,b\n1,2\n").expect("stage after collisions");
+        let name1 = p1.file_name().unwrap().to_string_lossy().into_owned();
+        let seq1: u64 = name1
+            .trim_end_matches(".csv")
+            .rsplit('_')
+            .next()
+            .unwrap()
+            .parse()
+            .expect("seq");
+        assert!(
+            seq1 >= 1024,
+            "must retry past the occupied range, got {seq1}"
+        );
+        assert_eq!(std::fs::read_to_string(&p1).expect("read"), "a,b\n1,2\n");
+        for p in obstacles {
+            let _ = std::fs::remove_file(p);
+        }
+        let _ = std::fs::remove_file(&p1);
+    }
+
+    /// A non-EEXIST open failure (missing parent dir) propagates as Err.
+    #[test]
+    fn stage_csv_propagates_create_error() {
+        let stem = "unit_test/nonexistent/stem";
+        let result = stage_csv(stem, "a,b\n1,2\n");
+        assert!(result.is_err(), "create_new on missing parent must fail");
     }
 
     // -----------------------------------------------------------------------

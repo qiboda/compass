@@ -1,5 +1,5 @@
 #!/bin/bash
-# pre-commit hook — fast Python lint check before commit.
+# pre-commit hook — fast Python lint + Rust fmt check before commit.
 # Full Rust + Python suites run in pre-push.
 
 has_error=0
@@ -16,9 +16,17 @@ if [ -d "collectors" ] && [ -f "collectors/pyproject.toml" ]; then
     fi
 fi
 
+echo "pre-commit: cargo fmt --check..."
+if ! cargo fmt --check; then
+    echo "ERROR: cargo fmt --check found unformatted code."
+    echo "  Run 'cargo fmt' and commit the changes."
+    has_error=1
+fi
+
 if [ $has_error -ne 0 ]; then
     echo ""
     echo "Run: cd collectors && uv run ruff check *.py tests/ --fix"
+    echo "     cargo fmt"
     exit 1
 fi
 exit 0
