@@ -1,0 +1,70 @@
+Task 1 evidence — symbol tooling layer + cross-crate exchange mechanical fixes (ref #181)
+==========================================================================================
+
+Scope executed (per .omo/plans/symbol-prefix-canonical.md Todo 1):
+- compass-core/data/symbol.rs: parse_explicit_prefix no-dot form now case-insensitive
+  (eq_ignore_ascii_case on code[..2]); deleted to_exchange/to_ts_code heuristics +
+  their tests + test-module section comments; dot-form parsing kept in
+  parse_explicit_prefix.
+- compass-core/model.rs: deleted Exchange enum + StockBasic.exchange field; prefix
+  doc semantics on StockBasic.symbol / CrossSectionBar.symbol; default_symbol()
+  "000001" -> "SZ000001"; appconfig test assertion updated (appconfig_from_toml
+  "600519" parsed-value assertion left untouched).
+- compass-core/data/parquet.rs: exchange removed from load_stock_basic /
+  load_all_stock_basics SELECTs and row.get calls; exchange assertions in
+  get_stock_basic / load_all_stock_basics tests deleted.
+- compass-data/sepa.rs: exchange_prefixes deleted; symbol_csv pass-through of
+  prefixed row.symbol; write_back no longer takes the reader; fixture symbols
+  prefixed (SZ000001/SH600001/SH600002); format_top_table test rows prefixed;
+  write-back test asserts exact prefixed symbol set in Dolt final_score;
+  industry_factor count 1->0 (transitional: engine membership keys still bare
+  until Task 4, documented in-test).
+- compass-strategy: scoring.rs exchange_of now derives SH/SZ/BJ from symbol
+  prefix with legacy shape fallback (keeps shape-assertion tests green);
+  exchange_of unit test compile-fixed, metadata case deleted, prefix cases added;
+  temperature.rs / backtest.rs fixture exchange fields removed.
+- compass/src/main.rs: stock_projection + sidebar derive exchange from symbol
+  prefix via exchange_of_symbol (prefix + legacy-shape fallback); sidebar test
+  fixture exchange fields and stock_basic() helper exchange param removed.
+
+RED-first evidence
+------------------
+1) Lowercase prefix parsing (new behavior):
+   $ cargo test -p compass-core data::symbol::tests::parse_explicit_prefix_dolt_native_case_insensitive
+   FAILED: assertion left ("", "sz000001") right ("SZ", "000001")  -> fixed by eq_ignore_ascii_case
+2) Write-back garbage symbols (F1 bug) — with prefixed fixture + old
+   exchange_prefixes/unwrap_or("SH") behavior emulated:
+   $ cargo test -p compass-data sepa::tests::run_score_writes_five_tables_and_prints_table
+   FAILED: final_score symbols must be prefixed forms: symbol
+   SHSH600001
+   SHSH600002
+   SHSZ000001
+   left: ["SHSH600001", "SHSH600002", "SHSZ000001"] right: ["SH600001", "SH600002", "SZ000001"]
+   -> fixed by deleting exchange_prefixes + pass-through symbol_csv
+3) N1 cross-crate compile break (expected, fixed in-task): after deleting
+   StockBasic.exchange, scoring.rs:990 (basic.exchange.as_deref) and
+   sepa.rs:222 (b.exchange.map) failed to compile.
+
+Gates (all pass)
+----------------
+$ cargo test -p compass-core -p compass-data -p compass-strategy -p compass
+  all test binaries ok (core 130+1, strategy 47/55/60, data 19+2 sepa, compass 11, ...)
+$ cargo clippy -p compass-core -p compass-data -p compass-strategy -p compass -- -D warnings
+  Finished, zero warnings
+$ cargo fmt --check
+  clean
+$ cargo check --workspace
+  Finished, zero errors
+
+Acceptance greps (all clean)
+----------------------------
+$ grep -rn "to_exchange\|to_ts_code" crates/ --include="*.rs" | grep -v "mod tests\|#\[cfg(test)\]"   -> no matches
+$ grep -nE "SELECT.*exchange|\.get[^)]*\"exchange\"" crates/compass-core/src/data/parquet.rs           -> no matches
+$ grep -n "exchange_prefixes\|unwrap_or(\"SH\")" crates/compass-data/src/sepa.rs                        -> no matches
+$ grep -rn "basic\.exchange" crates/compass-strategy/src/ --include="*.rs"                             -> no matches
+$ grep -n "\.exchange" crates/compass/src/main.rs                                                       -> no matches
+$ grep -n "default_symbol" crates/compass-core/src/model.rs   -> default_symbol() returns "SZ000001"
+New tests:
+  parse_explicit_prefix("sz000001") == ("SZ", "000001")  [symbol.rs parse_explicit_prefix_dolt_native_case_insensitive]
+  parse_explicit_prefix("SZ000001") == ("SZ", "000001")  [same test]
+  Write-back test asserts Dolt final_score symbol == exactly ["SH600001","SH600002","SZ000001"]

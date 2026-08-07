@@ -351,7 +351,7 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+            "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
                     board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              WHERE symbol = ?"
@@ -369,7 +369,6 @@ impl ParquetReader {
                     board: row.get::<_, Option<String>>("board")?,
                     full_name: row.get::<_, Option<String>>("full_name")?,
                     total_share: row.get::<_, Option<f64>>("total_share")?,
-                    exchange: row.get::<_, Option<String>>("exchange")?,
                     list_date: row
                         .get::<_, Option<String>>("list_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
@@ -406,7 +405,7 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+            "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
                     board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              ORDER BY symbol"
@@ -418,7 +417,6 @@ impl ParquetReader {
                 Ok(StockBasic {
                     symbol: row.get("symbol")?,
                     name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
-                    exchange: row.get::<_, Option<String>>("exchange")?,
                     area: row.get::<_, Option<String>>("region")?,
                     industry: row.get::<_, Option<String>>("industry")?,
                     market: None,
@@ -1386,7 +1384,6 @@ mod tests {
             .expect("should find 000001");
         assert_eq!(info.symbol, "000001");
         assert_eq!(info.name, "平安银行");
-        assert_eq!(info.exchange.as_deref(), Some("SZ"));
         assert_eq!(info.area.as_deref(), Some("广东省"));
         assert_eq!(info.industry.as_deref(), Some("银行"));
         assert_eq!(info.board.as_deref(), Some("主板"));
@@ -1646,7 +1643,6 @@ mod tests {
             .find(|b| b.symbol == "000001")
             .expect("find 000001");
         assert_eq!(pab.name, "平安银行");
-        assert_eq!(pab.exchange.as_deref(), Some("SZ"));
         assert!(
             pab.list_date.is_some(),
             "list_date should be Some for 000001"

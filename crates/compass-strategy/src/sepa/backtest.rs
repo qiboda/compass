@@ -904,7 +904,6 @@ mod tests {
             board: Some("主板".to_string()),
             full_name: Some(symbol.to_string()),
             total_share: Some(share),
-            exchange: Some("SZ".to_string()),
             list_date: Some(list),
             delist_date: None,
         }

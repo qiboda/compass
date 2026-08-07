@@ -8,6 +8,7 @@ use serde::Deserialize;
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
+use compass_core::data::symbol::parse_explicit_prefix;
 use compass_core::model::{AppConfig, WatchlistConfig};
 use compass_types::ScreenerQuery;
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
@@ -337,6 +338,22 @@ fn save_watchlist_config(symbols: &[String]) -> Result<(), String> {
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
 
+/// Exchange code from a symbol's explicit prefix, falling back to the
+/// legacy bare-code shape heuristic for pre-migration data.
+fn exchange_of_symbol(symbol: &str) -> &str {
+    let (exchange, _) = parse_explicit_prefix(symbol);
+    if !exchange.is_empty() {
+        return exchange;
+    }
+    if symbol.starts_with('6') {
+        "SH"
+    } else if symbol.starts_with('8') {
+        "BJ"
+    } else {
+        "SZ"
+    }
+}
+
 /// Projection mapping `StockBasic` rows into the searchable dropdown's fields.
 ///
 /// The UI crate stays free of business-crate dependencies; the binary adapts
@@ -345,7 +362,7 @@ fn stock_projection() -> StockProjection<compass_core::model::StockBasic> {
     StockProjection::new(
         |s: &compass_core::model::StockBasic| &s.symbol,
         |s: &compass_core::model::StockBasic| &s.name,
-        |s: &compass_core::model::StockBasic| s.exchange.as_deref(),
+        |s: &compass_core::model::StockBasic| Some(exchange_of_symbol(&s.symbol)),
     )
 }
 
@@ -731,7 +748,9 @@ impl CompassApp {
             let name = stock
                 .map(|s| s.name.clone())
                 .unwrap_or_else(|| symbol.clone());
-            let exchange = stock.and_then(|s| s.exchange.clone()).unwrap_or_default();
+            let exchange = stock
+                .map(|s| exchange_of_symbol(&s.symbol).to_string())
+                .unwrap_or_default();
             let matches = query.is_empty()
                 || symbol.to_lowercase().contains(&query)
                 || name.to_lowercase().contains(&query);
@@ -1790,7 +1809,6 @@ default_timeframe = "1w"
             board: None,
             full_name: None,
             total_share: None,
-            exchange: Some("SH".to_string()),
             list_date: None,
             delist_date: None,
         }];
@@ -1819,7 +1837,7 @@ default_timeframe = "1w"
     // S8 watchlist wiring (design §6.2 / §6.5 scenario 3)
     // ------------------------------------------------------------------
 
-    fn stock_basic(symbol: &str, name: &str, exchange: &str) -> StockBasic {
+    fn stock_basic(symbol: &str, name: &str) -> StockBasic {
         StockBasic {
             symbol: symbol.to_string(),
             name: name.to_string(),
@@ -1829,7 +1847,6 @@ default_timeframe = "1w"
             board: None,
             full_name: None,
             total_share: None,
-            exchange: Some(exchange.to_string()),
             list_date: None,
             delist_date: None,
         }
@@ -1849,7 +1866,7 @@ default_timeframe = "1w"
 
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("000001", "平安银行", "SZ")],
+            vec![stock_basic("000001", "平安银行")],
         );
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -1943,7 +1960,7 @@ default_timeframe = "1w"
 
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台", "SH")],
+            vec![stock_basic("600519", "贵州茅台")],
         );
         app.shared_state.symbol.set("600519".to_string());
         app.shared_state.watchlist.set(vec!["600519".to_string()]);
@@ -1995,7 +2012,7 @@ default_timeframe = "1w"
     fn sidebar_delete_modal_cancel_keeps_watchlist() {
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台", "SH")],
+            vec![stock_basic("600519", "贵州茅台")],
         );
         app.shared_state.symbol.set("600519".to_string());
         app.shared_state.watchlist.set(vec!["600519".to_string()]);
@@ -2052,7 +2069,7 @@ default_timeframe = "1w"
     fn startup_modal_skipped_when_stock_list_present() {
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台", "SH")],
+            vec![stock_basic("600519", "贵州茅台")],
         );
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2162,7 +2179,7 @@ default_timeframe = "1w"
     fn logger_export_button_triggers_save_dialog() {
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台", "SH")],
+            vec![stock_basic("600519", "贵州茅台")],
         );
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2180,8 +2197,8 @@ default_timeframe = "1w"
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![
-                stock_basic("000001", "平安银行", "SZ"),
-                stock_basic("600519", "贵州茅台", "SH"),
+                stock_basic("000001", "平安银行"),
+                stock_basic("600519", "贵州茅台"),
             ],
         );
         app.shared_state

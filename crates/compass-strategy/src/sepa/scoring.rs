@@ -984,13 +984,17 @@ fn is_filtered(
     exchange_of(basic) == "BJ"
 }
 
-/// Exchange from basics metadata, falling back to the bare-code shape
-/// (6 → SH, 8/92 → BJ, else SZ) when the field is missing.
+/// Exchange derived from the symbol's explicit prefix (SH/SZ/BJ), falling
+/// back to the legacy bare-code shape heuristic (6 → SH, 8/92 → BJ, else SZ)
+/// for data that predates the prefix-canonical convention (issue #181).
 fn exchange_of(basic: &StockBasic) -> &str {
-    if let Some(ex) = basic.exchange.as_deref() {
-        return ex;
-    }
-    if basic.symbol.starts_with('6') {
+    if basic.symbol.starts_with("SH") {
+        "SH"
+    } else if basic.symbol.starts_with("SZ") {
+        "SZ"
+    } else if basic.symbol.starts_with("BJ") {
+        "BJ"
+    } else if basic.symbol.starts_with('6') {
         "SH"
     } else if basic.symbol.starts_with('8') || basic.symbol.starts_with("92") {
         "BJ"
@@ -1482,8 +1486,8 @@ mod tests {
     }
 
     #[test]
-    fn exchange_of_uses_metadata_then_code_shape() {
-        let basic = |symbol: &str, exchange: Option<&str>| StockBasic {
+    fn exchange_of_derives_from_symbol_prefix_or_shape() {
+        let basic = |symbol: &str| StockBasic {
             symbol: symbol.to_string(),
             name: "S".to_string(),
             area: None,
@@ -1492,15 +1496,17 @@ mod tests {
             board: None,
             full_name: None,
             total_share: None,
-            exchange: exchange.map(str::to_string),
             list_date: None,
             delist_date: None,
         };
-        assert_eq!(exchange_of(&basic("000001", Some("BJ"))), "BJ");
-        assert_eq!(exchange_of(&basic("000001", None)), "SZ");
-        assert_eq!(exchange_of(&basic("600519", None)), "SH");
-        assert_eq!(exchange_of(&basic("830001", None)), "BJ");
-        assert_eq!(exchange_of(&basic("920001", None)), "BJ");
+        assert_eq!(exchange_of(&basic("SZ000001")), "SZ");
+        assert_eq!(exchange_of(&basic("SH600519")), "SH");
+        assert_eq!(exchange_of(&basic("BJ830001")), "BJ");
+        // Legacy bare-code fallback for pre-migration data.
+        assert_eq!(exchange_of(&basic("000001")), "SZ");
+        assert_eq!(exchange_of(&basic("600519")), "SH");
+        assert_eq!(exchange_of(&basic("830001")), "BJ");
+        assert_eq!(exchange_of(&basic("920001")), "BJ");
     }
 
     #[test]
