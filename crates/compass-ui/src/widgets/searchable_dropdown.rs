@@ -53,9 +53,53 @@ impl<T> StockProjection<T> {
     }
 }
 
-/// Pure filter: symbol-prefix or name-substring match, optional exchange
-/// filter, results sorted by symbol (design doc §5.2, migrated from the
-/// binary crate's `filter_stocks`).
+/// Normalize a free-text search query (D11): lowercase, strip a `sh.`/`sz.`/
+/// `bj.` dot prefix, then strip an optional `SH`/`SZ`/`BJ` letter prefix to
+/// get the pure code. E.g. `"SZ000001"` → `("sz000001", "000001")`,
+/// `"sz.000001"` → `("000001", "000001")`, `"600519"` → `("600519", "600519")`.
+fn normalize_query(query: &str) -> (String, String) {
+    let lower = query.trim().to_lowercase();
+    let q = lower
+        .strip_prefix("sh.")
+        .or_else(|| lower.strip_prefix("sz."))
+        .or_else(|| lower.strip_prefix("bj."))
+        .unwrap_or(&lower)
+        .to_string();
+    let q_code = q
+        .strip_prefix("sh")
+        .or_else(|| q.strip_prefix("sz"))
+        .or_else(|| q.strip_prefix("bj"))
+        .unwrap_or(&q)
+        .to_string();
+    (q, q_code)
+}
+
+/// Strip an exchange prefix (`SH`/`SZ`/`BJ`, any case) from a symbol for the
+/// bare-code display/match terms; unprefixed symbols pass through.
+pub(crate) fn strip_exchange_prefix(symbol: &str) -> &str {
+    for prefix in ["sh", "sz", "bj"] {
+        if symbol.len() >= 2 && symbol[..2].eq_ignore_ascii_case(prefix) {
+            return &symbol[2..];
+        }
+    }
+    symbol
+}
+
+/// D11 match predicate: a stock matches when its (lowercased) symbol starts
+/// with the normalized query, or its bare code starts with the pure-code part
+/// of the query, or its name contains the normalized query. The three
+/// spellings of one code — `"600519"`, `"SH600519"`, `"sh.600519"` — all
+/// match `SH600519`.
+fn matches_query<T>(projection: &StockProjection<T>, stock: &T, q: &str, q_code: &str) -> bool {
+    let symbol = projection.symbol_of(stock).to_lowercase();
+    symbol.starts_with(q)
+        || (!q_code.is_empty() && strip_exchange_prefix(&symbol).starts_with(q_code))
+        || projection.name_of(stock).to_lowercase().contains(q)
+}
+
+/// Pure filter: symbol/name match against a free-text query (bare code,
+/// prefixed code or name — D11), optional exchange filter, results sorted by
+/// symbol (design doc §5.2, migrated from the binary crate's `filter_stocks`).
 ///
 /// An empty query matches every stock in the (optionally exchange-filtered)
 /// list. The exchange filter takes a two-letter code such as `"SH"`; `None`
@@ -66,7 +110,7 @@ pub fn filter_stocks<'a, T>(
     exchange: Option<&str>,
     projection: &StockProjection<T>,
 ) -> Vec<&'a T> {
-    let lower = query.trim().to_lowercase();
+    let (q, q_code) = normalize_query(query);
     let mut result: Vec<&T> = stocks
         .iter()
         .filter(|s| {
@@ -75,11 +119,10 @@ pub fn filter_stocks<'a, T>(
                 .unwrap_or(true)
         })
         .filter(|s| {
-            if lower.is_empty() {
+            if q.is_empty() {
                 return true;
             }
-            projection.symbol_of(s).to_lowercase().starts_with(&lower)
-                || projection.name_of(s).to_lowercase().contains(&lower)
+            matches_query(projection, s, &q, &q_code)
         })
         .collect();
     result.sort_by(|a, b| projection.symbol_of(a).cmp(projection.symbol_of(b)));
@@ -100,7 +143,8 @@ pub struct SearchableDropdown<T> {
     projection: StockProjection<T>,
     /// Current filter query while the popup is open.
     pub filter_text: String,
-    /// Currently selected symbol (e.g. `"000001"`).
+    /// Currently selected symbol in canonical exchange-prefixed form
+    /// (e.g. `"SZ000001"`).
     pub selected_symbol: String,
     /// Display name of the selected symbol.
     pub selected_name: String,
@@ -251,11 +295,10 @@ impl<T> SearchableDropdown<T> {
                                     let symbol = self.projection.symbol_of(stock);
                                     let is_selected = symbol == self.selected_symbol;
                                     let is_highlighted = self.highlighted == Some(pos);
-                                    let text = format!(
-                                        "{} | {} | {}",
+                                    let text = format_display(
                                         self.projection.exchange_of(stock).unwrap_or(""),
                                         symbol,
-                                        self.projection.name_of(stock)
+                                        self.projection.name_of(stock),
                                     );
                                     let row = egui::Button::new(
                                         egui::RichText::new(&text)
@@ -321,21 +364,17 @@ impl<T> SearchableDropdown<T> {
         response
     }
 
-    /// Recompute `cached_indices` from the current filter text.
+    /// Recompute `cached_indices` from the current filter text (D11).
     fn refilter(&mut self, stock_list: &[T]) {
-        let lower = self.filter_text.trim().to_lowercase();
+        let (q, q_code) = normalize_query(&self.filter_text);
         self.cached_indices = stock_list
             .iter()
             .enumerate()
             .filter(|(_, s)| {
-                if lower.is_empty() {
+                if q.is_empty() {
                     return true;
                 }
-                self.projection
-                    .symbol_of(s)
-                    .to_lowercase()
-                    .starts_with(&lower)
-                    || self.projection.name_of(s).to_lowercase().contains(&lower)
+                matches_query(&self.projection, s, &q, &q_code)
             })
             .map(|(i, _)| i)
             .collect();
@@ -363,17 +402,26 @@ impl<T> SearchableDropdown<T> {
 
 /// Format the closed-state display text: `exchange | symbol | name`, omitting
 /// empty parts (migrated from the binary crate).
+///
+/// Display exemption (D5): storage/transport carry the full prefixed symbol,
+/// but the display shows the bare code with the exchange separated, so the
+/// prefix is not duplicated (`"SZ | SZ000001"` would be redundant).
 fn format_display(exchange: &str, symbol: &str, name: &str) -> String {
+    let display_symbol = if exchange.is_empty() {
+        symbol
+    } else {
+        strip_exchange_prefix(symbol)
+    };
     if name.is_empty() {
         if exchange.is_empty() {
-            symbol.to_string()
+            display_symbol.to_string()
         } else {
-            format!("{exchange} | {symbol}")
+            format!("{exchange} | {display_symbol}")
         }
     } else if exchange.is_empty() {
-        format!("{symbol} | {name}")
+        format!("{display_symbol} | {name}")
     } else {
-        format!("{exchange} | {symbol} | {name}")
+        format!("{exchange} | {display_symbol} | {name}")
     }
 }
 
@@ -413,11 +461,11 @@ mod tests {
 
     fn make_stocks() -> Vec<TestStock> {
         vec![
-            TestStock::new("000001", "平安银行", "SZ"),
-            TestStock::new("000002", "万科A", "SZ"),
-            TestStock::new("600519", "贵州茅台", "SH"),
-            TestStock::new("600036", "招商银行", "SH"),
-            TestStock::new("300750", "宁德时代", "SZ"),
+            TestStock::new("SZ000001", "平安银行", "SZ"),
+            TestStock::new("SZ000002", "万科A", "SZ"),
+            TestStock::new("SH600519", "贵州茅台", "SH"),
+            TestStock::new("SH600036", "招商银行", "SH"),
+            TestStock::new("SZ300750", "宁德时代", "SZ"),
         ]
     }
 
@@ -444,28 +492,36 @@ mod tests {
 
     #[test]
     fn format_display_full() {
+        // Display exemption: the prefixed symbol renders as bare code with the
+        // exchange separated ("SZ | SZ000001" would duplicate the prefix).
         assert_eq!(
-            format_display("SZ", "000001", "平安银行"),
+            format_display("SZ", "SZ000001", "平安银行"),
             "SZ | 000001 | 平安银行"
         );
     }
 
     #[test]
     fn format_display_no_name() {
-        assert_eq!(format_display("SZ", "000001", ""), "SZ | 000001");
+        assert_eq!(format_display("SZ", "SZ000001", ""), "SZ | 000001");
     }
 
     #[test]
     fn format_display_no_exchange() {
         assert_eq!(
-            format_display("", "000001", "平安银行"),
-            "000001 | 平安银行"
+            format_display("", "SZ000001", "平安银行"),
+            "SZ000001 | 平安银行"
         );
     }
 
     #[test]
     fn format_display_symbol_only() {
-        assert_eq!(format_display("", "000001", ""), "000001");
+        assert_eq!(format_display("", "SZ000001", ""), "SZ000001");
+    }
+
+    #[test]
+    fn format_display_bare_symbol_passes_through() {
+        // Unprefixed symbols are not double-stripped.
+        assert_eq!(format_display("SZ", "000001", ""), "SZ | 000001");
     }
 
     // --- filter_stocks (migrated + exchange filter) ---
@@ -475,8 +531,31 @@ mod tests {
         let stocks = make_stocks();
         let result = filter_stocks(&stocks, "600", None, &test_projection());
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].symbol, "600036");
-        assert_eq!(result[1].symbol, "600519");
+        assert_eq!(result[0].symbol, "SH600036");
+        assert_eq!(result[1].symbol, "SH600519");
+    }
+
+    #[test]
+    fn filter_stocks_three_spellings_find_same_stock() {
+        // D11 acceptance: the bare code, the native prefixed form and the
+        // dot form of one code must all match the same stock.
+        let stocks = make_stocks();
+        for query in ["600519", "SH600519", "sh.600519"] {
+            let result = filter_stocks(&stocks, query, None, &test_projection());
+            assert_eq!(
+                result.iter().map(|s| s.symbol.as_str()).collect::<Vec<_>>(),
+                vec!["SH600519"],
+                "query {query:?} must find exactly SH600519"
+            );
+        }
+        for query in ["000001", "SZ000001", "sz.000001"] {
+            let result = filter_stocks(&stocks, query, None, &test_projection());
+            assert_eq!(
+                result.iter().map(|s| s.symbol.as_str()).collect::<Vec<_>>(),
+                vec!["SZ000001"],
+                "query {query:?} must find exactly SZ000001"
+            );
+        }
     }
 
     #[test]
@@ -485,8 +564,8 @@ mod tests {
         let result = filter_stocks(&stocks, "银行", None, &test_projection());
         assert_eq!(result.len(), 2);
         let found: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
-        assert!(found.contains(&"000001"));
-        assert!(found.contains(&"600036"));
+        assert!(found.contains(&"SZ000001"));
+        assert!(found.contains(&"SH600036"));
     }
 
     #[test]
@@ -495,8 +574,8 @@ mod tests {
         let result = filter_stocks(&stocks, "", Some("SH"), &test_projection());
         assert_eq!(result.len(), 2);
         let symbols: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
-        assert!(symbols.contains(&"600519"));
-        assert!(symbols.contains(&"600036"));
+        assert!(symbols.contains(&"SH600519"));
+        assert!(symbols.contains(&"SH600036"));
     }
 
     #[test]
@@ -524,13 +603,14 @@ mod tests {
 
     #[test]
     fn stock_picker_starts_with_empty_cache() {
-        let picker = SearchableDropdown::new(ThemeTokens::dark(), "000001", test_projection());
+        let picker = SearchableDropdown::new(ThemeTokens::dark(), "SZ000001", test_projection());
         assert!(picker.cached_indices.is_empty());
     }
 
     #[test]
     fn stock_picker_detects_filter_change() {
-        let mut picker = SearchableDropdown::new(ThemeTokens::dark(), "000001", test_projection());
+        let mut picker =
+            SearchableDropdown::new(ThemeTokens::dark(), "SZ000001", test_projection());
         picker.filter_text = "平安".into();
         picker.popup_open = true;
         assert_ne!(picker.filter_text, picker.last_filter_text);
@@ -543,7 +623,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -568,7 +648,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -590,7 +670,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -604,7 +684,7 @@ mod tests {
         harness.get_by_label("SH | 600519 | 贵州茅台").click();
         harness.run();
 
-        assert_eq!(picker.borrow().selected_symbol, "600519");
+        assert_eq!(picker.borrow().selected_symbol, "SH600519");
         assert_eq!(picker.borrow().selected_name, "贵州茅台");
         assert_eq!(picker.borrow().selected_exchange, "SH");
         assert!(
@@ -614,11 +694,40 @@ mod tests {
     }
 
     #[test]
+    fn test_three_spellings_select_same_stock_with_prefixed_submit() {
+        // D11 acceptance: "600519" / "SH600519" / "sh.600519" all filter to
+        // the same row, and the selected (submitted) symbol is prefixed.
+        let stocks = make_stocks();
+        for query in ["600519", "SH600519", "sh.600519"] {
+            let picker = Rc::new(RefCell::new(SearchableDropdown::new(
+                ThemeTokens::dark(),
+                "SZ000001",
+                test_projection(),
+            )));
+            picker.borrow_mut().popup_open = true;
+            picker.borrow_mut().filter_text = query.to_string();
+
+            let mut harness = harness_for_picker(&picker, &stocks);
+            harness.run();
+
+            harness.get_by_label("SH | 600519 | 贵州茅台").click();
+            harness.run();
+
+            assert_eq!(
+                picker.borrow().selected_symbol,
+                "SH600519",
+                "query {query:?} must select the prefixed symbol"
+            );
+            assert_eq!(picker.borrow().selected_exchange, "SH");
+        }
+    }
+
+    #[test]
     fn test_popup_repopulates_cached_indices() {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -639,7 +748,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -665,7 +774,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -697,7 +806,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -722,7 +831,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -741,7 +850,7 @@ mod tests {
         harness.key_press(egui::Key::Enter);
         harness.step();
 
-        assert_eq!(picker.borrow().selected_symbol, "600519");
+        assert_eq!(picker.borrow().selected_symbol, "SH600519");
         assert_eq!(picker.borrow().selected_exchange, "SH");
         assert!(
             !picker.borrow().popup_open,
@@ -754,7 +863,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -767,7 +876,7 @@ mod tests {
         harness.key_press(egui::Key::Enter);
         harness.step();
 
-        assert_eq!(picker.borrow().selected_symbol, "000001");
+        assert_eq!(picker.borrow().selected_symbol, "SZ000001");
         assert!(
             picker.borrow().popup_open,
             "Enter without highlight is a no-op"
@@ -781,7 +890,7 @@ mod tests {
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
-            "000001",
+            "SZ000001",
             test_projection(),
         )));
 
@@ -800,7 +909,7 @@ mod tests {
         let light = ThemeTokens::light();
         let mut picker = SearchableDropdown::new(
             dark,
-            "000001",
+            "SZ000001",
             StockProjection::new(
                 |s: &TestStock| &s.symbol,
                 |s: &TestStock| &s.name,

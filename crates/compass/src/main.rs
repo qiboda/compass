@@ -237,7 +237,8 @@ struct FullConfig {
 }
 
 /// Reads `~/.config/compass/config.toml`. Falls back to `AppConfig::default()`
-/// if the file is missing or malformed.
+/// if the file is missing or malformed. Legacy bare-code values (D10) are
+/// auto-migrated to the exchange-prefixed form, rewriting the file.
 fn load_config() -> FullConfig {
     let config_path = std::env::var("HOME")
         .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
@@ -245,8 +246,9 @@ fn load_config() -> FullConfig {
 
     match std::fs::read_to_string(&config_path) {
         Ok(contents) => match toml::from_str(&contents) {
-            Ok(cfg) => {
+            Ok(mut cfg) => {
                 tracing::info!(path = %config_path.display(), "config loaded");
+                migrate_legacy_config(&mut cfg, &config_path, &contents);
                 cfg
             }
             Err(e) => {
@@ -267,6 +269,120 @@ fn load_config() -> FullConfig {
             }
         }
     }
+}
+
+/// Infer the exchange prefix for a legacy unprefixed 6-digit code (D10 migration,
+/// mirroring the pre-D9 heuristic: 6→SH, 8→BJ, 92→BJ, else→SZ). Non-digit
+/// or non-6-digit values return `None` and are left untouched.
+fn infer_exchange_prefix(code: &str) -> Option<&'static str> {
+    if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
+        if code.starts_with('6') {
+            Some("SH")
+        } else if code.starts_with('8') || code.starts_with("92") {
+            Some("BJ")
+        } else {
+            Some("SZ")
+        }
+    } else {
+        None
+    }
+}
+
+/// Normalize a legacy config symbol to the canonical exchange-prefixed form
+/// (D10): dot forms (`sh.000001`) and prefixed forms canonicalize to the
+/// uppercase native form (`SH000001`); unprefixed 6-digit codes get the
+/// inferred exchange prefix. Already-canonical symbols return `None`.
+fn normalize_config_symbol(symbol: &str) -> Option<String> {
+    let (exchange, code) = parse_explicit_prefix(symbol);
+    if !exchange.is_empty() {
+        if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
+            let migrated = format!("{exchange}{code}");
+            return (migrated != symbol).then_some(migrated);
+        }
+        return None;
+    }
+    infer_exchange_prefix(symbol).map(|ex| format!("{ex}{symbol}"))
+}
+
+/// D10: auto-migrate legacy bare-code / dot-form values in a loaded config to
+/// the canonical exchange-prefixed form, rewriting the file when the on-disk
+/// values differ. Write-back failures (read-only config, no permission) only
+/// warn — the migrated in-memory values still take effect and startup is not
+/// blocked. Only values read from the file are migrated; in-memory defaults
+/// are never touched.
+fn migrate_legacy_config(cfg: &mut FullConfig, config_path: &std::path::Path, contents: &str) {
+    let mut changed = false;
+    if let Some(migrated) = normalize_config_symbol(&cfg.app.app.default_symbol) {
+        tracing::warn!(
+            symbol = %cfg.app.app.default_symbol,
+            migrated = %migrated,
+            "migrating legacy default_symbol to exchange-prefixed form"
+        );
+        cfg.app.app.default_symbol = migrated;
+        changed = true;
+    }
+    for symbol in &mut cfg.watchlist.symbols {
+        if let Some(migrated) = normalize_config_symbol(symbol) {
+            tracing::warn!(
+                symbol = %symbol,
+                migrated = %migrated,
+                "migrating legacy watchlist symbol to exchange-prefixed form"
+            );
+            *symbol = migrated;
+            changed = true;
+        }
+    }
+    if !changed {
+        return;
+    }
+    match rewrite_config_file(
+        config_path,
+        contents,
+        &cfg.app.app.default_symbol,
+        &cfg.watchlist.symbols,
+    ) {
+        Ok(()) => {
+            tracing::info!(path = %config_path.display(), "legacy config migrated and rewritten")
+        }
+        Err(e) => tracing::warn!(
+            error = %e,
+            path = %config_path.display(),
+            "failed to rewrite migrated config; using migrated values in memory only"
+        ),
+    }
+}
+
+/// Rewrite the config file with migrated `default_symbol` / watchlist
+/// symbols. Unknown sections are preserved (the file is edited as a
+/// `toml::Value`); only the two migrated keys are replaced.
+fn rewrite_config_file(
+    config_path: &std::path::Path,
+    contents: &str,
+    default_symbol: &str,
+    watchlist: &[String],
+) -> Result<(), String> {
+    let mut doc = contents
+        .parse::<toml::Value>()
+        .map_err(|e| format!("failed to parse config.toml: {e}"))?;
+    if let Some(app) = doc.get_mut("app").and_then(|v| v.as_table_mut())
+        && let Some(ds) = app.get_mut("default_symbol")
+    {
+        *ds = toml::Value::String(default_symbol.to_string());
+    }
+    if let Some(wl) = doc.get_mut("watchlist").and_then(|v| v.as_table_mut())
+        && let Some(symbols) = wl.get_mut("symbols").and_then(|v| v.as_array_mut())
+    {
+        *symbols = watchlist
+            .iter()
+            .map(|s| toml::Value::String(s.clone()))
+            .collect();
+    }
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(config_path, serialized).map_err(|e| format!("failed to write config.toml: {e}"))
 }
 
 /// Persist the screener conditions to the `[screener]` section of
@@ -696,9 +812,8 @@ impl CompassApp {
 
     /// Fetch the current toolbar selection.
     ///
-    /// Parquet/DuckDB store bare 6-digit codes; the picker's exchange field
-    /// is display-only, so the prefixed form ("sz.000001") must NOT be sent
-    /// or the lookup finds no data.
+    /// Symbols are exchange-prefixed throughout the pipeline (D5/D7); the
+    /// picker's selection is sent as-is so the parquet lookup finds the row.
     fn fetch_bars(&mut self) {
         let symbol = self.stock_picker.selected_symbol.clone();
         info!(symbol = %symbol, timeframe = %timeframe_value(self.timeframe_index), "fetch requested");
@@ -707,18 +822,21 @@ impl CompassApp {
 
     /// Reflect `shared_state.symbol` changes back into the StockPicker.
     ///
-    /// Only bare 6-digit codes are synced — prefixed symbols ("sz.000001")
-    /// come from external sources (watchlist config) and copying those back
-    /// would corrupt the picker. The marker field tracks the last seen
-    /// symbol so per-frame checks fire only on actual changes.
+    /// Symbols are exchange-prefixed everywhere (screener rows, watchlist,
+    /// toolbar), so any prefixed change is synced back into the picker with
+    /// its exchange code derived from the prefix. Non-symbol values (empty,
+    /// malformed) are ignored. The marker field tracks the last seen symbol
+    /// so per-frame checks fire only on actual changes.
     fn sync_picker_from_symbol(&mut self) {
         let symbol = self.shared_state.symbol.get();
         if symbol == self.last_screener_synced_symbol {
             return;
         }
         self.last_screener_synced_symbol = symbol.clone();
-        let is_bare_code = symbol.len() == 6 && symbol.chars().all(|c| c.is_ascii_digit());
-        if !is_bare_code {
+        let (exchange, code) = parse_explicit_prefix(&symbol);
+        let is_prefixed =
+            !exchange.is_empty() && code.len() == 6 && code.chars().all(|c| c.is_ascii_digit());
+        if !is_prefixed {
             return;
         }
         let name = self
@@ -727,9 +845,10 @@ impl CompassApp {
             .find(|s| s.symbol == symbol)
             .map(|s| s.name.clone())
             .unwrap_or_default();
+        let exchange = exchange.to_string();
         self.stock_picker.selected_symbol = symbol;
         self.stock_picker.selected_name = name;
-        self.stock_picker.selected_exchange.clear();
+        self.stock_picker.selected_exchange = exchange;
     }
 
     /// Left watchlist sidebar: search row + the "自选" group backed by
@@ -1057,8 +1176,8 @@ mod tests {
 
     #[test]
     fn shared_state_initializes_with_defaults() {
-        let state = SharedState::new("000001", "1d");
-        assert_eq!(state.symbol.get(), "000001");
+        let state = SharedState::new("SZ000001", "1d");
+        assert_eq!(state.symbol.get(), "SZ000001");
         assert_eq!(state.bars.get().len(), 0);
         assert!(!state.loading.get());
         assert_eq!(state.error.get(), None);
@@ -1100,7 +1219,7 @@ mod tests {
     use crate::WINDOW_INNER_SIZE;
     use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
-    use compass_core::model::AppConfig;
+    use compass_core::model::{AppConfig, AppSection, WatchlistConfig};
     use compass_ui::tokens::ColorTokens;
     use compass_ui::widgets::modal::Modal;
     use compass_ui::widgets::searchable_dropdown::StockPicker;
@@ -1114,7 +1233,7 @@ mod tests {
         stocks: Vec<StockBasic>,
     ) -> CompassApp {
         let config = AppConfig::default();
-        let shared_state = Arc::new(SharedState::new("000001", "1d"));
+        let shared_state = Arc::new(SharedState::new("SZ000001", "1d"));
 
         let (work_signal, run_screener_signal, sepa_signal, _backend_handle) =
             crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
@@ -1134,7 +1253,7 @@ mod tests {
             &theme_tokens,
         );
         let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &theme_tokens);
-        let stock_picker = StockPicker::new(theme_tokens, "000001", stock_projection());
+        let stock_picker = StockPicker::new(theme_tokens, "SZ000001", stock_projection());
         let dock_style = egui_dock::Style::default();
 
         let mut dock_state =
@@ -1277,7 +1396,10 @@ default_timeframe = "1w"
             }
         }
 
-        assert_eq!(config.app.app.default_symbol, "600519");
+        assert_eq!(
+            config.app.app.default_symbol, "SH600519",
+            "bare legacy default_symbol must auto-migrate to the prefixed form"
+        );
         assert_eq!(config.app.app.default_timeframe, "1w");
         assert_eq!(config.app.parquet.dir, "/custom/parquet/dir");
     }
@@ -1597,7 +1719,7 @@ default_timeframe = "1w"
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d");
         let theme = CompassTheme::compass_dark();
 
         let mut dock_state =
@@ -1801,7 +1923,7 @@ default_timeframe = "1w"
     #[test]
     fn sidebar_row_click_fetches_selected_symbol() {
         let stocks = vec![StockBasic {
-            symbol: "600519".to_string(),
+            symbol: "SH600519".to_string(),
             name: "贵州茅台".to_string(),
             area: None,
             industry: None,
@@ -1813,22 +1935,22 @@ default_timeframe = "1w"
             delist_date: None,
         }];
         let app = build_compass_app_with_stocks(egui::Context::default(), stocks);
-        app.shared_state.symbol.set("600519".to_string());
-        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+        app.shared_state.symbol.set("SH600519".to_string());
+        app.shared_state.watchlist.set(vec!["SH600519".to_string()]);
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
         harness.get_by_label("贵州茅台").click();
         harness.step();
 
-        assert_eq!(harness.state().shared_state.symbol.get(), "600519");
+        assert_eq!(harness.state().shared_state.symbol.get(), "SH600519");
         assert!(
             harness.state().shared_state.loading.get(),
             "sidebar select must trigger a fetch"
         );
         assert_eq!(
             harness.state().stock_picker.selected_symbol,
-            "600519",
+            "SH600519",
             "sidebar select must sync the picker"
         );
     }
@@ -1866,7 +1988,7 @@ default_timeframe = "1w"
 
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("000001", "平安银行")],
+            vec![stock_basic("SZ000001", "平安银行")],
         );
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -1876,7 +1998,7 @@ default_timeframe = "1w"
 
         assert_eq!(
             harness.state().shared_state.watchlist.get(),
-            vec!["000001".to_string()],
+            vec!["SZ000001".to_string()],
             "add must insert the current symbol"
         );
         let contents =
@@ -1885,7 +2007,7 @@ default_timeframe = "1w"
             contents.contains("[watchlist]"),
             "watchlist section must be persisted, got: {contents}"
         );
-        assert!(contents.contains("\"000001\""));
+        assert!(contents.contains("\"SZ000001\""));
 
         if let Some(h) = saved_home {
             unsafe {
@@ -1911,24 +2033,27 @@ default_timeframe = "1w"
         }
 
         let mut app = build_compass_app(egui::Context::default());
-        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+        app.shared_state.watchlist.set(vec!["SH600519".to_string()]);
 
-        app.add_to_watchlist("600519"); // already present → no-op
+        app.add_to_watchlist("SH600519"); // already present → no-op
         assert_eq!(
             app.shared_state.watchlist.get(),
-            vec!["600519".to_string()],
+            vec!["SH600519".to_string()],
             "duplicate add must be rejected"
         );
 
-        app.add_to_watchlist("000001");
+        app.add_to_watchlist("SZ000001");
         assert_eq!(
             app.shared_state.watchlist.get(),
-            vec!["000001".to_string(), "600519".to_string()],
+            vec!["SH600519".to_string(), "SZ000001".to_string()],
             "watchlist must stay sorted after insert"
         );
         let contents =
             std::fs::read_to_string(config_dir.join("config.toml")).expect("config written");
-        assert!(contents.contains("000001"), "insert must be persisted");
+        assert!(
+            contents.contains("\"SZ000001\""),
+            "insert must be persisted"
+        );
 
         if let Some(h) = saved_home {
             unsafe {
@@ -1949,7 +2074,7 @@ default_timeframe = "1w"
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
             config_dir.join("config.toml"),
-            "[watchlist]\nsymbols = [\"600519\"]\n",
+            "[watchlist]\nsymbols = [\"SH600519\"]\n",
         )
         .unwrap();
 
@@ -1960,10 +2085,10 @@ default_timeframe = "1w"
 
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台")],
+            vec![stock_basic("SH600519", "贵州茅台")],
         );
-        app.shared_state.symbol.set("600519".to_string());
-        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+        app.shared_state.symbol.set("SH600519".to_string());
+        app.shared_state.watchlist.set(vec!["SH600519".to_string()]);
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
@@ -1993,7 +2118,7 @@ default_timeframe = "1w"
         let contents =
             std::fs::read_to_string(config_dir.join("config.toml")).expect("config written");
         assert!(
-            !contents.contains("600519"),
+            !contents.contains("SH600519"),
             "persisted watchlist must drop the removed symbol, got: {contents}"
         );
 
@@ -2012,10 +2137,10 @@ default_timeframe = "1w"
     fn sidebar_delete_modal_cancel_keeps_watchlist() {
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台")],
+            vec![stock_basic("SH600519", "贵州茅台")],
         );
-        app.shared_state.symbol.set("600519".to_string());
-        app.shared_state.watchlist.set(vec!["600519".to_string()]);
+        app.shared_state.symbol.set("SH600519".to_string());
+        app.shared_state.watchlist.set(vec!["SH600519".to_string()]);
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
@@ -2030,7 +2155,7 @@ default_timeframe = "1w"
 
         assert_eq!(
             harness.state().shared_state.watchlist.get(),
-            vec!["600519".to_string()],
+            vec!["SH600519".to_string()],
             "cancel must keep the watchlist intact"
         );
         assert!(
@@ -2069,7 +2194,7 @@ default_timeframe = "1w"
     fn startup_modal_skipped_when_stock_list_present() {
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台")],
+            vec![stock_basic("SH600519", "贵州茅台")],
         );
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2096,7 +2221,7 @@ default_timeframe = "1w"
 
     #[test]
     fn export_logs_writes_entries_to_file() {
-        let state = SharedState::new("000001", "1d");
+        let state = SharedState::new("SZ000001", "1d");
         {
             let logger = egui_lens::ReactiveEventLogger::new(&state.log);
             logger.log_info("hello world");
@@ -2123,7 +2248,7 @@ default_timeframe = "1w"
 
     #[test]
     fn export_logs_empty_state_writes_header_only() {
-        let state = SharedState::new("000001", "1d");
+        let state = SharedState::new("SZ000001", "1d");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("empty.txt");
 
@@ -2179,7 +2304,7 @@ default_timeframe = "1w"
     fn logger_export_button_triggers_save_dialog() {
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
-            vec![stock_basic("600519", "贵州茅台")],
+            vec![stock_basic("SH600519", "贵州茅台")],
         );
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2197,13 +2322,13 @@ default_timeframe = "1w"
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![
-                stock_basic("000001", "平安银行"),
-                stock_basic("600519", "贵州茅台"),
+                stock_basic("SZ000001", "平安银行"),
+                stock_basic("SH600519", "贵州茅台"),
             ],
         );
         app.shared_state
             .watchlist
-            .set(vec!["000001".to_string(), "600519".to_string()]);
+            .set(vec!["SZ000001".to_string(), "SH600519".to_string()]);
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
@@ -2286,7 +2411,8 @@ default_timeframe = "1w"
         harness.run_steps(3);
 
         let input = harness.get_by(|n| {
-            n.role() == egui::accesskit::Role::TextInput && n.value() == Some("000001".to_string())
+            n.role() == egui::accesskit::Role::TextInput
+                && n.value() == Some("SZ000001".to_string())
         });
         assert!(
             input.is_focused(),
@@ -2369,35 +2495,35 @@ default_timeframe = "1w"
     // ------------------------------------------------------------------
 
     #[test]
-    fn sync_picker_from_symbol_syncs_bare_code_and_clears_exchange() {
+    fn sync_picker_from_symbol_syncs_prefixed_symbol_and_exchange() {
         let mut app = build_compass_app(egui::Context::default());
-        app.shared_state.symbol.set("600519".to_string());
-        app.last_screener_synced_symbol = "000001".to_string();
+        app.shared_state.symbol.set("SH600519".to_string());
+        app.last_screener_synced_symbol = "SZ000001".to_string();
 
         app.sync_picker_from_symbol();
 
-        assert_eq!(app.stock_picker.selected_symbol, "600519");
-        assert!(
-            app.stock_picker.selected_exchange.is_empty(),
-            "bare code sync must clear stale exchange"
+        assert_eq!(app.stock_picker.selected_symbol, "SH600519");
+        assert_eq!(
+            app.stock_picker.selected_exchange, "SH",
+            "exchange derives from the symbol prefix"
         );
-        assert_eq!(app.last_screener_synced_symbol, "600519");
+        assert_eq!(app.last_screener_synced_symbol, "SH600519");
     }
 
     #[test]
-    fn sync_picker_from_symbol_ignores_prefixed_symbol() {
+    fn sync_picker_from_symbol_ignores_non_symbol_values() {
         let mut app = build_compass_app(egui::Context::default());
-        app.shared_state.symbol.set("sz.000001".to_string());
-        app.last_screener_synced_symbol = "000001".to_string();
+        app.shared_state.symbol.set("not-a-symbol".to_string());
+        app.last_screener_synced_symbol = "SZ000001".to_string();
 
         app.sync_picker_from_symbol();
 
         assert_eq!(
-            app.stock_picker.selected_symbol, "000001",
-            "prefixed symbol must not clobber picker selection"
+            app.stock_picker.selected_symbol, "SZ000001",
+            "malformed symbol must not clobber picker selection"
         );
         assert_eq!(
-            app.last_screener_synced_symbol, "sz.000001",
+            app.last_screener_synced_symbol, "not-a-symbol",
             "marker still advances"
         );
     }
@@ -2407,38 +2533,38 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
         // marker == symbol at startup → no-op, picker untouched.
         app.sync_picker_from_symbol();
-        assert_eq!(app.stock_picker.selected_symbol, "000001");
-        assert_eq!(app.last_screener_synced_symbol, "000001");
+        assert_eq!(app.stock_picker.selected_symbol, "SZ000001");
+        assert_eq!(app.last_screener_synced_symbol, "SZ000001");
     }
 
     // ------------------------------------------------------------------
-    // Toolbar fetch (regression: prefixed symbol breaks the parquet lookup)
+    // Toolbar fetch (regression: the canonical prefixed symbol is sent)
     // ------------------------------------------------------------------
 
     #[test]
-    fn fetch_bars_sends_bare_symbol_even_when_exchange_selected() {
+    fn fetch_bars_sends_prefixed_symbol_when_exchange_selected() {
         let mut app = build_compass_app(egui::Context::default());
-        app.stock_picker.selected_symbol = "000001".to_string();
+        app.stock_picker.selected_symbol = "SZ000001".to_string();
         app.stock_picker.selected_exchange = "SZ".to_string();
 
         app.fetch_bars();
 
         assert_eq!(
             app.shared_state.symbol.get(),
-            "000001",
-            "parquet stores bare codes; prefixed 'sz.000001' would find no data"
+            "SZ000001",
+            "fetch must send the canonical prefixed symbol"
         );
     }
 
     #[test]
-    fn fetch_bars_sends_bare_symbol_when_no_exchange_selected() {
+    fn fetch_bars_sends_prefixed_symbol_when_no_exchange_selected() {
         let mut app = build_compass_app(egui::Context::default());
-        app.stock_picker.selected_symbol = "600519".to_string();
+        app.stock_picker.selected_symbol = "SH600519".to_string();
         app.stock_picker.selected_exchange.clear();
 
         app.fetch_bars();
 
-        assert_eq!(app.shared_state.symbol.get(), "600519");
+        assert_eq!(app.shared_state.symbol.get(), "SH600519");
     }
 
     // ------------------------------------------------------------------
@@ -2602,7 +2728,10 @@ default_timeframe = "1w"
         }
 
         assert_eq!(config.screener, ScreenerQuery::default());
-        assert_eq!(config.app.app.default_symbol, "000001");
+        assert_eq!(
+            config.app.app.default_symbol, "SZ000001",
+            "bare legacy default_symbol must auto-migrate to the prefixed form"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -2714,7 +2843,8 @@ default_timeframe = "1w"
 
         assert_eq!(
             config.watchlist.symbols,
-            vec!["600519".to_string(), "000001".to_string()]
+            vec!["SH600519".to_string(), "SZ000001".to_string()],
+            "bare watchlist symbols must auto-migrate to the prefixed form"
         );
     }
 
@@ -2748,6 +2878,162 @@ default_timeframe = "1w"
         }
 
         assert!(config.watchlist.symbols.is_empty());
-        assert_eq!(config.app.app.default_symbol, "000001");
+        assert_eq!(
+            config.app.app.default_symbol, "SZ000001",
+            "bare legacy default_symbol must auto-migrate to the prefixed form"
+        );
+    }
+
+    #[test]
+    fn load_config_migrates_bare_default_symbol_and_watchlist_and_rewrites() {
+        // D10: legacy bare codes in the file are auto-migrated to the
+        // canonical exchange-prefixed form and the file is rewritten.
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"600519\"\n\n[watchlist]\nsymbols = [\"920001\", \"sh.000001\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.app.app.default_symbol, "SH600519",
+            "6-prefix legacy code migrates to SH"
+        );
+        assert_eq!(
+            config.watchlist.symbols,
+            vec!["BJ920001".to_string(), "SH000001".to_string()],
+            "92-prefix code migrates to BJ, dot form normalizes to native"
+        );
+        let contents =
+            std::fs::read_to_string(config_dir.join("config.toml")).expect("config rewritten");
+        assert!(contents.contains("SH600519"), "rewritten file: {contents}");
+        assert!(
+            contents.contains("\"BJ920001\""),
+            "rewritten file: {contents}"
+        );
+        assert!(
+            contents.contains("\"SH000001\""),
+            "rewritten file: {contents}"
+        );
+    }
+
+    #[test]
+    fn load_config_migrates_8_prefix_code_to_bj() {
+        // "830799" must migrate to BJ (not SZ), mirroring the legacy
+        // heuristic — 8-prefix codes are Beijing Stock Exchange.
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"830799\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(config.app.app.default_symbol, "BJ830799");
+    }
+
+    #[test]
+    fn migrate_legacy_config_writeback_failure_keeps_migrated_values() {
+        // D10 boundary: when the config file cannot be rewritten (read-only,
+        // no permission, blocked path), the migration must warn and keep the
+        // migrated values in memory without panicking.
+        let mut cfg = FullConfig {
+            app: AppConfig {
+                app: AppSection {
+                    default_symbol: "600519".to_string(),
+                    default_timeframe: "1d".to_string(),
+                },
+                ..AppConfig::default()
+            },
+            screener: ScreenerQuery::default(),
+            watchlist: WatchlistConfig {
+                symbols: vec!["000001".to_string()],
+            },
+        };
+        // The parent of the config path is a regular file → create_dir_all /
+        // write must fail.
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, "x").unwrap();
+        let bad_path = blocker.join("config.toml");
+
+        crate::migrate_legacy_config(&mut cfg, &bad_path, "[app]\ndefault_symbol = \"600519\"\n");
+
+        assert_eq!(cfg.app.app.default_symbol, "SH600519");
+        assert_eq!(cfg.watchlist.symbols, vec!["SZ000001".to_string()]);
+    }
+
+    #[test]
+    fn load_config_already_prefixed_values_are_not_migrated() {
+        // Canonical configs pass through unchanged (and the file is not
+        // rewritten with different values).
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"SH600519\"\n\n[watchlist]\nsymbols = [\"SZ000001\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(config.app.app.default_symbol, "SH600519");
+        assert_eq!(config.watchlist.symbols, vec!["SZ000001".to_string()]);
     }
 }

@@ -1,0 +1,91 @@
+# Task 6 — GUI 前缀化：输入/选中/同步/fetch + config 自动迁移 + 搜索语义 + validate_symbol 收紧
+
+Issue: #181 | Plan: .omo/plans/symbol-prefix-canonical.md (todo 6, lines 117-123)
+Date: 2026-08-08 | Worktree: symbol-prefix-canonical
+
+## RED-first evidence
+
+1. validate_symbol 收紧（compass-core）:
+   - 修改 `validate_symbol_allows_valid_codes` → `validate_symbol_allows_canonical_prefixed_codes`
+     （断言裸码 "000001"/"600519" 与 dot 形式 "sh.000001"/"sz.600059" 被拒绝、小写 "sz000001" 拒绝）
+   - RED 运行: `cargo test -p compass-core validate_symbol`
+     ```
+     test data::parquet::tests::validate_symbol_allows_canonical_prefixed_codes ... FAILED
+     thread '...' panicked at crates/compass-core/src/data/parquet.rs:1378:9:
+     bare code rejected
+     ```
+     （收紧前 validate_symbol 允许任意 alnum+dot，bare "000001" 被接受 → 断言失败）
+   - GREEN: `validate_symbol` 收紧为 `(SH|SZ|BJ) + 6 位数字` 字节级校验（bytes.len()==8 && 前缀匹配 && 全数字），
+     重新运行 2 passed。
+
+2. 收紧后红点修复（compass-core parquet.rs 测试区，全部由 validate_symbol 调用路径触发）:
+   - `create_test_parquet_dir` fixture 裸码行 → SZ000001 / SH600519 / SZ999999（hack 行替换为合法前缀码，
+     保留 NULL 字段覆盖）
+   - `get_stock_basic_returns_correct_row`（:1392-1431）裸码查询/断言 → SZ000001 / SH600519 / SZ999999
+   - `load_all_stock_basics_returns_all_rows` find 断言 → SZ000001 / SZ999999
+   - `fetch_bars_blocking_scales_ohlc_by_adjclose`（fixture "000001" + fetch "000001"）→ SZ000001
+   - `get_stored_range_returns_none_for_missing_symbol` "NONEXIST" → "SZ999999"（合法前缀码，仍返回 None）
+   - `get_stock_basic_blocking_returns_none_when_basic_path_missing` "000001" → "SZ000001"
+   - L1694 "999999" 断言本为 Err(NoData)，收紧后 validate_symbol 直接返回 NoData → 仍绿，未改（计划明文非红点）
+
+## 实现内容
+
+### crates/compass/src/main.rs
+- (a) fetch_bars: 注释语义反转（"prefixed form must NOT be sent" → "发送规范化前缀 symbol"）；
+  发送逻辑本就透传 selected_symbol，选中值恒为前缀（D7）。
+- (b) sync_picker_from_symbol: 裸码检测（len==6 && is_ascii_digit）废弃 → parse_explicit_prefix 前缀检测
+  （前缀非空 + code 6 位数字）；sync 时 selected_exchange 从前缀派生（不再 clear）。
+- (c) 展示层豁免确认：render_sidebar L751-753 `exchange_of_symbol(&s.symbol)` 从 symbol 前缀派生（Task 1 机械修复，
+  本任务确认）；sidebar.rs 行内 monospace 显示用 strip_exchange_prefix 显示裸码 + exchange Tag 分离。
+- (d) D10 config 自动迁移：load_config 解析后调 migrate_legacy_config —
+  ① 内联启发式 infer_exchange_prefix：6→SH、8→BJ、92→BJ、其余→SZ（"920001"→BJ920001、"830799"→BJ830799，
+    不复活 to_exchange，lib.rs:216 引用作废）
+  ② dot 形式 "sh.000001" 经 parse_explicit_prefix 规范化 → "SH000001"
+  ③ 回写失败（blocker 路径/只读）→ warn + 内存继续用迁移值，不 panic 不阻断启动
+  ④ 仅文件值迁移，内存默认值不迁移（load_config_missing_file_returns_default 保持 == AppConfig::default()）
+  ⑤ 回写经 toml::Value 编辑原文件，保留未知 section
+- 测试：#119 回归测试语义反转（fetch_bars_sends_prefixed_symbol_*）；sync_picker 三个测试改写
+  （syncs_prefixed_symbol_and_exchange / ignores_non_symbol_values / noop_when_symbol_unchanged）；
+  config 测试断言迁移（load_config_valid_toml_returns_parsed→"SH600519"、
+  load_config_parses_watchlist_section→[SH600519,SZ000001]、missing_*_section→"SZ000001"）；
+  新增 4 个迁移测试（含 920001→BJ920001 + sh.000001→SH000001 回写验证、830799→BJ830799、
+  写回失败内存继续、已前缀不迁移）；save_* roundtrip 测试（原始 toml::from_str 路径）按计划不改。
+
+### crates/compass-ui/src/widgets/searchable_dropdown.rs
+- (e) D11 搜索语义：normalize_query（小写 → 剥 sh./sz./bj. dot 前缀 → 剥 SH/SZ/BJ 字母前缀得纯码 q_code）
+  + matches_query（symbol 小写 starts_with q || 裸码 starts_with q_code || name contains q）；
+  filter_stocks / refilter 共用；q_code 为空时跳过裸码 term（防 2 字符 "sh" 查询全匹配）。
+- format_display 展示豁免：exchange 非空时 symbol 剥前缀显示（"SZ | 000001 | 平安银行"，避免 "SZ | SZ000001"）；
+  弹出行文本改用 format_display；裸码符号不被二次剥离（backward compatible）。
+- 测试：fixture 前缀化（SZ000001/SH600519/...）；filter_stocks 三种拼写验收
+  （"600519"/"SH600519"/"sh.600519" 均精确命中 SH600519；"000001"/"SZ000001"/"sz.000001" 均精确命中 SZ000001，
+  QA fixture 不注入 SH000001 指数行消除歧义）；kittest 三拼写选中 + 前缀提交
+  （test_three_spellings_select_same_stock_with_prefixed_submit）；format_display 豁免断言。
+
+### crates/compass-ui/src/widgets/sidebar.rs
+- L196 展示层消费点确认：Tag::new(&item.exchange) 显示前缀派生 exchange（main.rs 传值）；
+  行内裸码显示（strip_exchange_prefix）；SidebarItem.symbol 文档改前缀语义（L29-30）；fixture/事件断言前缀化。
+
+### crates/compass-core/src/data/parquet.rs
+- validate_symbol 收紧为 (SH|SZ|BJ)+6 位数字（拒绝裸码/dot/任意 alnum+dot），文档同步。
+
+## 验收门禁（全部通过）
+
+- `cargo test -p compass -p compass-ui -p compass-core` — 125 + 204 + 130 passed（+1 integration passed, 1 ignored）
+- `cargo test --workspace` — 全部绿（compass-strategy 51、compass-data 55 等）
+- `grep -n "must NOT be sent\|bare 6-digit" crates/compass/src/main.rs` — 无匹配
+- fetch 测试断言请求 symbol 为前缀（fetch_bars_sends_prefixed_symbol_when_exchange_selected → "SZ000001"）
+- config 迁移断言：含 "920001"→"BJ920001"、"sh.000001"→"SH000001"、"830799"→"BJ830799"；
+  load_config_valid_toml_returns_parsed → "SH600519"；load_config_missing_file_returns_default
+  保持 == AppConfig::default()（"SZ000001"，不触发迁移）
+- validate_symbol 测试：裸码 "000001" 拒绝、"SZ000001" 通过、"sh.000001" 拒绝
+- 搜索测试：三种拼写均选中同一代码且提交带前缀
+- `cargo clippy --workspace --all-targets -- -D warnings` — 0 告警
+- `cargo fmt --check` — clean
+
+## MUST NOT 遵守
+
+- 未改变 GUI 视觉/布局/交互（仅逻辑 + 展示豁免维持 "SZ | 600519 | 平安银行" 显示）
+- 未给搜索框加"必须前缀"输入校验（D11：query 自由，仅提交值前缀）
+- 未删除 exchange display（改为前缀派生）
+- 未修改 watchlist 存储格式（仅前缀迁移）

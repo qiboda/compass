@@ -492,7 +492,7 @@ mod tests {
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
         let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens);
-        (panel, SharedState::new("000001", "1d"))
+        (panel, SharedState::new("SZ000001", "1d"))
     }
 
     #[test]
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn dispatch_row_fetch_sets_symbol_and_triggers_fetch() {
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d");
         // The work slot must stay alive so the signal send succeeds.
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
         let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn dispatch_row_fetch_ignores_out_of_range_index() {
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d");
         let (_, work_signal) = signals();
         let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
 
@@ -734,7 +734,7 @@ mod tests {
 
         assert_eq!(
             shared.symbol.get(),
-            "000001",
+            "SZ000001",
             "out-of-range index is a no-op"
         );
     }
