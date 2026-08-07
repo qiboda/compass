@@ -1,0 +1,61 @@
+# Task 3 Evidence — stock_basic prefix + drop exchange column (ref #181)
+
+Date: 2026-08-07
+Branch: fix/symbol-prefix-canonical
+Plan: .omo/plans/symbol-prefix-canonical.md Task 3 (todo 3, L93-99)
+
+## Changes
+
+`crates/compass-data/src/import_compass.rs`:
+- `import_stock_basic` SQL: removed `RIGHT(symbol, 6) AS symbol` → direct `SELECT symbol` (Dolt-native prefixed symbol, e.g. `SH600519`).
+- Removed `CASE LEFT(symbol,2) WHEN 'SH' ... END AS exchange` column (D6).
+- Other columns (name/list_date/delist_date/board/full_name/total_share/industry/region) unchanged.
+- Test `stock_basic_exports_parquet` (formerly L504-505): assertion `symbol == "600519"` + `exchange == "SH"` → `symbol == "SH600519"`, exchange assertion deleted; added assertion that no `exchange` column exists in the parquet (DESCRIBE); WHERE clauses updated to `'SH600519'`.
+
+Scope guardrails respected: Dolt source table `stock_basic` structure untouched (test fixture DDL has no exchange column — matches real source); no columns added/removed beyond exchange; compass-core consumers handled by Task 1 (fec8781).
+
+## RED-first evidence
+
+Command: `cargo test -p compass-data import_compass::tests::stock_basic_exports_parquet`
+(before production change, test already updated to expect prefixed symbol)
+
+```
+running 1 test
+test import_compass::tests::stock_basic_exports_parquet ... FAILED
+
+---- import_compass::tests::stock_basic_exports_parquet stdout ----
+
+thread 'import_compass::tests::stock_basic_exports_parquet' (2938144) panicked at crates/compass-data/src/import_compass.rs:501:14:
+called `Result::unwrap()` on an `Err` value: QueryReturnedNoRows
+...
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.38s
+```
+
+Interpretation: test queries `WHERE symbol = 'SH600519'`; production still wrote bare `600519` (via `RIGHT(symbol, 6)`), so the row is unfindable → `QueryReturnedNoRows`. This proves the old format was still bare 6-digit before the fix (RED-first per plan QA scenario).
+
+## GREEN evidence
+
+Command: `cargo test -p compass-data import_compass`
+
+```
+test import_compass::tests::stock_basic_exports_parquet ... ok
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 2.02s
+     Running unittests src/main.rs (target/debug/deps/compass_data-dc830cd9891de3bc)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 52 filtered out; finished in 0.38s
+```
+
+## Acceptance gates
+
+| Gate | Command | Result |
+|---|---|---|
+| import_compass tests | `cargo test -p compass-data import_compass` | 18 + 3 passed |
+| no RIGHT(symbol | `grep -n "RIGHT(symbol" crates/compass-data/src/import_compass.rs` | no matches (exit 1) |
+| no AS exchange | `grep -n "AS exchange" crates/compass-data/src/import_compass.rs` | no matches (exit 1) |
+| clippy | `cargo clippy -p compass-data -- -D warnings` | clean |
+| fmt | `cargo fmt --check` | clean |
+| lsp_diagnostics | import_compass.rs | no errors |
+
+## QA scenarios
+
+- happy: `cargo test -p compass-data import_compass::tests::stock_basic_exports_parquet` asserts prefixed symbol `SH600519` and no exchange column — PASS.
+- failure (RED-first): old assertion `symbol == "600519"` would fail — demonstrated by QueryReturnedNoRows above before the production fix.

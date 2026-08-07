@@ -124,9 +124,8 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
     info!("Exporting stock_basic...");
     let data = run_dolt_sql_parquet(
         dolt_dir,
-        "SELECT RIGHT(symbol, 6) AS symbol, \
+        "SELECT symbol, \
          name, \
-         CASE LEFT(symbol, 2) WHEN 'SH' THEN 'SH' WHEN 'SZ' THEN 'SZ' WHEN 'BJ' THEN 'BJ' ELSE '' END AS exchange, \
          CAST(list_date AS DATE) AS list_date, \
          CAST(delist_date AS DATE) AS delist_date, \
          board, \
@@ -470,8 +469,7 @@ mod tests {
 
         // New columns present with expected values
         let duck = duckdb::Connection::open_in_memory().unwrap();
-        let (symbol, exchange, list_date, board, full_name, total_share, industry, region): (
-            String,
+        let (symbol, list_date, board, full_name, total_share, industry, region): (
             String,
             String,
             String,
@@ -482,8 +480,8 @@ mod tests {
         ) = duck
             .query_row(
                 &format!(
-                    "SELECT symbol, exchange, strftime(list_date, '%Y-%m-%d'), board, full_name, total_share, industry, region \
-                     FROM read_parquet('{}') WHERE symbol = '600519'",
+                    "SELECT symbol, strftime(list_date, '%Y-%m-%d'), board, full_name, total_share, industry, region \
+                     FROM read_parquet('{}') WHERE symbol = 'SH600519'",
                     parquet.display()
                 ),
                 [],
@@ -496,13 +494,11 @@ mod tests {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
-                        row.get(7)?,
                     ))
                 },
             )
             .unwrap();
-        assert_eq!(symbol, "600519");
-        assert_eq!(exchange, "SH");
+        assert_eq!(symbol, "SH600519");
         assert_eq!(list_date, "2001-08-27");
         assert_eq!(board, "主板");
         assert_eq!(full_name, "贵州茅台酒股份有限公司");
@@ -510,11 +506,25 @@ mod tests {
         assert_eq!(industry, "白酒Ⅱ");
         assert_eq!(region, "贵州");
 
+        let has_exchange: i64 = duck
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM read_parquet('{}')) \
+                 WHERE column_name = 'exchange'",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert_eq!(has_exchange, 0, "exchange column must be dropped");
+
         // delist_date column exists and is NULL for this row
         let delist_date: Option<String> = duck
             .query_row(
                 &format!(
-                    "SELECT CAST(delist_date AS VARCHAR) FROM read_parquet('{}') WHERE symbol = '600519'",
+                    "SELECT CAST(delist_date AS VARCHAR) FROM read_parquet('{}') WHERE symbol = 'SH600519'",
                     parquet.display()
                 ),
                 [],
