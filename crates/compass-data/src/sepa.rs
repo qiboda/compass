@@ -549,6 +549,58 @@ mod tests {
         let _ = std::fs::remove_file(&p2);
     }
 
+    /// Occupied candidate names must be skipped: create_new fails with
+    /// EEXIST (stale file / PID reuse), the sequence bumps, and the call
+    /// lands on a fresh path. Obstacles are placed with create_new so a
+    /// parallel test's staged file is never clobbered.
+    #[test]
+    fn stage_csv_retries_when_candidate_exists() {
+        let stem = "unit_test_stage_csv_retry";
+        let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let pid = std::process::id();
+        let mut obstacles = Vec::new();
+        for seq in 0..1024 {
+            let p = temp_dir.join(format!("{stem}_{pid}_{seq}.csv"));
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&p)
+            {
+                let _ = f.write_all(b"occupied");
+                obstacles.push(p);
+            }
+        }
+        // Whatever the shared counter holds (< 1024 stage_csv calls in this
+        // process), the next call hits an obstacle and retries past the range.
+        let p1 = stage_csv(stem, "a,b\n1,2\n").expect("stage after collisions");
+        let name1 = p1.file_name().unwrap().to_string_lossy().into_owned();
+        let seq1: u64 = name1
+            .trim_end_matches(".csv")
+            .rsplit('_')
+            .next()
+            .unwrap()
+            .parse()
+            .expect("seq");
+        assert!(
+            seq1 >= 1024,
+            "must retry past the occupied range, got {seq1}"
+        );
+        assert_eq!(std::fs::read_to_string(&p1).expect("read"), "a,b\n1,2\n");
+        for p in obstacles {
+            let _ = std::fs::remove_file(p);
+        }
+        let _ = std::fs::remove_file(&p1);
+    }
+
+    /// A non-EEXIST open failure (missing parent dir) propagates as Err.
+    #[test]
+    fn stage_csv_propagates_create_error() {
+        let stem = "unit_test/nonexistent/stem";
+        let result = stage_csv(stem, "a,b\n1,2\n");
+        assert!(result.is_err(), "create_new on missing parent must fail");
+    }
+
     // -----------------------------------------------------------------------
     // Parquet fixture (minimal: daily + basic + one concept member; the rest
     // of the SEPA tables stay absent — run_sepa degrades them to empty vecs)
