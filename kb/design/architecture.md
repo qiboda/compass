@@ -320,9 +320,9 @@ API 获取数据并导入 Dolt：
 | `main.py` | 统一 CLI：fetch/import/sync/sync-investment | — |
 | `fetch_stock_basic.py` | 公司基本信息 | 12,388 只股票，13 个字段 |
 | `fetch_fin_indicators.py` | 财务指标 | 126K 行，37 个字段，2020-2026 |
-| `fetch_balance_sheet.py` | 资产负债表 | 57 个字段，按季度，RPT_DMSK_FN_BALANCE |
-| `fetch_income.py` | 利润表 | 46 个字段，按季度，RPT_DMSK_FN_INCOME |
-| `fetch_cash_flow.py` | 现金流量表 | 48 个字段，按季度，RPT_DMSK_FN_CASHFLOW |
+| `fetch_balance_sheet.py` | 资产负债表 | 319 个字段，按季度，RPT_F10_FINANCE_GBALANCE |
+| `fetch_income.py` | 利润表 | 203 个字段，按季度，RPT_F10_FINANCE_GINCOME |
+| `fetch_cash_flow.py` | 现金流量表 | 254 个字段，按季度，RPT_F10_FINANCE_GCASHFLOW |
 
 工具链：`uv`（Python 依赖管理器）+ `ruff`（lint/格式化）+
 `pytest`（16 个测试）+ `mypy`（类型检查）。CI 通过 GitHub Actions 运行，
