@@ -159,6 +159,30 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 而该 provider 无此模型）。agent 默认继承全局 `model`；需要给某 agent 指定
 非默认模型时，在 `opencode.json` 的 `agent` 段集中配置。
 
+### test Agent（独立 QA）
+
+`.opencode/agent/test.md` 定义了测试 agent **`test`**（独立 QA 角色）。
+
+**与 `qa` skill 的区别（关键）**：`qa` skill 注入测试**方法论**（怎么测——
+rstest/tokio::test/内存 DuckDB/Dolt tempdir/覆盖率门槛）；`test` agent 提供
+**认知独立**（谁来独立判断测什么）。skill 由主 agent 加载执行，主 agent 的
+上下文盲区 skill 同样看不到；agent 以独立上下文读代码、独立写测试、独立跑
+验证，能发现主 agent 注意不到的测试缺口。二者**并存**：委派 `test` agent 时
+以 `load_skills=["qa"]` 注入方法论。
+
+**路由规则（强制）**：
+- 门禁第 4 步 TESTS（RED）：委派 `test` agent 独立写失败测试（而非主 agent
+  自己加载 skill 写）
+- 实现后独立验证：主 agent 完成 GREEN 后，委派 `test` agent 做独立 QA 复核
+  ——验证者与实现者分离（独立验证原则）
+- `/test` 手动触发同样走 `test` agent
+
+**职责边界**：独立读生产代码/写测试（RED）/跑验证（cargo test/llvm-cov/
+pytest --cov）/判定覆盖缺口/审查主 agent 已写测试。**不写生产实现代码**。
+Rust 单测 `#[cfg(test)]` 内嵌源文件，路径权限无法细分——用三层兜底保证
+独立验证：① 指令约束只改 `mod tests` 内；② bash 禁 `cargo run`/git 写操作；
+③ 无提交权，改动经主 agent 审查后提交。
+
 ### Epic & Sub-Issue Workflow
 
 跨多模块的大型需求分解为 **epic**（父 issue）+ **sub-issues**（子 issue）
