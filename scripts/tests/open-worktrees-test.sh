@@ -241,6 +241,44 @@ check "terminal whitelist excludes daemons" "bash -c '
     ! echo \"\$body\" | grep -q gnome-terminal-server
 '"
 
+# 22. resolve_project_root() must return the MAIN repo root, not the worktree
+#     root, when invoked from inside a worktree with a relative script path
+#     (ref #205 regression: PROJECT_ROOT used `dirname "$0"` which resolved to
+#     the worktree itself when called as `bash scripts/open-worktrees.sh` from
+#     inside a worktree, breaking --close with "not a worktree").
+check "resolve_project_root from worktree cwd returns main repo" "bash -c '
+    set -e
+    func=\$(sed -n \"/^resolve_project_root()/,/^}/p\" \"$SCRIPT\")
+    [ -n \"\$func\" ] || { echo \"resolve_project_root not defined\"; exit 1; }
+    eval \"\$func\"
+    (cd $WT && [ \"\$(resolve_project_root)\" = \"$REPO\" ])
+'"
+
+# 23. resolve_project_root() from the main repo root (and a subdirectory)
+#     still returns the main repo root (no regression for master-side use).
+#     cond is SINGLE-quoted so `$(resolve_project_root)` defers to the inner
+#     bash -c; $REPO expands at the outer level only (it is a fixture var).
+check "resolve_project_root from repo root" 'bash -c "
+    set -e
+    func=\$(sed -n \"/^resolve_project_root()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    (cd $REPO && [ \"\$(resolve_project_root)\" = \"$REPO\" ])
+    mkdir -p $REPO/sub
+    (cd $REPO/sub && [ \"\$(resolve_project_root)\" = \"$REPO\" ])
+"'
+
+# 24. Outside a git repo, resolve_project_root falls back to the old $0-based
+#     resolution (never empty, never crashes). Single-quoted for the same
+#     deferral reason as #23.
+check "resolve_project_root outside repo falls back" 'bash -c "
+    set -e
+    func=\$(sed -n \"/^resolve_project_root()/,/^}/p\" \"$SCRIPT\")
+    eval \"\$func\"
+    OUT=\$(mktemp -d)
+    (cd \$OUT && [ -n \"\$(resolve_project_root)\" ])
+    rm -rf \$OUT
+"'
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
     echo "ALL TESTS PASSED"

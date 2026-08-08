@@ -23,8 +23,31 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+# Resolve the MAIN repo root. The script is invoked from the main repo, from
+# a subdirectory, or from inside a worktree (whose scripts/ copy is a checkout
+# copy); `$0` is relative in the latter case, so `dirname "$0"` cannot locate
+# the main repo. `git rev-parse --git-common-dir` returns the shared .git dir
+# of the main repo from ANY worktree (absolute path), or a repo-relative path
+# (.git / ../.git) from the main repo itself. Outside a git repo, fall back
+# to the $0-relative resolution.
+resolve_project_root() {
+    local common
+    common="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    case "$common" in
+        .git | ../.git)
+            cd "$(dirname "$common")" && pwd
+            ;;
+        /*)
+            dirname "$common"
+            ;;
+        *)
+            cd "$(dirname "$0")/.." && pwd
+            ;;
+    esac
+}
+
+PROJECT_ROOT="$(resolve_project_root)"
+SELF="$PROJECT_ROOT/scripts/open-worktrees.sh"
 WT_DIR="$PROJECT_ROOT/.worktrees"
 
 # ---------------------------------------------------------------------------
