@@ -1,0 +1,8 @@
+tasks 12+13 (merged commit):
+- deleted 7 local skill dirs (compass-workflow/docs/issue-workflow/qa/reflect/rustdoc/worktree)
+- deleted .opencode/agent/test.md + scripts/open-worktrees.sh + scripts/tests/open-worktrees-test.sh
+- kept product skill + ui-designer agent
+- AGENTS.md synced: gate table (3.5 adversarial step added, step 4 -> skwy-requirement-test,
+  5a RUSTDOC removed, 5b docs -> skwy-workflow embedded section), Skills table (8 rows skwy-* + product),
+  test Agent section (dual agent routing), path refs -> global, scripts -> global absolute paths
+- anchored-pattern grep on AGENTS.md: 0 residual (reflections*.md historical refs correctly excluded)

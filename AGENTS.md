@@ -61,11 +61,11 @@ Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成�
 | Step | 动作 | 所需证据 |
 |---|---|---|
 | **1. Design** | 涉及界面设计时：委派 `ui-designer` 产出 `.omo/designs/<feature>.md` 方案并经用户确认；纯逻辑/数据变更可跳过 | 展示方案要点 + 用户确认 |
-| **2. Issue** | 调用 `/issue-workflow` 创建/管理 issue | 向用户展示 issue URL |
+| **2. Issue** | 调用 `/skwy-github-workflow` 创建/管理 issue | 向用户展示 issue URL |
 | **3. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.omo/plans/*.md` 文件创建 + 用户批准 |
-| **4. Tests** | 调用 `/test`（qa skill）写失败测试 | 测试失败输出 |
-| **5a. Rustdoc** | 调用 `/rustdoc` 验证 `#![warn(missing_docs)]` 合规 | `cargo doc --no-deps` 无警告 |
-| **5b. Docs** | 调用 `/docs` 确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
+| **3.5. Adversarial Tests** | 委派 `skwy-adversarial-test` 写对抗性测试（RED；plan 无接口契约时返回 DEFERRED，首个可编译接口 commit 后携带 SHA 重新委派） | 测试失败输出 / DEFERRED 记录 |
+| **4. Tests** | 委派 `skwy-requirement-test` 写失败测试（需求验收 RED） | 测试失败输出 |
+| **5b. Docs** | 按 `skwy-workflow` 技能内嵌「文档同步」章节确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
 | **5c. 决策记录** | 检查相关 `kb/design/` 文件是否含 `## 决策记录` 章节 | 缺失则补齐后再继续 |
 
 **任何一步未完成即 STOP。不实现。不创建 todos。不改文件。**
@@ -89,7 +89,7 @@ Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败�
 
 ### HARD BLOCK
 
-本 gate 不可妥协。加载 `compass-workflow` skill 时会再次提醒此 gate。
+本 gate 不可妥协。加载 `skwy-workflow` skill 时会再次提醒此 gate。
 如果发现自己没完成这些步骤就在写代码，即违反工作流——立即停止，
 `git stash` 或 revert，回到第 0 步。
 
@@ -98,7 +98,7 @@ Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败�
 
 ### 实现后：Reflection Record
 
-每次 feature/bugfix 完成后，调用 `/reflect`（reflect skill）写事后反思，
+每次 feature/bugfix 完成后，调用 `/skwy-reflect`（skwy-reflect skill）写事后反思，
 追加到 `kb/dev/reflections.md`。
 
 **反思时机（强制）**：在**用户确认 push 之后、执行 push 之前**编写并提交
@@ -113,7 +113,7 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 
 ## Workflow (MANDATORY)
 
-所有 **feature** 和 **bugfix** 工作 MUST 加载 `compass-workflow` skill。
+所有 **feature** 和 **bugfix** 工作 MUST 加载 `skwy-workflow` skill。
 它强制执行：issue 驱动开发、doc-sync、test-first、分步验证、commit 纪律。
 
 **加载 skill 后**：立即按上面的 PRE-IMPLEMENTATION GATE 检查清单走一遍，一步不跳。
@@ -122,17 +122,17 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 
 | Skill | Slash Command | 用途 |
 |---|---|---|
-| `compass-workflow` | `/compass-workflow` | 强制执行 issue 驱动开发、doc-sync、test-first、分步验证、commit 纪律 |
-| `issue-workflow` | `/issue-workflow` | 创建和管理 issues（单 issue + epic/sub-issue 分解与批量关闭） |
-| `worktree` | `/worktree` | 管理 PR 开发的 git worktrees（创建/删除/启动区域） |
-| `qa` (test) | `/test` | 编写单元/集成测试（TDD/BDD）、测试覆盖 |
-| `rustdoc` | `/rustdoc` | 验证 `#![warn(missing_docs)]` 合规 |
-| `docs` | `/docs` | 根据代码变更识别并更新 `kb/` 文件 |
-| `reflect` | `/reflect` | 写事后反思（含 User corrections + 趋势分析） |
+| `skwy-workflow` | `/skwy-workflow` | 强制执行 issue 驱动开发、doc-sync、test-first、分步验证、commit 纪律 |
+| `skwy-github-workflow` | `/skwy-github-workflow` | 创建和管理 issues（单 issue + epic/sub-issue 分解与批量关闭） |
+| `skwy-git-workflow` | `/skwy-git-workflow` | git 提交纪律（ref #N、Never auto-push、commit→review、push 前 rebase） |
+| `skwy-requirement-test` | `/skwy-requirement-test` | 面向需求的验收测试（TDD/BDD、测试覆盖） |
+| `skwy-adversarial-test` | `/skwy-adversarial-test` | 对抗性测试工程师（门禁 3.5 步，刁钻但真实有效的对抗性测试） |
+| `skwy-reflect` | `/skwy-reflect` | 写事后反思（含 User corrections + 趋势分析） |
+| `skwy-worktree` | `/skwy-worktree` | 管理 PR 开发的 git worktrees（创建/删除/启动区域） |
 | `product` | `/product` | Sprint 候选分析（只读，milestone 提议） |
 
-所有 skill 位于 `.opencode/skills/<name>/SKILL.md`。OpenCode 从文件系统
-自动发现 skill —— 无需注册。
+所有 skill 位于 `~/.config/opencode/skills/<name>/SKILL.md`（全局技能组，可被
+OpenCode 自动发现）；项目本地技能位于 `.opencode/skills/`。无需注册。
 
 ### ui-designer Agent（界面设计）
 
@@ -143,7 +143,7 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 **路由规则（强制）**：任何涉及界面设计的工作 —— 布局、视觉风格、交互效果、
 动画、hover/快捷键/反馈状态 —— 主 agent 必须先委派 `ui-designer` 产出
 设计方案，再由实现 agent 按方案落地。`ui-designer` 不写源码，只输出方案。
-该环节即 compass-workflow 预实现门禁的 **第 1 步 DESIGN**：方案产出后须向
+该环节即 skwy-workflow 预实现门禁的 **第 1 步 DESIGN**：方案产出后须向
 用户展示要点并获确认，方可进入后续步骤。纯逻辑/数据变更可跳过此步。
 
 **设计方案留档**：`.omo/designs/` 下的设计方案文件必须随实现一并提交（
@@ -159,29 +159,39 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 而该 provider 无此模型）。agent 默认继承全局 `model`；需要给某 agent 指定
 非默认模型时，在 `opencode.json` 的 `agent` 段集中配置。
 
-### test Agent（独立 QA）
+### 测试 Agent（独立 QA，双 agent 并存）
 
-`.opencode/agent/test.md` 定义了测试 agent **`test`**（独立 QA 角色）。
+`~/.config/opencode/agent/skwy-requirement-test.md` 定义了需求验收测试 agent
+**`skwy-requirement-test`**（独立 QA 角色）；`~/.config/opencode/agent/skwy-adversarial-test.md`
+定义了对抗性测试 agent **`skwy-adversarial-test`**（找茬测试工程师）。
 
-**与 `qa` skill 的区别（关键）**：`qa` skill 注入测试**方法论**（怎么测——
-rstest/tokio::test/内存 DuckDB/Dolt tempdir/覆盖率门槛）；`test` agent 提供
+**与 `skwy-requirement-test` skill 的区别（关键）**：skill 注入测试**方法论**（怎么测——
+框架/内存数据库/tempdir/覆盖率门槛，由项目在自身 kb/dev/testing.md 定义）；agent 提供
 **认知独立**（谁来独立判断测什么）。skill 由主 agent 加载执行，主 agent 的
 上下文盲区 skill 同样看不到；agent 以独立上下文读代码、独立写测试、独立跑
-验证，能发现主 agent 注意不到的测试缺口。二者**并存**：委派 `test` agent 时
-以 `load_skills=["qa"]` 注入方法论。
+验证，能发现主 agent 注意不到的测试缺口。二者**并存**：委派 `skwy-requirement-test`
+agent 时以 `load_skills=["skwy-requirement-test"]` 注入方法论。
+
+**两个 agent 分工**：
+- `skwy-requirement-test`：**面向需求的验收测试**——验证 plan/issue 声明的功能契约
+  （happy path + 基本错误路径）
+- `skwy-adversarial-test`：**对抗性测试**——攻击极端场景（边界/错误路径/非法输入/
+  并发/性能退化/资源耗尽），真实有效但刁钻，实现正确修复后必须能通过
 
 **路由规则（强制）**：
-- 门禁第 4 步 TESTS（RED）：委派 `test` agent 独立写失败测试（而非主 agent
-  自己加载 skill 写）
-- 实现后独立验证：主 agent 完成 GREEN 后，委派 `test` agent 做独立 QA 复核
-  ——验证者与实现者分离（独立验证原则）
-- `/test` 手动触发同样走 `test` agent
+- 门禁第 3.5 步 ADVERSARIAL TESTS（RED）：plan 批准后委派 `skwy-adversarial-test`
+  写对抗性测试（plan 无接口契约时返回 DEFERRED，首个可编译接口 commit 后携带
+  SHA 重新委派）
+- 门禁第 4 步 TESTS（RED）：委派 `skwy-requirement-test` 独立写需求验收失败测试
+  （而非主 agent 自己加载 skill 写）
+- 实现后独立验证：主 agent 完成 GREEN 后，委派 `skwy-requirement-test` 做独立
+  QA 复核——验证者与实现者分离（独立验证原则）
+- `/skwy-requirement-test`、`/skwy-adversarial-test` 手动触发同样走对应 agent
 
-**职责边界**：独立读生产代码/写测试（RED）/跑验证（cargo test/llvm-cov/
-pytest --cov）/判定覆盖缺口/审查主 agent 已写测试。**不写生产实现代码**。
-Rust 单测 `#[cfg(test)]` 内嵌源文件，路径权限无法细分——用三层兜底保证
-独立验证：① 指令约束只改 `mod tests` 内；② bash 禁 `cargo run`/git 写操作；
-③ 无提交权，改动经主 agent 审查后提交。
+**职责边界**：独立读生产代码/写测试（RED）/跑验证/判定覆盖缺口/审查主 agent 已写
+测试。**不写生产实现代码**。Rust 单测 `#[cfg(test)]` 内嵌源文件，路径权限无法细分
+——用三层兜底保证独立验证：① 指令约束只改 `mod tests` 内；② bash 禁 `cargo run`/
+git 写操作；③ 无提交权，改动经主 agent 审查后提交。
 
 ### Epic & Sub-Issue Workflow
 
@@ -190,7 +200,7 @@ Rust 单测 `#[cfg(test)]` 内嵌源文件，路径权限无法细分——用�
 commit，`ref #<sub-N>`）、一个 worktree、按依赖 DAG 分批处理（手动切换批次）、
 合并后批量关闭。计划文件（`.omo/plans/<epic>.md`）跟踪状态。
 
-完整子 issue 生命周期见 `.opencode/skills/issue-workflow/SKILL.md`。
+完整子 issue 生命周期见 `~/.config/opencode/skills/skwy-github-workflow/SKILL.md`。
 
 ### Issue-Driven Commits
 
@@ -233,7 +243,7 @@ Commit 和 push 是**两个独立操作**。不要用 `&&` 串联。
 
 **Push 前必须 rebase base 分支**：push 前先 `git fetch origin <base>`，若分支落后 base（`git log HEAD..origin/<base>` 非空），先 `git rebase origin/<base>` 解决冲突后再 push。禁止携带过期 base 的提交直接 push——rebase 冲突在 push 后更难收拾（force-push 需小心、远端已带缺陷 commit）。
 
-**Push 前必须提交反思**：用户确认 push 后，先调用 `/reflect` 写反思并提交（ref #119），再执行 push——反思 commit 与实现同批推送，随 PR 合并落在 master（见「实现后：Reflection Record」）。
+**Push 前必须提交反思**：用户确认 push 后，先调用 `/skwy-reflect` 写反思并提交（ref #119），再执行 push——反思 commit 与实现同批推送，随 PR 合并落在 master（见「实现后：Reflection Record」）。
 
 完整 push gate 清单见 `kb/dev/process.md`。
 
@@ -285,13 +295,13 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 
 使用 GitHub Milestones 进行每周 sprint 管理（周一规划 / 周日回顾，周末为核心开发窗口）。
 `product` skill 每周一扫描代码库和 open issues，提出 3-5 个候选需求；`/product brainstorm`
-可随时手动触发。Sprint 节奏由 `compass-workflow` skill 的 Sprint Rhythm 规则强制执行。
+可随时手动触发。Sprint 节奏由 `skwy-workflow` skill 的 Sprint Rhythm 规则强制执行。
 
 ## 摩擦记录（并入反思）
 
 任何「AI 行为偏差被用户纠正」的场合（grill-me 分歧、执行方向偏离、意图误解、约束遗漏等），
 在写事后反思时记录到 `reflections.md` 条目的 **User corrections** 小节。
-**/reflect 必须读取本 session 对话记录（`session_read`）逐条提取用户纠正，
+**/skwy-reflect 必须读取本 session 对话记录（`session_read`）逐条提取用户纠正，
 逐字引用原话——不凭记忆，对话记录是客观存在的**（执行者会忘，对话不会忘）；
 同时用 git 命令客观验证流程（commit 分支归属、worktree 是否创建未用）。
 `friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `kb/dev/reflections-archive.md` 归档文件。已融入流程的反思条目归档至 `kb/dev/reflections-archive.md`（主文件 `kb/dev/reflections.md` 仅保留活性条目）。
@@ -302,7 +312,7 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 关键设计决策的 **what + why + why-not**。
 
 - **格式**: 表格 `| 决策 | 选项 | 选择 | 理由 | 排除原因 |`
-- **保障**: `compass-workflow` PRE-IMPLEMENTATION GATE Step 5c 检查是否存在
+- **保障**: `skwy-workflow` PRE-IMPLEMENTATION GATE Step 5c 检查是否存在
 - **自包含**: 决策记录不依赖外部引用（如 friction.md），所有理由直接写在设计文档内
 
 ---
@@ -320,16 +330,16 @@ worktree 是独立 checkout，master 工作区的 untracked 文件不会出现�
 
 **主 session 的职责仅为确定用途 + 命名**：将用途简述、
 对应 issue URL 与已锁定决策写入 `.worktrees/<name>/.omo/handoff.md`，然后运行
-`scripts/open-worktrees.sh <name>` 自动启动工作树区域（探测默认终端 + setsid
+`~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh <name>` 自动启动工作树区域（探测默认终端 + setsid
 脱离进程组，无需手动解绑当前 session）。剩余工作（设计/计划/实现/commit/PR）
 全部由 worktree 内的 agent 自主完成——worktree 会话启动后**第一步读取
 `.omo/handoff.md`** 获取上下文契约。opencode 仍占用目录无法删除时用
-`scripts/open-worktrees.sh --close <name>` 终止并清理
+`~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh --close <name>` 终止并清理
 （从 worktree 内执行时自动转为 detached 清理，含关闭承载终端窗口，见 `kb/dev/process.md`）。
-**加载 `worktree` skill 获取完整流程**（含 post-creation MANDATORY 步骤与清理）。
+**加载 `/skwy-worktree` skill 获取完整流程****（含 post-creation MANDATORY 步骤与清理）。
 
 **强制规则**：worktree 一旦创建，后续实现工作必须在 worktree 内完成交接闭环
-（add → 写 handoff → `open-worktrees.sh <name>` 启动），master 上不再继续实现。
+（add → 写 handoff → `~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh <name>` 启动），master 上不再继续实现。
 master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree 时实现类提交
 落在 master 即流程违规，在 reflections 中记录。
 **用户明确指示直推时的知情同意**：用户指示实现类提交直推 master（如"在master
