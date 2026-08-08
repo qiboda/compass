@@ -1,0 +1,3 @@
+task-2: kb/design/workflow-skills.md created
+- 2 decision record tables, 4 skwy-adversarial-test mentions
+- avoided old skill names (compass-workflow/issue-workflow/skwy-test) per Oracle observation

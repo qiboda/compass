@@ -1,0 +1,31 @@
+# Workflow Skills — skwy 技能组设计
+
+本文档记录 compass 工作流技能去全局化（skwy- 技能组）的设计决策。实现见 issue #210。
+
+## 背景
+
+compass 项目积累了 8 个 opencode 技能（工作流门禁、文档同步、issue 管理、测试方法论、反思、rustdoc 检查、worktree 管理、产品规划），其中大部分是通用开发流程，但深度绑定 compass 项目（cargo/Dolt/A股/kb/ 具体文件）。目标：抽取通用技能为全局技能组 **skwy-workflow**，使多个项目共用；compass 特有内容通过「项目自身 AGENTS.md/kb/ 定义」引用点保留。
+
+## 决策记录
+
+| 决策 | 选项 | 选择 | 理由 | 排除原因 |
+|---|---|---|---|---|
+| 技能组形态 | 单一技能 vs 多技能统一前缀 | 多技能统一 `skwy-` 前缀，放 `~/.config/opencode/skills/` | 技能职责清晰、可按需加载；前缀命名空间避免与项目本地技能冲突 | 单一技能体量过大、跨领域职责耦合 |
+| 全局技能范围 | 全量迁移 vs 部分迁移 | 7 个技能：skwy-workflow / skwy-github-workflow / skwy-git-workflow / skwy-requirement-test / skwy-adversarial-test / skwy-reflect / skwy-worktree | 覆盖完整开发工作流（门禁/issue/git/测试×2/反思/worktree）；产品技能 product 留本地 | 全量迁移会把 compass 特有内容带入全局 |
+| rustdoc 技能 | 迁移 vs 废弃 | **废弃不迁** | 已有 `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` 编译期强制（pre-push hook 覆盖），技能冗余 | 保留则维护双份机制、职责重叠 |
+| docs 技能 | 独立技能 vs 整合进 workflow | **整合进 skwy-workflow** 的「文档同步」章节 | 文档同步是门禁流程的一环，与 workflow 强耦合；映射表改为「项目在自身 AGENTS.md/kb/ 定义」 | 独立技能需单独触发，易与门禁脱节 |
+| 测试技能 | skwy- 单测试技能 vs 需求/对抗双技能 | **拆为 skwy-requirement-test（需求验收）+ skwy-adversarial-test（对抗性）** | 两个角色方法论互补：需求验收验证功能契约（happy path + 基本错误），对抗性攻击极端场景（边界/错误路径/并发/性能）；并存分工职责清晰 | 单技能无法表达「找茬」定位，职责混淆 |
+| 门禁新增步骤 | 无 vs 第 3.5 步 Adversarial Tests | **门禁新增第 3.5 步** | plan 批准后自动委派 skwy-adversarial-test 写对抗性测试（RED），实现必须让 3.5+4 全绿——在实现前拦截缺陷 | 手动触发易被跳过，丧失对抗性测试的常态化价值 |
+| 脚本位置 | 留在仓库 vs 随技能自包含 | **随技能自包含**（skwy-worktree/scripts/open-worktrees.sh，绝对路径引用） | 新项目可仅依赖全局技能组运行 worktree 工作流；脚本零硬编码路径（git-common-dir 解析），可移植 | 留在仓库则新项目无脚本可用 |
+| 现有 test agent | 保留原名 vs 改名 | **改名 skwy-requirement-test**（面向需求验收测试），随迁移放全局 | 与 skwy-adversarial-test 形成需求/攻击对应，命名表达定位 | 保留 test 名无法与对抗性区分 |
+| 泛化原则 | 保留 compass 细节 vs 项目自引用 | **通用约定 + 项目自引用**：技能正文用 AGENTS.md/kb/.omo 通用约定，compass 特有细节（cargo 命令、Dolt、kb 文件名、A股/egui）改为「项目在自身 AGENTS.md 定义」 | 技能跨项目可复用；项目特有内容由项目自身文档承载 | 硬编码 compass 细节使技能无法复用 |
+
+## 决策记录补充（对抗性测试工程师，2026-08-09 grill）
+
+| 决策 | 选项 | 选择 | 理由 | 排除原因 |
+|---|---|---|---|---|
+| 找茬工程师与 test agent 关系 | 替代 vs 并存分工 | **并存分工** | 现有 agent 保留门禁第 4 步 RED 写需求验收测试 + 实现后独立复核；新 agent 在 plan 批准后写对抗性测试——方法论不同（功能测试 vs 攻击测试） | 替代则丢失需求验收独立复核角色 |
+| 找茬产出形态 | 用例清单 vs 直接写测试代码 | **直接写对抗性测试代码**（落盘项目测试目录） | 测试可执行、可验证 RED/GREEN；清单需二次落地、易失真 | 清单不产生可执行验证 |
+| 对抗性测试边界 | 无限制 vs 真实有效但极端 | **真实有效但极端**：能编译、能运行、断言正确，实现正确修复后必须能通过，禁止无解/无效测试 | 对抗性价值在于发现真实缺陷，而非制造不可解测试 | 无限制攻击会产出无效测试，破坏测试套件可信度 |
+| 触发时机 | 手动命令 vs 内嵌门禁 | **内嵌门禁第 3.5 步**（plan 批准后自动） | 与门禁流程一体，plan 承诺的功能契约即对抗目标 | 手动触发依赖纪律，易遗漏 |
+| RED/GREEN 契约 | 实现前硬写 vs 两段式 | **两段式委派**：plan 含接口契约则实现前写；无则 agent 返回 DEFERRED，主 agent 在首个可编译接口 commit 后携带 SHA 重新委派 | 消除「实现前 vs 必须编译」悖论；RED = 断言失败而非编译错误 | 实现前硬写对未声明接口的 plan 不可行 |
