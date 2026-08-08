@@ -399,3 +399,27 @@
 
 ### Trends (last 10)
 - **用户纠正多指向"原则/归属"而非"值/细节"**（ref #181 "不允许输入层便利" → 本次 "去掉模型约束"）：AI 倾向最小修正（改引用/补便利），用户倾向原则性方案（删约束/禁裸码）——发现异常时应先呈报"该不该存在/边界在哪"，再谈怎么修
+
+## 2026-08-08 — ref #203 创建独立 test agent（认知独立 vs 权限隔离）
+
+**What was done**: 创建 `.opencode/agent/test.md`（独立 QA subagent）+ AGENTS.md 登记。核心设计决策：test agent 与 `qa` skill 并存——skill 注入方法论（怎么测），agent 提供认知独立（谁来独立判断测什么）；edit 权限放开到 `crates/**/src/**/*.rs` + `collectors/**/*.py`，用三层兜底（指令约束 + bash 收紧 + 无提交权）保证独立验证。
+
+**User corrections**（逐字引用对话记录）:
+1. "把 agent 的价值错误限定为'权限隔离'，忽略了 AI 系统里更重要的'上下文隔离和认知独立'" —— 纠正我对 agent/skill 差异的理解：agent 的价值核心是独立上下文与认知独立，不是权限隔离；测试 skill 适合执行流程，test agent 扮演独立 QA 角色
+2. "2 有点问题，单元测试在文件的内容。。。" —— 纠正我 Q4 权限设计：Rust 单测 `#[cfg(test)]` 内嵌源文件，路径级权限（只允许测试文件路径）无法区分"文件里的测试部分"与"生产部分"，必须放开 edit 到整个 src 并用三层兜底替代硬隔离
+
+**What went wrong**: 
+- 初始权限方案犯了"路径隔离迷信"：设计了 `**/*test*.rs`、`**/tests/**` 的 edit 白名单，没有先想清楚 Rust 单测内嵌源文件的现实——正是用户纠正点 1 批评的"把 agent 价值限定为权限隔离"的实例。被用户点破后才改成三层兜底。
+- git 流程验证：本次 commit `97a78e9` 在 master，但当时已有两个活跃 worktree（sepa-unit、financial-f10）。这是**工具链配置变更**（.opencode/ 下，非产品代码），按"master 只允许 docs/lint/typo/反思类直推"判定为可接受的直推——但未向用户明示该判定，应在交付时声明。
+
+**Lessons learned**:
+1. 设计 agent 权限时，先想清楚**代码现实**（Rust 单测内嵌 = 路径隔离不可行），再设计隔离机制；硬权限做不到时，用"指令约束 + 工具限制 + 流程兜底（无提交权+主agent审查）"组合替代——隔离的本质是**判断独立**，不是文件物理隔离。
+2. agent/skill 差异的建模：skill = 方法论（how），agent = 认知主体（who judges what）——复杂长期项目需要独立 agent 保证验证者≠实现者；简单项目 skill 足够。这是 agent 设计的原则性决策，不是工具配置细节。
+3. 工具链配置变更（.opencode/ 下）在活跃 worktree 存在时直推 master，需在交付时显式声明判定依据（非产品代码 + docs 类），避免模糊。
+
+**Process improvements**: 
+- 已落实：AGENTS.md 新增「test Agent（独立 QA）」章节——路由规则（门禁第 4 步 RED 委派 + 实现后独立复核 + /test 手动触发）、职责边界（不写生产实现）、三层兜底说明。
+- 建议（可检测）：`.opencode/agent/*.md` 新 agent 创建后可加"agent 文件 YAML frontmatter 合法性校验"（opencode 启动时校验，属于运行时行为，无需额外 hook）——proposed
+
+### Trends (last 10)
+- **用户纠正持续指向"原则/建模"而非"值/细节"**（ref #200 "去掉模型约束" → 本次 "认知独立 vs 权限隔离"）：AI 倾向工具化最小修正（权限白名单/改引用），用户倾向原则性建模（认知主体/配置归属）——设计新机制时应先问"这个机制在系统里的正确抽象是什么"，再谈具体参数
