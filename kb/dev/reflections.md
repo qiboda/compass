@@ -535,3 +535,34 @@
 - **并行子任务的同构一致性是盲区**（ref #202 三采集器不同构、ref #139 多 agent 并行）：并行委派各自全绿但跨任务契约（同构字段/语义）无检查——主 agent 合并前必须做跨任务的模式一致性 diff
 - **"验证通过"依赖真实数据/真实路径持续强化**（ref #205 worktree 真实执行、ref #154 冒烟证据、ref #139 数据终态、本次 review 实证 203 列超限）：fixture/单测覆盖不到的（行尺寸上限、会话清理）必须用真实 CSV/真实环境实测
 - **用户纠正驱动范围收敛**（本次配套代码范围、ref #201 顺序语义、ref #190 写库收尾）：用户对"范围/顺序"的纠正集中指向交付契约的边界——plan 阶段把"影响面"问透比实现后修正成本低得多
+
+## 2026-08-08 — ref #208 mold 链接器 + collectors CSV 输出目录统一
+
+**What was done**: (1) 新增 `.cargo/config.toml`（参考 atom 项目布局）：Linux 启用 mold（`linker="clang"` + `-fuse-ld=/usr/bin/mold`），macOS/Windows 默认链接器占位，Nightly flags 注释保留；CI `rust`/`bench-check` job 安装 mold+clang；AGENTS.md + kb/user/index.md 补 mold 前置条件。(2) collectors 全部 11 个采集器默认 CSV 输出从 `collectors/` 相对路径统一到 `csv_dir()`（`/data/compass-data/csv`，`COMPASS_CSV_DIR` env 可覆盖），`-o/--output` 保留覆盖；`main.py` import 路径同步；conftest autouse fixture 隔离测试目录；review 修复后补 `csv_dir()` mkdir + 删 `COLLECTORS_DIR` 死代码。3 commits（735d4ea/8d7bca4/2c24f68），5-way review 两轮。
+
+**User corrections**（逐字引用对话记录）:
+1. "支持各个平台。 所有需要编译的都需要，要不然就编译不过了。。。" —— grill Q2 我推荐"只配 Linux target 段"，用户否决：要求像 atom 一样覆盖各平台段，且 CI 所有编译 job 都要装 mold（否则 rustflags 引用 mold 会编译失败）
+2. "本地编译之前，先clean一下旧的编译产物。" —— 我原本计划直接 cargo build 验证，用户要求先 `cargo clean` 再编译，确保链接证据来自全新构建而非增量缓存
+3. "抓取的 CSV 原始数据保存到 compass_data 目录下，这个也作为一个要求" —— 在 mold 审查进行中追加无关的新需求（CSV 输出目录），并确认"追加到 #208 验收标准"而非独立 issue
+
+**What went wrong**:
+1. **测试全量跑污染真实数据目录**：`csv_dir()` 落地后第一次全量 pytest（326 个）中，6 个旧测试把 `RPT_DMSK_FN_*.csv` 等写入真实 `/data/compass-data/csv/`（20:05-20:07 时间戳），污染需手动 trash 清理——conftest autouse fixture 是 review 前才补的，RED 阶段契约测试与既有测试跑混合时已发生污染。测试隔离应在实现第一批代码时就位，而非等全量跑发现污染。
+2. **review Round 1 FAIL（MAJOR）**：`COLLECTORS_DIR` 在 main.py 改 csv_dir() 后成死代码，且 test_main.py 两个 legacy 测试类仍 monkeypatch 它（no-op，靠 conftest autouse 恰好指向同 tmp_path 才通过）——code quality review 抓出"为错误理由通过"的误导性测试。批量替换路径引用后未清理旧常量与旧测试机制。
+3. **Goal Verification oracle lane 卡死 1h10m**：5-way review 中 4 lane 正常完成，goal lane 长时间无输出，respawn 替换 lane 才拿到结论；原任务最终被系统回收（task not found）。应更早（~30min）判定 lane 失活并替换，而非等 1h+。
+4. **`-o` help 文本泄漏代码标识符**（NITPICK）：`help="default: csv_dir()/stock_basic.csv"` 把 `csv_dir()` 函数名写进用户可见的 `--help`——应插值真实解析路径。
+
+**Lessons learned**:
+1. **路径/目录语义变更时，测试隔离必须与实现同批落地**：任何"默认输出目录"类改动，第一步就是 conftest autouse fixture 指向 tmp_path（或等价隔离），再写实现——顺序颠倒必然污染真实环境
+2. **批量替换后必须清理死代码与失效测试机制**：改引用点后 grep 旧常量全仓（含测试 monkeypatch），并逐测试确认"断言的是真实行为而非巧合通过"——review Round 1 的 MAJOR 正是这类残留
+3. **review lane 失活判定阈值**：oracle/子任务 30 分钟无输出即 respawn 小 lane（替换任务），不无限等待；原任务回收后清理
+4. **用户可见文本不写代码标识符**：`--help`/报错信息展示解析后的真实值（`csv_dir() / 'x.csv'` 的实际路径），而非函数名
+
+**Process improvements**:
+- 已落实（随实现提交）：`collectors/tests/conftest.py` autouse `_isolate_csv_dir` fixture——任何新测试默认 COMPASS_CSV_DIR 指向 tmp_path，杜绝数据目录污染（本条目教训 1 的固化）
+- 已落实（随实现提交）：`csv_dir()` 内 `mkdir(parents=True, exist_ok=True)`——消除首写 FileNotFoundError
+- 教训 2/3/4 为一次性过程教训，写入本条目（None）
+
+### Trends (last 10)
+- **真实环境隔离反复出现**（ref #190 Dolt 工作区滞留、ref #154 冒烟证据、本次测试污染 /data/compass-data/csv）："测试/写库不得触碰真实数据环境"是反复教训——本次已固化为 conftest autouse fixture，但 Dolt 侧（ref #190）仍是人工纪律；建议将"测试隔离"检查项纳入 compass-workflow 门禁第 4 步（TESTS）的强制清单
+- **review 抓出批量替换残留**（ref #202 三采集器不同构、本次 COLLECTORS_DIR 死代码）：批量/并行改同构代码后，主 agent 必须做"残留模式 grep"自查（旧常量、旧测试机制、同构字段），不能只信子任务自报全绿
+- **用户对范围与顺序的追加要求**（本次 CSV 追加到 #208、ref #202 配套代码、ref #201 顺序语义）：用户在实施中追加需求/纠正顺序是常态——grill 阶段把"影响面"（含测试/文档/数据环境）问透，比实现中追加再改成本低
