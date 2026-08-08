@@ -475,3 +475,28 @@
 ### Trends (last 10)
 - **测试全绿 ≠ 真实可用 反复出现**（ref #139 真实数据冒烟、ref #154 冒烟证据、本次 worktree 内执行）：fixture/单测覆盖不到"真实执行路径"（副本、cwd、环境）——脚本类变更必须做真实路径冒烟，不能只看测试套件
 - **用户纠正持续指向"实际验证"而非"代码推理"**（ref #200 "去掉模型约束" → 本次 "新建worktree模拟"）：AI 倾向从代码/测试推导结论，用户倾向真实场景复现——发现"测试通过但用户说不行"时应立即怀疑测试与真实路径的差异
+
+## 2026-08-08 — ref #206 reflect 强制记录 agent 自身流程摩擦
+
+**What was done**: 修改 reflect skill——第 0 步新增"提取 agent 自身流程摩擦"步骤（从 assistant 消息识别命令用错/流程违反/效果不符预期/效率摩擦），`What went wrong` 改为强制章节；回填 #205 反思条目的自身摩擦（master 直提流程违规、冒烟不完整、filter 试错、review lane 卡住）。
+
+**User corrections**（逐字引用对话记录）:
+1. "反思里目前似乎只处理了用户的纠正，这不对，agent自身执行的流程有摩擦也需要记录。例如，命令用错了，流程违反了之类的，效果不符合agent的期望等。" —— 纠正反思机制的根本偏斜：反思输入被用户纠正垄断，agent 自身流程摩擦（命令用错/流程违反/效果不符预期）未系统性记录。我此前对 #205 的反思只写了用户纠正带出的内容，Context Mining lane 指出的"master 直提流程违规"被我漏记——正是用户指出的偏斜实证。
+
+**What went wrong**:
+- **流程违规（本次执行）**：执行 #206 文档变更时，`git commit` 首次被 commit-msg hook 拒绝——反思回填部分引用了已关闭的 #205（`ref #205`），违反"ref #N 必须指向 OPEN issue"规则。修正为叙述性 `#205` + `ref #206`。这是我在同一 session 内第二次犯"引用已关闭 issue 用 ref 前缀"的错（此前 #203/#205 收尾时已学习，但跨条目未内化）。
+- **流程违规（回填对象）**：#205 修复存在活跃 worktree（financial-f10）时直接在 master 提交实现，未在反思中记录（用户纠正点 1 的实证）。
+- **效率摩擦**：#205 review 第二轮 Code Quality lane 卡住 19 分钟才取消重试——已在 #205 反思回填中记录。
+
+**Lessons learned**:
+1. 反思输入 = 用户纠正 + agent 自身摩擦，二者并列强制提取；自身摩擦的客观证据（命令、错误输出、尝试次数）来自对话记录而非记忆——"执行者会忘自己返工过几次，对话不会忘"同样适用于 assistant 消息。
+2. 跨条目教训内化不足：commit-msg hook 规则（ref #N 必须 OPEN）已在多次 commit 中遵守，但撰写新条目引用旧 issue 时仍会误用——写反思/文档引用历史 issue 前，先确认其 OPEN/CLOSED 状态。
+3. 流程违规的"单文件修复跳过 worktree"判定需显式声明——Context Mining lane 能发现，但 agent 主动声明才能避免事后才发现。
+
+**Process improvements**: 
+- 已落实：reflect skill 第 0 步新增"提取 agent 自身流程摩擦（强制）"，What went wrong 改强制章节；#205 反思回填 4 条自身摩擦（随 #206 commit）。
+- 已落实：本条目即为新机制的首个执行实例（What went wrong 主动记录本次的 hook 拒绝摩擦）。
+
+### Trends (last 10)
+- **agent 自身摩擦与用户纠正并列记录的需求反复出现**（ref #205 Context Mining 发现 master 直提未记录 → 用户指出机制偏斜 → ref #206 固化）：反思机制必须显式强制自身摩擦提取，不能依赖用户纠正触发
+- **已关闭 issue 引用摩擦复发**（ref #119 教训 → 本次 commit-msg 拒绝）：撰写引用历史 issue 的文本（commit/反思/文档）前必须确认 issue 状态——可考虑在 reflect skill 中加"引用 issue 前查状态"步骤
