@@ -195,7 +195,21 @@ pub fn run(
     let mut where_parts: Vec<String> = Vec::new();
 
     // Index exclusion is unconditional (ref #201): indices must never enter
-    // the parquet even when --symbols explicitly names one.
+    // the parquet even when --symbols explicitly names one. Warn so an
+    // explicitly-requested index does not silently produce an empty export.
+    if let Some(filter) = &symbols_filter {
+        let requested: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
+        let hit: Vec<&&str> = INDEX_SYMBOLS
+            .iter()
+            .filter(|i| requested.contains(i))
+            .collect();
+        if !hit.is_empty() {
+            warn!(
+                "--symbols names index code(s) {:?}; indices are always excluded (ref #201)",
+                hit
+            );
+        }
+    }
     where_parts.push(symbol_not_in_clause());
 
     // --since: tradedate filter (does NOT affect symbol enumeration)
@@ -832,7 +846,7 @@ mod tests {
     /// Since #201, SH000905 is an index code and must be excluded by import —
     /// only the stock SZ000905 survives, keeping its prefix.
     #[test]
-    fn run_preserves_colliding_sh_sz_symbols() {
+    fn run_excludes_index_keeps_colliding_stock() {
         let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
         setup_dolt(dolt_tmp.path());
         dolt_setup_tables(dolt_tmp.path());
