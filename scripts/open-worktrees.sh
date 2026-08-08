@@ -47,6 +47,13 @@ resolve_project_root() {
 }
 
 PROJECT_ROOT="$(resolve_project_root)"
+# resolve_project_root can silently yield "" when both git resolution and the
+# $0 fallback fail (assignment-in-substitution failures do not trigger set -e);
+# fail loudly rather than operating against "/scripts" or "/.worktrees".
+[ -n "$PROJECT_ROOT" ] && [ -d "$PROJECT_ROOT" ] || {
+    echo "error: cannot resolve project root (cwd: $(pwd))" >&2
+    exit 1
+}
 SELF="$PROJECT_ROOT/scripts/open-worktrees.sh"
 WT_DIR="$PROJECT_ROOT/.worktrees"
 
