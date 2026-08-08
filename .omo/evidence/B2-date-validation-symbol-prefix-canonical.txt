@@ -1,0 +1,84 @@
+B2 — --start-date/--end-date SQL injection closure (ref #181)
+==============================================================
+Finding (security review): crates/compass-data/src/import_dolt.rs match
+(start_date, end_date) interpolates CLI values raw into the WHERE clause
+("tradedate >= '{s}' AND tradedate <= '{e}'") with NO format validation,
+unlike --since which requires exactly 8 ASCII digits. Vectors: quote
+injection ("20200101' OR '1'='1" -> OR binds looser than AND -> full-range
+export) and comment truncation ("20200101' --").
+
+Files changed
+-------------
+crates/compass-data/src/import_dolt.rs
+  + validate_date_arg(flag, value): 8-ASCII-digit (YYYYMMDD) check, error
+    names the flag and offending value: "{flag} must be 8 digits (YYYYMMDD),
+    got '{value}'"
+  + run(): pre-validate start_date/end_date via validate_date_arg before the
+    where_parts match arm (--since validation untouched; --symbols untouched)
+  + tests: run_rejects_invalid_start_date / run_rejects_invalid_end_date
+    (bad values: "2025", "2025010X", "2024-03-01", "20200101' OR '1'='1",
+    "20200101' --"; each must Err and name its flag)
+  ~ tests run_filters_by_start_date/end_date/date_range updated from dash
+    format ("2024-03-01") to the documented YYYYMMDD contract ("20240301")
+
+==========================================================================
+RED — tests fail before fix (cargo test -p compass-data --lib run_rejects_invalid_)
+==========================================================================
+running 4 tests
+test import_dolt::tests::run_rejects_invalid_since_non_digit ... ok
+test import_dolt::tests::run_rejects_invalid_since_not_8_digits ... ok
+test import_dolt::tests::run_rejects_invalid_start_date ... FAILED
+test import_dolt::tests::run_rejects_invalid_end_date ... FAILED
+
+failures:
+
+---- import_dolt::tests::run_rejects_invalid_start_date stdout ----
+thread 'import_dolt::tests::run_rejects_invalid_start_date' (687247) panicked at crates/compass-data/src/import_dolt.rs:637:13:
+error must name the --start-date flag: dolt error: error on line 1 for query SELECT symbol, tradedate, open, high, low, close, adjclose, volume, amount FROM final_a_stock_eod_price WHERE tradedate >= '2025' ORDER BY symbol, tradedate : Incorrect datetime value: '2025'
+
+---- import_dolt::tests::run_rejects_invalid_end_date stdout ----
+thread 'import_dolt::tests::run_rejects_invalid_end_date' (687244) panicked at crates/compass-data/src/import_dolt.rs:677:13:
+error must name the --end-date flag: dolt error: error on line 1 for query SELECT symbol, tradedate, open, high, low, close, adjclose, volume, amount FROM final_a_stock_eod_price WHERE tradedate <= '2025' ORDER BY symbol, tradedate : Incorrect datetime value: '2025'
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 50 filtered out; measured; 50 filtered out
+```
+(Note: failure mode proves the vector — invalid values reached the raw SQL
+query; clean CLI validation error was absent.)
+
+==========================================================================
+GREEN — after fix (cargo test -p compass-data, full crate)
+==========================================================================
+running 4 tests  (run_rejects_invalid_: since_not_8_digits ok,
+                  since_non_digit ok, start_date ok, end_date ok)
+test result: ok. 4 passed; 0 failed
+
+running 5 tests  (run_filters_by_: date_range ok, symbols_dot_form ok,
+                  end_date ok, start_date ok, symbols ok)
+test result: ok. 5 passed; 0 failed
+
+running 1 test   (run_valid_since_with_8_digits_exports_data ok)
+test result: ok. 1 passed; 0 failed
+
+cargo test -p compass-data (full):
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+Doc-tests: 0 tests, ok
+
+==========================================================================
+GATES
+==========================================================================
+cargo clippy --workspace --all-targets -- -D warnings  -> Finished, no warnings
+cargo fmt --check                                       -> FMT-CLEAN
+lsp_diagnostics crates/compass-data/src/import_dolt.rs   -> No diagnostics found
+
+==========================================================================
+Scope fidelity (MUST NOT checklist)
+==========================================================================
+- --since behavior: untouched (same validation, same error text)
+- --symbols behavior: untouched (normalize_symbol_filter untouched)
+- compass-core validate_symbol: untouched
+- collectors/: untouched
+- kb/ docs: untouched (separate task)
+- no new dependencies; no real Dolt data touched (tempdir-only tests)
+
+Commit: fix(data): validate --start-date/--end-date as 8-digit dates, close
+import SQL injection (ref #181)

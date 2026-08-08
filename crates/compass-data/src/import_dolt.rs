@@ -92,6 +92,19 @@ fn filter_symbols(symbols: Vec<String>, filter: &str) -> Vec<String> {
         .collect()
 }
 
+/// Validate a `--start-date`/`--end-date` CLI value: must be exactly 8 ASCII
+/// digits (YYYYMMDD), the same contract `--since` enforces.
+///
+/// The value is interpolated raw into the WHERE clause, so anything else —
+/// quote chars, SQL comment markers, short/non-digit input — is an injection
+/// vector (B2, ref #181). Returns an error naming the flag and offending value.
+fn validate_date_arg(flag: &str, value: &str) -> Result<(), String> {
+    if value.len() != 8 || !value.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("{flag} must be 8 digits (YYYYMMDD), got '{value}'"));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     dolt_dir: PathBuf,
@@ -180,7 +193,14 @@ pub fn run(
         where_parts.push(format!("symbol IN ({})", quoted.join(",")));
     }
 
-    // --start-date / --end-date
+    // --start-date / --end-date: validate both up front — values are
+    // interpolated raw into the WHERE clause (B2, ref #181).
+    if let Some(s) = start_date {
+        validate_date_arg("--start-date", s)?;
+    }
+    if let Some(e) = end_date {
+        validate_date_arg("--end-date", e)?;
+    }
     match (start_date, end_date) {
         (Some(s), Some(e)) => {
             where_parts.push(format!("tradedate >= '{s}' AND tradedate <= '{e}'"));
@@ -597,6 +617,90 @@ mod tests {
         );
     }
 
+    /// B2 (ref #181): `--start-date` is interpolated raw into the WHERE
+    /// clause; anything besides 8 ASCII digits — short values, non-digits,
+    /// quote chars, SQL comment markers — must be rejected with a clear error
+    /// naming the flag, mirroring the `--since` validation.
+    #[test]
+    fn run_rejects_invalid_start_date() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)",
+        );
+
+        for bad in [
+            "2025",                // too short
+            "2025010X",            // non-digit
+            "2024-03-01",          // dash format (not YYYYMMDD)
+            "20200101' OR '1'='1", // quote injection
+            "20200101' --",        // comment truncation
+        ] {
+            let output_tmp = tempfile::tempdir().expect("output tmp");
+            let result = run(
+                dolt_tmp.path().to_path_buf(),
+                output_tmp.path().to_path_buf(),
+                0,
+                None,
+                Some(bad),
+                None,
+                None,
+            );
+            assert!(
+                result.is_err(),
+                "--start-date {bad:?} must be rejected, got {result:?}"
+            );
+            let err = result.unwrap_err().to_string();
+            assert!(
+                err.contains("--start-date"),
+                "error must name the --start-date flag: {err}"
+            );
+        }
+    }
+
+    /// B2 (ref #181): same injection closure for `--end-date`.
+    #[test]
+    fn run_rejects_invalid_end_date() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0)",
+        );
+
+        for bad in [
+            "2025",         // too short
+            "2025010X",     // non-digit
+            "2024-01-15",   // dash format (not YYYYMMDD)
+            "20200101' --", // comment truncation
+        ] {
+            let output_tmp = tempfile::tempdir().expect("output tmp");
+            let result = run(
+                dolt_tmp.path().to_path_buf(),
+                output_tmp.path().to_path_buf(),
+                0,
+                None,
+                None,
+                Some(bad),
+                None,
+            );
+            assert!(
+                result.is_err(),
+                "--end-date {bad:?} must be rejected, got {result:?}"
+            );
+            let err = result.unwrap_err().to_string();
+            assert!(
+                err.contains("--end-date"),
+                "error must name the --end-date flag: {err}"
+            );
+        }
+    }
+
     #[test]
     fn run_filters_by_symbols() {
         let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
@@ -791,7 +895,7 @@ mod tests {
             output_tmp.path().to_path_buf(),
             0,
             None,
-            Some("2024-03-01"),
+            Some("20240301"),
             None,
             None,
         )
@@ -833,7 +937,7 @@ mod tests {
             0,
             None,
             None,
-            Some("2024-01-15"),
+            Some("20240115"),
             None,
         )
         .expect("run with --end-date");
@@ -874,8 +978,8 @@ mod tests {
             output_tmp.path().to_path_buf(),
             0,
             None,
-            Some("2024-02-01"),
-            Some("2024-02-28"),
+            Some("20240201"),
+            Some("20240228"),
             None,
         )
         .expect("run with date range");
