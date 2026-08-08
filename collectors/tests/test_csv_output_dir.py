@@ -40,17 +40,17 @@ class TestRunDefaultOutputInCsvDir:
         "module_name, report_name, run_kwargs, since_value",
         [
             pytest.param(
-                "fetch_income", "RPT_DMSK_FN_INCOME",
+                "fetch_income", "RPT_F10_FINANCE_GINCOME",
                 {"years": [2024], "periods": "FY"}, "2099-12-31",
                 id="income",
             ),
             pytest.param(
-                "fetch_balance_sheet", "RPT_DMSK_FN_BALANCE",
+                "fetch_balance_sheet", "RPT_F10_FINANCE_GBALANCE",
                 {"years": [2024], "periods": "FY"}, "2099-12-31",
                 id="balance_sheet",
             ),
             pytest.param(
-                "fetch_cash_flow", "RPT_DMSK_FN_CASHFLOW",
+                "fetch_cash_flow", "RPT_F10_FINANCE_GCASHFLOW",
                 {"years": [2024], "periods": "FY"}, "2099-12-31",
                 id="cash_flow",
             ),
