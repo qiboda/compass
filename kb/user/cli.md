@@ -40,6 +40,10 @@ cargo run --bin compass-data -- import [OPTIONS]
 
 导入过程通过 `dolt sql -r parquet`（直接二进制 Parquet）读取每只股票的行数据，写入单一的 `stock_daily.parquet` 文件。再次运行会重新导入完整数据集。
 
+**单位换算（ref #201）**：import 将 Dolt 源的 `volume`（手）×100 为**股**、`amount`（千元）×1000 为**元**后写入 parquet——`stock_daily.parquet` 中 volume 为股、amount 为元（SEPA 评分等下游按此口径消费）。
+
+**指数剔除（ref #201）**：import 无条件剔除 6 个指数代码（SH000300/SH000852/SH000905/SH000906/SH000985/SZ399300）——即使 `--symbols` 显式指定也剔除；`stock_daily.parquet` 与 `stock_daily.symbols.txt` 均不含指数。
+
 **⚠️ 过滤参数不是增量**：`import` 是「全量直写」命令——任何过滤参数（`--symbols`/`--limit`/`--start-date`/`--end-date`/`--since`）都只是 WHERE 过滤查询后**整体覆盖** `stock_daily.parquet`，旧数据不保留。需要增量/merge 语义请用 `import-compass`。
 
 ### 输出结构
@@ -51,7 +55,7 @@ parquet_data/
 └── stock_daily.symbols.txt         # 股票索引（每行一个）
 ```
 
-`stock_daily.parquet` 中的 `symbol` 列存储 Dolt 原生的股票代码格式（如 `SZ000001`、`SH600519`）。共享同一 6 位代码的股票（SZ）和指数（SH）通过交易所前缀区分。
+`stock_daily.parquet` 中的 `symbol` 列存储 Dolt 原生的股票代码格式（如 `SZ000001`、`SH600519`）。**指数代码已在 import 时剔除**（见上），parquet 仅含股票；共享同一 6 位代码的股票（SZ）与指数（SH）不再共存于数据中。
 
 > **⚠️ 符号前缀规范化（issue #181）后需重新 import + export**：旧版 `compass.duckdb`
 > 中的裸码数据在前缀化查询下会查空（Metis B9 实测）。升级后请重新运行
