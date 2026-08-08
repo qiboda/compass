@@ -517,6 +517,22 @@ mod tests {
     }
 
     #[test]
+    fn normalize_symbol_filter_skips_empty_entries() {
+        // Consecutive commas / leading-trailing commas produce empty parts
+        // after trim; they are skipped, not rejected (covers the `continue`
+        // branch inside the split loop).
+        assert_eq!(
+            normalize_symbol_filter("SH600519,,SZ000001").unwrap(),
+            "SH600519,SZ000001"
+        );
+        assert_eq!(normalize_symbol_filter(",SH600519,").unwrap(), "SH600519");
+        assert_eq!(
+            normalize_symbol_filter("SH600519, ,SZ000001").unwrap(),
+            "SH600519,SZ000001"
+        );
+    }
+
+    #[test]
     fn normalize_symbol_filter_requires_exactly_6_digit_code() {
         // Full canonical form is exchange + exactly 6 ASCII digits; anything
         // else (non-digit, wrong length, quote chars) must be rejected with a

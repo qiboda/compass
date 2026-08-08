@@ -346,6 +346,12 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    /// Serialise merge-path tests: `import_fin_indicators` and
+    /// `import_financial_table` stage work files under the shared
+    /// `std::env::temp_dir()/compass_parquet_work` directory with fixed
+    /// names, so concurrent tests would clobber each other's files.
+    static MERGE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     const FIN_SCHEMA: &str = "\
         CREATE TABLE fin_indicators (\
         symbol VARCHAR(20) NOT NULL, report_date DATE NOT NULL, \
@@ -645,6 +651,7 @@ mod tests {
 
     #[test]
     fn fin_indicators_since_merge_with_existing_parquet() {
+        let _lock = MERGE_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
 
@@ -692,6 +699,146 @@ mod tests {
             )
             .expect("count");
         assert_eq!(count, 2, "merged parquet should have both rows");
+    }
+
+    #[test]
+    fn run_dispatches_fin_indicators_arm() {
+        // import_table's FinIndicators arm routes to import_fin_indicators
+        // (the match arm was previously only covered indirectly).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(FIN_SCHEMA)
+            .output()
+            .expect("create table");
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2024-12-31', 1.5e11, 7e10, 59.0, '贵州茅台')")
+            .output().expect("insert");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::FinIndicators,
+            false,
+            None,
+        )
+        .expect("run fin_indicators");
+
+        let parquet = tmp.path().join("fin_indicators.parquet");
+        assert!(parquet.exists(), "fin_indicators.parquet should be created");
+    }
+
+    #[test]
+    fn fin_indicators_merge_failure_falls_back_to_full_export() {
+        let _lock = MERGE_MUTEX.lock().unwrap();
+        // Corrupt the existing parquet so the DuckDB incremental-merge SQL
+        // fails; the import must fall back to overwriting the parquet with
+        // the fresh Dolt data instead of erroring out.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(FIN_SCHEMA)
+            .output()
+            .expect("create table");
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2024-12-31', 1.5e11, 7e10, 59.0, '贵州茅台')")
+            .output().expect("insert 2024");
+
+        import_fin_indicators(tmp.path(), tmp.path(), false, None).expect("first import");
+        let parquet = tmp.path().join("fin_indicators.parquet");
+        assert!(parquet.exists());
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2025-12-31', 1.72e11, 8.23e10, 65.66, '贵州茅台')")
+            .output().expect("insert 2025");
+
+        std::fs::write(&parquet, b"corrupted parquet").expect("corrupt parquet");
+
+        import_fin_indicators(tmp.path(), tmp.path(), false, Some("2025-01-01"))
+            .expect("fallback import");
+
+        // The fallback rewrote the parquet with the since-filtered Dolt
+        // export (2025 row only; the 2024 row predates the filter), so the
+        // garbage file was replaced by a readable parquet again.
+        assert_eq!(read_parquet_row_count(&parquet), 1);
+    }
+
+    #[test]
+    fn financial_table_merge_failure_falls_back_to_full_export() {
+        let _lock = MERGE_MUTEX.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE fin_balance_sheet (\
+                symbol VARCHAR(20) NOT NULL, \
+                report_date DATE NOT NULL, \
+                total_assets DOUBLE, \
+                net_profit DOUBLE, \
+                PRIMARY KEY (symbol, report_date))",
+            )
+            .output()
+            .expect("create table");
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_balance_sheet (symbol, report_date, total_assets, net_profit) VALUES \
+                ('SH600519', '2024-12-31', 2.6e11, 7e10)")
+            .output().expect("insert 2024");
+
+        import_financial_table("fin_balance_sheet", tmp.path(), tmp.path(), false, None)
+            .expect("first import");
+
+        let parquet = tmp.path().join("fin_balance_sheet.parquet");
+        assert!(parquet.exists());
+        assert_eq!(read_parquet_row_count(&parquet), 1);
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_balance_sheet (symbol, report_date, total_assets, net_profit) VALUES \
+                ('SH600519', '2025-12-31', 2.8e11, 8e10)")
+            .output().expect("insert 2025");
+
+        std::fs::write(&parquet, b"corrupted parquet").expect("corrupt parquet");
+
+        import_financial_table(
+            "fin_balance_sheet",
+            tmp.path(),
+            tmp.path(),
+            false,
+            Some("2025-01-01"),
+        )
+        .expect("fallback import");
+
+        assert_eq!(read_parquet_row_count(&parquet), 1);
     }
 
     fn setup_financial_table(dolt_dir: &std::path::Path, table_name: &str) {
@@ -830,6 +977,7 @@ mod tests {
 
     #[test]
     fn financial_table_since_merge_preserves_old_rows() {
+        let _lock = MERGE_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
 

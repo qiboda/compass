@@ -1085,4 +1085,85 @@ mod tests {
         assert!(row.contains("64.3"), "breadth: {row}");
         assert!(row.contains("40%-70%"), "position: {row}");
     }
+
+    #[test]
+    fn dolt_import_returns_error_for_unknown_table() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+
+        let csv_tmp = tempfile::tempdir().expect("csv tmp");
+        let csv_path = csv_tmp.path().join("rows.csv");
+        std::fs::write(&csv_path, "a,b\n1,2\n").expect("write csv");
+
+        let result = dolt_import(dolt_tmp.path(), "no_such_table", &csv_path);
+        assert!(result.is_err(), "dolt import of a missing table must fail");
+    }
+
+    #[test]
+    fn write_back_skips_tables_without_data_rows() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+
+        let data = SepaData {
+            rows: Vec::new(),
+            thermometer: MarketThermometer {
+                score: 50.0,
+                position: "40%-70%".to_string(),
+                position_pct: 55.0,
+                indicators: vec![
+                    compass_types::SepaIndicator {
+                        label: "沪深300趋势".to_string(),
+                        value_text: "50.0%".to_string(),
+                        delta_pct: None,
+                        heat: 0.5,
+                    },
+                    compass_types::SepaIndicator {
+                        label: "中证1000趋势".to_string(),
+                        value_text: "50.0%".to_string(),
+                        delta_pct: None,
+                        heat: 0.5,
+                    },
+                    compass_types::SepaIndicator {
+                        label: "涨停数".to_string(),
+                        value_text: "0 家".to_string(),
+                        delta_pct: None,
+                        heat: 0.0,
+                    },
+                    compass_types::SepaIndicator {
+                        label: "成交额".to_string(),
+                        value_text: "0万亿".to_string(),
+                        delta_pct: None,
+                        heat: 0.0,
+                    },
+                    compass_types::SepaIndicator {
+                        label: "赚钱效应".to_string(),
+                        value_text: "50.0%".to_string(),
+                        delta_pct: None,
+                        heat: 0.5,
+                    },
+                ],
+            },
+            date: "2026-07-31".to_string(),
+        };
+
+        write_back(
+            dolt_tmp.path(),
+            &data,
+            &["technical_factor", "market_temperature"],
+        )
+        .expect("write_back with empty rows");
+
+        // technical_factor CSV was header-only → skipped; the thermometer
+        // row was still appended to market_temperature.
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "technical_factor", "2026-07-31"),
+            0
+        );
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-07-31"),
+            1
+        );
+    }
 }

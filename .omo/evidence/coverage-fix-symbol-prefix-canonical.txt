@@ -1,0 +1,89 @@
+Coverage-gate fix for PR #199 (issue #181): compass-data line coverage below CI gate
+====================================================================================
+
+CI failure (run 31236024591):
+  FAIL: compass-data line coverage 94.92332099418297% < 95%
+  OK: workspace 95.39%, compass-core 97.96%, compass 90.60%, strategy 96.95%,
+      types 89.58%, ui 97.14%
+Root cause: compass-data sat ~0.08-0.21pp above the 95% gate locally, and the
+ubuntu-latest CI environment (cargo llvm-cov after cargo nextest, rust-cache)
+consistently measures ~0.2pp lower — 94.92% < 95%. No production code was
+changed; the fix adds unit tests covering the previously-uncovered error and
+branch paths in compass-data.
+
+Before (local, this worktree):
+  compass-data 95.13% (3598/3782 lines)
+  export.rs 84.58%, baostock.rs 92.36%, main.rs 86.91%, backtest.rs 95.97%,
+  import_dolt.rs 97.56%, import_compass.rs 98.57%, sepa.rs 98.17%
+
+After (local, same command: cargo llvm-cov --workspace --json --summary-only):
+  compass-data 96.93% (4036/4164 lines)  — margin vs CI gate +1.93pp,
+  >1.7pp above the observed CI environment gap (~0.21pp)
+  export.rs 98.81%, baostock.rs 98.67%, backtest.rs 98.68%,
+  import_compass.rs 99.17%, import_dolt.rs 97.70%, sepa.rs 98.96%,
+  main.rs 86.91% (unchanged; CLI arg-parse branches out of scope per task)
+
+check-coverage.sh /tmp/opencode/cov-final.json:
+  OK: workspace 95.78%
+  OK: compass-data line coverage 96.92603266090298% (>= 95)
+  OK: compass-core 97.96%, compass 90.60%, compass-strategy 96.95%,
+      compass-types 89.58%, compass-ui 97.14%
+
+New tests (13 added, 3 existing tests extended):
+- export.rs (5):
+  * run_export_duckdb_success_path_writes_records — happy path: symbols.txt +
+    real parquet with prefixed symbol SZ000001 → fetch_bars Ok → DailyRecord
+    mapping → save_stock_daily (covered lines 46, 51-63, 65; previously only
+    the fetch Err/continue path ran because bare codes fail validate_symbol)
+  * run_export_duckdb_fails_silently_when_list_symbols_errors — corrupt
+    stock_daily.parquet + no symbols.txt → SQL fallback read_parquet error
+    (lines 22-24)
+  * run_export_duckdb_fails_silently_when_output_dir_missing — parent dir
+    missing → Connection::open error in DuckDbProvider::new_file (lines 30-32)
+  * export_all_tables_returns_error_when_dir_is_a_file — create_dir_all error
+    → DataError::Parse (lines 87-91)
+  * export_all_tables_warns_when_copy_target_is_directory — COPY TO existing
+    directory → per-table warn, loop continues (line 112)
+- import_dolt.rs (1):
+  * normalize_symbol_filter_skips_empty_entries — consecutive/leading/trailing
+    commas → empty-part `continue` (line 16)
+- import_compass.rs (3):
+  * run_dispatches_fin_indicators_arm — import_table FinIndicators match arm
+    (line 61)
+  * fin_indicators_merge_failure_falls_back_to_full_export — corrupt existing
+    parquet → DuckDB merge SQL fails → warn + fallback full export (200-201)
+  * financial_table_merge_failure_falls_back_to_full_export — same fallback
+    for import_append_table path (311-312)
+  * extended fin_indicators_since_merge_with_existing_parquet and
+    financial_table_since_merge_preserves_old_rows with MERGE_MUTEX so the
+    new fallback tests cannot race on the shared compass_parquet_work files
+- sepa.rs (2):
+  * dolt_import_returns_error_for_unknown_table — dolt table import failure
+    path (422-424)
+  * write_back_skips_tables_without_data_rows — header-only CSV → "no rows to
+    write back" skip, thermometer row still written (374-375)
+- backtest.rs (1):
+  * run_backtest_cli_default_start_writes_csv — start=None → default-start
+    parse closure (41-46), csv write path
+  * extended write_back_result_stages_and_cleans_temp_file to seed a stale
+    temp file so the cleanup loop's remove_file path runs (270-273)
+- baostock.rs (1):
+  * fetch_adj_factors_wrapper_propagates_script_error — dead-code-annotated
+    wrapper delegation to fetch_adj_factors_with_script (8-15)
+
+Lines intentionally not covered (llvm-cov artifacts / structurally
+unreachable; verified empirically they cannot be hit by any test):
+- tracing macro format-arg lines (info!/warn! args): import_dolt 134,163,275;
+  sepa 106,108,127
+- lazy assert! format args (evaluated only on failure): import_dolt
+  312,324,340,385,406,420,422; import_compass 431,443; sepa 503; backtest 165
+- unreachable error paths: export 15-17 (ParquetReader::new cannot fail),
+  export 66 (save_stock_daily cannot fail on the ensured schema)
+- closing-brace / `)?;` tail region mapping: backtest 58,280; import_compass
+  338; sepa 241
+
+Gate results:
+  cargo test --workspace: 695 passed, 0 failed (16 test binaries)
+  cargo clippy --workspace --all-targets -- -D warnings: clean (exit 0)
+  cargo fmt --check: clean
+  lsp_diagnostics (crates/compass-data/src): 0 errors

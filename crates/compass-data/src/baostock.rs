@@ -204,4 +204,13 @@ sys.exit({exit_code})
         // The error is python3's stderr (e.g. "can't open file").
         assert!(!result.unwrap_err().is_empty());
     }
+
+    /// The `fetch_adj_factors` convenience wrapper (dead-code-annotated,
+    /// CLI-unused) delegates to fetch_adj_factors_with_script with the
+    /// repo-relative script path; a missing script must surface as Err.
+    #[tokio::test]
+    async fn fetch_adj_factors_wrapper_propagates_script_error() {
+        let result = fetch_adj_factors("000001.SZ", "20250721", "20250722").await;
+        assert!(result.is_err(), "expected error, got: {result:?}");
+    }
 }

@@ -259,6 +259,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_export_duckdb_success_path_writes_records() {
+        // Full happy path: symbols.txt + real parquet data with a prefixed
+        // symbol. fetch_bars returns Ok → records are mapped and saved into
+        // the output DuckDB (covers the success loop, not just error skips).
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t(symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);
+             INSERT INTO t VALUES ('SZ000001', '2024-01-02', 9, 11, 8, 10, 10, 1000, 0);",
+        )
+        .expect("create");
+        conn.execute_batch(&format!(
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            parquet_tmp.path().join("stock_daily.parquet").display()
+        ))
+        .expect("copy");
+
+        std::fs::write(
+            parquet_tmp.path().join("stock_daily.symbols.txt"),
+            "SZ000001\n",
+        )
+        .expect("write symbols.txt");
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path.clone(),
+            true,
+        )
+        .await;
+
+        let out_conn = duckdb::Connection::open(&duckdb_path).expect("open export db");
+        let count: usize = out_conn
+            .query_row("SELECT COUNT(*) FROM stock_daily", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1, "exported row should be written to stock_daily");
+    }
+
+    #[tokio::test]
+    async fn run_export_duckdb_fails_silently_when_list_symbols_errors() {
+        // Corrupt stock_daily.parquet with no symbols.txt forces list_symbols
+        // down the SQL fallback path, which errors on the unreadable parquet
+        // → run_export logs and returns without panicking.
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            parquet_tmp.path().join("stock_daily.parquet"),
+            b"this is not a parquet file",
+        )
+        .expect("write corrupt parquet");
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path,
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_export_duckdb_fails_silently_when_output_dir_missing() {
+        // Connection::open fails when the parent directory of the target
+        // DuckDB file does not exist → the new_file error path is logged.
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("nonexistent").join("export.duckdb");
+
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path,
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn export_all_tables_returns_error_when_dir_is_a_file() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file_path = tmp.path().join("not_a_dir");
+        std::fs::write(&file_path, b"file").expect("write file");
+
+        let result = export_all_tables(&provider, &file_path).await;
+        assert!(result.is_err(), "create_dir_all on a file should fail");
+    }
+
+    #[tokio::test]
+    async fn export_all_tables_warns_when_copy_target_is_directory() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        let d = NaiveDate::from_ymd_opt(2025, 1, 1).expect("valid date");
+        provider
+            .save_stock_daily(
+                "SZ000001",
+                &[DailyRecord {
+                    trade_date: d,
+                    open: 10.0,
+                    high: 11.0,
+                    low: 9.0,
+                    close: 10.5,
+                    adjclose: 10.5,
+                    volume: 100.0,
+                    amount: 1000.0,
+                }],
+                true,
+            )
+            .await
+            .expect("save_stock_daily failed");
+
+        // Pre-create a directory where the COPY target file would go — DuckDB
+        // COPY to an existing directory fails → the warn path is exercised
+        // and the loop continues with the remaining tables.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(tmp.path().join("stock_daily.parquet")).expect("mkdir");
+
+        export_all_tables(&provider, tmp.path())
+            .await
+            .expect("export should complete despite per-table warnings");
+    }
+
+    #[tokio::test]
     async fn run_export_fetch_bars_error_continues_when_file_missing() {
         // When stock_daily.symbols.txt lists symbols but stock_daily.parquet is
         // missing, fetch_bars_blocking returns NoData → continue to next symbol.
