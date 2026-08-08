@@ -1,0 +1,54 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/financial-f10/collectors
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 14 items
+
+tests/test_cash_flow.py F
+
+=================================== FAILURES ===================================
+__________ TestImportToDolt.test_first_run_creates_table_and_imports ___________
+tests/test_cash_flow.py:434: in test_first_run_creates_table_and_imports
+    assert rows == 1
+E   assert 0 == 1
+----------------------------- Captured stderr call -----------------------------
+[import cash_flow]
+------------------------------ Captured log call -------------------------------
+ERROR    compass_collectors:common.py:231   SQL error: error on line 2 for query INSERT IGNORE INTO fin_cash_flow (symbol, report_date, SECUCODE, SECURITY_CODE, INDUSTRY_CODE, ORG_CODE, SECURITY_NAME_ABBR, INDUSTRY_NAME, MARKET, SECURITY_TYPE_CODE, TRADE_MARKET_CODE, DATE_TYPE_CODE, REPORT_TYPE_CODE, DATA_STATE, NOTICE_DATE, NETCASH_OPERATE, NETCASH_OPERATE_RATIO, SALES_SERVICES, SALES_SERVICES_RATIO, PAY_STAFF_CASH, PSC_RATIO, NETCASH_INVEST, NETCASH_INVEST_RATIO, RECEIVE_INVEST_INCOME, RII_RATIO, CONSTRUCT_LONG_ASSET, CLA_RATIO, NETCASH_FINANCE, NETCASH_FINANCE_RATIO, CCE_ADD, CCE_ADD_RATIO, CUSTOMER_DEPOSIT_ADD, CDA_RATIO, DEPOSIT_IOFI_OTHER, DIO_RATIO, LOAN_ADVANCE_ADD, LAA_RATIO, RECEIVE_INTEREST_COMMISSION, RIC_RATIO, INVEST_PAY_CASH, IPC_RATIO, BEGIN_CCE, BEGIN_CCE_RATIO, END_CCE, END_CCE_RATIO, RECEIVE_ORIGIC_PREMIUM, ROP_RATIO, PAY_ORIGIC_COMPENSATE, POC_RATIO)
+            SELECT
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
+                REPORT_DATE, SECUCODE, SECURITY_CODE, INDUSTRY_CODE, ORG_CODE, SECURITY_NAME_ABBR, INDUSTRY_NAME, MARKET, SECURITY_TYPE_CODE, TRADE_MARKET_CODE, DATE_TYPE_CODE, REPORT_TYPE_CODE, DATA_STATE, NOTICE_DATE, NETCASH_OPERATE, NETCASH_OPERATE_RATIO, SALES_SERVICES, SALES_SERVICES_RATIO, PAY_STAFF_CASH, PSC_RATIO, NETCASH_INVEST, NETCASH_INVEST_RATIO, RECEIVE_INVEST_INCOME, RII_RATIO, CONSTRUCT_LONG_ASSET, CLA_RATIO, NETCASH_FINANCE, NETCASH_FINANCE_RATIO, CCE_ADD, CCE_ADD_RATIO, CUSTOMER_DEPOSIT_ADD, CDA_RATIO, DEPOSIT_IOFI_OTHER, DIO_RATIO, LOAN_ADVANCE_ADD, LAA_RATIO, RECEIVE_INTEREST_COMMISSION, RIC_RATIO, INVEST_PAY_CASH, IPC_RATIO, BEGIN_CCE, BEGIN_CCE_RATIO, END_CCE, END_CCE_RATIO, RECEIVE_ORIGIC_PREMIUM, ROP_RATIO, PAY_ORIGIC_COMPENSATE, POC_RATIO
+            FROM _tmp_cf
+            WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
+                  IN (SELECT symbol FROM stock_basic)
+        : column "INDUSTRY_CODE" could not be found in any table in scope
+=========================== short test summary info ============================
+FAILED tests/test_cash_flow.py::TestImportToDolt::test_first_run_creates_table_and_imports
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.88s ===============================
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/financial-f10/collectors
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 14 items
+
+tests/test_cash_flow.py ..............                                   [100%]
+
+============================= 14 passed in 13.09s ==============================
+
+=== POST-FORMAT FINAL RUN ===
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/financial-f10/collectors
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 14 items
+
+tests/test_cash_flow.py ..............                                   [100%]
+
+============================= 14 passed in 13.67s ==============================

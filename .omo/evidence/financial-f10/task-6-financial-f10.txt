@@ -1,0 +1,5 @@
+=== Task 6 Parquet smoke test (ref #202) ===
+fin_income: rows=138537, range=2020-03-31 00:00:00~2026-06-30 00:00:00, moutai col=174144069958.25 PASS=True
+fin_balance_sheet: rows=132822, range=2020-03-31 00:00:00~2026-06-30 00:00:00, moutai col=298944579918.7 PASS=True
+fin_cash_flow: rows=135875, range=2020-03-31 00:00:00~2026-06-30 00:00:00, moutai col=92463692168.43 PASS=True
+ALL PASS: True
