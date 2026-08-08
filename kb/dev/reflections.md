@@ -500,3 +500,38 @@
 ### Trends (last 10)
 - **agent 自身摩擦与用户纠正并列记录的需求反复出现**（ref #205 Context Mining 发现 master 直提未记录 → 用户指出机制偏斜 → ref #206 固化）：反思机制必须显式强制自身摩擦提取，不能依赖用户纠正触发
 - **已关闭 issue 引用摩擦复发**（ref #119 教训 → 本次 commit-msg 拒绝）：撰写引用历史 issue 的文本（commit/反思/文档）前必须确认 issue 状态——可考虑在 reflect skill 中加"引用 issue 前查状态"步骤
+
+## 2026-08-08 — ref #202 财务三表切换 F10 完整版报表
+
+**What was done**: 财务三表（fin_income/fin_balance_sheet/fin_cash_flow）采集器从东财 DMSK 主干版报表（RPT_DMSK_FN_*，46/57/48 字段）切换到 F10 完整版（RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW，203/319/254 字段），全字段保留（含 _YOY 列）、元单位、2020 至今全量重抓。采集器改 `merge=False`（replace 原子重建）+ 显式宽 schema 临时表（`create_sql`，超 Dolt `-c` 推断 65504 字节行尺寸上限）。Dolt 三表重建（138537/132822/135875 行）并 push remote，Parquet 刷新冒烟通过（茅台 2024 TOTAL_OPERATE_INCOME=1.7414e11、BASIC_EPS=68.64）。Rust 测试夹具同步锁 SELECT * 新列。5 个 commit + 5-way review（3 MAJOR 修复）。
+
+**User corrections**（逐字引用对话记录）:
+1. "配套的代码也需要修改。" —— 纠正我"Rust 零改动"的过早结论：探索发现三表走 SELECT * 自动带新列、GUI 零消费，我据此判定零改动，但用户明确要求三表影响的配套代码同步修改——Rust 测试夹具/文档/共享测试文件都属配套，最终确实需要改
+2. "fin_indicatros 是什么？" —— 我抛出的"fin_indicators 是否纳入"选项让用户困惑，说明我的澄清问题偏离了用户实际意图（用户指的是三表本身的配套）
+3. "我指的那三张表影响的代码也要同步修改。" —— 明确范围：用户说的"配套"= 三张表（fin_income/fin_balance_sheet/fin_cash_flow）schema 变更影响的所有代码，非 fin_indicators
+4. "三表的更新日期有刷新吗？" —— push 前核查数据新鲜度：data_updates.last_updated 与数据内 UPDATE_DATE 均应为抓取日；客观证据确认 2026-08-08 后用户才确认 push
+
+**What went wrong**:
+1. **Rust 零改动结论过早且与用户契约冲突**：handoff 契约明确"Rust 同步：import_compass.rs / CompassTable schema 扩展"，我基于探索（SELECT * 自动带新列）判定零改动，未把"配套代码同步"纳入 plan——用户纠正后才修正 Scope IN。探索结论正确（业务代码确实零改动）但交付范围判断失误：测试/文档/共享测试也是"三表影响的代码"。
+2. **5-way review 抓出三采集器不同构缺陷**：任务 2/3/4 并行委派给 3 个子代理，balance_sheet 遇到 319 列超 Dolt `-c` 推断行尺寸上限（80032>65504）后加了 `create_sql`，但 income（203 列同样超限）与 cash_flow 未加——代码质量 review（MAJOR）实证 income 203 列 CSV 导入失败。并行子代理各自验证，没有跨代理的同构一致性检查，直到 review 才暴露。
+3. **income 缺 CAST(REPORT_DATE AS DATE)**：balance/cash_flow 加了 CAST（F10 返回 "2024-12-31 00:00:00" 带时间格式），income 漏加——同构性检查缺失的直接后果。
+4. **后台抓取进程被 bash 工具会话终结**：`nohup ... &` 启动的抓取进程在 bash 工具调用结束后被清理（CSV 只抓到 495 行就停）——nohup 不够，需 `setsid` 脱离会话。
+5. **磁盘满中断 cargo test**：/data 分区 100%（64K 可用），F2/F3 验证波首次 cargo test 失败；根因是并发编译进程（atom/其他 worktree）占用，进程结束后自动释放。磁盘告警应在验证前检查。
+
+**Lessons learned**:
+1. **同构采集器/并行子任务必须有跨代理一致性门禁**：3 个子代理并行改同构文件，各自测试全绿但彼此不一致（CAST/create_sql 有有无）——并行任务应共享"契约清单"（哪些字段必须全部一致），或主 agent 在合并前做同构 diff 检查（grep 每个采集器的关键模式：CAST/create_sql/merge/REPORT_NAME）
+2. **"零改动"结论需区分业务代码 vs 配套代码**：探索证明业务零改动 ≠ 交付零改动——handoff 契约明示的"配套同步"（测试/文档/共享测试）必须纳入 plan 范围；对"影响的代码"从契约而非仅代码消费路径判断
+3. **宽表 CSV（203+ 列）必然超 Dolt `-c` 推断 65504 字节行尺寸上限**：任何 200+ 列采集器都必须 `create_sql` 显式建临时表——验证路径：真实 CSV 直接 `dolt table import -c` 实测（income 203 列 80032 字节），不要在修复前假设列数不超限
+4. **长时后台任务用 `setsid` 而非 `nohup`**：bash 工具会话在命令结束后清理子进程，nohup 不脱离会话；`setsid bash -c '...' < /dev/null > /dev/null 2>&1 &` 才能真正脱离
+5. **数据管线验证前先查磁盘**：大分区（/data）易被并发编译填满，cargo test/llvm-cov 前 `df -h` 确认可用空间，避免验证波中断
+
+**Process improvements**:
+- 已落实：本条目记录同构采集器一致性门禁教训（未来多采集器并行改造必查）
+- 已落实：`kb/dev/toolchain.md` 候选——宽表 create_sql 的判定路径（真实 CSV 实测 `-c` 上限）
+- 已落实：`kb/dev/process.md` 候选——长时后台任务 setsid 纪律
+- 数据管线磁盘预检建议写入 `kb/dev/process.md` 验证章节——proposed
+
+### Trends (last 10)
+- **并行子任务的同构一致性是盲区**（ref #202 三采集器不同构、ref #139 多 agent 并行）：并行委派各自全绿但跨任务契约（同构字段/语义）无检查——主 agent 合并前必须做跨任务的模式一致性 diff
+- **"验证通过"依赖真实数据/真实路径持续强化**（ref #205 worktree 真实执行、ref #154 冒烟证据、ref #139 数据终态、本次 review 实证 203 列超限）：fixture/单测覆盖不到的（行尺寸上限、会话清理）必须用真实 CSV/真实环境实测
+- **用户纠正驱动范围收敛**（本次配套代码范围、ref #201 顺序语义、ref #190 写库收尾）：用户对"范围/顺序"的纠正集中指向交付契约的边界——plan 阶段把"影响面"问透比实现后修正成本低得多
