@@ -14,34 +14,107 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from conftest import StubResponse  # noqa: E402
 
-# 46-field header for RPT_DMSK_FN_INCOME
+# 203-field header for RPT_F10_FINANCE_GINCOME (F10 full income statement,
+# generated from .omo/evidence/financial-f10/f10_columns.json GINCOME.fields)
 _HEADER = [
-    "SECUCODE", "SECURITY_CODE", "INDUSTRY_CODE", "ORG_CODE",
-    "SECURITY_NAME_ABBR", "INDUSTRY_NAME", "MARKET", "SECURITY_TYPE_CODE",
-    "TRADE_MARKET_CODE", "DATE_TYPE_CODE", "REPORT_TYPE_CODE", "DATA_STATE",
-    "NOTICE_DATE", "REPORT_DATE",
-    "PARENT_NETPROFIT", "TOTAL_OPERATE_INCOME", "TOTAL_OPERATE_COST", "TOE_RATIO",
-    "OPERATE_COST", "OPERATE_EXPENSE", "OPERATE_EXPENSE_RATIO", "SALE_EXPENSE",
-    "MANAGE_EXPENSE", "FINANCE_EXPENSE", "OPERATE_PROFIT", "TOTAL_PROFIT", "INCOME_TAX",
-    "OPERATE_INCOME", "INTEREST_NI", "INTEREST_NI_RATIO", "FEE_COMMISSION_NI", "FCN_RATIO",
-    "OPERATE_TAX_ADD", "MANAGE_EXPENSE_BANK", "FCN_CALCULATE", "INTEREST_NI_CALCULATE",
-    "EARNED_PREMIUM", "EARNED_PREMIUM_RATIO", "INVEST_INCOME", "SURRENDER_VALUE",
-    "COMPENSATE_EXPENSE", "TOI_RATIO", "OPERATE_PROFIT_RATIO",
-    "PARENT_NETPROFIT_RATIO", "DEDUCT_PARENT_NETPROFIT", "DPN_RATIO",
+    "SECUCODE", "SECURITY_CODE", "SECURITY_NAME_ABBR", "ORG_CODE", "ORG_TYPE", "REPORT_DATE",
+    "REPORT_TYPE", "REPORT_DATE_NAME", "SECURITY_TYPE_CODE", "NOTICE_DATE", "UPDATE_DATE",
+    "CURRENCY", "TOTAL_OPERATE_INCOME", "TOTAL_OPERATE_INCOME_YOY", "OPERATE_INCOME",
+    "OPERATE_INCOME_YOY", "INTEREST_INCOME", "INTEREST_INCOME_YOY", "EARNED_PREMIUM",
+    "EARNED_PREMIUM_YOY", "FEE_COMMISSION_INCOME", "FEE_COMMISSION_INCOME_YOY",
+    "OTHER_BUSINESS_INCOME", "OTHER_BUSINESS_INCOME_YOY", "TOI_OTHER", "TOI_OTHER_YOY",
+    "TOTAL_OPERATE_COST", "TOTAL_OPERATE_COST_YOY", "OPERATE_COST", "OPERATE_COST_YOY",
+    "INTEREST_EXPENSE", "INTEREST_EXPENSE_YOY", "FEE_COMMISSION_EXPENSE",
+    "FEE_COMMISSION_EXPENSE_YOY", "RESEARCH_EXPENSE", "RESEARCH_EXPENSE_YOY", "SURRENDER_VALUE",
+    "SURRENDER_VALUE_YOY", "NET_COMPENSATE_EXPENSE", "NET_COMPENSATE_EXPENSE_YOY",
+    "NET_CONTRACT_RESERVE", "NET_CONTRACT_RESERVE_YOY", "POLICY_BONUS_EXPENSE",
+    "POLICY_BONUS_EXPENSE_YOY", "REINSURE_EXPENSE", "REINSURE_EXPENSE_YOY", "OTHER_BUSINESS_COST",
+    "OTHER_BUSINESS_COST_YOY", "OPERATE_TAX_ADD", "OPERATE_TAX_ADD_YOY", "SALE_EXPENSE",
+    "SALE_EXPENSE_YOY", "MANAGE_EXPENSE", "MANAGE_EXPENSE_YOY", "ME_RESEARCH_EXPENSE",
+    "ME_RESEARCH_EXPENSE_YOY", "FINANCE_EXPENSE", "FINANCE_EXPENSE_YOY", "FE_INTEREST_EXPENSE",
+    "FE_INTEREST_EXPENSE_YOY", "FE_INTEREST_INCOME", "FE_INTEREST_INCOME_YOY",
+    "ASSET_IMPAIRMENT_LOSS", "ASSET_IMPAIRMENT_LOSS_YOY", "CREDIT_IMPAIRMENT_LOSS",
+    "CREDIT_IMPAIRMENT_LOSS_YOY", "TOC_OTHER", "TOC_OTHER_YOY", "FAIRVALUE_CHANGE_INCOME",
+    "FAIRVALUE_CHANGE_INCOME_YOY", "INVEST_INCOME", "INVEST_INCOME_YOY", "INVEST_JOINT_INCOME",
+    "INVEST_JOINT_INCOME_YOY", "NET_EXPOSURE_INCOME", "NET_EXPOSURE_INCOME_YOY", "EXCHANGE_INCOME",
+    "EXCHANGE_INCOME_YOY", "ASSET_DISPOSAL_INCOME", "ASSET_DISPOSAL_INCOME_YOY",
+    "ASSET_IMPAIRMENT_INCOME", "ASSET_IMPAIRMENT_INCOME_YOY", "CREDIT_IMPAIRMENT_INCOME",
+    "CREDIT_IMPAIRMENT_INCOME_YOY", "OTHER_INCOME", "OTHER_INCOME_YOY", "OPERATE_PROFIT_OTHER",
+    "OPERATE_PROFIT_OTHER_YOY", "OPERATE_PROFIT_BALANCE", "OPERATE_PROFIT_BALANCE_YOY",
+    "OPERATE_PROFIT", "OPERATE_PROFIT_YOY", "NONBUSINESS_INCOME", "NONBUSINESS_INCOME_YOY",
+    "NONCURRENT_DISPOSAL_INCOME", "NONCURRENT_DISPOSAL_INCOME_YOY", "NONBUSINESS_EXPENSE",
+    "NONBUSINESS_EXPENSE_YOY", "NONCURRENT_DISPOSAL_LOSS", "NONCURRENT_DISPOSAL_LOSS_YOY",
+    "EFFECT_TP_OTHER", "EFFECT_TP_OTHER_YOY", "TOTAL_PROFIT_BALANCE", "TOTAL_PROFIT_BALANCE_YOY",
+    "TOTAL_PROFIT", "TOTAL_PROFIT_YOY", "INCOME_TAX", "INCOME_TAX_YOY", "EFFECT_NETPROFIT_OTHER",
+    "EFFECT_NETPROFIT_OTHER_YOY", "EFFECT_NETPROFIT_BALANCE", "EFFECT_NETPROFIT_BALANCE_YOY",
+    "UNCONFIRM_INVEST_LOSS", "UNCONFIRM_INVEST_LOSS_YOY", "NETPROFIT", "NETPROFIT_YOY",
+    "PRECOMBINE_PROFIT", "PRECOMBINE_PROFIT_YOY", "CONTINUED_NETPROFIT", "CONTINUED_NETPROFIT_YOY",
+    "DISCONTINUED_NETPROFIT", "DISCONTINUED_NETPROFIT_YOY", "PARENT_NETPROFIT",
+    "PARENT_NETPROFIT_YOY", "MINORITY_INTEREST", "MINORITY_INTEREST_YOY",
+    "DEDUCT_PARENT_NETPROFIT", "DEDUCT_PARENT_NETPROFIT_YOY", "NETPROFIT_OTHER",
+    "NETPROFIT_OTHER_YOY", "NETPROFIT_BALANCE", "NETPROFIT_BALANCE_YOY", "BASIC_EPS",
+    "BASIC_EPS_YOY", "DILUTED_EPS", "DILUTED_EPS_YOY", "OTHER_COMPRE_INCOME",
+    "OTHER_COMPRE_INCOME_YOY", "PARENT_OCI", "PARENT_OCI_YOY", "MINORITY_OCI", "MINORITY_OCI_YOY",
+    "PARENT_OCI_OTHER", "PARENT_OCI_OTHER_YOY", "PARENT_OCI_BALANCE", "PARENT_OCI_BALANCE_YOY",
+    "UNABLE_OCI", "UNABLE_OCI_YOY", "CREDITRISK_FAIRVALUE_CHANGE",
+    "CREDITRISK_FAIRVALUE_CHANGE_YOY", "OTHERRIGHT_FAIRVALUE_CHANGE",
+    "OTHERRIGHT_FAIRVALUE_CHANGE_YOY", "SETUP_PROFIT_CHANGE", "SETUP_PROFIT_CHANGE_YOY",
+    "RIGHTLAW_UNABLE_OCI", "RIGHTLAW_UNABLE_OCI_YOY", "UNABLE_OCI_OTHER", "UNABLE_OCI_OTHER_YOY",
+    "UNABLE_OCI_BALANCE", "UNABLE_OCI_BALANCE_YOY", "ABLE_OCI", "ABLE_OCI_YOY",
+    "RIGHTLAW_ABLE_OCI", "RIGHTLAW_ABLE_OCI_YOY", "AFA_FAIRVALUE_CHANGE",
+    "AFA_FAIRVALUE_CHANGE_YOY", "HMI_AFA", "HMI_AFA_YOY", "CASHFLOW_HEDGE_VALID",
+    "CASHFLOW_HEDGE_VALID_YOY", "CREDITOR_FAIRVALUE_CHANGE", "CREDITOR_FAIRVALUE_CHANGE_YOY",
+    "CREDITOR_IMPAIRMENT_RESERVE", "CREDITOR_IMPAIRMENT_RESERVE_YOY", "FINANCE_OCI_AMT",
+    "FINANCE_OCI_AMT_YOY", "CONVERT_DIFF", "CONVERT_DIFF_YOY", "ABLE_OCI_OTHER",
+    "ABLE_OCI_OTHER_YOY", "ABLE_OCI_BALANCE", "ABLE_OCI_BALANCE_YOY", "OCI_OTHER", "OCI_OTHER_YOY",
+    "OCI_BALANCE", "OCI_BALANCE_YOY", "TOTAL_COMPRE_INCOME", "TOTAL_COMPRE_INCOME_YOY",
+    "PARENT_TCI", "PARENT_TCI_YOY", "MINORITY_TCI", "MINORITY_TCI_YOY", "PRECOMBINE_TCI",
+    "PRECOMBINE_TCI_YOY", "EFFECT_TCI_BALANCE", "EFFECT_TCI_BALANCE_YOY", "TCI_OTHER",
+    "TCI_OTHER_YOY", "TCI_BALANCE", "TCI_BALANCE_YOY", "ACF_END_INCOME", "ACF_END_INCOME_YOY",
+    "OPINION_TYPE",
 ]
+
+# F10 text columns (VARCHAR in DDL) — REPORT_DATE excluded: it maps to the
+# PK column `report_date DATE NOT NULL`.
+_VARCHAR_FIELDS = {
+    "SECUCODE", "SECURITY_CODE", "SECURITY_NAME_ABBR", "ORG_CODE", "ORG_TYPE",
+    "REPORT_TYPE", "REPORT_DATE_NAME", "SECURITY_TYPE_CODE", "NOTICE_DATE",
+    "UPDATE_DATE", "CURRENCY", "OPINION_TYPE",
+}
+
+_HEADER_IDX = {f: i for i, f in enumerate(_HEADER)}
+
+# Moutai FY2024 reference values (yuan units), locked by
+# test_moutai_2024_values_units (±1%).
+MOUTAI_TOTAL_OPERATE_INCOME = "174144069958.25"
+MOUTAI_BASIC_EPS = "68.64"
 
 
 def _make_row(
     secucode: str = "000001.SZ",
-    report_date: str = "2024-12-31",
+    report_date: str = "2024-12-31 00:00:00",
     parent_netprofit: str = "1000",
 ) -> list[str]:
-    """Build a full 46-col row with minimal data populated."""
-    row = [""] * len(_HEADER)
-    row[_HEADER.index("SECUCODE")] = secucode
-    row[_HEADER.index("SECURITY_CODE")] = secucode.split(".")[0]
-    row[_HEADER.index("REPORT_DATE")] = report_date
-    row[_HEADER.index("PARENT_NETPROFIT")] = parent_netprofit
+    """Build a full 203-col F10 row with every field populated.
+
+    Numeric fields get reasonable values; TOTAL_OPERATE_INCOME / BASIC_EPS
+    carry the Moutai FY2024 reference values (yuan units) so any imported
+    row exercises the full 203-column path and the unit assertions.
+    """
+    row = ["1"] * len(_HEADER)
+    row[_HEADER_IDX["SECUCODE"]] = secucode
+    row[_HEADER_IDX["SECURITY_CODE"]] = secucode.split(".")[0]
+    row[_HEADER_IDX["SECURITY_NAME_ABBR"]] = "TEST CO LTD"
+    row[_HEADER_IDX["ORG_CODE"]] = "ORG001"
+    row[_HEADER_IDX["REPORT_DATE"]] = report_date
+    row[_HEADER_IDX["REPORT_DATE_NAME"]] = "2024 Annual"
+    row[_HEADER_IDX["NOTICE_DATE"]] = "2025-04-30 00:00:00"
+    row[_HEADER_IDX["UPDATE_DATE"]] = "2025-04-30 00:00:00"
+    row[_HEADER_IDX["CURRENCY"]] = "CNY"
+    row[_HEADER_IDX["OPINION_TYPE"]] = "标准无保留意见"
+    row[_HEADER_IDX["PARENT_NETPROFIT"]] = parent_netprofit
+    row[_HEADER_IDX["TOTAL_OPERATE_INCOME"]] = MOUTAI_TOTAL_OPERATE_INCOME
+    row[_HEADER_IDX["BASIC_EPS"]] = MOUTAI_BASIC_EPS
     return row
 
 
@@ -96,6 +169,24 @@ class TestImportToDolt:
             writer.writerow(_HEADER)
             writer.writerows(rows)
 
+    def test_ddl_covers_all_f10_fields(self) -> None:
+        """DDL/COLS must cover every F10 GINCOME field except REPORT_DATE (→ PK)."""
+        from fetch_income import COLS, DDL  # noqa: E402
+
+        cols = [c.strip() for c in COLS.split(",")]
+        assert len(cols) == len(_HEADER) - 1 == 202
+        assert cols == [f for f in _HEADER if f != "REPORT_DATE"]
+
+        assert "PRIMARY KEY (symbol, report_date)" in DDL
+        for field in cols:
+            line = next(
+                (ln for ln in DDL.splitlines() if ln.strip().startswith(field + " ")),
+                None,
+            )
+            assert line is not None, f"{field} missing from DDL"
+            expect = "VARCHAR(100)" if field in _VARCHAR_FIELDS else "DOUBLE"
+            assert expect in line, f"{field}: expected {expect}, got {line.strip()}"
+
     def test_first_run_creates_table_and_imports(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
@@ -115,10 +206,32 @@ class TestImportToDolt:
         ).strip()
         assert "1" in row and "2024-12-31" in row
 
-    def test_incremental_merge_appends_preserving_history(
+    def test_moutai_2024_values_units(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """CSV B (same row + new symbol + older period) appends to existing history."""
+        """Moutai FY2024 units: revenue ≈ 174.14bn CNY, EPS ≈ 68.64 (±1%)."""
+        from fetch_income import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        dolt_sql_csv("INSERT INTO stock_basic VALUES ('SH600519')")
+        csv_path = tmp_path / "inc.csv"
+        self._write_csv(csv_path, [_make_row(secucode="600519.SH")])
+
+        assert import_to_dolt(csv_path) == 1
+        out = dolt_sql_csv(
+            "SELECT TOTAL_OPERATE_INCOME, BASIC_EPS FROM fin_income "
+            "WHERE symbol='SH600519' AND report_date='2024-12-31'"
+        )
+        lines = out.strip().split("\n")
+        assert lines[0].split(",") == ["TOTAL_OPERATE_INCOME", "BASIC_EPS"]
+        total, eps = lines[1].split(",")
+        assert float(total) == pytest.approx(174144069958.25, rel=0.01)
+        assert float(eps) == pytest.approx(68.64, rel=0.01)
+
+    def test_refetch_full_csv_rebuilds_table(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """A full-history CSV refetch rebuilds the table; every row present."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -131,7 +244,7 @@ class TestImportToDolt:
             [
                 _make_row(),
                 _make_row(secucode="000002.SZ"),
-                _make_row(report_date="2023-12-31"),
+                _make_row(report_date="2023-12-31 00:00:00"),
             ],
         )
         rows = import_to_dolt(csv_path)
@@ -153,34 +266,38 @@ class TestImportToDolt:
         ).strip()
         assert "3" in row and "2024-12-31" in row
 
-    def test_incremental_window_preserves_older_history(
+    def test_partial_window_replaces_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Incremental-window CSV B must not erase periods older than the window."""
+        """A partial-window CSV replaces the whole table (rebuild semantics)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "inc.csv"
-        self._write_csv(csv_path, [_make_row(), _make_row(report_date="2023-12-31")])
+        self._write_csv(csv_path, [_make_row(), _make_row(report_date="2023-12-31 00:00:00")])
         assert import_to_dolt(csv_path) == 2
 
         self._write_csv(csv_path, [_make_row(), _make_row(secucode="000002.SZ")])
         rows = import_to_dolt(csv_path)
-        assert rows == 3
-        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "3"
+        assert rows == 2
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "2"
+        assert self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM fin_income WHERE symbol='SZ000002'"
+        )) == "1"
+        # periods outside the new CSV are dropped (replace, not append)
         assert self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM fin_income "
             "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
-        )) == "1"
+        )) == "0"
         row = dolt_sql_csv(
             "SELECT row_count FROM data_updates WHERE table_name='fin_income'"
         ).strip()
-        assert "3" in row
+        assert "2" in row
 
-    def test_restated_overlap_value_ignored_on_merge(
+    def test_restated_value_wins_on_replace(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """A restated value for an existing (symbol, report_date) is ignored on merge."""
+        """A restated value in the new CSV replaces the previously stored one."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -198,12 +315,12 @@ class TestImportToDolt:
         assert self._last(dolt_sql_csv(
             "SELECT PARENT_NETPROFIT FROM fin_income "
             "WHERE symbol='SZ000001' AND report_date='2024-12-31'"
-        )) == "1000"
+        )) == "200"
 
     def test_same_report_refetch_idempotent(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Re-importing the same CSV twice yields a single row (PK dedup)."""
+        """Re-importing the same single-row CSV twice yields a single row."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -215,30 +332,30 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "1"
 
-    def test_merge_watermark_full_total_and_max_date(
+    def test_replace_watermark_full_total_and_max_date(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Watermark row_count is the full-table count, not just this CSV's rows."""
+        """Watermark row_count is the final table count and max report date."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "inc.csv"
-        self._write_csv(csv_path, [_make_row(report_date="2023-12-31")])
+        self._write_csv(csv_path, [_make_row(report_date="2023-12-31 00:00:00")])
         assert import_to_dolt(csv_path) == 1
 
         self._write_csv(csv_path, [_make_row()])
         rows = import_to_dolt(csv_path)
-        assert rows == 2
+        assert rows == 1
         row = dolt_sql_csv(
             "SELECT row_count, last_report_date FROM data_updates "
             "WHERE table_name='fin_income'"
         ).strip()
-        assert "2" in row and "2024-12-31" in row
+        assert "1" in row and "2024-12-31" in row
 
-    def test_first_run_insert_failure_leaves_empty_table(
+    def test_first_run_insert_failure_leaves_no_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """First-run INSERT failure leaves the table present but empty (merge semantics)."""
+        """First-run INSERT failure drops the fresh table (nothing to roll back to)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -248,7 +365,10 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 0
-        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "0"
+        assert self._last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_name='fin_income'"
+        )) == "0"
         for t in ("_tmp_inc", "_tmp_inc_old"):
             cnt = self._last(dolt_sql_csv(
                 "SELECT COUNT(*) FROM information_schema.tables "
@@ -262,7 +382,7 @@ class TestImportToDolt:
     def test_rerun_insert_failure_preserves_prior_rows(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Rerun with failing INSERT keeps prior rows and the watermark (merge semantics)."""
+        """Rerun with failing INSERT rolls back to the previous table and watermark."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -329,8 +449,8 @@ class TestRun:
         with patch("fetch_income.AsyncSession", return_value=stub):
             result = await run(years=[2024], periods="FY")
 
-        assert result.name == "RPT_DMSK_FN_INCOME.csv"
-        csv_path = tmp_path / "RPT_DMSK_FN_INCOME.csv"
+        assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
+        csv_path = tmp_path / "RPT_F10_FINANCE_GINCOME.csv"
         assert csv_path.exists()
 
     async def test_run_default_years(
@@ -354,7 +474,7 @@ class TestRun:
         with patch("fetch_income.AsyncSession", return_value=stub):
             result = await run(periods="FY")
 
-        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
 
     async def test_run_incremental_since_short_circuits(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -368,7 +488,7 @@ class TestRun:
         monkeypatch.setattr("fetch_income.last_report_date", lambda _tbl: "2099-12-31")
 
         result = await run(years=[2024], periods="FY")
-        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
 
     async def test_run_fetch_exception_continues(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -400,7 +520,7 @@ class TestRun:
         with patch("fetch_income.AsyncSession", return_value=stub):
             result = await run(years=[2024], periods="Q1,Q2", page_size=100)
 
-        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
 
     async def test_run_incremental_overwrites_stale_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -414,7 +534,7 @@ class TestRun:
         monkeypatch.setattr(asyncio, "sleep", mock_sleep)
         monkeypatch.setattr("fetch_income.last_report_date", lambda _tbl: "2026-06-30")
 
-        stale = tmp_path / "RPT_DMSK_FN_INCOME.csv"
+        stale = tmp_path / "RPT_F10_FINANCE_GINCOME.csv"
         stale.write_text("code,REPORT_DATE\n000001,2024-12-31\n", encoding="utf-8-sig")
 
         stub = make_stub_session(
@@ -430,7 +550,7 @@ class TestRun:
         with patch("fetch_income.AsyncSession", return_value=stub):
             result = await run(years=[2026], periods="Q2", page_size=100)
 
-        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
         with open(stale, newline="", encoding="utf-8-sig") as f:
             rows = list(csv.DictReader(f))
         assert rows == [{"code": "000001", "REPORT_DATE": "2026-06-30"}]
@@ -470,10 +590,9 @@ class TestRun:
         with patch("fetch_income.AsyncSession", return_value=stub):
             result = await run(years=[2026], periods="Q1,Q2", page_size=100)
 
-        assert result.name == "RPT_DMSK_FN_INCOME.csv"
+        assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
         assert len(calls) == 1
         assert "(REPORT_DATE='2026-06-30')" in calls[0]
-        with open(tmp_path / "RPT_DMSK_FN_INCOME.csv", newline="", encoding="utf-8-sig") as f:
+        with open(tmp_path / "RPT_F10_FINANCE_GINCOME.csv", newline="", encoding="utf-8-sig") as f:
             rows = list(csv.DictReader(f))
         assert rows == [{"code": "000001", "REPORT_DATE": "2026-06-30"}]
-
