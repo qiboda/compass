@@ -1,0 +1,8 @@
+task-15: verification suite - ALL 5 ASSERTIONS PASSED
+① 7 skills + 2 agents + script present: ALL present
+② anchored grep no residual: 0 hits (2 wording fixes made: process.md L206 kdco/worktree->kdco worktree,
+   workflow-skills.md L14 反思/worktree->反思与 worktree 管理; reflections*.md excluded per plan)
+③ open-worktrees behavior test (global path): ALL TESTS PASSED
+④ new-project smoke (mktemp + git init + minimal AGENTS.md + opencode run):
+   discovered ALL 7 /skwy- commands incl. skwy-workflow, skwy-adversarial-test, skwy-requirement-test
+⑤ global-files.sha256: 10 lines (7 SKILL + 1 script + 2 agent) recorded

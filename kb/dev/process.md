@@ -203,7 +203,7 @@ xfce4-terminal 因单实例守护进程（进程名即 xfce4-terminal）不尝�
 且 worktree 重新同步后**，副本才是新版本；旧副本上执行 `--close` 仍会报
 `not a worktree`。worktree 关闭本身使用主仓库脚本即可，不受此限。
 
-**为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco/worktree via OCX），
+**为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco worktree 插件 via OCX），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。
 手动 worktrees + `/skwy-worktree` skill 提供了完全的控制，避免了这些问题。
 
