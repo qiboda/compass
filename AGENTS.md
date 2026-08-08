@@ -376,6 +376,27 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/github/pr-review.md` | GitHub bot 角色 — /review 代码审查（工作流按路径加载，勿改） |
 | `kb/github/ci-fix.md` | GitHub bot 角色 — CI 失败诊断（工作流按路径加载，勿改） |
 
+### 变更类型 → kb/ 文件映射表
+
+文档同步（`skwy-workflow` 技能内嵌「文档同步」章节，门禁 5b 步）时，按此表
+确定需更新的 kb/ 文件——这是本项目的「项目自身定义的映射表」引用点。
+
+| 变更类型 | 主要 kb/ 文件 | 次要 kb/ 文件 |
+|---|---|---|
+| 新增数据源、API 调用、schema 变更 | `kb/design/data-providers.md` | `kb/design/architecture.md`（如涉及管线变更） |
+| 线程、管线、库变更 | `kb/design/architecture.md` | — |
+| 符号格式、timeframe 映射 | `kb/design/symbols.md` | — |
+| 测试框架、测试模式 | `kb/dev/testing.md` | — |
+| 工作流、hook、约定 | `kb/dev/process.md` | `AGENTS.md`（如项目级别） |
+| 新增 CLI 命令或 flag 变更 | `kb/user/cli.md` | `kb/dev/process.md`（调试章节） |
+| GUI 布局、控件变更 | `kb/user/gui.md` | `kb/design/ui.md`（布局/视觉/交互设计变更）+ `kb/design/architecture.md`（如涉及线程变更） |
+| 配置项新增/变更 | `kb/user/config.md` | — |
+| 重大功能（用户侧） | `kb/user/index.md` | 相关 design + GUI/CLI 文件 |
+| 项目级别约定 | `AGENTS.md` | `kb/dev/process.md` |
+| OpenCode skill 或 agent 变更 | `AGENTS.md` | `kb/dev/process.md`（OpenCode 工作流章节） |
+| 标签约定 | `kb/github/labels.md` | — |
+| 评论约定 | `kb/github/comments.md` | — |
+
 ## Setup
 
 - **Rust edition 2024** — 需要 Rust ≥1.85。当前：1.96。

@@ -198,10 +198,9 @@ xfce4-terminal 因单实例守护进程（进程名即 xfce4-terminal）不尝�
 
 **`--close` 从 worktree 内部执行（ref #205）**：脚本通过 `git rev-parse --git-common-dir`
 定位主仓库根（`resolve_project_root()`），不依赖 `$0` 相对路径——从 worktree 内
-以 `bash scripts/open-worktrees.sh --close <name>` 调用也能正确解析主仓库。
-注意：worktree 内的 `scripts/` 是独立 checkout 副本，**修复脚本必须已合并进 master
-且 worktree 重新同步后**，副本才是新版本；旧副本上执行 `--close` 仍会报
-`not a worktree`。worktree 关闭本身使用主仓库脚本即可，不受此限。
+以 `bash ~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh --close <name>`
+调用也能正确解析主仓库。脚本已随 skwy-worktree 技能放全局（单一来源，无副本同步
+问题——全局副本即最新版，无需合并 master/重新同步）。
 
 **为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco worktree 插件 via OCX），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。

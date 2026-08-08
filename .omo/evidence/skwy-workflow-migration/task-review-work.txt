@@ -1,0 +1,9 @@
+review-work (5-agent) results:
+1. Goal verification: PASS HIGH (10/10 constraints, 1 WARN process.md ref #205 stale script ref -> FIXED)
+2. QA execution: PASS HIGH (14 scenarios, 7 /skwy- commands discovered in fresh project)
+3. Code quality: FAIL -> 2 MAJOR fixed:
+   - MAJOR 1: process.md L200-204 ref #205 stale scripts/open-worktrees.sh ref -> global path + rewritten
+   - MAJOR 2: 变更->kb mapping table lost when docs skill deleted -> restored to AGENTS.md
+     "变更类型 -> kb/ 文件映射表" section (13 rows, project-self-defined reference point)
+4. Security: PASS (3 non-blocking: agent edit perm breadth MEDIUM, bash glob semantics LOW, log perms LOW)
+5. Context mining: PASS (no related issues, no global config residue, no stale skill dirs)
