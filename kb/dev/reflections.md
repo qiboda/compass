@@ -423,3 +423,26 @@
 
 ### Trends (last 10)
 - **用户纠正持续指向"原则/建模"而非"值/细节"**（ref #200 "去掉模型约束" → 本次 "认知独立 vs 权限隔离"）：AI 倾向工具化最小修正（权限白名单/改引用），用户倾向原则性建模（认知主体/配置归属）——设计新机制时应先问"这个机制在系统里的正确抽象是什么"，再谈具体参数
+
+## 2026-08-08 — ref #201 SEPA 单位口径修复：import 侧换算 + 指数剔除
+
+**What was done**: 修复 SEPA 评分单位 bug——`import` 侧 SELECT 对 `volume × 100`（手→股）、`amount × 1000`（千元→元），并无条件剔除 6 个指数代码（SH000300/SH000852/SH000905/SH000906/SH000985/SZ399300）于主查询与 symbols.txt 枚举；重跑全量 import + `sepa score --top 50` 冒烟验证选满 50 只、无指数、茅台通过过滤。
+
+**User corrections**:
+1. "rebase，然后review" —— 用户指定**顺序：先 rebase 再 review**。实际执行时 review（5-agent review-work）在 rebase **前**已完成，rebase 后仅重跑测试+clippy 验证、未重新触发 review-work。rebase 是干净 fast-forward 无冲突、review 结论对 rebase 后内容仍成立，但执行顺序与用户指令不完全一致——应在 rebase 后显式重跑 review 或向用户说明 review 已在前一 base 上完成且结论不变。
+
+**What went wrong**:
+- **冒烟时 matched=0（真实数据坑）**：重跑 `import` 生成前缀格式 `stock_daily.parquet` 后，`sepa score` 匹配 0 只——`stock_basic.parquet` 仍是 8-01 的旧裸码格式（`000001`），与前缀 daily 无法 join。修复：重跑 `import-compass --table stock_basic` 刷新前缀格式，matched 恢复 4703。此问题属于 handoff 契约"顺带解决旧 parquet 裸码 symbol 问题"的直接体现，但当时只计划重跑 import、未预见 stock_basic 也需刷新——真实数据冒烟（ref #154 教训）正是暴露此依赖链的唯一途径。
+- **review 顺序偏差**（见 User corrections 1）：rebase 后未重跑 review-work，仅以测试+clippy 代替。
+
+**Lessons learned**:
+1. 用户给出"先 X 再 Y"的顺序指令时，严格按序执行：先 rebase 到最新 base，再在 rebase 后的内容上跑 review-work；若 review 已先行完成，必须在 rebase 后显式重跑（或向用户声明"review 在前一 base 上已通过、rebase 无冲突、结论不变"并获认可）。
+2. 数据管线变更的冒烟必须是**全链路**（import → 下游消费方）：单位/格式修正会影响所有关联 parquet（stock_daily 与 stock_basic 的 symbol 格式必须一致才能 join）——刷新主表时盘点所有依赖它的副表，一并刷新。
+
+**Process improvements**: 
+- 已落实（docs）：`kb/dev/toolchain.md` 指数混源卡片补注 #201 已落地 import 侧剔除（随本 PR 提交）。
+- 建议（可检测）：数据管线变更的 plan 中，冒烟步骤显式列出"全链路验证（含所有依赖副表格式一致性）"——proposed（下次 plan 模板层面落实）。
+
+### Trends (last 10)
+- **用户纠正指向"顺序/流程语义"**（ref #201 "rebase，然后review"）：AI 倾向于"先做重要的事（review）再做形式步骤（rebase）"，用户关注指令字面顺序——复合指令中的顺序词（先/然后）是硬约束，不是建议；本条与 ref #190（写库后立即 commit）同属"执行顺序纪律"类别
+- **真实数据冒烟暴露格式不一致**（ref #154 → ref #201 matched=0）：跨文件依赖（daily 前缀 ↔ basic 前缀）在 fixture 测试中不可见，只有全链路真实冒烟能暴露——数据管线变更的冒烟清单应从"单命令验证"扩展为"消费链末端验证"
