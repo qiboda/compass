@@ -1,0 +1,101 @@
+=== task-2-financial-f10: RED phase ===
+=== 2026-08-08T14:08:29+08:00 ===
+
+## RED: pytest collectors/tests/test_income.py -q (tests updated to F10 203-field contract, implementation still RPT_DMSK_FN_INCOME/46-field/merge=True)
+
+Done: 0 records → /tmp/pytest-of-skwy/pytest-21/test_run_default_years0/RPT_DMSK_FN_INCOME.csv
+______________ TestRun.test_run_incremental_since_short_circuits _______________
+/data/codes/compass/.worktrees/financial-f10/collectors/tests/test_income.py:490: in test_run_incremental_since_short_circuits
+    assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
+E   AssertionError: assert 'RPT_DMSK_FN_INCOME.csv' == 'RPT_F10_FINANCE_GINCOME.csv'
+E     
+E     - RPT_F10_FINANCE_GINCOME.csv
+E     + RPT_DMSK_FN_INCOME.csv
+----------------------------- Captured stderr call -----------------------------
+Last report date in Dolt: 2099-12-31, fetching only newer periods
+No new report periods to fetch.
+__________________ TestRun.test_run_fetch_exception_continues __________________
+/data/codes/compass/.worktrees/financial-f10/collectors/tests/test_income.py:522: in test_run_fetch_exception_continues
+    assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
+E   AssertionError: assert 'RPT_DMSK_FN_INCOME.csv' == 'RPT_F10_FINANCE_GINCOME.csv'
+E     
+E     - RPT_F10_FINANCE_GINCOME.csv
+E     + RPT_DMSK_FN_INCOME.csv
+----------------------------- Captured stderr call -----------------------------
+Report: RPT_DMSK_FN_INCOME
+Periods: 2 (Q1,Q2, 2024-03-31..2024-06-30)
+Output: /tmp/pytest-of-skwy/pytest-21/test_run_fetch_exception_conti0/RPT_DMSK_FN_INCOME.csv
+
+[1/2] 2024-03-31 ...     retry 1/4 in 4s: simulated fetch error
+    retry 2/4 in 3s: simulated fetch error
+    retry 3/4 in 6s: simulated fetch error
+FAILED: simulated fetch error
+[2/2] 2024-06-30 ... empty
+
+Done: 0 records → /tmp/pytest-of-skwy/pytest-21/test_run_fetch_exception_conti0/RPT_DMSK_FN_INCOME.csv
+______________ TestRun.test_run_incremental_overwrites_stale_csv _______________
+/data/codes/compass/.worktrees/financial-f10/collectors/tests/test_income.py:552: in test_run_incremental_overwrites_stale_csv
+    assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
+E   AssertionError: assert 'RPT_DMSK_FN_INCOME.csv' == 'RPT_F10_FINANCE_GINCOME.csv'
+E     
+E     - RPT_F10_FINANCE_GINCOME.csv
+E     + RPT_DMSK_FN_INCOME.csv
+----------------------------- Captured stderr call -----------------------------
+Last report date in Dolt: 2026-06-30, fetching only newer periods
+Report: RPT_DMSK_FN_INCOME
+Periods: 1 (Q2, 2026-06-30..2026-06-30)
+Output: /tmp/pytest-of-skwy/pytest-21/test_run_incremental_overwrite0/RPT_DMSK_FN_INCOME.csv
+
+[1/1] 2026-06-30 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-21/test_run_incremental_overwrite0/RPT_DMSK_FN_INCOME.csv
+___________ TestRun.test_run_incremental_window_starts_at_watermark ____________
+/data/codes/compass/.worktrees/financial-f10/collectors/tests/test_income.py:592: in test_run_incremental_window_starts_at_watermark
+    assert result.name == "RPT_F10_FINANCE_GINCOME.csv"
+E   AssertionError: assert 'RPT_DMSK_FN_INCOME.csv' == 'RPT_F10_FINANCE_GINCOME.csv'
+E     
+E     - RPT_F10_FINANCE_GINCOME.csv
+E     + RPT_DMSK_FN_INCOME.csv
+----------------------------- Captured stderr call -----------------------------
+Last report date in Dolt: 2026-06-30, fetching only newer periods
+Report: RPT_DMSK_FN_INCOME
+Periods: 1 (Q1,Q2, 2026-06-30..2026-06-30)
+Output: /tmp/pytest-of-skwy/pytest-21/test_run_incremental_window_st0/RPT_DMSK_FN_INCOME.csv
+
+[1/1] 2026-06-30 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-21/test_run_incremental_window_st0/RPT_DMSK_FN_INCOME.csv
+=========================== short test summary info ============================
+FAILED tests/test_income.py::TestImportToDolt::test_ddl_covers_all_f10_fields
+FAILED tests/test_income.py::TestImportToDolt::test_first_run_creates_table_and_imports
+FAILED tests/test_income.py::TestImportToDolt::test_moutai_2024_values_units
+FAILED tests/test_income.py::TestImportToDolt::test_refetch_full_csv_rebuilds_table
+FAILED tests/test_income.py::TestImportToDolt::test_partial_window_replaces_table
+FAILED tests/test_income.py::TestImportToDolt::test_restated_value_wins_on_replace
+FAILED tests/test_income.py::TestImportToDolt::test_same_report_refetch_idempotent
+FAILED tests/test_income.py::TestImportToDolt::test_replace_watermark_full_total_and_max_date
+FAILED tests/test_income.py::TestImportToDolt::test_first_run_insert_failure_leaves_no_table
+FAILED tests/test_income.py::TestImportToDolt::test_rerun_insert_failure_preserves_prior_rows
+FAILED tests/test_income.py::TestRun::test_run_writes_csv_with_data - Asserti...
+FAILED tests/test_income.py::TestRun::test_run_default_years - AssertionError...
+FAILED tests/test_income.py::TestRun::test_run_incremental_since_short_circuits
+FAILED tests/test_income.py::TestRun::test_run_fetch_exception_continues - As...
+FAILED tests/test_income.py::TestRun::test_run_incremental_overwrites_stale_csv
+FAILED tests/test_income.py::TestRun::test_run_incremental_window_starts_at_watermark
+======================== 16 failed, 1 passed in 24.40s =========================
+
+=== GREEN phase ===
+=== 2026-08-08T14:10:07+08:00 ===
+
+## GREEN: uv run pytest tests/test_income.py -q after fetch_income.py switched to RPT_F10_FINANCE_GINCOME (203 fields, merge=False)
+
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/financial-f10/collectors
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 17 items
+
+tests/test_income.py .................                                   [100%]
+
+============================= 17 passed in 17.90s ==============================

@@ -1,8 +1,10 @@
 """Integration tests for import_to_dolt() — temp Dolt + COMPASS_DATA_DIR.
 
-Covers the merge-import semantics (ref #160): first run vs rerun, INSERT
-failure safety (the table is left empty on first-run failure — CREATE TABLE
-IF NOT EXISTS runs before the INSERT, so the table exists but holds no rows).
+Covers the replace-import semantics (full rebuild, ref #202): first run vs
+rerun, INSERT failure safety. With merge=False (replace), a first-run INSERT
+failure drops the freshly created table (no old table to roll back to), so
+the target table does not exist afterwards; a rerun failure rolls back to
+the previous table contents.
 """
 
 import csv
@@ -15,72 +17,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fetch_balance_sheet import import_to_dolt  # noqa: E402
+from fetch_balance_sheet import COLS, import_to_dolt  # noqa: E402
 
-# Full 57-col header (API field names, ordered as in the DDL).
-_HEADER = [
-    "SECUCODE",
-    "SECURITY_CODE",
-    "INDUSTRY_CODE",
-    "ORG_CODE",
-    "SECURITY_NAME_ABBR",
-    "INDUSTRY_NAME",
-    "MARKET",
-    "SECURITY_TYPE_CODE",
-    "TRADE_MARKET_CODE",
-    "DATE_TYPE_CODE",
-    "REPORT_TYPE_CODE",
-    "DATA_STATE",
-    "NOTICE_DATE",
-    "REPORT_DATE",
-    "TOTAL_ASSETS",
-    "FIXED_ASSET",
-    "MONETARYFUNDS",
-    "MONETARYFUNDS_RATIO",
-    "ACCOUNTS_RECE",
-    "ACCOUNTS_RECE_RATIO",
-    "INVENTORY",
-    "INVENTORY_RATIO",
-    "TOTAL_LIABILITIES",
-    "ACCOUNTS_PAYABLE",
-    "ACCOUNTS_PAYABLE_RATIO",
-    "ADVANCE_RECEIVABLES",
-    "ADVANCE_RECEIVABLES_RATIO",
-    "TOTAL_EQUITY",
-    "TOTAL_EQUITY_RATIO",
-    "TOTAL_ASSETS_RATIO",
-    "TOTAL_LIAB_RATIO",
-    "CURRENT_RATIO",
-    "DEBT_ASSET_RATIO",
-    "CASH_DEPOSIT_PBC",
-    "CDP_RATIO",
-    "LOAN_ADVANCE",
-    "LOAN_ADVANCE_RATIO",
-    "AVAILABLE_SALE_FINASSET",
-    "ASF_RATIO",
-    "LOAN_PBC",
-    "LOAN_PBC_RATIO",
-    "ACCEPT_DEPOSIT",
-    "ACCEPT_DEPOSIT_RATIO",
-    "SELL_REPO_FINASSET",
-    "SRF_RATIO",
-    "SETTLE_EXCESS_RESERVE",
-    "SER_RATIO",
-    "BORROW_FUND",
-    "BORROW_FUND_RATIO",
-    "AGENT_TRADE_SECURITY",
-    "ATS_RATIO",
-    "PREMIUM_RECE",
-    "PREMIUM_RECE_RATIO",
-    "SHORT_LOAN",
-    "SHORT_LOAN_RATIO",
-    "ADVANCE_PREMIUM",
-    "ADVANCE_PREMIUM_RATIO",
-]
+# Full 319-col F10 header (API field names): COLS (318 data fields, JSON
+# order) plus REPORT_DATE, which is mapped to the report_date PK column.
+# Derived from the implementation so it tracks schema changes automatically.
+_HEADER = [c.strip() for c in COLS.split(",")] + ["REPORT_DATE"]
 
 
 def _make_row(secucode: str = "000001.SZ") -> list[str]:
-    """Build a full 57-col row; only identity + TOTAL_ASSETS populated."""
+    """Build a full 319-col F10 row; only identity + TOTAL_ASSETS populated."""
     row = [""] * len(_HEADER)
     row[_HEADER.index("SECUCODE")] = secucode
     row[_HEADER.index("SECURITY_CODE")] = secucode.split(".")[0]
@@ -165,10 +111,10 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "1"
 
-    def test_first_run_insert_failure_leaves_empty_table(self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path) -> None:
-        """Merge semantics: first-run INSERT failure leaves the table present
-        but empty (CREATE TABLE IF NOT EXISTS runs before the INSERT, and the
-        failed INSERT IGNORE touches nothing), with no temp-table residue.
+    def test_first_run_insert_failure_drops_table(self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path) -> None:
+        """Replace semantics: first-run INSERT failure drops the freshly
+        created table — there is no old table to roll back to, so the target
+        table does not exist afterwards, with no temp-table residue.
         """
         dolt_dir, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "bs.csv"
@@ -178,10 +124,11 @@ class TestImportToDolt:
         rows = import_to_dolt(csv_path)
 
         assert rows == 0
+        # replace: fresh table dropped on failure; no prior table to restore
         cnt = self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM fin_balance_sheet"
         ))
-        assert cnt == "0"
+        assert cnt == ""
         cnt = self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM information_schema.tables "
             "WHERE table_name='_tmp_bs_old'"

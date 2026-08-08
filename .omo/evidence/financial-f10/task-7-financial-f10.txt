@@ -1,0 +1,161 @@
+=== task-7: sync import_compass.rs test fixtures to F10 SELECT * schema (issue #202) ===
+=== date: 2026-08-08T06:10:28Z ===
+
+########## 1. cargo test -p compass-data ##########
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running unittests src/lib.rs (target/debug/deps/compass_data-cc7a8180bf350cca)
+
+running 59 tests
+test import_compass::tests::compass_table_from_str_all_valid_variants ... ok
+test import_compass::tests::compass_table_from_str_invalid_variant ... ok
+test import_compass::tests::compass_table_from_str_empty_string ... ok
+test import_dolt::tests::filter_symbols_handles_spaces_in_filter ... ok
+test import_dolt::tests::filter_symbols_matches_multiple_comma_separated ... ok
+test import_dolt::tests::filter_symbols_matches_sh_code ... ok
+test import_dolt::tests::filter_symbols_matches_sz_code ... ok
+test import_dolt::tests::filter_symbols_returns_empty_on_empty_input ... ok
+test import_dolt::tests::filter_symbols_returns_empty_on_no_match ... ok
+test import_dolt::tests::normalize_symbol_filter_case_insensitive ... ok
+test import_dolt::tests::normalize_symbol_filter_dot_to_native ... ok
+test import_dolt::tests::normalize_symbol_filter_keeps_dolt_native ... ok
+test import_dolt::tests::normalize_symbol_filter_multiple_entries ... ok
+test import_dolt::tests::normalize_symbol_filter_rejects_bare_code ... ok
+test import_dolt::tests::normalize_symbol_filter_requires_exactly_6_digit_code ... ok
+test import_dolt::tests::normalize_symbol_filter_skips_empty_entries ... ok
+test baostock::tests::fetch_adj_factors_wrapper_propagates_script_error ... ok
+test baostock::tests::with_script_missing_script_file ... ok
+test baostock::tests::with_script_empty_array ... ok
+test baostock::tests::with_script_invalid_json ... ok
+test baostock::tests::with_script_empty_stdout ... ok
+test baostock::tests::with_script_non_zero_exit_plain_stderr ... ok
+test baostock::tests::with_script_non_zero_exit_with_json_error ... ok
+test baostock::tests::with_script_valid_json_array ... ok
+test import_dolt::tests::run_dolt_sql_csv_returns_error_for_nonexistent_dir ... ok
+test import_compass::tests::capital_table_skip_tiny_data ... ok
+test import_compass::tests::financial_table_skip_tiny_data ... ok
+test import_compass::tests::fin_indicators_skips_tiny_data ... ok
+test import_dolt::tests::run_rejects_bare_symbol_filter ... ok
+test import_dolt::tests::run_dolt_sql_parquet_returns_small_file_for_nonexistent_symbol ... ok
+test import_compass::tests::fin_indicators_exports_parquet ... ok
+test import_dolt::tests::run_rejects_invalid_since_non_digit ... ok
+test import_dolt::tests::run_rejects_invalid_since_not_8_digits ... ok
+test import_compass::tests::run_fin_balance_sheet_exports_parquet ... ok
+test import_dolt::tests::run_dolt_sql_csv_success_returns_data ... ok
+test import_compass::tests::run_dispatches_fin_indicators_arm ... ok
+test import_compass::tests::run_fin_cash_flow_exports_parquet ... ok
+test import_compass::tests::run_fin_income_exports_parquet ... ok
+test import_compass::tests::stock_basic_exports_parquet ... ok
+test import_dolt::tests::run_completes_when_legacy_stock_daily_dir_exists ... ok
+test import_compass::tests::parquet_data_matches_dolt_source ... ok
+test import_dolt::tests::run_preserves_colliding_sh_sz_symbols ... ok
+test import_dolt::tests::run_rejects_invalid_end_date ... ok
+test import_dolt::tests::run_filters_by_end_date ... ok
+test import_dolt::tests::run_filters_by_start_date ... ok
+test import_dolt::tests::run_filters_by_symbols_dot_form_normalized ... ok
+test import_dolt::tests::run_valid_since_with_8_digits_exports_data ... ok
+test import_dolt::tests::run_respects_limit ... ok
+test import_compass::tests::fin_indicators_merge_failure_falls_back_to_full_export ... ok
+test import_dolt::tests::run_filters_by_symbols ... ok
+test import_dolt::tests::run_filters_by_date_range ... ok
+test import_dolt::tests::run_rejects_invalid_start_date ... ok
+test import_compass::tests::fin_indicators_since_merge_with_existing_parquet ... ok
+test import_compass::tests::concept_member_full_overwrite_propagates_deletion ... ok
+test import_compass::tests::financial_table_merge_failure_falls_back_to_full_export ... ok
+test import_compass::tests::financial_table_since_merge_preserves_old_rows ... ok
+test import_compass::tests::capital_table_since_merge_new_value_wins ... ok
+test import_compass::tests::dragon_list_merge_preserves_multiple_seat_types ... ok
+test import_compass::tests::run_sepa_capital_tables_export_parquet ... ok
+
+test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.39s
+
+     Running unittests src/main.rs (target/debug/deps/compass_data-dc830cd9891de3bc)
+
+running 68 tests
+test backtest::tests::cli_csv_matches_equity_csv ... ok
+test export::tests::run_export_unknown_format_warns ... ok
+test sepa::tests::stage_csv_returns_distinct_paths_per_call ... ok
+test sepa::tests::format_top_table_has_header_and_ranked_rows ... ok
+test sepa::tests::thermometer_row_extracts_all_five_components ... ok
+test tests::cli_backup_with_keep_zip ... ok
+test tests::cli_backup_subcommand_parses ... ok
+test tests::cli_export_default_format_is_duckdb ... ok
+test tests::cli_import_compass_with_table ... ok
+test tests::cli_export_with_format_and_output ... ok
+test tests::cli_import_compass_with_overwrite ... ok
+test tests::cli_import_default_limit_is_zero ... ok
+test tests::cli_sepa_backtest_defaults ... ok
+test tests::cli_import_with_limit_and_since ... ok
+test tests::cli_invalid_subcommand_is_err ... ok
+test tests::cli_sepa_backtest_rejects_invalid_date ... ok
+test tests::cli_sepa_score_default_top_is_50 ... ok
+test tests::cli_sepa_backtest_parses_all_options ... ok
+test tests::cli_sepa_score_parses_top_and_date ... ok
+test tests::cli_sepa_temperature_parses ... ok
+test tests::import_filter_flags_help_warns_overwrite ... ok
+test baostock::tests::with_script_missing_script_file ... ok
+test sepa::tests::stage_csv_propagates_create_error ... ok
+test baostock::tests::with_script_empty_array ... ok
+test baostock::tests::with_script_non_zero_exit_plain_stderr ... ok
+test baostock::tests::fetch_adj_factors_wrapper_propagates_script_error ... ok
+test baostock::tests::with_script_non_zero_exit_with_json_error ... ok
+test baostock::tests::with_script_empty_stdout ... ok
+test export::tests::run_export_duckdb_fails_silently_when_list_symbols_errors ... ok
+test sepa::tests::stage_csv_retries_when_candidate_exists ... ok
+test baostock::tests::with_script_invalid_json ... ok
+test tests::run_import_errors_on_missing_data ... ok
+test baostock::tests::with_script_valid_json_array ... ok
+test export::tests::export_all_tables_returns_error_when_dir_is_a_file ... ok
+test tests::run_import_compass_errors_on_missing_data ... ok
+test export::tests::run_export_duckdb_fails_silently_when_output_dir_missing ... ok
+test export::tests::export_all_tables_warns_when_copy_target_is_directory ... ok
+test export::tests::export_all_tables_creates_directory_if_missing ... ok
+test export::tests::export_all_tables_creates_parquet_files ... ok
+test export::tests::run_export_fetch_bars_error_continues_when_file_missing ... ok
+test tests::run_uses_config_defaults_when_cli_options_are_none ... ok
+test tests::run_export_duckdb_succeeds ... ok
+test export::tests::run_export_duckdb_creates_database ... ok
+test export::tests::run_export_duckdb_success_path_writes_records ... ok
+test backtest::tests::run_backtest_cli_default_start_writes_csv ... ok
+test backtest::tests::write_back_result_empty ... ok
+test backtest::tests::write_back_result_stages_and_cleans_temp_file ... ok
+test sepa::tests::run_score_preserves_other_dates ... ok
+test sepa::tests::run_score_default_date_is_latest_trading_day ... ok
+test backtest::tests::write_back_result_roundtrip ... ok
+test backtest::tests::run_backtest_cli_end_to_end ... ok
+test sepa::tests::run_score_with_smaller_top_preserves_all_stored_rows ... ok
+test sepa::tests::dolt_import_returns_error_for_unknown_table ... ok
+test sepa::tests::run_temperature_does_not_touch_factor_tables ... ok
+test backtest::tests::write_back_result_full_replace ... ok
+test sepa::tests::run_score_is_idempotent_on_same_date ... ok
+test sepa::tests::run_score_writes_five_tables_and_prints_table ... ok
+test sepa::tests::run_score_returns_err_when_reader_has_no_data ... ok
+test sepa::tests::run_temperature_writes_market_temperature_row ... ok
+test sepa::tests::run_score_returns_err_when_dolt_is_missing ... ok
+test sepa::tests::write_back_skips_tables_without_data_rows ... ok
+test tests::load_config_valid_toml_parses_all_fields ... ok
+test tests::load_config_missing_file_returns_defaults ... ok
+test tests::load_config_invalid_toml_returns_defaults ... ok
+test tests::run_sepa_temperature_errors_on_missing_dolt ... ok
+test tests::run_backup_with_keep_zip_uses_flag ... ok
+test tests::run_sepa_score_errors_on_missing_dolt ... ok
+test tests::run_backup_succeeds_with_dummy_script ... ok
+
+test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 51.69s
+
+   Doc-tests compass_data
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+########## 2. cargo clippy -p compass-data -- -D warnings ##########
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.30s
+
+########## 3. cargo fmt --check ##########
+
+########## 4. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p compass-data ##########
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+   Generated /data/codes/compass/.worktrees/financial-f10/target/doc/compass_data/index.html
+
+=== ALL FOUR CHECKS: EXIT CODES: test=0 ===

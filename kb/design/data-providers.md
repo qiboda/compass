@@ -123,6 +123,9 @@ Parquet 主数据库布局（`stock_daily.parquet` 由 `compass-data import` 生
 parquet_data/
 ├── stock_basic.parquet        # symbol, name, list_date, delist_date, board, full_name, total_share, industry, region
 ├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
+├── fin_income.parquet         # 利润表 — F10 完整版（203 字段），PK (symbol, report_date)
+├── fin_balance_sheet.parquet  # 资产负债表 — F10 完整版（319 字段），PK (symbol, report_date)
+├── fin_cash_flow.parquet      # 现金流量表 — F10 完整版（254 字段），PK (symbol, report_date)
 └── stock_daily.symbols.txt    # 每行一个标的（快速列表）
 ```
 
@@ -131,6 +134,14 @@ parquet_data/
 以元为准；其他消费者（GUI 图表柱高、screener 量能相对倍数）不受换算影响。
 另外 import 无条件剔除 6 个指数代码（见 `symbols.md` 指数剔除约定），parquet 与
 `symbols.txt` 均不含指数。
+
+财务三表（fin_income/fin_balance_sheet/fin_cash_flow，ref #202）：
+
+- **来源**：东财 F10 完整版报表 `RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW`（`columns=ALL` 全量返回），替代此前 DMSK 主干版（46/57/48 字段）
+- **schema**：`symbol` + `report_date`（PK）+ 全部 F10 字段（203/319/254 列，含 `_YOY` 同比列）；字段名保持 F10 原生大写名，数值列 DOUBLE、文本列 VARCHAR(100)
+- **单位**：元（与 DMSK 口径一致；茅台 2024 实测 TOTAL_OPERATE_INCOME=174144069958.25、BASIC_EPS=68.64）
+- **范围**：2020 至今（START_YEAR=2020），report_date 按季度（Q1/Q2/Q3/FY）
+- **导出**：`import-compass --table fin_income|fin_balance_sheet|fin_cash_flow`（`SELECT *` 通配符，新列自动带出）；采集器导入用 replace 语义（全表原子重建）+ 显式宽 schema 临时表（`create_sql`，203-319 列超 Dolt `-c` 推断 65504 字节行尺寸上限）
 
 完整 DDL 见上文（DuckDB DDL 代码块）。Parquet 主数据库布局见本文件的 Schema 章节。
 
@@ -377,3 +388,8 @@ compass_data_dir = "/data/compass-data/compass_data"
 | backtest_result 表结构（ref #154） | 存每日持仓明细 / 只存每日净值 | PK(trade_date) + strategy_nav/benchmark_nav/update_date | 净值曲线足以支撑绩效复盘；明细体积大且可重算 | 明细持久化无查询需求；全表 DELETE + `dolt table import -a` 单快照替换幂等 |
 | stock_daily 单位换算（ref #201） | 引擎侧换算 / **import 侧 SQL 换算** | import 侧 `volume × 100`、`amount × 1000` | 源库 amount 为千元、volume 为手（茅台 08-03 实证 ratio≈1000）；import 侧修正后所有下游（SEPA/GUI/温度计/回测）一次性拿到元/股，且无需各模块各自换算 | 引擎侧修正只修 SEPA，GUI 与温度计（`total_amount/1e12` 假设元）仍错 |
 | 指数代码剔除（ref #201） | 内存过滤 / **主查询 + 枚举查询 WHERE NOT IN** | 6 个指数（SH000300/SH000852/SH000905/SH000906/SH000985/SZ399300）无条件剔除 | 指数非股票，混入导致 SEPA 硬过滤线被指数占位（修复前 top50 仅 2 只）；双查询过滤使 parquet 与 symbols.txt 一致，COUNT 汇总复用同一 where 自动一致 | 仅内存过滤则 parquet 仍含指数行，下游仍被污染 |
+| 财务三表报表版本（ref #202） | DMSK 主干版（RPT_DMSK_FN_INCOME/BALANCE/CASHFLOW，46/57/48 字段）/ F10 完整版（RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW，203/319/254 字段） | **F10 完整版** | DMSK 主干版是金融机构模板（塞满银行保险专用科目），缺研发费用/营业外收支分开/其他收益/公允价值变动/资产信用减值/少数股东损益/EPS/综合收益、商誉/无形资产/开发支出/递延税/合同资产/应付债券/租赁负债、购建固定资产支付/取得子公司股权/税费返还/投资明细/分配股利等关键科目（ref #68 选型失误）；F10 `columns=ALL` 全量返回无数据丢失 | DMSK 主干版字段严重不全，无法支撑基本面分析 |
+| 财务三表字段保留（ref #202） | 裁剪常用字段 / 全字段保留 | **全字段保留（含 `_YOY` 同比列）** | Parquet 列式存储 NULL 压缩成本≈0；未来免返工；Dolt 宽表 204-320 列可承受 | 裁剪清单需维护且可能再次漏字段 |
+| 财务三表导入语义（ref #202，修正 ref #160） | merge 追加 / replace 原子替换 | **replace（全表原子重建）**：旧表 rename aside → DDL 建新表 → INSERT SELECT → 失败回滚 | F10 新 schema 与旧 DMSK 字段集不兼容，merge（CREATE IF NOT EXISTS + INSERT IGNORE）会保留旧结构表；本次为 schema 变更后的一次性全量重抓（2020 至今，无增量窗口），replace 匹配重建契约；未来增量恢复 merge | merge 无法重建新 schema 表；增量窗口 + replace 会丢历史（ref #160 教训），但本次是全量重建非增量窗口 |
+| 财务三表临时表导入（ref #202） | Dolt `-c` 推断 / 显式宽 schema + `create_sql` | **显式宽 schema**（`_TMP_INC_DDL`/`_TMP_BS_DDL`/`_TMP_CF_DDL`，203-319 列全字段 + REPORT_DATE VARCHAR） | Dolt `-c` CSV 导入推断行尺寸上限 65504 字节，203+ 列真实 CSV 溢出（实测 income 203 列 80032 字节报错）；显式 DDL + `dolt table import -u` 绕开限制，与 institution_survey 长文本表同模式 | `-c` 推断在宽表上静默失败，无法导入真实 F10 数据 |
+| 财务三表 REPORT_DATE 处理（ref #202） | 裸插 / CAST | `CAST(REPORT_DATE AS DATE)` | F10 API 返回 `"2024-12-31 00:00:00"` 带时间格式，显式 CAST 入 DATE 列避免依赖宽松模式隐式截断 | 裸插依赖 Dolt 宽松模式，行为隐式 |

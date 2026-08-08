@@ -1,0 +1,44 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/financial-f10/collectors
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 18 items
+
+tests/test_balance_sheet.py F
+
+=================================== FAILURES ===================================
+__________ TestImportToDolt.test_first_run_creates_table_and_imports ___________
+tests/test_balance_sheet.py:141: in test_first_run_creates_table_and_imports
+    assert rows == 1
+E   assert 0 == 1
+----------------------------- Captured stderr call -----------------------------
+[import balance_sheet]
+  dolt import error: An error occurred while moving data
+cause: invalid table spec: expected size < 65504, found 253616
+Errors during import can be ignored using '--continue'
+  Import failed
+=========================== short test summary info ============================
+FAILED tests/test_balance_sheet.py::TestImportToDolt::test_first_run_creates_table_and_imports
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.55s ===============================
+
+=================== GREEN (after implementation) ===================
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/financial-f10/collectors
+configfile: pyproject.toml
+plugins: cov-7.1.0, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 18 items
+
+tests/test_balance_sheet.py ..................                           [100%]
+
+============================= 18 passed in 28.17s ==============================
+
+=================== regression: test_main.py ===================
+tests/test_main.py ..................................................    [100%]
+
+============================== 50 passed in 7.19s ==============================

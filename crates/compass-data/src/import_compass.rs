@@ -850,16 +850,24 @@ mod tests {
         assert_eq!(read_parquet_row_count(&parquet), 1);
     }
 
+    /// Create a financial table with the F10 API schema (representative
+    /// subset) and seed one Moutai row.
+    ///
+    /// The three financial tables are exported via `SELECT *`
+    /// (import_append_table), so every column here must flow through to the
+    /// parquet automatically — `assert_f10_columns_exported` locks that in.
     fn setup_financial_table(dolt_dir: &std::path::Path, table_name: &str) {
         let schema = format!(
             "CREATE TABLE {table_name} (\
              symbol VARCHAR(20) NOT NULL, \
              report_date DATE NOT NULL, \
-             total_assets DOUBLE, \
-             total_liabilities DOUBLE, \
-             shareholder_equity DOUBLE, \
-             revenue DOUBLE, \
-             net_profit DOUBLE, \
+             TOTAL_OPERATE_INCOME DOUBLE, \
+             TOTAL_OPERATE_INCOME_YOY DOUBLE, \
+             RESEARCH_EXPENSE DOUBLE, \
+             BASIC_EPS DOUBLE, \
+             MINORITY_INTEREST DOUBLE, \
+             TOTAL_ASSETS DOUBLE, \
+             NETCASH_OPERATE DOUBLE, \
              PRIMARY KEY (symbol, report_date))"
         );
         Command::new("dolt")
@@ -875,10 +883,38 @@ mod tests {
             .arg("--data-dir").arg(dolt_dir)
             .arg("sql").arg("-q")
             .arg(format!(
-                "INSERT INTO {table_name} (symbol, report_date, total_assets, total_liabilities, shareholder_equity, revenue, net_profit) VALUES \
-                 ('SH600519', '2024-12-31', 2.6e11, 4.8e10, 2.1e11, 1.5e11, 7e10)"
+                "INSERT INTO {table_name} (symbol, report_date, TOTAL_OPERATE_INCOME, \
+                 TOTAL_OPERATE_INCOME_YOY, RESEARCH_EXPENSE, BASIC_EPS, MINORITY_INTEREST, \
+                 TOTAL_ASSETS, NETCASH_OPERATE) VALUES \
+                 ('SH600519', '2024-12-31', 174144069958.25, 15.66, 2.79e8, 68.64, 8.5e8, 2.8e11, 9.0e10)"
             ))
             .output().unwrap_or_else(|_| panic!("insert {table_name}"));
+    }
+
+    /// Assert that the exported parquet carries the F10 schema columns.
+    ///
+    /// `import_append_table` exports financial tables via `SELECT *`, so new
+    /// Dolt columns (F10 API fields) must appear in the parquet without any
+    /// column-list maintenance. Guards against regressions when the F10
+    /// schema is extended.
+    fn assert_f10_columns_exported(parquet: &std::path::Path) {
+        let duck = duckdb::Connection::open_in_memory().unwrap();
+        let count: i64 = duck
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM read_parquet('{}')) \
+                 WHERE column_name IN ('TOTAL_OPERATE_INCOME','RESEARCH_EXPENSE','BASIC_EPS','TOTAL_OPERATE_INCOME_YOY')",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            count, 4,
+            "F10 columns must be exported via SELECT * (schema regression?)"
+        );
     }
 
     #[test]
@@ -902,6 +938,7 @@ mod tests {
             parquet.metadata().unwrap().len() > 500,
             "parquet should have data"
         );
+        assert_f10_columns_exported(&parquet);
     }
 
     #[test]
@@ -922,6 +959,7 @@ mod tests {
         let parquet = tmp.path().join("fin_income.parquet");
         assert!(parquet.exists(), "parquet should exist");
         assert!(parquet.metadata().unwrap().len() > 500);
+        assert_f10_columns_exported(&parquet);
     }
 
     #[test]
@@ -942,6 +980,7 @@ mod tests {
         let parquet = tmp.path().join("fin_cash_flow.parquet");
         assert!(parquet.exists(), "parquet should exist");
         assert!(parquet.metadata().unwrap().len() > 500);
+        assert_f10_columns_exported(&parquet);
     }
 
     #[test]
