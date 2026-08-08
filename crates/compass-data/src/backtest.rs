@@ -262,7 +262,14 @@ mod tests {
 
         // Given stale files from earlier runs of this test exist, remove
         // them so the post-condition below counts only this test's runs.
+        // Seed one first so the cleanup loop's remove-file path executes.
         let temp_dir = std::env::temp_dir().join("compass_sepa_writeback");
+        std::fs::create_dir_all(&temp_dir).expect("create writeback dir");
+        std::fs::write(
+            temp_dir.join("2025-06-30_backtest_result_stale.csv"),
+            "stale",
+        )
+        .expect("seed stale file");
         if let Ok(rd) = std::fs::read_dir(&temp_dir) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
@@ -414,6 +421,101 @@ mod tests {
 
         let count = table_count(dolt_dir.path(), "backtest_result");
         assert_eq!(count, 9, "Dolt should hold the 9 output days");
+    }
+
+    /// `start=None` falls back to DEFAULT_BACKTEST_START (the unwrap_or_else
+    /// closure), and a csv path writes the equity curve file.
+    #[test]
+    fn run_backtest_cli_default_start_writes_csv() {
+        use compass_core::data::parquet::ParquetReader;
+        use duckdb::Connection;
+
+        let _lock = dolt_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dolt_dir = tempfile::tempdir().expect("dolt tempdir");
+        setup_dolt(dolt_dir.path());
+
+        let conn = Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        let dates = [
+            "2024-12-30",
+            "2024-12-31",
+            "2025-01-02",
+            "2025-01-03",
+            "2025-01-06",
+            "2025-01-07",
+            "2025-01-08",
+            "2025-01-09",
+            "2025-01-10",
+            "2025-01-13",
+            "2025-01-14",
+        ];
+        for (i, d) in dates.iter().enumerate() {
+            for sym in ["600001", "600002", "600003"] {
+                let close = 10.0 * (1.0 + 0.01 * i as f64);
+                conn.execute(
+                    "INSERT INTO daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    duckdb::params![
+                        sym,
+                        d,
+                        close - 0.01,
+                        close,
+                        close - 0.02,
+                        close,
+                        close,
+                        5e7,
+                        5e8
+                    ],
+                )
+                .expect("insert daily");
+            }
+        }
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_daily.parquet").display()
+        ))
+        .expect("copy daily");
+
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        )
+        .expect("create basic");
+        for sym in ["600001", "600002", "600003"] {
+            conn.execute(
+                "INSERT INTO basic VALUES (?, ?, ?, '2024-01-01', NULL, '主板', ?, 1e9, '测试', NULL)",
+                duckdb::params![sym, sym, "SH", sym],
+            )
+            .expect("insert basic");
+        }
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_basic.parquet").display()
+        ))
+        .expect("copy basic");
+
+        let reader = ParquetReader::new(tmp.path()).expect("reader");
+        let csv_path = tmp.path().join("curve.csv");
+        let end = Some(NaiveDate::parse_from_str("2025-01-14", "%Y-%m-%d").unwrap());
+
+        run_backtest_cli(
+            2,
+            None,
+            end,
+            5,
+            0.0,
+            Some(&csv_path),
+            &reader,
+            dolt_dir.path(),
+        )
+        .expect("cli runs");
+
+        let csv = std::fs::read_to_string(&csv_path).expect("csv exists");
+        assert!(csv.starts_with("trade_date,strategy_nav,benchmark_nav\n"));
+        let count = table_count(dolt_dir.path(), "backtest_result");
+        assert!(count > 0, "Dolt should hold output days");
     }
 
     /// CSV file written by the CLI matches equity_csv output.

@@ -115,7 +115,12 @@ fn screen_symbol(
         return Ok(None);
     }
     if !query.exchanges.is_empty() {
-        let exchange = exchange_of(basic.symbol.as_str());
+        // Exchange derived from the symbol's explicit prefix (the
+        // StockBasic.exchange column was removed, issue #181), falling
+        // back to the legacy bare-code shape heuristic for pre-migration
+        // data — same policy as the GUI layer (parse_explicit_prefix is
+        // case-insensitive by construction).
+        let exchange = compass_core::data::symbol::exchange_of_symbol(&basic.symbol);
         if !query.exchanges.iter().any(|e| e == exchange) {
             return Ok(None);
         }
@@ -210,17 +215,6 @@ fn screen_symbol(
         market_cap,
         industry,
     }))
-}
-
-/// Infer exchange from the bare code: 6→SH, 8/92→BJ, else SZ.
-fn exchange_of(symbol: &str) -> &'static str {
-    if symbol.starts_with('6') {
-        "SH"
-    } else if symbol.starts_with('8') || symbol.starts_with("92") {
-        "BJ"
-    } else {
-        "SZ"
-    }
 }
 
 /// Simple moving average of the last `n` adjusted closes.

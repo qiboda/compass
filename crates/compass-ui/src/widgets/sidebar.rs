@@ -13,6 +13,7 @@ use crate::tokens::ThemeTokens;
 use super::empty_state::EmptyState;
 use super::icon_button::IconButton;
 use super::input::Input;
+use super::searchable_dropdown::strip_exchange_prefix;
 use super::section_title::SectionTitle;
 use super::tag::{Tag, TagVariant};
 
@@ -26,11 +27,12 @@ const ROW_HEIGHT: f32 = 28.0;
 
 /// One watchlist row.
 pub struct SidebarItem {
-    /// Bare 6-digit symbol, e.g. `600519`.
+    /// Exchange-prefixed symbol, e.g. `SH600519`.
     pub symbol: String,
     /// Display name, e.g. `贵州茅台`.
     pub name: String,
-    /// Exchange code, e.g. `SH` / `SZ` / `BJ` (drives the `Tag` color).
+    /// Exchange code derived from the symbol prefix, e.g. `SH` / `SZ` / `BJ`
+    /// (drives the `Tag` color; display shows the bare code separately).
     pub exchange: String,
     /// Whether this row is the currently selected one.
     pub selected: bool,
@@ -187,7 +189,7 @@ impl<'a> Sidebar<'a> {
                     .interact(Sense::click());
                 let symbol_resp = ui
                     .label(
-                        RichText::new(&item.symbol)
+                        RichText::new(strip_exchange_prefix(&item.symbol))
                             .monospace()
                             .size(tokens.typography.caption)
                             .color(c.text_weak),
@@ -239,13 +241,13 @@ mod tests {
                 title: "自选".to_string(),
                 items: vec![
                     SidebarItem {
-                        symbol: "600519".into(),
+                        symbol: "SH600519".into(),
                         name: "贵州茅台".into(),
                         exchange: "SH".into(),
                         selected: false,
                     },
                     SidebarItem {
-                        symbol: "000001".into(),
+                        symbol: "SZ000001".into(),
                         name: "平安银行".into(),
                         exchange: "SZ".into(),
                         selected: false,
@@ -255,7 +257,7 @@ mod tests {
             SidebarGroup {
                 title: "最近".to_string(),
                 items: vec![SidebarItem {
-                    symbol: "000002".into(),
+                    symbol: "SZ000002".into(),
                     name: "万科A".into(),
                     exchange: "SZ".into(),
                     selected: true,
@@ -319,7 +321,7 @@ mod tests {
         assert_eq!(
             events.borrow().as_slice(),
             &[SidebarEvent::Select {
-                symbol: "600519".into()
+                symbol: "SH600519".into()
             }]
         );
     }
@@ -353,7 +355,7 @@ mod tests {
         assert_eq!(
             events.borrow().as_slice(),
             &[SidebarEvent::DeleteRequest {
-                symbol: "000001".into()
+                symbol: "SZ000001".into()
             }]
         );
     }

@@ -1,0 +1,67 @@
+# F1 — Plan Compliance Audit (symbol-prefix-canonical, ref #181)
+
+Date: 2026-08-08
+Auditor: main agent (orchestrator)
+Base: master e6fd6b2 | Branch: fix/symbol-prefix-canonical
+Verdict: PASS (all 7 tasks + F1-F4 wave artifacts accounted)
+
+## 1. Commit compliance — all 11 commits reference ref #181
+
+```
+bfa6984 docs(kb,evidence): record F1/F4 wave verdicts, mark plan complete, update #181 toolchain cards
+c79564c fix(core,data,ui,strategy): harden symbol validation and rename stale bare-code identifiers
+6a85d48 chore(evidence): record F2 code-quality and F3 real-data QA verdicts
+555bb70 fix(core,gui,strategy): prevent parse_explicit_prefix panic on non-ASCII, align exchange derivation
+5b68b84 docs(kb): sync symbol prefix convention across design/user docs
+5992017 refactor(gui): prefix-only symbol submit, auto-migrate legacy config, fix search semantics
+799f811 test(data): verify prefixed symbols in SEPA write-back
+6cce7c4 refactor(strategy): prefix-key SEPA engine, fix exchange derivation from symbol
+2f93fd6 fix(data): restore Dolt-native symbol prefix in stock_daily import
+73422c7 fix(data): prefix stock_basic symbols, drop exchange column
+fec8781 refactor(core,data,strategy,gui): canonicalize symbol prefix parsing, drop bare-code heuristic
+```
+Check: `git log e6fd6b2..HEAD --format=%B | grep -c "ref #181"` = **11/11** ✓
+(Note: 此文件初稿写于 6a85d48 后（当时 9 commits），后随 c79564c + bfa6984 补正为 11 commits —— 2026-08-08 复审修正)
+
+## 2. Plan task checklist — all 7 tasks + F1-F4 complete
+
+- [x] 1. 符号工具层：parse_explicit_prefix 大小写不敏感 + to_exchange/to_ts_code 启发式废弃 (fec8781)
+- [x] 2. import 去剥前缀 + symbols.txt 保留前缀 + --symbols 只接受前缀 (2f93fd6, 73422c7)
+- [x] 3. stock_basic 前缀化 + 删除 exchange 列 (73422c7)
+- [x] 4. SEPA 引擎全前缀 key + 删剥前缀 + exchange 派生修复 (6cce7c4, 555bb70)
+- [x] 5. SEPA CLI 写回测试核对 (799f811)
+- [x] 6. GUI 前缀化：输入/选中/同步/fetch + config 自动迁移 + 搜索语义 (5992017)
+- [x] 7. kb/ 文档同步 + 决策记录更新 (5b68b84)
+- [x] F1. Plan compliance audit (this file)
+- [x] F2. Code quality review (.omo/evidence/F2-code-quality.txt — CHANGES_REQUESTED → fix 555bb70 → re-review APPROVE)
+- [x] F3. Real manual QA (.omo/evidence/F3-real-data-qa.txt — APPROVE)
+- [x] F4. Scope fidelity (.omo/evidence/F4-scope-fidelity.txt)
+- [x] 5-agent review-work pass (5 lanes all PASS — see session record)
+- [x] MINOR fixes from review pass (symbol.rs 43→BJ, import_dolt 6-digit gate, bare→symbol rename, strip_exchange_prefix .get(), dispatcher prefixed fixtures)
+
+## 3. Acceptance grep — zero residue
+
+| Pattern | Matches in crates/ (*.rs) |
+|---|---|
+| `to_exchange` | 0 ✓ |
+| `to_ts_code` | 0 ✓ |
+| `SUBSTRING(symbol` | 0 ✓ |
+| `RIGHT(symbol` | 0 ✓ |
+| `AS exchange` | 0 ✓ |
+| `exchange_prefixes` | 0 ✓ |
+
+## 4. Decision record (kb/design/symbols.md)
+
+D9/D10/D11 decision rows present — grep count 13 references ✓ (D9 input-layer bare-code ban, D10 config migration heuristics 6→SH/8/43/92→BJ/else→SZ, D11 search semantics)
+
+## 5. Gates (post-MINOR-fixes, workspace)
+
+- `cargo test --workspace` — all green (672 + new regression tests)
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo fmt --check` — clean
+- Evidence: MINOR-fixes commit output
+
+## Notes
+
+- F2 review initially returned CHANGES_REQUESTED (blocking: parse_explicit_prefix non-ASCII panic); fix committed 555bb70, re-review APPROVE — full record in .omo/evidence/F2-code-quality.txt + F2-fixes evidence
+- No new issues created during this PR (all fixes in-PR per AGENTS.md, commit ref #181)

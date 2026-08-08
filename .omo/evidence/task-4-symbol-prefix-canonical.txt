@@ -1,0 +1,125 @@
+Task 4 — SEPA 引擎全前缀 key + 删剥前缀 + exchange 派生修复 (ref #181)
+=====================================================================
+Plan: .omo/plans/symbol-prefix-canonical.md todo 4 (lines 101-107)
+Date: 2026-08-08
+Worktree: symbol-prefix-canonical (fix/symbol-prefix-canonical)
+
+Implementation summary
+----------------------
+1. crates/compass-strategy/src/sepa/scoring.rs
+   - bars_by_symbol / basics_by_symbol keyed by prefixed symbol directly
+     (fixtures now write prefixed symbols).
+   - Deleted all 7 `parse_explicit_prefix(...).1` strip sites
+     (memberships L234, flow_group L319, institution_buy L342, surveyed L350,
+     block_group L358, board_momentums L512, aggregation.rs L79) — joins use
+     prefixed keys as-is.
+   - Deleted `use compass_core::data::symbol::parse_explicit_prefix`
+     (scoring.rs:29, aggregation.rs:17) and rewrote both intra-doc links
+     (scoring.rs:79, aggregation.rs:11) — module docs now state prefixed keys.
+   - 🔴 Deleted `fn exchange_of(basic)` (was L989-1004) and inlined the
+     prefix derivation at the is_suspended_after_pause call site (L984):
+     `basic.symbol.starts_with("BJ")`. Unit test rewritten to exercise the
+     real call site (is_filtered) and renamed to
+     `bj_filter_derives_exchange_from_symbol_prefix` (no "exchange_of"
+     substring).
+2. crates/compass-strategy/src/lib.rs
+   - Deleted `fn exchange_of(symbol)` bare-code heuristic (was L215-224).
+   - Inlined prefix derivation at the screener exchanges filter (L117-122):
+     SH / BJ prefixes checked, else SZ.
+3. crates/compass-types/src/lib.rs — SepaRow.symbol doc: bare 6-digit →
+   exchange-prefixed.
+4. Tests updated to prefixed fixtures/assertions:
+   - tests/sepa.rs: fixture DDL dropped the exchange column; TestStock
+     exchange field removed; all ~25 stock() symbols prefixed
+     (SZ000001/SH600003/SH600000/.../BJ920001); assertions L449-450 +
+     L539/544/569/582/596/613/633/646/730 prefixed.
+   - tests/sepa.rs: new `index_row_without_basics_is_excluded_from_results`
+     (SH000905 bar-only + SZ000905 with basics → SH000905 excluded, locks D3
+     basics-join assumption). Fixture gains `in_basic` flag + bar_only_stock().
+   - tests/screener.rs: exchange column/field removed from fixture; symbols
+     prefixed (SZ000001/SH600519/SZ301677/BJ920992/...); assertions
+     prefixed; `exchange_filter_92_prefix_is_bj` now asserts "BJ920992".
+   - temperature.rs: new `index_symbol_without_basics_does_not_change_score`
+     — compute_market_thermometer score/position/indicators IDENTICAL with
+     and without a single-bar amount=0.0 SH000905 (no basics row): cannot
+     enter ranked (basics-only) and does not touch breadth counters s3/s4/s5.
+   - aggregation.rs: `prefixed_members_join_prefixed_bars_without_normalization`
+     (semantic inversion of the old bare-normalization test — a bare member
+     "000001" no longer matches prefixed key "SZ000001" and is skipped);
+     remaining fixture keys prefixed.
+   - parquet.rs: fetch_cross_section_returns_all_market_rows fixture prefixed
+     (SZ000001/SH600519/BJ920992) — assertions updated for the new
+     (BJ < SH < SZ) ordering. L1389/L1649 exchange==Some("SZ") assertions
+     confirmed already deleted by Task 1 (not re-touched).
+     get_stock_basic_blocking("000001") tests left as-is: their fixture
+     (create_test_parquet_dir) still writes bare symbols internally
+     consistently — reader is format-agnostic; validate_symbol tightening is
+     Task 6.
+   - citizens/screener.rs + citizens/sepa.rs: sample_row/sample_data symbols
+     prefixed; dispatch assertions expect prefixed shared.symbol
+     ("SH600519"). SharedState::new("000001", ...) initial values untouched
+     (Task 6 GUI domain).
+   - backtest.rs: no change needed — benchmark fixtures use single-letter
+     keys ("A"/"B"/"Z"), mk_basic already exchange-free (Task 1).
+
+RED-first evidence (tests written before engine change; old engine)
+-------------------------------------------------------------------
+$ cargo test -p compass-strategy --test screener
+---- exchange_filter_92_prefix_is_bj stdout ----
+assertion `left == right` failed
+  left: 0            <- BJ-prefixed stock NOT matched by query.exchanges=["BJ"]
+ right: 1            <- old bare-code heuristic misclassifies "BJ920992" → "SZ"
+test result: FAILED. 18 passed; 1 failed
+
+$ cargo test -p compass-strategy --test sepa strong_stock_outranks_junk_stock
+---- strong_stock_outranks_junk_stock stdout ----
+theme must cap at 25 (news default 10): 0
+test result: FAILED. 11 passed; 1 failed
+<- membership strip-to-bare key vs prefixed bars key → join miss → theme 0
+
+GREEN evidence (after engine change)
+------------------------------------
+$ cargo test -p compass-strategy -p compass -p compass-core
+  ok. 121 passed (compass)
+  ok. 130 passed (compass-core)
+  ok. 61 passed + 19 passed (screener) + 12 passed (sepa integration)
+  incl. filter_bj_exchange, index_row_without_basics_is_excluded_from_results,
+  index_symbol_without_basics_does_not_change_score, prefixed members join test
+$ cargo clippy -p compass-strategy -p compass -p compass-core -- -D warnings  → clean
+$ cargo fmt --check → clean
+$ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p compass-strategy -p compass → clean
+$ cargo check --workspace → clean
+
+Falsifiability check (Oracle F6) — 🔴 fix deleted ⇒ tests go RED
+----------------------------------------------------------------
+Temporarily replaced the inline `basic.symbol.starts_with("BJ")` with the
+legacy bare-code heuristic, then:
+
+$ cargo test -p compass-strategy --test sepa filter_bj_exchange
+thread 'filter_bj_exchange' panicked at crates/compass-strategy/tests/sepa.rs:660:5:
+  left: 2           <- BJ920001 misjudged "SZ" → not filtered → 2 rows
+ right: 1
+test result: FAILED. 0 passed; 1 failed
+
+$ cargo test -p compass-strategy --lib bj_filter_derives...
+  FAILED (is_filtered accepts BJ-prefixed symbol)
+
+Fix restored → both GREEN again. Proves the inlined prefix derivation is
+necessary for the BJ suspension hard filter (prefixed symbols like
+"BJ830799" would be misjudged "SZ" by the bare-code heuristic).
+
+Grep acceptance (all 0 matches, exit 1)
+---------------------------------------
+$ grep -rn "parse_explicit_prefix" crates/compass-strategy/            → 0
+  (was 11: 7 production + 2 use + 2 intra-doc)
+$ grep -rn "exchange_of\|starts_with('6')\|starts_with('8')\|starts_with(\"92\")" \
+  crates/compass-strategy/src/                                         → 0
+$ grep -rn '"000001"\|"600519"\|"600000"\|"920001"\|"600020"' \
+  crates/compass-strategy/tests/sepa.rs                                → 0 (all prefixed)
+
+Scope guardrails honored
+------------------------
+- No scoring algorithm logic changed (only key format + exchange derivation).
+- No benchmark selection logic touched.
+- No bare-code→prefix inference added inside the engine.
+- No GUI config migration (Task 6), no kb/ docs (Task 7).

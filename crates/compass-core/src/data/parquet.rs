@@ -28,13 +28,14 @@ type DailyRow = (String, f64, f64, f64, f64, f64, Option<f64>);
 ///
 /// With the single-file format, symbols are bound as DuckDB parameters (`?`),
 /// not inserted into SQL strings. This function provides defense-in-depth:
-/// allows alphanumeric chars plus `.` (for exchange-prefixed symbols like
-/// `sh.600058`). Rejects empty strings and other special chars.
+/// only the canonical exchange-prefixed form (`SH`/`SZ`/`BJ` + 6 digits, e.g.
+/// `SZ000001`) is accepted (D9). Bare codes, dot forms (`sh.000001`) and any
+/// other alphanumeric shapes are rejected.
 pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
-    let valid = !symbol.is_empty()
-        && symbol
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.');
+    let bytes = symbol.as_bytes();
+    let valid = bytes.len() == 8
+        && matches!(&bytes[..2], b"SH" | b"SZ" | b"BJ")
+        && bytes[2..].iter().all(u8::is_ascii_digit);
     if !valid {
         return Err(DataError::NoData {
             symbol: symbol.to_string(),
@@ -351,7 +352,7 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+            "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
                     board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              WHERE symbol = ?"
@@ -369,7 +370,6 @@ impl ParquetReader {
                     board: row.get::<_, Option<String>>("board")?,
                     full_name: row.get::<_, Option<String>>("full_name")?,
                     total_share: row.get::<_, Option<f64>>("total_share")?,
-                    exchange: row.get::<_, Option<String>>("exchange")?,
                     list_date: row
                         .get::<_, Option<String>>("list_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
@@ -390,7 +390,7 @@ impl ParquetReader {
 
     /// Load all rows from `stock_basic.parquet`.
     ///
-    /// Returns the full stock list (symbol, name, exchange) for use in
+    /// Returns the full stock list (symbol, name) for use in
     /// the GUI symbol picker. If `stock_basic.parquet` doesn't exist,
     /// returns an empty vec.
     pub fn load_all_stock_basics(&self) -> Result<Vec<StockBasic>, DataError> {
@@ -406,7 +406,7 @@ impl ParquetReader {
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
         let sql = format!(
-            "SELECT symbol, name, exchange, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+            "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
                     board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              ORDER BY symbol"
@@ -418,7 +418,6 @@ impl ParquetReader {
                 Ok(StockBasic {
                     symbol: row.get("symbol")?,
                     name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
-                    exchange: row.get::<_, Option<String>>("exchange")?,
                     area: row.get::<_, Option<String>>("region")?,
                     industry: row.get::<_, Option<String>>("industry")?,
                     market: None,
@@ -770,9 +769,9 @@ mod tests {
         let conn = duckdb::Connection::open_in_memory().expect("duckdb");
         conn.execute_batch(
             "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);
-             INSERT INTO basic VALUES ('000001', '平安银行', 'SZ', '1991-04-03', NULL, '主板', '平安银行股份有限公司', 19405918198, '银行', '广东省');
-             INSERT INTO basic VALUES ('600519', '贵州茅台', 'SH', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 1256197800, '白酒', '贵州省');
-             INSERT INTO basic VALUES ('hack', 'hacked', 'XX', NULL, NULL, NULL, NULL, NULL, NULL, NULL);",
+             INSERT INTO basic VALUES ('SZ000001', '平安银行', 'SZ', '1991-04-03', NULL, '主板', '平安银行股份有限公司', 19405918198, '银行', '广东省');
+             INSERT INTO basic VALUES ('SH600519', '贵州茅台', 'SH', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 1256197800, '白酒', '贵州省');
+             INSERT INTO basic VALUES ('SZ999999', 'hacked', 'SZ', NULL, NULL, NULL, NULL, NULL, NULL, NULL);",
         )
         .expect("create");
 
@@ -887,7 +886,7 @@ mod tests {
         create_test_stock_daily_parquet_adjclose(
             &tmp,
             &[(
-                "000001",
+                "SZ000001",
                 &[("2024-01-02", 10.0, 8.0), ("2024-01-03", 12.0, 12.0)],
             )],
         );
@@ -897,7 +896,7 @@ mod tests {
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
 
         let bars = reader
-            .fetch_bars_blocking("000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end)
             .expect("fetch_bars_blocking failed");
 
         assert_eq!(bars.len(), 2);
@@ -943,9 +942,12 @@ mod tests {
         create_test_stock_daily_parquet(
             &tmp,
             &[
-                ("000001", &[("2024-01-02", 10.0), ("2024-01-03", 10.5)]),
-                ("600519", &[("2024-01-02", 1500.0), ("2024-01-03", 1520.0)]),
-                ("920992", &[("2024-01-02", 8.0)]),
+                ("SZ000001", &[("2024-01-02", 10.0), ("2024-01-03", 10.5)]),
+                (
+                    "SH600519",
+                    &[("2024-01-02", 1500.0), ("2024-01-03", 1520.0)],
+                ),
+                ("BJ920992", &[("2024-01-02", 8.0)]),
             ],
         );
 
@@ -958,27 +960,38 @@ mod tests {
             .expect("fetch cross section");
 
         assert_eq!(bars.len(), 5, "all market rows within range");
-        // Ordered by symbol, then trade_date.
-        assert_eq!(bars[0].symbol, "000001");
+        // Ordered by symbol (BJ < SH < SZ), then trade_date.
+        assert_eq!(bars[0].symbol, "BJ920992");
         assert_eq!(
             bars[0].trade_date,
             NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
         );
-        assert_eq!(bars[0].adjclose, 10.0);
-        assert_eq!(bars[0].close, 10.0);
+        assert_eq!(bars[0].adjclose, 8.0);
+        assert_eq!(bars[0].close, 8.0);
         assert_eq!(bars[0].volume, 1000.0);
         // Fixture derives OHLC from close: open=close-1, high=close+1, low=close-0.5.
-        assert_eq!(bars[0].open, 9.0);
-        assert_eq!(bars[0].high, 11.0);
-        assert_eq!(bars[0].low, 9.5);
+        assert_eq!(bars[0].open, 7.0);
+        assert_eq!(bars[0].high, 9.0);
+        assert_eq!(bars[0].low, 7.5);
         assert_eq!(bars[0].amount, 0.0);
+        assert_eq!(bars[1].symbol, "SH600519");
         assert_eq!(
             bars[1].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
+        );
+        assert_eq!(bars[1].adjclose, 1500.0);
+        assert_eq!(
+            bars[3].trade_date,
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("date")
+        );
+        assert_eq!(bars[3].symbol, "SZ000001");
+        assert_eq!(bars[3].adjclose, 10.0);
+        assert_eq!(
+            bars[4].trade_date,
             NaiveDate::from_ymd_opt(2024, 1, 3).expect("date")
         );
-        assert_eq!(bars[1].adjclose, 10.5);
-        assert_eq!(bars[4].symbol, "920992");
-        assert_eq!(bars[4].adjclose, 8.0);
+        assert_eq!(bars[4].symbol, "SZ000001");
+        assert_eq!(bars[4].adjclose, 10.5);
     }
 
     #[test]
@@ -1356,14 +1369,21 @@ mod tests {
     }
 
     #[test]
-    fn validate_symbol_allows_valid_codes() {
-        // Dolt without dot: uppercase prefix + bare code
+    fn validate_symbol_allows_canonical_prefixed_codes() {
+        // Canonical Dolt-native form: uppercase exchange prefix + 6 digits
         validate_symbol("SZ000001").expect("SZ000001 should be valid");
         validate_symbol("SH600519").expect("SH600519 should be valid");
         validate_symbol("BJ830799").expect("BJ830799 should be valid");
-        // Exchange-prefixed with dot: lowercase prefix.bare code
-        validate_symbol("sh.000001").expect("sh.000001 should be valid");
-        validate_symbol("sz.600059").expect("sz.600059 should be valid");
+        // Bare codes, dot forms and any alnum+dot shapes are rejected (D9:
+        // the data access layer only accepts the canonical prefixed form)
+        assert!(validate_symbol("000001").is_err(), "bare code rejected");
+        assert!(validate_symbol("600519").is_err(), "bare code rejected");
+        assert!(validate_symbol("sh.000001").is_err(), "dot form rejected");
+        assert!(validate_symbol("sz.600059").is_err(), "dot form rejected");
+        assert!(
+            validate_symbol("sz000001").is_err(),
+            "lowercase prefix rejected"
+        );
         // Empty and special chars still rejected
         assert!(validate_symbol("").is_err());
         assert!(validate_symbol("DROP TABLE").is_err());
@@ -1381,12 +1401,11 @@ mod tests {
         let (_tmp, reader) = create_test_parquet_dir();
 
         let info = reader
-            .get_stock_basic_blocking("000001")
+            .get_stock_basic_blocking("SZ000001")
             .expect("should succeed")
-            .expect("should find 000001");
-        assert_eq!(info.symbol, "000001");
+            .expect("should find SZ000001");
+        assert_eq!(info.symbol, "SZ000001");
         assert_eq!(info.name, "平安银行");
-        assert_eq!(info.exchange.as_deref(), Some("SZ"));
         assert_eq!(info.area.as_deref(), Some("广东省"));
         assert_eq!(info.industry.as_deref(), Some("银行"));
         assert_eq!(info.board.as_deref(), Some("主板"));
@@ -1399,19 +1418,19 @@ mod tests {
         assert_eq!(info.delist_date, None);
 
         let info2 = reader
-            .get_stock_basic_blocking("600519")
+            .get_stock_basic_blocking("SH600519")
             .expect("should succeed")
-            .expect("should find 600519");
-        assert_eq!(info2.symbol, "600519");
+            .expect("should find SH600519");
+        assert_eq!(info2.symbol, "SH600519");
         assert_eq!(info2.area.as_deref(), Some("贵州省"));
         assert_eq!(info2.board.as_deref(), Some("主板"));
         assert_eq!(info2.total_share, Some(1_256_197_800.0));
 
         let info3 = reader
-            .get_stock_basic_blocking("hack")
+            .get_stock_basic_blocking("SZ999999")
             .expect("should succeed")
-            .expect("should find hack");
-        assert_eq!(info3.symbol, "hack");
+            .expect("should find SZ999999");
+        assert_eq!(info3.symbol, "SZ999999");
         assert_eq!(info3.area, None);
         assert_eq!(info3.industry, None);
         assert_eq!(info3.board, None);
@@ -1625,7 +1644,7 @@ mod tests {
         create_test_stock_daily_parquet(&tmp, &[("SZ000001", &[("2024-01-02", 10.0)])]);
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        let range = reader.get_stored_range("NONEXIST").expect("range");
+        let range = reader.get_stored_range("SZ999999").expect("range");
         assert!(range.is_none(), "nonexistent symbol should return None");
     }
 
@@ -1640,22 +1659,21 @@ mod tests {
         let basics = reader.load_all_stock_basics().expect("load");
         assert_eq!(basics.len(), 3, "should return all 3 rows");
 
-        // Ordered by symbol: 000001, 600519, hack
+        // Ordered by symbol: SZ000001, SH600519, SZ999999
         let pab = basics
             .iter()
-            .find(|b| b.symbol == "000001")
-            .expect("find 000001");
+            .find(|b| b.symbol == "SZ000001")
+            .expect("find SZ000001");
         assert_eq!(pab.name, "平安银行");
-        assert_eq!(pab.exchange.as_deref(), Some("SZ"));
         assert!(
             pab.list_date.is_some(),
-            "list_date should be Some for 000001"
+            "list_date should be Some for SZ000001"
         );
 
         let hack = basics
             .iter()
-            .find(|b| b.symbol == "hack")
-            .expect("find hack");
+            .find(|b| b.symbol == "SZ999999")
+            .expect("find SZ999999");
         assert!(hack.list_date.is_none(), "NULL list_date should be None");
         assert!(
             hack.delist_date.is_none(),
@@ -1693,7 +1711,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         let result = reader
-            .get_stock_basic_blocking("000001")
+            .get_stock_basic_blocking("SZ000001")
             .expect("should be Ok");
         assert!(
             result.is_none(),

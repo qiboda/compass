@@ -1,0 +1,41 @@
+Task 7 — kb/ 文档同步 + 决策记录更新 (C6) — evidence
+Branch: fix/symbol-prefix-canonical | Issue: #181 | Wave 5 (final implementation task)
+
+=== Acceptance gates (all PASS) ===
+
+G1 prefixed composite key:        kb/design/symbols.md:186  ("SZ000001", "1d")
+G2 no 600519→to_exchange:         grep "600519.*to_exchange"  → no match (exit 1)
+G3 no → to_exchange arrow:        grep "→ to_exchange"        → no match (exit 1)
+G4 no bare-input claim:           grep "裸 6 位|6 位数字输入" kb/design/architecture.md → no match (exit 1)
+G5 no bare config examples:       grep 'default_symbol = "000001"|"600519"|symbols = \[.*000001' kb/user/config.md → no match (exit 1)
+G6 decision rows:                 D9 输入层裸码禁令 / D10 旧配置自动迁移 / D11 搜索框语义 rows present (3 matches)
+
+=== Extended consistency checks ===
+- to_exchange / to_ts_code / strip_prefix functions deleted in code (Task 1/2);
+  symbols.md now states they are removed (was: "仍保留在代码库中")
+- stock_basic.parquet actual columns (import_compass.rs:127-138): symbol, name, list_date,
+  delist_date, board, full_name, total_share, industry, region = 9 cols (no exchange);
+  data-providers.md:124 layout + L341 "新 9 列" + L356 SEPA write-back decision updated
+- architecture.md data pipeline example (L241-260) rewritten: SH600519 prefixed submit path
+- architecture.md config example default_symbol = "SZ000001"
+- testing.md rstest examples prefixed; tracy example --symbols SH600519
+- gui.md: L152 D11 free-text search + prefixed submit; L170-173 prefixed submit/display-exemption note
+- config.md: L27/L61/L79/L88/L95/L111 prefixed + D10 migration section (6→SH, 8/92→BJ, else→SZ, dot normalize)
+- cli.md: --symbols prefixed-only (bare rejected, dot normalized), example updated,
+  note: re-import + export required for old compass.duckdb (Metis B9)
+- Code doc comments updated (remaining stale sites):
+  temperature.rs:44   bars_by_symbol keyed by exchange-prefixed symbols
+  backtest.rs:222-231 ±100% guard retained as data-quality defense (root cause fixed)
+  backtest.rs:317-320 dedup_bars comment (root cause fixed, defense retained)
+  parquet.rs:393      load_all_stock_basics "(symbol, name)" (exchange dropped)
+  model.rs:17/:242/:366 SymbolInfo.code / Cmd.symbol / WatchlistConfig prefixed
+  compass-types/src/lib.rs:200 ScreenerRow.symbol prefixed
+  state.rs:12/:39      symbol + watchlist prefixed
+  main.rs:723          reverse-sync comment (prefixed-only, D9)
+  (already updated in Tasks 1-6: parquet.rs:31 validate_symbol, sepa.rs:244 symbol_csv,
+   sidebar.rs:29-30, searchable_dropdown.rs, aggregation.rs, scoring.rs, import_dolt.rs filter_symbols)
+
+=== QA checks ===
+happy: git diff kb/ shows doc change volume (below)
+failure spot-check: symbols.md:183-197 consistent with import_dolt.rs (prefixed keys only,
+  no bare inference examples); architecture.md no bare-input residual claim.

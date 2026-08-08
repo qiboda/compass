@@ -41,8 +41,9 @@ const TEMP_LIMIT_UP_PCT: f64 = 9.8;
 /// Compute the market thermometer from per-symbol bar series and stock
 /// metadata.
 ///
-/// `bars_by_symbol` must be keyed by bare 6-digit codes with series in
-/// ascending `trade_date` order; `basics_by_symbol` keyed the same way (the
+/// `bars_by_symbol` must be keyed by exchange-prefixed symbols (e.g.
+/// `SH600519`) with series in ascending `trade_date` order;
+/// `basics_by_symbol` keyed the same way (the
 /// exact shape produced by grouping
 /// [`ParquetReader::fetch_cross_section`](compass_core::data::parquet::ParquetReader::fetch_cross_section)
 /// and
@@ -296,7 +297,6 @@ mod tests {
                     board: None,
                     full_name: None,
                     total_share: Some(1.0e9 / (1.0 + pct / 100.0)),
-                    exchange: Some("SH".to_string()),
                     list_date: None,
                     delist_date: None,
                 },
@@ -428,7 +428,6 @@ mod tests {
                 board: None,
                 full_name: None,
                 total_share: Some(1.0e9),
-                exchange: Some("SH".to_string()),
                 list_date: None,
                 delist_date: None,
             },
@@ -444,5 +443,41 @@ mod tests {
         // 1 limit-up (0.1875) + turnover 1e8→0.00125 + breadth 10 → ~10.19.
         assert!((tm.score - (15.0 / 80.0 + 1.0e8 / 1e12 / 1.2 * 15.0 + 10.0)).abs() < 1e-9);
         assert_eq!(tm.position, "0%-20%");
+    }
+
+    /// An index-like symbol (SH000905) with bars but no basics row must not
+    /// change the score: it cannot enter the cap-ranked proxies (built from
+    /// basics only) and a single bar with zero amount leaves the breadth
+    /// counters (s3/s4/s5) untouched (issue #181 index-code collision).
+    #[test]
+    fn index_symbol_without_basics_does_not_change_score() {
+        let market = build_market(2000, |_| 10.0, 1.0e9);
+        let (bars, basics) = refs(&market);
+        let baseline = compute_market_thermometer(&bars, &basics);
+
+        let mut bars2 = market.bars.clone();
+        bars2.insert(
+            "SH000905".to_string(),
+            vec![CrossSectionBar {
+                symbol: "SH000905".to_string(),
+                trade_date: END,
+                open: 4000.0,
+                high: 4000.0,
+                low: 4000.0,
+                adjclose: 4000.0,
+                close: 4000.0,
+                volume: 0.0,
+                amount: 0.0,
+            }],
+        );
+        let bars2_refs: HashMap<String, Vec<&CrossSectionBar>> = bars2
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().collect()))
+            .collect();
+        let with_index = compute_market_thermometer(&bars2_refs, &basics);
+        assert_eq!(with_index.score, baseline.score, "score must be identical");
+        assert_eq!(with_index.position, baseline.position);
+        assert_eq!(with_index.position_pct, baseline.position_pct);
+        assert_eq!(with_index.indicators, baseline.indicators);
     }
 }

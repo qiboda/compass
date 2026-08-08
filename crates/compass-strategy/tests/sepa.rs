@@ -23,15 +23,17 @@ struct TestBar {
     amount: f64,
 }
 
-/// One fixture stock (stock_daily + stock_basic rows).
+/// One fixture stock. `in_basic` controls whether a stock_basic row is
+/// written (false = bar-only symbol such as an index code, which the engine
+/// must exclude via the basics join).
 struct TestStock {
     symbol: &'static str,
     name: &'static str,
-    exchange: &'static str,
     board: &'static str,
     industry: &'static str,
     list_date: &'static str,
     total_share: f64,
+    in_basic: bool,
     bars: Vec<TestBar>,
 }
 
@@ -151,16 +153,18 @@ impl Fixture {
         .expect("copy daily");
 
         conn.execute_batch(
-            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
         )
         .expect("create basic");
         for s in &self.stocks {
+            if !s.in_basic {
+                continue;
+            }
             conn.execute(
-                "INSERT INTO basic VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL)",
+                "INSERT INTO basic VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL)",
                 duckdb::params![
                     s.symbol,
                     s.name,
-                    s.exchange,
                     s.list_date,
                     s.board,
                     s.name,
@@ -319,18 +323,30 @@ fn bars(end: &str, closes: &[f64], up: f64, down: f64, volume: f64, amount: f64)
 fn stock(
     symbol: &'static str,
     name: &'static str,
-    exchange: &'static str,
     list_date: &'static str,
     bars: Vec<TestBar>,
 ) -> TestStock {
     TestStock {
         symbol,
         name,
-        exchange,
         board: "主板",
         industry: "测试",
         list_date,
         total_share: 1.0e9,
+        in_basic: true,
+        bars,
+    }
+}
+
+fn bar_only_stock(symbol: &'static str, bars: Vec<TestBar>) -> TestStock {
+    TestStock {
+        symbol,
+        name: "指数",
+        board: "主板",
+        industry: "指数",
+        list_date: "2005-01-01",
+        total_share: 0.0,
+        in_basic: false,
         bars,
     }
 }
@@ -381,11 +397,11 @@ fn filler_series() -> Vec<TestBar> {
 
 fn ranking_fixture() -> Fixture {
     Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", strong_series()),
-        stock("600003", "测试科技", "SH", "2015-01-01", strong_series_b()),
-        stock("600000", "工商银行", "SH", "2005-01-01", junk_series()),
-        stock("600001", "测试甲", "SH", "2005-01-01", filler_series()),
-        stock("600002", "测试乙", "SH", "2005-01-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", strong_series()),
+        stock("SH600003", "测试科技", "2015-01-01", strong_series_b()),
+        stock("SH600000", "工商银行", "2005-01-01", junk_series()),
+        stock("SH600001", "测试甲", "2005-01-01", filler_series()),
+        stock("SH600002", "测试乙", "2005-01-01", filler_series()),
     ])
     .with_members(vec![
         TestMember {
@@ -446,8 +462,8 @@ fn strong_stock_outranks_junk_stock() {
     assert_eq!(data.rows.len(), 5);
 
     // Official order: strong > concept peer > fillers > junk.
-    assert_eq!(data.rows[0].symbol, "000001");
-    assert_eq!(data.rows[4].symbol, "600000");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
+    assert_eq!(data.rows[4].symbol, "SH600000");
     let strong = &data.rows[0];
     let junk = &data.rows[4];
     assert!(
@@ -526,8 +542,8 @@ fn risk_deductions_floor_at_minus_3_75() {
     }
 
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", strong_series()),
-        stock("600004", "高危测试", "SH", "2008-01-01", risky),
+        stock("SZ000001", "平安银行", "2010-01-01", strong_series()),
+        stock("SH600004", "高危测试", "2008-01-01", risky),
     ]);
     let (_tmp, reader) = fixture.build();
 
@@ -536,12 +552,12 @@ fn risk_deductions_floor_at_minus_3_75() {
     let strong = data
         .rows
         .iter()
-        .find(|r| r.symbol == "000001")
+        .find(|r| r.symbol == "SZ000001")
         .expect("strong");
     let risky = data
         .rows
         .iter()
-        .find(|r| r.symbol == "600004")
+        .find(|r| r.symbol == "SH600004")
         .expect("risky");
     assert_eq!(strong.risk, 0.0, "clean stock has zero risk contribution");
     assert!(
@@ -560,26 +576,26 @@ fn risk_deductions_floor_at_minus_3_75() {
 #[test]
 fn filter_st_name() {
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
-        stock("600010", "ST中安", "SH", "2000-01-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
+        stock("SH600010", "ST中安", "2000-01-01", filler_series()),
     ]);
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert_eq!(data.rows.len(), 1);
-    assert_eq!(data.rows[0].symbol, "000001");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
 }
 
 /// A stock whose name contains "退" is hard-filtered.
 #[test]
 fn filter_delisting_name() {
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
-        stock("600011", "国华退", "SH", "2000-01-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
+        stock("SH600011", "国华退", "2000-01-01", filler_series()),
     ]);
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert_eq!(data.rows.len(), 1);
-    assert_eq!(data.rows[0].symbol, "000001");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
 }
 
 /// A stock listed within the last 90 calendar days (~60 trading days) is
@@ -587,13 +603,13 @@ fn filter_delisting_name() {
 #[test]
 fn filter_short_listing() {
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
-        stock("601001", "次新股", "SH", "2026-07-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
+        stock("SH601001", "次新股", "2026-07-01", filler_series()),
     ]);
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert_eq!(data.rows.len(), 1);
-    assert_eq!(data.rows[0].symbol, "000001");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
 }
 
 /// A stock whose 20-day average amount is below 3000 万 is hard-filtered.
@@ -604,13 +620,13 @@ fn filter_low_liquidity() {
         b.amount = 1.0e6; // avg 100 万 ≪ 3000 万
     }
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
-        stock("601002", "冷门股", "SH", "2000-01-01", low_amount),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
+        stock("SH601002", "冷门股", "2000-01-01", low_amount),
     ]);
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert_eq!(data.rows.len(), 1);
-    assert_eq!(data.rows[0].symbol, "000001");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
 }
 
 /// A stock with no bar in the last ~5 trading days (last bar 11 calendar days
@@ -618,11 +634,10 @@ fn filter_low_liquidity() {
 #[test]
 fn filter_suspended() {
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
         stock(
-            "601003",
+            "SH601003",
             "停牌股",
-            "SH",
             "2000-01-01",
             bars("2026-07-20", &[10.0; 60], 0.1, 0.1, 1.0e6, 5.0e8),
         ),
@@ -630,20 +645,41 @@ fn filter_suspended() {
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert_eq!(data.rows.len(), 1);
-    assert_eq!(data.rows[0].symbol, "000001");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
 }
 
-/// A BJ (北交所) stock is hard-filtered via its exchange metadata.
+/// A BJ (北交所) stock is hard-filtered via its exchange prefix.
 #[test]
 fn filter_bj_exchange() {
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
-        stock("920001", "北交测试", "BJ", "2000-01-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
+        stock("BJ920001", "北交测试", "2000-01-01", filler_series()),
     ]);
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert_eq!(data.rows.len(), 1);
-    assert_eq!(data.rows[0].symbol, "000001");
+    assert_eq!(data.rows[0].symbol, "SZ000001");
+}
+
+/// An index code (SH000905) with bars but no stock_basic row is excluded by
+/// the basics join, while the same numeric code as a stock (SZ000905, has a
+/// basics row) is scored (issue #181: SH/SZ same-code collision).
+#[test]
+fn index_row_without_basics_is_excluded_from_results() {
+    let fixture = Fixture::new(vec![
+        stock("SZ000905", "厦门港务", "2010-01-01", filler_series()),
+        bar_only_stock("SH000905", filler_series()),
+    ]);
+    let (_tmp, reader) = fixture.build();
+    let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
+    assert!(
+        data.rows.iter().any(|r| r.symbol == "SZ000905"),
+        "stock with basics row must be scored"
+    );
+    assert!(
+        !data.rows.iter().any(|r| r.symbol == "SH000905"),
+        "index row without basics must not leak into results"
+    );
 }
 
 /// Every hard filter fires at once → empty rows, no crash.
@@ -653,13 +689,7 @@ fn all_filtered_returns_empty_rows() {
     for b in low_amount.iter_mut() {
         b.amount = 1.0e6;
     }
-    let fixture = Fixture::new(vec![stock(
-        "600010",
-        "ST冷门",
-        "SH",
-        "2026-07-01",
-        low_amount,
-    )]);
+    let fixture = Fixture::new(vec![stock("SH600010", "ST冷门", "2026-07-01", low_amount)]);
     let (_tmp, reader) = fixture.build();
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert!(data.rows.is_empty());
@@ -688,18 +718,16 @@ fn short_window_and_zero_close_do_not_panic() {
     let mut broken: Vec<f64> = (0..100).map(|i| 10.0 + i as f64 * 0.1).collect();
     broken[79] = 0.0; // zero base for the 20-day momentum window
     let fixture = Fixture::new(vec![
-        stock("000001", "平安银行", "SZ", "2010-01-01", filler_series()),
+        stock("SZ000001", "平安银行", "2010-01-01", filler_series()),
         stock(
-            "600020",
+            "SH600020",
             "短窗股",
-            "SH",
             "2020-01-01",
             bars("2026-07-31", &[10.0; 5], 0.1, 0.1, 1.0e6, 5.0e8),
         ),
         stock(
-            "600021",
+            "SH600021",
             "坏数据股",
-            "SH",
             "2020-01-01",
             bars("2026-07-31", &broken, 0.1, 0.1, 1.0e6, 5.0e8),
         ),
@@ -727,7 +755,7 @@ fn short_window_and_zero_close_do_not_panic() {
     let short = data
         .rows
         .iter()
-        .find(|r| r.symbol == "600020")
+        .find(|r| r.symbol == "SH600020")
         .expect("short");
     assert!(
         short.total_score < 30.0,

@@ -40,7 +40,9 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
 
-        /// Stock symbols to import (comma-separated 6-digit codes, e.g. "000001,600519").
+        /// Stock symbols to import (comma-separated exchange-prefixed codes,
+        /// e.g. "SH600519,sz.000001"; bare 6-digit codes are rejected, dot
+        /// form is normalized to Dolt-native prefixed form).
         /// WARNING: filters + overwrites the whole stock_daily.parquet with
         /// only these symbols — not an incremental update.
         #[arg(long)]

@@ -222,8 +222,11 @@ pub fn compute_benchmark_returns(
             // Sanity guard: A-share daily moves are bounded by ±30% price
             // limits (ST 5%, main 10%, ChiNext/STAR 20%, BSE 30%). A return
             // beyond ±100% cannot be a real single-day move — it is a data
-            // artifact (index-like symbols mixing two sources on adjacent
-            // dates, e.g. 000905 at 9031 vs 21.5, tracked in issue #181).
+            // artifact. This guard is retained as a data-quality defense:
+            // the historical cross-source duplicate rows (e.g. 000905 index
+            // mixing two sources, issue #181) that once produced such
+            // returns are gone after symbol prefix canonicalization, but a
+            // bad row must never distort the mean.
             // Skipping the member keeps the mean representative.
             if ret.is_finite() && ret.abs() < 1.0 {
                 sum += ret;
@@ -314,10 +317,11 @@ pub fn run_backtest(
     // Calendar from the day before start (for day-1 returns).
     let cal_start = params.start - chrono::Duration::days(1);
     let all_bars = reader.fetch_cross_section(cal_start, end)?;
-    // Real parquet data occasionally carries duplicate rows for the same
-    // symbol and date (e.g. index symbols like 000905 mixing two sources);
-    // keeping the last row per (symbol, date) prevents cross-source
-    // day-over-day returns that would otherwise be absurdly large.
+    // Dedup keeps the last row per (symbol, date) as a data-quality
+    // defense: symbol prefix canonicalization (issue #181) fixed the
+    // historical cross-source duplicate rows (index codes like 000905
+    // mixing two sources), but a duplicate row in source data would still
+    // otherwise produce absurd day-over-day returns.
     let all_bars = dedup_bars(all_bars);
     let calendar: Vec<NaiveDate> = all_bars
         .iter()
@@ -904,7 +908,6 @@ mod tests {
             board: Some("主板".to_string()),
             full_name: Some(symbol.to_string()),
             total_share: Some(share),
-            exchange: Some("SZ".to_string()),
             list_date: Some(list),
             delist_date: None,
         }

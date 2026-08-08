@@ -3,6 +3,7 @@
 //! Follows the same `dolt sql -r parquet` → `fs::write` pattern as `import_dolt.rs`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use duckdb::Connection;
 use tracing::{info, warn};
@@ -124,9 +125,8 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
     info!("Exporting stock_basic...");
     let data = run_dolt_sql_parquet(
         dolt_dir,
-        "SELECT RIGHT(symbol, 6) AS symbol, \
+        "SELECT symbol, \
          name, \
-         CASE LEFT(symbol, 2) WHEN 'SH' THEN 'SH' WHEN 'SZ' THEN 'SZ' WHEN 'BJ' THEN 'BJ' ELSE '' END AS exchange, \
          CAST(list_date AS DATE) AS list_date, \
          CAST(delist_date AS DATE) AS delist_date, \
          board, \
@@ -142,6 +142,25 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
     std::fs::write(&path, &data)?;
     info!("  → {}", path.display());
     Ok(())
+}
+
+/// Unique temp-file path under `compass_parquet_work` for incremental-merge
+/// staging.
+///
+/// PID + per-process atomic sequence keep names distinct across nextest
+/// processes and within one process (ref #184 — a fixed
+/// `{table_name}.new.parquet` / `{table_name}.merged.parquet` name raced
+/// between parallel test binaries running in different processes, clobbering
+/// each other's stage files and silently falling back to full export).
+fn unique_work_path(stem: &str) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir()
+        .join("compass_parquet_work")
+        .join(format!(
+            "{stem}_{}_{}.parquet",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
 }
 
 fn import_fin_indicators(
@@ -180,13 +199,12 @@ fn import_fin_indicators(
     if since.is_some() && !overwrite && path.exists() {
         // Incremental merge: old parquet (priority 1) + new dolt (priority 2)
         info!("Merging incremental data with existing parquet...");
-        let work_dir = std::env::temp_dir().join("compass_parquet_work");
-        std::fs::create_dir_all(&work_dir)?;
+        std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
-        let new_path = work_dir.join("fin.new.parquet");
+        let new_path = unique_work_path("fin.new");
         std::fs::write(&new_path, &new_data)?;
 
-        let tmp_path = work_dir.join("fin.merged.parquet");
+        let tmp_path = unique_work_path("fin.merged");
         let duck = Connection::open_in_memory()?;
         let sql = format!(
             "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) AS rn \
@@ -286,10 +304,9 @@ fn import_append_table<'a>(
 
     if since.is_some() && !overwrite && path.exists() {
         info!("Merging incremental data with existing parquet...");
-        let work_dir = std::env::temp_dir().join("compass_parquet_work");
-        std::fs::create_dir_all(&work_dir)?;
+        std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
-        let new_path = work_dir.join(format!("{table_name}.new.parquet"));
+        let new_path = unique_work_path(&format!("{table_name}.new"));
         std::fs::write(&new_path, &new_data)?;
 
         let priority_order = if prefer_new {
@@ -297,7 +314,7 @@ fn import_append_table<'a>(
         } else {
             "priority"
         };
-        let tmp_path = work_dir.join(format!("{table_name}.merged.parquet"));
+        let tmp_path = unique_work_path(&format!("{table_name}.merged"));
         let duck = Connection::open_in_memory()?;
         let sql = format!(
             "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY {partition_cols} ORDER BY {priority_order}) AS rn \
@@ -470,8 +487,7 @@ mod tests {
 
         // New columns present with expected values
         let duck = duckdb::Connection::open_in_memory().unwrap();
-        let (symbol, exchange, list_date, board, full_name, total_share, industry, region): (
-            String,
+        let (symbol, list_date, board, full_name, total_share, industry, region): (
             String,
             String,
             String,
@@ -482,8 +498,8 @@ mod tests {
         ) = duck
             .query_row(
                 &format!(
-                    "SELECT symbol, exchange, strftime(list_date, '%Y-%m-%d'), board, full_name, total_share, industry, region \
-                     FROM read_parquet('{}') WHERE symbol = '600519'",
+                    "SELECT symbol, strftime(list_date, '%Y-%m-%d'), board, full_name, total_share, industry, region \
+                     FROM read_parquet('{}') WHERE symbol = 'SH600519'",
                     parquet.display()
                 ),
                 [],
@@ -496,13 +512,11 @@ mod tests {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
-                        row.get(7)?,
                     ))
                 },
             )
             .unwrap();
-        assert_eq!(symbol, "600519");
-        assert_eq!(exchange, "SH");
+        assert_eq!(symbol, "SH600519");
         assert_eq!(list_date, "2001-08-27");
         assert_eq!(board, "主板");
         assert_eq!(full_name, "贵州茅台酒股份有限公司");
@@ -510,11 +524,25 @@ mod tests {
         assert_eq!(industry, "白酒Ⅱ");
         assert_eq!(region, "贵州");
 
+        let has_exchange: i64 = duck
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM read_parquet('{}')) \
+                 WHERE column_name = 'exchange'",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert_eq!(has_exchange, 0, "exchange column must be dropped");
+
         // delist_date column exists and is NULL for this row
         let delist_date: Option<String> = duck
             .query_row(
                 &format!(
-                    "SELECT CAST(delist_date AS VARCHAR) FROM read_parquet('{}') WHERE symbol = '600519'",
+                    "SELECT CAST(delist_date AS VARCHAR) FROM read_parquet('{}') WHERE symbol = 'SH600519'",
                     parquet.display()
                 ),
                 [],
@@ -682,6 +710,144 @@ mod tests {
             )
             .expect("count");
         assert_eq!(count, 2, "merged parquet should have both rows");
+    }
+
+    #[test]
+    fn run_dispatches_fin_indicators_arm() {
+        // import_table's FinIndicators arm routes to import_fin_indicators
+        // (the match arm was previously only covered indirectly).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(FIN_SCHEMA)
+            .output()
+            .expect("create table");
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2024-12-31', 1.5e11, 7e10, 59.0, '贵州茅台')")
+            .output().expect("insert");
+
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::FinIndicators,
+            false,
+            None,
+        )
+        .expect("run fin_indicators");
+
+        let parquet = tmp.path().join("fin_indicators.parquet");
+        assert!(parquet.exists(), "fin_indicators.parquet should be created");
+    }
+
+    #[test]
+    fn fin_indicators_merge_failure_falls_back_to_full_export() {
+        // Corrupt the existing parquet so the DuckDB incremental-merge SQL
+        // fails; the import must fall back to overwriting the parquet with
+        // the fresh Dolt data instead of erroring out.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(FIN_SCHEMA)
+            .output()
+            .expect("create table");
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2024-12-31', 1.5e11, 7e10, 59.0, '贵州茅台')")
+            .output().expect("insert 2024");
+
+        import_fin_indicators(tmp.path(), tmp.path(), false, None).expect("first import");
+        let parquet = tmp.path().join("fin_indicators.parquet");
+        assert!(parquet.exists());
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_indicators (symbol, report_date, revenue, net_profit, basic_eps, name) VALUES \
+                ('SH600519', '2025-12-31', 1.72e11, 8.23e10, 65.66, '贵州茅台')")
+            .output().expect("insert 2025");
+
+        std::fs::write(&parquet, b"corrupted parquet").expect("corrupt parquet");
+
+        import_fin_indicators(tmp.path(), tmp.path(), false, Some("2025-01-01"))
+            .expect("fallback import");
+
+        // The fallback rewrote the parquet with the since-filtered Dolt
+        // export (2025 row only; the 2024 row predates the filter), so the
+        // garbage file was replaced by a readable parquet again.
+        assert_eq!(read_parquet_row_count(&parquet), 1);
+    }
+
+    #[test]
+    fn financial_table_merge_failure_falls_back_to_full_export() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "CREATE TABLE fin_balance_sheet (\
+                symbol VARCHAR(20) NOT NULL, \
+                report_date DATE NOT NULL, \
+                total_assets DOUBLE, \
+                net_profit DOUBLE, \
+                PRIMARY KEY (symbol, report_date))",
+            )
+            .output()
+            .expect("create table");
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_balance_sheet (symbol, report_date, total_assets, net_profit) VALUES \
+                ('SH600519', '2024-12-31', 2.6e11, 7e10)")
+            .output().expect("insert 2024");
+
+        import_financial_table("fin_balance_sheet", tmp.path(), tmp.path(), false, None)
+            .expect("first import");
+
+        let parquet = tmp.path().join("fin_balance_sheet.parquet");
+        assert!(parquet.exists());
+        assert_eq!(read_parquet_row_count(&parquet), 1);
+
+        Command::new("dolt")
+            .arg("--data-dir").arg(tmp.path())
+            .arg("sql").arg("-q")
+            .arg("INSERT INTO fin_balance_sheet (symbol, report_date, total_assets, net_profit) VALUES \
+                ('SH600519', '2025-12-31', 2.8e11, 8e10)")
+            .output().expect("insert 2025");
+
+        std::fs::write(&parquet, b"corrupted parquet").expect("corrupt parquet");
+
+        import_financial_table(
+            "fin_balance_sheet",
+            tmp.path(),
+            tmp.path(),
+            false,
+            Some("2025-01-01"),
+        )
+        .expect("fallback import");
+
+        assert_eq!(read_parquet_row_count(&parquet), 1);
     }
 
     fn setup_financial_table(dolt_dir: &std::path::Path, table_name: &str) {

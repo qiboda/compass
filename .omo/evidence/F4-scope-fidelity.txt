@@ -1,0 +1,52 @@
+# F4 — Scope Fidelity (symbol-prefix-canonical, ref #181)
+
+Date: 2026-08-08
+Auditor: main agent (orchestrator)
+Base: master e6fd6b2 | Branch: fix/symbol-prefix-canonical
+Verdict: PASS (MUST NOT 全部遵守；Success criteria [1]-[7] 逐条达成)
+
+## 1. MUST NOT — 逐项核对（e6fd6b2..HEAD diff）
+
+| # | Constraint | Evidence | Status |
+|---|---|---|---|
+| M1 | 不改 Dolt 源侧数据 | diff 中无 collectors/ 变更；唯一含 "dolt" 的文件是 crates/compass-data/src/import_dolt.rs（import 逻辑本身）| ✓ |
+| M2 | 不排除指数、不去重 | import_dolt.rs 主查询无 WHERE 过滤指数；`WHERE symbol IN ('SH000905','SZ000905')` 仅出现在回归测试断言（验证两行并存）| ✓ |
+| M3 | 不引入新依赖 | `git diff e6fd6b2..HEAD -- Cargo.toml crates/*/Cargo.toml` 无 + 行 | ✓ |
+| M4 | 不改 GUI 视觉（布局/样式） | diff 无 theme*/styles* 变更 | ✓ |
+| M5 | 不动 baostock/collectors | diff 无 baostock/collectors/ 变更 | ✓ |
+| M6 | 无新 exchange 列 / 不复活裸码+exchange 分离 | `grep "AS exchange\|RIGHT(symbol" crates/` exit=1（0 残留）；Exchange 枚举已删 | ✓ |
+
+## 2. Success criteria — 逐条核对
+
+| # | Criterion | Evidence | Status |
+|---|---|---|---|
+| [1] | import 无 SUBSTRING/bare stripping | grep 0 残留；import_dolt.rs 主查询直接 SELECT symbol | ✓ |
+| [2] | 无 RIGHT(symbol,6) AS exchange / exchange 列 | grep 0 残留；stock_basic.parquet DESCRIBE 无 exchange 列（F3）| ✓ |
+| [3] | fetch_bars_sends_prefixed_symbol tests | fetch_bars_sends_prefixed_symbol_when_exchange_selected / _no_exchange_selected 均绿 | ✓ |
+| [4] | 搜索 "600519"/"SH600519"/"sh.600519" 均命中 SH600519 | filter_stocks_three_spellings_find_same_stock + test_three_spellings_select_same_stock_with_prefixed_submit 绿 | ✓ |
+| [5] | config default/watchlist 迁移测试 | load_config_migrates_bare_default_symbol_and_watchlist_and_rewrites + 8_prefix→BJ + writeback failure 绿 | ✓ |
+| [6] | exchange-free stock_basic | import_compass.rs 无 exchange 列；测试断言列不存在；F3 DESCRIBE 确认 | ✓ |
+| [7] | kb/ 文档同步 | kb/design/{architecture,data-providers,symbols}.md + kb/dev/testing.md + kb/user/{cli,config,gui}.md 全部更新（commit 5b68b84）| ✓ |
+
+## 3. 5-agent review-work pass（独立 lane）
+
+| Lane | Verdict | Key output |
+|---|---|---|
+| Goal & Constraint | PASS / HIGH | D1-D11 全部 ACHIEVED；无 MISSED/PARTIAL |
+| QA Execution | PASS / HIGH | 33 scenarios，P0 9/9 P1 7/7 P2 8/8，0 FAIL |
+| Code Quality | PASS / HIGH | 3 MINOR + 3 NITPICK，无 CRITICAL/MAJOR |
+| Security | PASS / LOW | 1 LOW（CLI 参数校验缺口，自注入），无 CRITICAL/HIGH |
+| Context Mining | PASS / MEDIUM | 2 IMPORTANT（F1/F4 evidence 缺失 → 本文件补产；toolchain.md 失真 → 已修订）|
+
+## 4. 评审 MINOR 修复（收口）
+
+- symbol.rs infer_exchange_prefix 补 43→BJ（对齐官方 collector 4/8/9 规则）
+- import_dolt.rs normalize_symbol_filter 增加 6 位码校验（拒绝 SHabc/SH600519'/7 位）
+- scoring.rs/aggregation.rs bare→symbol 重命名
+- searchable_dropdown.rs strip_exchange_prefix .get(..2) 加固
+- dispatcher.rs 测试 fixture 前缀化
+- Evidence: .omo/evidence/MINOR-fixes-symbol-prefix-canonical.txt
+
+## 结论
+
+无 scope creep（无超出 plan 的功能）；MUST NOT 全部遵守；success criteria 全部达成；评审发现的 2 个 IMPORTANT 项已收口（本文件 + toolchain.md 修订）。**F4 PASS。**

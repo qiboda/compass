@@ -22,9 +22,9 @@ mkdir -p ~/.config/compass
 theme = "compass_dark"
 
 [watchlist]
-# 自选股（Sidebar 左侧栏）。裸 6 位代码列表。
+# 自选股（Sidebar 左侧栏）。带交易所前缀的代码列表（如 "SH600519"）。
 # 由 GUI 在添加/移除自选时自动写回，重启后恢复。
-# symbols = ["600519", "000001"]
+# symbols = ["SH600519", "SZ000002"]
 
 [screener]
 # 选股器条件（Screener tab）。全部可选——缺省键用默认值。
@@ -56,9 +56,9 @@ investment_data_dir = "/data/compass-data/investment_data"
 compass_data_dir = "/data/compass-data/compass_data"
 
 [app]
-# 应用启动时显示的股票代码。
-# 默认值："000001"
-default_symbol = "000001"
+# 应用启动时显示的股票代码（带交易所前缀）。
+# 默认值："SZ000001"
+default_symbol = "SZ000001"
 
 # 应用启动时显示的时间周期。
 # 默认值："1d"
@@ -76,7 +76,7 @@ default_timeframe = "1d"
 | `parquet` | `dir` | `/data/compass-data/parquet_data` |
 | `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
-| `app` | `default_symbol` | `000001` |
+| `app` | `default_symbol` | `SZ000001` |
 | `app` | `default_timeframe` | `1d` |
 
 ## 配置示例
@@ -85,14 +85,14 @@ default_timeframe = "1d"
 
 ```toml
 [app]
-default_symbol = "600519"
+default_symbol = "SH600519"
 ```
 
 部分配置也能工作 — 仅覆盖你指定的键：
 
 ```toml
 [app]
-default_symbol = "600519"
+default_symbol = "SH600519"
 # default_timeframe 保持 "1d"（默认值）
 ```
 
@@ -108,11 +108,25 @@ theme = "compass_light"
 
 ```toml
 [watchlist]
-symbols = ["600519", "000001"]
+symbols = ["SH600519", "SZ000002"]
 ```
 
 左侧自选栏的股票列表，按代码升序。GUI 在侧边栏点 ＋ 添加、点 × 并确认移除时
 自动写回；也可手动编辑。缺失该节 = 空自选。
+
+### 旧格式自动迁移（D10，issue #181）
+
+符号前缀规范化（issue #181）之前，配置中可以写裸 6 位码。加载配置时，
+文件中的裸码值会被**自动迁移**为带前缀形式并回写文件（回写失败仅警告，
+不阻断启动）：
+
+- 6 开头 → `SH`（如 `600519` → `SH600519`）
+- 8 开头、43 开头、92 开头 → `BJ`（如 `830799` → `BJ830799`、`430047` → `BJ430047`、`920001` → `BJ920001`）
+- 其余 → `SZ`（如 `000001` → `SZ000001`）
+- dot 形式直接规范化（如 `sh.000001` → `SH000001`）
+
+仅迁移**文件中的值**；内存默认值（`SZ000001`）不迁移。新配置建议直接写
+带前缀形式。
 
 ### 自定义数据目录
 

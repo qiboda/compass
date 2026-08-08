@@ -39,12 +39,11 @@ jobs:
           sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
           dolt version
       - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Collect coverage
+      - name: Run tests and collect coverage (nextest semantics)
         run: |
           mkdir -p target/llvm-cov
-          cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
+          cargo llvm-cov nextest --json --summary-only --output-path target/llvm-cov/coverage.json
       - name: "Enforce coverage gate (per-crate thresholds: data/core 95%, others 80%)"
         run: bash scripts/check-coverage.sh target/llvm-cov/coverage.json
       - uses: actions/upload-artifact@v7

@@ -350,3 +350,33 @@
 ### Trends (last 10)
 - **「文档已固化但未遵守」模式第五次出现**（ref #96 → #104 → #171 fmt → #190 Dolt → 本次 commit-msg ref 前缀）：AGENTS.md 明文规则（叙述性提及已关闭 issue 用 #N）执行时未遵守，被 commit-msg hook 硬拦截——文档规则必须配套执行侧硬钩子（本次 #182 的 fmt hook 正是该模式的正向固化：从文档规则升级为 pre-commit 硬钩子）
 - **review 驱动的同类问题发现 → 共享修复**（ref #139 六轮、#171 两轮、本次两轮）：Context agent 发现的 sepa.rs 竞争与 backtest.rs 原 bug 同根因，一次提取共享 helper 解决两处——review 的价值不只是抓 bug，还在于发现"修一个留一个"的同类风险
+## 2026-08-08 — ref #181 symbol 前缀规范化全面修复
+
+**What was done**: 修复 issue #181（import 剥 SH/SZ/BJ 前缀导致指数 SH000905 与股票 SZ000905 汇合为裸码 000905，stock_daily.parquet 出现 (symbol, date) 重复行）。方案：恢复 Dolt-native 前缀符号全链路（五 crate），废弃裸码+exchange 分离设计（D9 输入层禁裸码）、D10 旧 config 自动迁移、D11 搜索语义。14 commits（fec8781..1948a0c），含 10 轮 plan 双审（momus+Oracle r1-r10）、F2/F3 验证波、两轮 review-work（5-lane 首轮 FAIL → 修复轮 PASS）。
+
+**User corrections**（逐字引用对话记录）:
+1. "不允许输入层便利。" —— 对 D7 的重大修正：输入层（CLI --symbols、GUI 过滤/fetch、config 默认值）也不接受裸码，不是"输入层便利 + 数据层规范化"。直接改变 plan 范围（D9 由此诞生）。
+2. "Scope OUT（已确认不做的） 这部分里面有前缀和symbol分离的吗？" —— 追问 scope 边界，促使 Scope OUT 补充"禁止新代码以裸码作为存储/查询/返回值格式"显式条目。
+3. "压缩一部分上下文，把plan修改的具体过程压缩掉。" —— 用户主动要求压缩会话以继续工作。
+4. "1 ，并minor也一并修复" —— review 报告选项选择：收口 2 个 IMPORTANT 项 + 一并修复全部 MINOR 项（而非只做 IMPORTANT）。
+5. "push" —— 明确推送指令（此前所有 review 轮次均未授权 push，符合 HARD BLOCK）。
+
+**What went wrong**:
+1. **F1 evidence 早期声称"9 commits"**：plan 完成审计（F1）在修复轮中途写就，声称 9 commits 全部含 ref #181——实际完成时 14 commits。上下文挖掘 lane 抓出"evidence 过期声称"，违反 AGENTS.md ref #174"完成声明前必须核实、禁止过度声称"。教训：F-wave evidence 应在全部实现完成后一次性写，中途写必然过期。
+2. **MINOR 修复引入 doc drift（43→BJ 未同步 kb/）**：c79564c 给 `infer_exchange_prefix` 加 43→BJ 分支（对齐官方采集器），但 kb/design/symbols.md L57/L211 + kb/user/config.md D10 迁移规则仍是"8/92→BJ、其余→SZ"——三方 review（Goal/CodeQuality/Context）同时抓出。违反 plan 自身 success criterion "kb/ 文档与代码一致"。教训：行为变更（尤其规则/启发式改动）必须同 commit 同步文档，不能等"文档任务"。
+3. **Security lane 抓到 --start-date/--end-date 注入未封**：首轮修复只封了 --symbols 注入，日期参数仍是原始插值——修复不完整导致第二轮 FAIL。教训：安全修复要覆盖同一漏洞类的全部实例（--since 已有校验，start/end 应同构处理），review 通过后修复必须逐条验证而非"修了主要的那条"。
+
+**Lessons learned**:
+1. **F-wave evidence 只在全部实现完成后写**——中途写必然"过期声称"；如不得已中途写，完成后必须补正（本次已补正为 11→14 commits 但应避免再犯）。"声明完成前逐条核实"是 ref #174 的强制要求，evidence 产物本身也必须真实。
+2. **规则/启发式改动 = 文档同 commit 同步**——行为变更的 commit 必须包含其文档同步，不能依赖独立的"文档任务"兜底；doc-drift 会被 review 抓出但已在 review 后才暴露（成本更高）。可固化：commit 自检增加"改了规则/常量 → 检查 kb/ 是否有对应文字"。
+3. **安全修复按"漏洞类"而非"单点"闭合**——--symbols 与日期参数是同类注入面，修复必须枚举全部入口；review 通过 ≠ 无遗漏，复审要验证修复覆盖了 finding 描述的全部范围。
+
+**Process improvements**:
+- 已落实：无机制变更（本次为 review 修复闭环 + evidence 补正，规则已在 AGENTS.md/KB 中；43→BJ 规则已同步三处文档，F1 evidence 已补正）
+- 建议（可检测失误）：plan 的 Final verification wave F1 增加"evidence 文件日期/commit 计数与 HEAD 一致"自检项——proposed，走 gate 建 issue 时评估
+- 建议（行为类）：commit-msg 前自检清单增加"规则/启发式改动 → 同 commit 检查 kb/ 对应文字"——proposed
+
+### Trends (last 10)
+- **"完成声明先于验证/声称过期"模式延续**（ref #160 → #174 → 本次 F1 "9 commits" 过期声称）：声明 plan 完成前的证据核实是反复被"学到"但未固化的教训——F1 evidence 应在实现收尾后统一写，且 evidence 本身内容要可复核（commit 计数、grep 结果）
+- **doc-drift 反复出现**（ref #171 陈旧文档、ref #139 决策记录同步、本次 43→BJ 未同步 kb/）：行为变更（规则/启发式/默认值）与 kb/ 文档必须同 commit 提交——"文档任务"兜底模式已被证实两次失败，应固化为 commit 自检
+- **安全/质量修复不完整导致复审 FAIL**（ref #154 两轮修复、本次 security lane 抓到日期注入）：review 发现的修复必须逐条验证覆盖 finding 全部范围——"修了主要实例"不等于"闭合漏洞类"

@@ -121,7 +121,7 @@ Parquet 主数据库布局（`stock_daily.parquet` 由 `compass-data import` 生
 
 ```
 parquet_data/
-├── stock_basic.parquet        # symbol, name, exchange, list_date, delist_date, board, full_name, total_share, industry, region
+├── stock_basic.parquet        # symbol, name, list_date, delist_date, board, full_name, total_share, industry, region
 ├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
 └── stock_daily.symbols.txt    # 每行一个标的（快速列表）
 ```
@@ -338,7 +338,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 | GUI 数据来源 | 在线 API 直连 / 多层读穿缓存 / 纯本地直读 Parquet | DuckDbProvider 直读 `stock_daily.parquet`（`read_parquet()` 回退） | 本地读取零延迟、无网络依赖、无 API 限流；重构后消除 cache miss 与负缓存复杂度 | 在线直连增加延迟和失败点；读穿缓存需维护 CachedProvider、负缓存、inflight 去重等多层状态 |
 | 错误处理：错误类型设计 | anyhow 通用错误 / 精确枚举 | DataError 枚举：Network / Database / Parse / RateLimited / NoData，含 From 实现 | 调用方可区分错误类型（如 NoData 表示标的不存在 vs Network 表示网络中断），GUI 可据此展示不同提示；From 实现支持 `?` 传播 | anyhow 丢失错误分类信息，调用方无法做差异化处理；Parse 携带原始字符串便于排查 API 响应变更 |
 | stock_basic 数据源 | 东财 push2 (EM_FS) / investment_data ts_a_stock_list / 三大交易所官网 | 官网 | 数据权威含退市日期、无新三板污染（东财 t:81 段混入 6841 只新三板/老三板）、ts_a_stock_list 过时 4 年 | 东财段位不可靠且无退市日期；ts_a_stock_list max list_date 2022-07-18 无法覆盖新股 |
-| stock_basic 元数据存储 | DuckDB 表 + Parquet 双轨 / 仅 Parquet | 仅 Parquet（`import-compass --table stock_basic` 生成，ParquetReader 直读） | duckdb.rs 的旧 stock_basic 路径（8 列旧 schema + upsert/get）零生产调用者；`import` 写 5 列占位文件会覆盖新 10 列 parquet；单一数据源避免双 schema 维护 | DuckDB 双轨徒增第二份 schema 定义与同步成本；`import` 保留导出会持续制造错误列文件（ref #80） |
+| stock_basic 元数据存储 | DuckDB 表 + Parquet 双轨 / 仅 Parquet | 仅 Parquet（`import-compass --table stock_basic` 生成，ParquetReader 直读） | duckdb.rs 的旧 stock_basic 路径（8 列旧 schema + upsert/get）零生产调用者；`import` 写 5 列占位文件会覆盖新 9 列 parquet（issue #181 起无 exchange 列）；单一数据源避免双 schema 维护 | DuckDB 双轨徒增第二份 schema 定义与同步成本；`import` 保留导出会持续制造错误列文件（ref #80） |
 | 横截面原语位置 | DataProvider trait 方法 / DuckDbProvider 方法 / ParquetReader 固有方法 | ParquetReader 固有方法 `fetch_cross_section` | 与 `load_all_stock_basics` 同源同模式；避免 trait 三 impl（duckdb/parquet/synthetic）牵连；符合"直读 parquet"契约 | trait 扩展需同时改三处 impl 且 synthetic 为私有 mod；DuckDbProvider 依赖内存表缓存模型，与全表扫描不兼容 |
 | CrossSectionBar 字段集 | 全 OHLCV / 仅 adjclose / adjclose+close+volume | `symbol, trade_date, adjclose, close, volume` | 足以支撑选股器全部条件（均线/动量/突破用 adjclose，量能用 volume，最新价/市值用 close）；DuckDB 列裁剪最小化 I/O | 全字段浪费内存（约 1.6M 行）；仅 adjclose 无法算市值/最新价 |
 | CrossSectionBar 字段集（SEPA 扩展，ref #145） | 保持 5 字段 / 扩展 9 字段 | 9 字段（+`open`/`high`/`low`/`amount`） | SEPA 形态模块（VCP 需 high/low 通道）与 ATR（需 high/low/close）依赖 OHLC，成交额（20 日均额）过滤需要 `amount`；字段追加向后兼容，选股器仍只用原 5 字段，内存代价可接受（全市场单日 ~6000 行） | 保持 5 字段无法支撑形态/ATR/成交额因子；只加 amount 则形态与 ATR 仍缺数据 |
@@ -353,7 +353,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 | capital_factor 列集（ref #150） | plan 模板（volume_ratio_score/chip_score/main_flow_score/institution_score）/ 子项分 | `symbol, trade_date, volume_price_score, chip_score, big_capital_score, update_date`，PK(symbol, trade_date) | 量价配合/筹码集中/大资金流入为 `details.capital` 子项分，直接可得 | institution_score 独立值只存在于 note 字符串（"主力+龙虎+调研+大宗"），解析脆弱 |
 | final_score 列集（ref #150） | — | plan 模板原样：`symbol, trade_date, trend_score, theme_score, money_score, pattern_score, risk_score, total_score, rank, update_date`，PK(symbol, trade_date)；`rank` 反引号转义（Dolt 保留字） | `SepaRow` 五模块加权分 + total + rank 全部直接可得（money_score = `SepaRow.capital`） | — |
 | market_temperature 列集（ref #150） | 原始值直存 / 从 indicators value_text 解析 | plan 模板列：`trade_date, score, hs300_trend, zz1000_trend, limit_up_count, total_amount, breadth, position_suggestion, update_date`，PK(trade_date)；数值从 5 个 `SepaIndicator.value_text` 解析 | 原始值（ratio/涨停数/成交额/上涨比例）只在引擎内部计算，`MarketThermometer` 仅暴露 value_text；格式由 temperature.rs 常量锁定（`{:.1}%`/`{n} 家`/`{:.2}万亿`）且有既有测试断言 | 改引擎暴露原始值违反"不改 compass-strategy"；value_text 解析失败回退 0，绝不 panic |
-| SEPA symbol 前缀来源（ref #150） | 裸码直写 / 从 stock_basic.parquet exchange 列拼前缀 | CSV 中写 `exchange + 6位码`（如 `SZ000001`），exchange 查不到回退 `SH` | Dolt 计算表与采集表一致带前缀；SepaRow 只有裸码，exchange 列在 stock_basic.parquet 中可得 | 裸码与采集表外键语义不一致；回退 SH 只影响缺失元数据的边缘股票，不阻塞写回 |
+| SEPA symbol 前缀来源（ref #150，issue #181 修订） | 裸码直写 / 从 stock_basic.parquet exchange 列拼前缀 / **透传引擎前缀 symbol** | 写回 CSV 直接透传 `SepaRow.symbol`（前缀形式，如 `SZ000001`），`exchange_prefixes` 查找已删除 | D6 删除 stock_basic.parquet 的 exchange 列后无从查找；引擎 key 已全前缀（C4），透传零转换零回退，杜绝 `SHSZ000001` 垃圾前缀 | 拼前缀依赖已删 exchange 列且回退 `SH` 会误标一切；裸码直写与采集表外键语义不一致 |
 | run_temperature 实现（ref #150） | 独立重算温度计 / 复用 run_sepa 输出 | `run_sepa(SepaQuery{top_n:1})` 取 `SepaData.thermometer` | run_sepa 内部已算温度计，复用免重复 fetch 与分组逻辑；全市场打分一次可接受（CLI 非热路径） | 独立重算需复制 fetch/分组管线，双份维护 |
 | data_updates 登记（ref #150） | 仅 Dolt 表 / 同步登记 | 每张计算表 import 后 upsert `data_updates`（source=`'compass-data sepa'`，last_report_date=计算日期，last_updated=运行日，row_count=导入行数） | 与采集表同款可观测性；脚本/用户可查最近计算状态 | 不登记则计算历史无从追踪 |
 | 写回内容与 `--top` 解耦（ref #150，PR 评审 P0-1） | 写回 top-N 截断集 / 写回全量计算集 | `run_score` 引擎 `top_n: usize::MAX` 全量计算，`--top` 仅控制终端表格打印；write_back 持久化全量通过过滤的排序结果 | PR 评审实证：`sepa score --top 3` 重跑会 DELETE 当日已存全部行再只写 3 行（SZ000852/SZ000906 被删）；`--top` 语义是"输出条数上限"，不该决定持久化内容；与 GUI "TOP N 截断仅作用于本地副本" 原则一致 | 写回 top-N 子集导致不同 --top 值产生不同持久状态、非幂等 |

@@ -1,0 +1,104 @@
+Task 2 — import 去剥前缀 + symbols.txt 保留前缀 + --symbols 只接受前缀
+======================================================================
+Plan: .omo/plans/symbol-prefix-canonical.md todo 2 (lines 85-91)
+Branch: fix/symbol-prefix-canonical (worktree symbol-prefix-canonical)
+Base: Task 1 commit fec8781
+Date: 2026-08-07
+
+1. RED-FIRST EVIDENCE
+---------------------
+All test updates + new tests written BEFORE any production change, against
+old (strip-prefix) code:
+
+(a) Compile error (new function absent):
+  cargo test -p compass-data import_dolt
+  → error[E0425]: cannot find function `normalize_symbol_filter` in this scope
+    (11 errors, all in the new --symbols validation tests)
+
+(b) Runtime assertion failures (8) with normalize tests temporarily gated off:
+  - filter_symbols_matches_sz_code            FAILED (exact-match vs strip)
+  - filter_symbols_matches_sh_code            FAILED
+  - filter_symbols_matches_multiple_comma_separated FAILED
+  - filter_symbols_handles_spaces_in_filter   FAILED
+  - run_filters_by_symbols                    FAILED (prefixed filter input
+    "SZ000001" matches nothing via strip-prefix comparison)
+  - run_rejects_bare_symbol_filter            FAILED (bare "000001" accepted)
+  - run_preserves_colliding_sh_sz_symbols     FAILED
+    panicked: assertion `left == right` failed
+      left: []            <- parquet has NO SH000905/SZ000905: old import
+                              merged both into bare "000905"
+      right: ["SH000905", "SZ000905"]
+  - run_filters_by_symbols_dot_form_normalized FAILED (dot form "sz.600519"
+    silently matches nothing — empty result)
+  Result: 13 passed; 8 failed (temporary gate reverted; 26/26 green after fix)
+
+2. CHANGES (crates/compass-data/src/import_dolt.rs)
+---------------------------------------------------
+(a) Main query: removed
+    `CASE WHEN LEFT(symbol,2) IN ('SH','SZ','BJ') THEN SUBSTRING(symbol,3)
+     ELSE symbol END AS symbol`
+    → direct `SELECT symbol, tradedate, open, high, low, close, adjclose,
+      volume, amount FROM final_a_stock_eod_price`
+(b) symbols.txt: writes Dolt-native prefixed symbols (no strip_prefix)
+(c) --symbols WHERE: `symbol IN (...)` direct comparison; filter_symbols is
+    exact match; shared normalization path = normalize_symbol_filter()
+    (dot form → Dolt-native via compass_core::data::symbol::parse_explicit_prefix,
+    case-insensitive) applied once at run() entry, used by both symbols.txt
+    enumeration filter and the SQL WHERE clause
+(d) strip_prefix helper + its 4 unit tests deleted (dead code)
+(e) --symbols entry validation: bare 6-digit codes rejected with error,
+    non-zero exit (D9)
+
+crates/compass-data/src/main.rs: --symbols help text now documents
+exchange-prefixed form ("SH600519,sz.000001"), bare rejection, dot→native
+normalization.
+
+3. TESTS (all in import_dolt.rs tests module)
+---------------------------------------------
+- run_filters_by_symbols: filter input Some("000001")→Some("SZ000001"),
+  assertion vec!["000001"]→vec!["SZ000001"]
+- filter_symbols unit tests (6): prefixed filter inputs (exact match)
+- normalize_symbol_filter tests (5): Dolt-native kept, dot→native equivalence
+  (sz.600519 == SZ600519), case-insensitive, bare rejected, multi-entry
+- run_rejects_bare_symbol_filter: bare "000001" → Err
+- run_preserves_colliding_sh_sz_symbols (regression #181): SH000905 +
+  SZ000905 fixture → both in parquet, 0 (symbol, tradedate) dups
+- run_filters_by_symbols_dot_form_normalized: "sz.600519" → SZ600519 row only
+
+cargo test -p compass-data import_dolt: 26 passed, 0 failed
+cargo test -p compass-data (full): 51 + 55 passed, 0 failed
+cargo clippy -p compass-data -- -D warnings: clean
+cargo fmt --check: clean
+
+4. ACCEPTANCE GATES
+-------------------
+- grep -nE "fn strip_prefix|SUBSTRING\(symbol" crates/compass-data/src/import_dolt.rs
+  → exit 1, no matches ✓
+- --symbols SH600519 works: (see dot-form equivalence below, SZ000001)
+  ✓ (fixture test run_filters_by_symbols + CLI smoke)
+- --symbols 600519 → error "not exchange-prefixed", exit code 1 ✓
+- --symbols sz.000001 vs --symbols SZ000001 → identical: 1 symbol
+  SZ000001, 8410 rows each ✓
+- help text: "comma-separated exchange-prefixed codes, e.g.
+  'SH600519,sz.000001'; bare 6-digit codes are rejected, dot form is
+  normalized to Dolt-native prefixed form" ✓
+- --symbols SH000905,SZ000905 on real Dolt → both symbols distinct,
+  symbols.txt = [SH000905, SZ000905] ✓
+
+5. REAL-DATA SMOKE (ref #154) — /data/compass-data/investment_data
+------------------------------------------------------------------
+Full unfiltered import (6132 symbols, 18,315,747 rows, exit 0):
+- SELECT COUNT(*) FROM (SELECT symbol, tradedate FROM read_parquet(...)
+  GROUP BY 1,2 HAVING COUNT(*)>1) → 0 ✓ (source-side full_dup=0 verified
+  independently on Dolt: 0)
+- SELECT DISTINCT symbol ... IN ('SH000905','SZ000905') → 2 rows
+  (SH000905, SZ000905) ✓
+- regexp_matches(symbol, '^[0-9]+$') → 0 rows (no bare codes) ✓
+- symbols.txt contains 6132 prefixed symbols ✓
+
+6. MUST-NOT VIOLATIONS
+----------------------
+None: no indices excluded, no dedup, Dolt source untouched (read-only
+SELECTs), column mappings open/high/low/close/adjclose/volume/amount
+unchanged, no new dependencies (uses existing compass-core
+parse_explicit_prefix from Task 1).

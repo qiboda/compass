@@ -1,0 +1,91 @@
+# MINOR fixes — symbol-prefix-canonical (issue #181) review round
+
+Date: 2026-08-08
+Branch: fix/symbol-prefix-canonical
+Commit: (this round — after fec8781..6a85d48)
+
+Five MINOR findings from the 5-agent review-work pass, fixed in-PR (ref #181).
+RED-first where behavior changes; pure renames/fixtures behavior-locked by
+existing tests (no RED applies).
+
+## Finding 1 — infer_exchange_prefix missing 43xxxx→BJ (compass-core)
+
+- `crates/compass-core/src/data/symbol.rs` — `infer_exchange_prefix`
+- RED: added `infer_exchange_prefix_bj_43_segment` asserting
+  `infer_exchange_prefix("430047") == Some("BJ")` (+ "436149"→BJ, "920000"→BJ)
+- RED evidence (before fix): `left: Some("SZ") right: Some("BJ")` — FAILED
+- FIX: `code.starts_with('8') || code.starts_with("43") || code.starts_with("92") → BJ`;
+  doc comment updated to `6→SH, 8/92/43→BJ, else→SZ`
+- GREEN: 8 tests pass in `data::symbol`; existing tests (600519→SH, 830799→BJ,
+  000001→SZ, 920001→BJ) stay green
+
+## Finding 2 — normalize_symbol_filter missing 6-digit gate + unescaped IN values (compass-data)
+
+- `crates/compass-data/src/import_dolt.rs`
+- RED: added `normalize_symbol_filter_requires_exactly_6_digit_code` —
+  "SH600519" ok, "sh.600519" ok→SH600519, "600519" rejected (bare),
+  "SHabc" rejected (non-digit), "SH6005190" rejected (7 digits), "SH60051"
+  rejected (5 digits), "SH600519'" rejected (quote), "SH600519;" rejected,
+  "SZ000001,SH6005190" rejected (one bad entry poisons whole filter)
+- RED evidence (before fix): `--symbols entry "SHabc" must be rejected,
+  got Ok("SHabc")` — FAILED
+- FIX: after normalization validate canonical form == exchange + exactly 6
+  ASCII digits (mirrors `compass_core::data::parquet::validate_symbol`;
+  len==8, prefix ∈ {SH,SZ,BJ}, rest all ascii digits); error message names
+  the offending entry and the expected form
+- Belt-and-suspenders: single quotes doubled in the `symbol IN (...)` clause
+  values (injection already impossible after the gate)
+- GREEN: 27 tests pass in `import_dolt`
+
+## Finding 3 — stale `bare` loop var names (compass-strategy)
+
+- `crates/compass-strategy/src/sepa/scoring.rs` — loop sites at (old) lines
+  238, 288, 319, 354, 384, 401 + all uses inside bodies (themes insert,
+  best_theme insert, flow_5d insert, block_adj insert, sector_momentums
+  push/get, sector_of insert) renamed `bare` → `symbol`
+- `crates/compass-strategy/src/sepa/aggregation.rs` line 52 — loop var + two
+  `bare.as_str()` uses renamed `symbol`/`symbol.as_str()`
+- Pure rename, no behavior change. RED not applicable (rename, behavior locked
+  by existing tests). `cargo test -p compass-strategy` green.
+
+## Finding 4 — strip_exchange_prefix byte-slice panic on non-ASCII (compass-ui)
+
+- `crates/compass-ui/src/widgets/searchable_dropdown.rs` — `strip_exchange_prefix`
+- RED: added `strip_exchange_prefix_non_ascii_does_not_panic` —
+  "平安银行" unchanged, "中" unchanged, "SH600519"→"600519"
+- RED evidence (before fix): `panicked at ...: end byte index 2 is not a char
+  boundary; it is inside '平' (bytes 0..3 of string)` — FAILED
+- FIX: `symbol.get(..2)` (Option — None on non-char-boundary → no prefix
+  strip) replaces `symbol.len() >= 2 && symbol[..2]...`
+- Note: test initially asserted dot form "sh.600519" passes through unchanged;
+  actual (pre-existing) behavior strips the letter prefix → ".600519"
+  (dot-form stripping lives in `normalize_query` upstream). Assertion updated
+  to document that boundary.
+- GREEN: 27 tests pass in `widgets::searchable_dropdown`
+
+## Finding 5 — bare-code fixtures in dispatcher tests (compass)
+
+- `crates/compass/src/dispatcher.rs` — `SharedState::new("000001", ...)` ×3,
+  `SharedState::new("600519", ...)`, `dispatch_symbol_fetch(..., "600519")`,
+  assertions `request.symbol == "000001"` / `state.symbol.get() == "600519"`
+  updated to prefixed SZ000001 / SH600519 (D9/D5: no bare code as input
+  format). Dispatcher is a format-agnostic passthrough — fixture-only change.
+- RED not applicable (fixture update, behavior locked by existing tests).
+  `cargo test -p compass` green.
+
+## Gates (all pass)
+
+- `cargo test --workspace` — all crates green (incl. 3 new regression tests)
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo fmt --check` — clean
+- lsp_diagnostics — no diagnostics on any changed file
+- MUST NOT checklist honored: no collector changes, no scoring logic change
+  beyond rename, plan file untouched, kb/ docs untouched (docs sync separate),
+  no Dolt data touched, no new dependencies, `validate_symbol` untouched
+
+## Stray working-tree files (NOT part of this commit)
+
+- `kb/dev/toolchain.md` + `.omo/evidence/F1-plan-compliance.txt` +
+  `.omo/evidence/F4-scope-fidelity.txt` appeared mid-session (10:19) from
+  background F1/F4 review agents completing after the 6a85d48 evidence
+  commit. Left uncommitted — not part of this fix round.

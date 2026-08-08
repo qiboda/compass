@@ -26,7 +26,6 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{Duration, NaiveDate};
 use compass_core::data::parquet::ParquetReader;
-use compass_core::data::symbol::parse_explicit_prefix;
 use compass_core::model::{
     BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow,
     InstitutionSurveyRow, StockBasic,
@@ -75,10 +74,9 @@ const SUSPEND_CAL_DAYS: i64 = 7; // ≈ 5 trading days
 /// score (NaN-safe), truncate to `query.top_n` (default 50) and assemble
 /// ranked [`SepaRow`]s with per-module [`SepaFactor`] breakdowns.
 ///
-/// Symbols are normalized to bare 6-digit codes via
-/// [`parse_explicit_prefix`]; theme names come from `fetch_concept_member`
-/// grouped by symbol. Missing SEPA parquet files degrade to empty vecs —
-/// their modules score 0 without a panic.
+/// Symbols are exchange-prefixed (`SH600519`); theme names come from
+/// `fetch_concept_member` grouped by symbol. Missing SEPA parquet files
+/// degrade to empty vecs — their modules score 0 without a panic.
 /// Pre-fetched SEPA scoring window (full range, sliced per-day by
 /// [`score_sepa`]). Fetching once and scoring many days avoids re-reading
 /// the parquet files for every backtest day (the original per-day
@@ -217,7 +215,7 @@ pub(crate) fn score_sepa(
     let members = &window.members;
     let slice_ms = started.elapsed().as_millis();
 
-    // --- Group raw rows by bare symbol (run_screener shape) -----------------
+    // --- Group raw rows by exchange-prefixed symbol ------------------------
     let basics_by_symbol: HashMap<String, &StockBasic> =
         basics.iter().map(|b| (b.symbol.clone(), b)).collect();
     let mut bars_by_symbol: HashMap<String, Vec<&CrossSectionBar>> = HashMap::new();
@@ -228,21 +226,21 @@ pub(crate) fn score_sepa(
             .push(bar);
     }
 
-    // Membership rows carry exchange-prefixed symbols → group by bare code.
+    // Membership rows carry exchange-prefixed symbols → group by prefixed
+    // symbol (the same key format as bars and basics).
     let mut memberships: HashMap<String, Vec<&ConceptMember>> = HashMap::new();
     for m in members {
-        let bare = parse_explicit_prefix(&m.symbol).1;
-        memberships.entry(bare.to_string()).or_default().push(m);
+        memberships.entry(m.symbol.clone()).or_default().push(m);
     }
 
     // Concept display names per symbol (deduped, sorted).
     let mut themes: HashMap<String, Vec<String>> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         let mut names: Vec<String> = ms.iter().filter_map(|m| m.concept_name.clone()).collect();
         names.sort();
         names.dedup();
         if !names.is_empty() {
-            themes.insert(bare.clone(), names);
+            themes.insert(symbol.clone(), names);
         }
     }
 
@@ -287,7 +285,7 @@ pub(crate) fn score_sepa(
     // Per symbol keep the concept scoring highest (multi-membership stocks
     // are scored on their best board).
     let mut best_theme: HashMap<String, ThemeComponents> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         let mut best: Option<(f64, ThemeComponents)> = None;
         for m in ms {
             let components = ThemeComponents {
@@ -306,7 +304,7 @@ pub(crate) fn score_sepa(
             }
         }
         if let Some((_, components)) = best {
-            best_theme.insert(bare.clone(), components);
+            best_theme.insert(symbol.clone(), components);
         }
     }
 
@@ -315,13 +313,10 @@ pub(crate) fn score_sepa(
     // have flow data.
     let mut flow_group: HashMap<String, Vec<&CapitalMainFlow>> = HashMap::new();
     for f in flows.iter().copied() {
-        flow_group
-            .entry(parse_explicit_prefix(&f.symbol).1.to_string())
-            .or_default()
-            .push(f);
+        flow_group.entry(f.symbol.clone()).or_default().push(f);
     }
     let mut flow_5d: HashMap<String, f64> = HashMap::new();
-    for (bare, rows) in &flow_group {
+    for (symbol, rows) in &flow_group {
         let cum: f64 = rows
             .iter()
             .rev()
@@ -329,7 +324,7 @@ pub(crate) fn score_sepa(
             .map(|r| r.main_net_inflow)
             .filter(|v| v.is_finite())
             .sum();
-        flow_5d.insert(bare.clone(), cum);
+        flow_5d.insert(symbol.clone(), cum);
     }
     let flow_values: Vec<f64> = flow_5d.values().copied().collect();
     let main_flow_pct: HashMap<String, f64> = flow_5d
@@ -339,28 +334,24 @@ pub(crate) fn score_sepa(
 
     let mut institution_buy: HashSet<String> = HashSet::new();
     for d in dragons.iter().copied() {
-        let bare = parse_explicit_prefix(&d.symbol).1;
         if d.institution_flag == Some(1) && d.net_amount.unwrap_or(0.0) > 0.0 {
-            institution_buy.insert(bare.to_string());
+            institution_buy.insert(d.symbol.clone());
         }
     }
 
     let mut surveyed: HashSet<String> = HashSet::new();
     for s in surveys.iter().copied() {
-        surveyed.insert(parse_explicit_prefix(&s.symbol).1.to_string());
+        surveyed.insert(s.symbol.clone());
     }
 
     // Block-trade ±5 adjustment from the last 5 rows per symbol: a discount
     // (>2%) adds, a premium (>2%) subtracts.
     let mut block_group: HashMap<String, Vec<&BlockTradeRow>> = HashMap::new();
     for b in blocks.iter().copied() {
-        block_group
-            .entry(parse_explicit_prefix(&b.symbol).1.to_string())
-            .or_default()
-            .push(b);
+        block_group.entry(b.symbol.clone()).or_default().push(b);
     }
     let mut block_adj: HashMap<String, f64> = HashMap::new();
-    for (bare, rows) in &block_group {
+    for (symbol, rows) in &block_group {
         let mut discount = false;
         let mut premium = false;
         for r in rows.iter().rev().take(5) {
@@ -380,7 +371,7 @@ pub(crate) fn score_sepa(
         if premium {
             adj -= 5.0;
         }
-        block_adj.insert(bare.clone(), adj);
+        block_adj.insert(symbol.clone(), adj);
     }
 
     // --- RS pass -------------------------------------------------------------
@@ -390,31 +381,31 @@ pub(crate) fn score_sepa(
         .collect();
     let mut sector_momentums: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let mut sector_member_count: HashMap<String, usize> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         for m in ms {
             *sector_member_count
                 .entry(m.concept_code.clone())
                 .or_default() += 1;
-            if let Some(series) = bars_by_symbol.get(bare)
+            if let Some(series) = bars_by_symbol.get(symbol)
                 && let Some(mom) = momentum_for(series)
             {
                 sector_momentums
                     .entry(m.concept_code.clone())
                     .or_default()
-                    .push((bare.clone(), mom));
+                    .push((symbol.clone(), mom));
             }
         }
     }
     // Each symbol's most representative sector (most members) for RS ranking.
     let mut sector_of: HashMap<String, String> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         if let Some(best) = ms.iter().max_by_key(|m| {
             sector_member_count
                 .get(&m.concept_code)
                 .copied()
                 .unwrap_or(0)
         }) {
-            sector_of.insert(bare.clone(), best.concept_code.clone());
+            sector_of.insert(symbol.clone(), best.concept_code.clone());
         }
     }
 
@@ -509,8 +500,7 @@ fn board_momentums(
 ) -> HashMap<String, BoardMomentums> {
     let mut out: HashMap<String, BoardMomentums> = HashMap::new();
     for m in members {
-        let bare = parse_explicit_prefix(&m.symbol).1;
-        let Some(series) = bars_by_symbol.get(bare) else {
+        let Some(series) = bars_by_symbol.get(m.symbol.as_str()) else {
             continue;
         };
         let entry = out.entry(m.concept_code.clone()).or_insert(BoardMomentums {
@@ -981,22 +971,11 @@ fn is_filtered(
     if market_latest.is_some_and(|m| m - latest.trade_date > Duration::days(SUSPEND_CAL_DAYS)) {
         return true;
     }
-    exchange_of(basic) == "BJ"
-}
-
-/// Exchange from basics metadata, falling back to the bare-code shape
-/// (6 → SH, 8/92 → BJ, else SZ) when the field is missing.
-fn exchange_of(basic: &StockBasic) -> &str {
-    if let Some(ex) = basic.exchange.as_deref() {
-        return ex;
-    }
-    if basic.symbol.starts_with('6') {
-        "SH"
-    } else if basic.symbol.starts_with('8') || basic.symbol.starts_with("92") {
-        "BJ"
-    } else {
-        "SZ"
-    }
+    // Exchange derived from the symbol's explicit prefix
+    // (StockBasic.exchange was removed): BJ (北交所) stocks are hard-filtered.
+    // parse_explicit_prefix is case-insensitive; the bare-code fallback
+    // keeps legacy pre-migration 8xxxxx codes classified BJ.
+    compass_core::data::symbol::exchange_of_symbol(&basic.symbol) == "BJ"
 }
 
 /// Score one symbol into a row (filters already applied by the caller).
@@ -1482,8 +1461,26 @@ mod tests {
     }
 
     #[test]
-    fn exchange_of_uses_metadata_then_code_shape() {
-        let basic = |symbol: &str, exchange: Option<&str>| StockBasic {
+    fn bj_filter_derives_exchange_from_symbol_prefix() {
+        // StockBasic.exchange was removed; the BJ hard filter derives the
+        // exchange from the symbol's prefix. A prefixed BJ symbol must be
+        // filtered while SH/SZ prefixed symbols pass.
+        let now = NaiveDate::parse_from_str("2026-07-31", "%Y-%m-%d").expect("date");
+        let series: Vec<CrossSectionBar> = (0..300)
+            .map(|k| CrossSectionBar {
+                symbol: "SH600519".to_string(),
+                trade_date: now - Duration::days(300 - k as i64),
+                open: 10.0,
+                high: 10.1,
+                low: 9.9,
+                adjclose: 10.0,
+                close: 10.0,
+                volume: 1.0e6,
+                amount: 5.0e8,
+            })
+            .collect();
+        let refs: Vec<&CrossSectionBar> = series.iter().collect();
+        let mk_basic = |symbol: &str| StockBasic {
             symbol: symbol.to_string(),
             name: "S".to_string(),
             area: None,
@@ -1492,15 +1489,33 @@ mod tests {
             board: None,
             full_name: None,
             total_share: None,
-            exchange: exchange.map(str::to_string),
-            list_date: None,
+            list_date: Some(now - Duration::days(3650)),
             delist_date: None,
         };
-        assert_eq!(exchange_of(&basic("000001", Some("BJ"))), "BJ");
-        assert_eq!(exchange_of(&basic("000001", None)), "SZ");
-        assert_eq!(exchange_of(&basic("600519", None)), "SH");
-        assert_eq!(exchange_of(&basic("830001", None)), "BJ");
-        assert_eq!(exchange_of(&basic("920001", None)), "BJ");
+        assert!(
+            is_filtered(&mk_basic("BJ830001"), &refs, now, Some(now)),
+            "BJ prefix must be hard-filtered"
+        );
+        assert!(
+            is_filtered(&mk_basic("bj830001"), &refs, now, Some(now)),
+            "lowercase BJ prefix must be hard-filtered (case-insensitive)"
+        );
+        assert!(
+            is_filtered(&mk_basic("830001"), &refs, now, Some(now)),
+            "legacy bare 8xxxxx must fall back to BJ and be hard-filtered"
+        );
+        assert!(
+            !is_filtered(&mk_basic("600519"), &refs, now, Some(now)),
+            "legacy bare 6xxxxx must fall back to SH and pass"
+        );
+        assert!(
+            !is_filtered(&mk_basic("SH600519"), &refs, now, Some(now)),
+            "SH prefix must pass"
+        );
+        assert!(
+            !is_filtered(&mk_basic("SZ000001"), &refs, now, Some(now)),
+            "SZ prefix must pass"
+        );
     }
 
     #[test]
