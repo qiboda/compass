@@ -3,6 +3,7 @@
 //! Follows the same `dolt sql -r parquet` → `fs::write` pattern as `import_dolt.rs`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use duckdb::Connection;
 use tracing::{info, warn};
@@ -143,6 +144,25 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Unique temp-file path under `compass_parquet_work` for incremental-merge
+/// staging.
+///
+/// PID + per-process atomic sequence keep names distinct across nextest
+/// processes and within one process (ref #184 — a fixed
+/// `{table_name}.new.parquet` / `{table_name}.merged.parquet` name raced
+/// between parallel test binaries running in different processes, clobbering
+/// each other's stage files and silently falling back to full export).
+fn unique_work_path(stem: &str) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir()
+        .join("compass_parquet_work")
+        .join(format!(
+            "{stem}_{}_{}.parquet",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+}
+
 fn import_fin_indicators(
     dolt_dir: &Path,
     output: &Path,
@@ -179,13 +199,12 @@ fn import_fin_indicators(
     if since.is_some() && !overwrite && path.exists() {
         // Incremental merge: old parquet (priority 1) + new dolt (priority 2)
         info!("Merging incremental data with existing parquet...");
-        let work_dir = std::env::temp_dir().join("compass_parquet_work");
-        std::fs::create_dir_all(&work_dir)?;
+        std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
-        let new_path = work_dir.join("fin.new.parquet");
+        let new_path = unique_work_path("fin.new");
         std::fs::write(&new_path, &new_data)?;
 
-        let tmp_path = work_dir.join("fin.merged.parquet");
+        let tmp_path = unique_work_path("fin.merged");
         let duck = Connection::open_in_memory()?;
         let sql = format!(
             "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) AS rn \
@@ -285,10 +304,9 @@ fn import_append_table<'a>(
 
     if since.is_some() && !overwrite && path.exists() {
         info!("Merging incremental data with existing parquet...");
-        let work_dir = std::env::temp_dir().join("compass_parquet_work");
-        std::fs::create_dir_all(&work_dir)?;
+        std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
-        let new_path = work_dir.join(format!("{table_name}.new.parquet"));
+        let new_path = unique_work_path(&format!("{table_name}.new"));
         std::fs::write(&new_path, &new_data)?;
 
         let priority_order = if prefer_new {
@@ -296,7 +314,7 @@ fn import_append_table<'a>(
         } else {
             "priority"
         };
-        let tmp_path = work_dir.join(format!("{table_name}.merged.parquet"));
+        let tmp_path = unique_work_path(&format!("{table_name}.merged"));
         let duck = Connection::open_in_memory()?;
         let sql = format!(
             "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY {partition_cols} ORDER BY {priority_order}) AS rn \
@@ -345,12 +363,6 @@ fn import_concept_member(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn s
 mod tests {
     use super::*;
     use std::process::Command;
-
-    /// Serialise merge-path tests: `import_fin_indicators` and
-    /// `import_financial_table` stage work files under the shared
-    /// `std::env::temp_dir()/compass_parquet_work` directory with fixed
-    /// names, so concurrent tests would clobber each other's files.
-    static MERGE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     const FIN_SCHEMA: &str = "\
         CREATE TABLE fin_indicators (\
@@ -651,7 +663,6 @@ mod tests {
 
     #[test]
     fn fin_indicators_since_merge_with_existing_parquet() {
-        let _lock = MERGE_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
 
@@ -739,7 +750,6 @@ mod tests {
 
     #[test]
     fn fin_indicators_merge_failure_falls_back_to_full_export() {
-        let _lock = MERGE_MUTEX.lock().unwrap();
         // Corrupt the existing parquet so the DuckDB incremental-merge SQL
         // fails; the import must fall back to overwriting the parquet with
         // the fresh Dolt data instead of erroring out.
@@ -786,7 +796,6 @@ mod tests {
 
     #[test]
     fn financial_table_merge_failure_falls_back_to_full_export() {
-        let _lock = MERGE_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
 
@@ -977,7 +986,6 @@ mod tests {
 
     #[test]
     fn financial_table_since_merge_preserves_old_rows() {
-        let _lock = MERGE_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
 
