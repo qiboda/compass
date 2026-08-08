@@ -92,6 +92,24 @@ fn filter_symbols(symbols: Vec<String>, filter: &str) -> Vec<String> {
         .collect()
 }
 
+/// Index codes present in the source `final_a_stock_eod_price` table that must
+/// be excluded from the exported parquet and symbols.txt (ref #201): they are
+/// exchange indices, not stocks, and would pollute SEPA scoring filters.
+const INDEX_SYMBOLS: &[&str] = &[
+    "SH000300", "SH000852", "SH000905", "SH000906", "SH000985", "SZ399300",
+];
+
+/// Build a `symbol NOT IN ('SH000300', ...)` SQL fragment excluding
+/// [`INDEX_SYMBOLS`]. Doubles quotes as belt-and-suspenders; the entries are
+/// hardcoded constants so injection is impossible.
+fn symbol_not_in_clause() -> String {
+    let quoted: Vec<String> = INDEX_SYMBOLS
+        .iter()
+        .map(|c| format!("'{}'", c.replace('\'', "''")))
+        .collect();
+    format!("symbol NOT IN ({})", quoted.join(","))
+}
+
 /// Validate a `--start-date`/`--end-date` CLI value: must be exactly 8 ASCII
 /// digits (YYYYMMDD), the same contract `--since` enforces.
 ///
@@ -141,8 +159,11 @@ pub fn run(
     //    WHERE filter on the data query below.
     // ------------------------------------------------------------------
     info!("Fetching symbol list...");
-    let symbol_query =
-        "SELECT DISTINCT symbol FROM final_a_stock_eod_price ORDER BY symbol".to_string();
+    let symbol_query = format!(
+        "SELECT DISTINCT symbol FROM final_a_stock_eod_price \
+         WHERE {} ORDER BY symbol",
+        symbol_not_in_clause()
+    );
     let symbols_csv = run_dolt_sql_csv(&dolt_dir, &symbol_query)?;
 
     let symbols: Vec<String> = symbols_csv
@@ -172,6 +193,24 @@ pub fn run(
 
     // Build WHERE clause from all filters
     let mut where_parts: Vec<String> = Vec::new();
+
+    // Index exclusion is unconditional (ref #201): indices must never enter
+    // the parquet even when --symbols explicitly names one. Warn so an
+    // explicitly-requested index does not silently produce an empty export.
+    if let Some(filter) = &symbols_filter {
+        let requested: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
+        let hit: Vec<&&str> = INDEX_SYMBOLS
+            .iter()
+            .filter(|i| requested.contains(i))
+            .collect();
+        if !hit.is_empty() {
+            warn!(
+                "--symbols names index code(s) {:?}; indices are always excluded (ref #201)",
+                hit
+            );
+        }
+    }
+    where_parts.push(symbol_not_in_clause());
 
     // --since: tradedate filter (does NOT affect symbol enumeration)
     if let Some(since_date) = since {
@@ -230,7 +269,8 @@ pub fn run(
     };
 
     let query = format!(
-        "SELECT symbol, tradedate, open, high, low, close, adjclose, volume, amount \
+        "SELECT symbol, tradedate, open, high, low, close, adjclose, \
+         volume * 100 AS volume, amount * 1000 AS amount \
          FROM final_a_stock_eod_price \
          {where_clause} \
          ORDER BY symbol, tradedate \
@@ -802,8 +842,11 @@ mod tests {
     /// same bare code; import used to strip prefixes, merging both rows into
     /// a single bare "000905" row. Dolt-native prefixed symbols must survive
     /// import as distinct rows with no (symbol, tradedate) duplicates.
+    ///
+    /// Since #201, SH000905 is an index code and must be excluded by import —
+    /// only the stock SZ000905 survives, keeping its prefix.
     #[test]
-    fn run_preserves_colliding_sh_sz_symbols() {
+    fn run_excludes_index_keeps_colliding_stock() {
         let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
         setup_dolt(dolt_tmp.path());
         dolt_setup_tables(dolt_tmp.path());
@@ -839,7 +882,11 @@ mod tests {
             .unwrap()
             .filter_map(|r| r.ok())
             .collect();
-        assert_eq!(symbols, vec!["SH000905", "SZ000905"]);
+        assert_eq!(
+            symbols,
+            vec!["SZ000905"],
+            "index SH000905 must be excluded (ref #201), stock SZ000905 kept with prefix"
+        );
 
         let dup_count: usize = duck
             .query_row(
@@ -852,6 +899,110 @@ mod tests {
             )
             .expect("dup count");
         assert_eq!(dup_count, 0, "no (symbol, tradedate) duplicates");
+    }
+
+    /// ref #201: the Dolt source stores volume in lots (手) and amount in
+    /// thousands of yuan (千元); import must scale them to shares and yuan so
+    /// downstream consumers (SEPA scoring etc.) get canonical units.
+    #[test]
+    fn run_converts_volume_amount_units() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SH600519', '2024-01-02', 99, 101, 98, 100, 100, 1000, 2500)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("run");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+
+        let (volume, amount): (f64, f64) = duck
+            .query_row(
+                &format!(
+                    "SELECT volume, amount FROM read_parquet('{}') WHERE symbol='SH600519'",
+                    parquet.display()
+                ),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read volume/amount");
+        assert_eq!(volume, 1000.0 * 100.0, "volume lots -> shares (x100)");
+        assert_eq!(amount, 2500.0 * 1000.0, "amount 千元 -> yuan (x1000)");
+    }
+
+    /// ref #201: the 6 index codes present in the source Dolt table
+    /// (SH000300, SH000852, SH000905, SH000906, SH000985, SZ399300) must be
+    /// excluded from the exported parquet and symbols.txt.
+    #[test]
+    fn run_excludes_index_symbols() {
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        dolt_setup_tables(dolt_tmp.path());
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_a_stock_eod_price VALUES \
+             ('SH000300', '2024-01-02', 3400, 3450, 3380, 3420, 3420, 1000, 0), \
+             ('SH000852', '2024-01-02', 2100, 2150, 2080, 2120, 2120, 1000, 0), \
+             ('SH000905', '2024-01-02', 4900, 4950, 4880, 4920, 4920, 1000, 0), \
+             ('SH000906', '2024-01-02', 4300, 4350, 4280, 4320, 4320, 1000, 0), \
+             ('SH000985', '2024-01-02', 3300, 3350, 3280, 3320, 3320, 1000, 0), \
+             ('SZ399300', '2024-01-02', 3800, 3850, 3780, 3820, 3820, 1000, 0), \
+             ('SH600519', '2024-01-02', 99, 101, 98, 100, 100, 2000, 2500)",
+        );
+
+        let output_tmp = tempfile::tempdir().expect("output tmp");
+        run(
+            dolt_tmp.path().to_path_buf(),
+            output_tmp.path().to_path_buf(),
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("run");
+
+        let parquet = output_tmp.path().join("stock_daily.parquet");
+        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
+
+        let symbols: Vec<String> = duck
+            .prepare(&format!(
+                "SELECT DISTINCT symbol FROM read_parquet('{}') ORDER BY symbol",
+                parquet.display()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(
+            symbols,
+            vec!["SH600519"],
+            "only the stock must survive, all 6 index codes excluded"
+        );
+
+        let symbols_txt =
+            std::fs::read_to_string(output_tmp.path().join("stock_daily.symbols.txt"))
+                .expect("symbols.txt");
+        assert_eq!(
+            symbols_txt.trim(),
+            "SH600519",
+            "symbols.txt must also exclude index codes"
+        );
     }
 
     #[test]

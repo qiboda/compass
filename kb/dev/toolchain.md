@@ -262,8 +262,12 @@
   保留最后一行）——回测代码对真实数据输入防御。**数据管线侧根因**由
   [issue #181](https://github.com/qiboda/compass/issues/181) 修复：
   import 不再剥 SH/SZ/BJ 前缀（恢复 Dolt-native 前缀符号），指数 SH000905
-  与股票 SZ000905 不再汇合为同一 000905，混源行随之消除——该卡片中的
-  建议方向（import 去重或排除指数代码）已被前缀恢复方案取代，未采纳
+  与股票 SZ000905 不再汇合为同一 000905，混源行随之消除。原建议方向
+  （import 去重或排除指数代码）当时被前缀恢复方案取代、未采纳；
+  **后续由 [issue #201](https://github.com/qiboda/compass/issues/201)
+  落地 import 侧指数剔除**——`compass-data import` 无条件剔除
+  SH000300/SH000852/SH000905/SH000906/SH000985/SZ399300（主查询 +
+  symbols.txt 枚举），parquet 不再含任何指数行，混源彻底消除
 - **验证**: 冒烟重跑——strategy -9.63%、benchmark -13.93%、excess +4.30%，
   NAV 曲线合理（0.85-1.01）；`cargo test -p compass-strategy backtest` 含
   `dedup_bars_keeps_last_row_per_symbol_date` 全绿；#181 修复后实测

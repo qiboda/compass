@@ -126,6 +126,12 @@ parquet_data/
 └── stock_daily.symbols.txt    # 每行一个标的（快速列表）
 ```
 
+**单位约定（ref #201）**：`stock_daily.parquet` 的 `volume` 为**股**（Dolt 源为"手"，import 时 ×100）、
+`amount` 为**元**（Dolt 源为"千元"，import 时 ×1000）。SEPA 引擎的 `MIN_AVG_AMOUNT=3000万`
+以元为准；其他消费者（GUI 图表柱高、screener 量能相对倍数）不受换算影响。
+另外 import 无条件剔除 6 个指数代码（见 `symbols.md` 指数剔除约定），parquet 与
+`symbols.txt` 均不含指数。
+
 完整 DDL 见上文（DuckDB DDL 代码块）。Parquet 主数据库布局见本文件的 Schema 章节。
 
 ### 缺口检测
@@ -289,6 +295,10 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
 
 导入直接写入完整数据集 — 没有合并模式，也没有 `--overwrite` 标志。重新运行会用 Dolt 的新导出替换文件。使用 `--since` 进行增量导入更新数据。
 
+**导入侧换算与过滤（ref #201）**：主查询对 `volume × 100`（手→股）、`amount × 1000`（千元→元），
+并无条件追加 `symbol NOT IN (6 个指数代码)` 过滤（即使 `--symbols` 显式指定指数也剔除）；
+symbol 枚举查询（symbols.txt）同步过滤。Dolt 源表 `final_a_stock_eod_price` 保持原样（手/千元）。
+
 ## 错误处理
 
 ### DataError 枚举
@@ -365,3 +375,5 @@ compass_data_dir = "/data/compass-data/compass_data"
 | institution_survey 去重分组键（ref #139，F3 修复） | HEX(org_name) 仅按机构 / 完整复合键 | `GROUP BY s, d, gk`（s/d 为已派生 symbol/date，gk=HEX(org_name)），列用 MAX() 重新派生 | F3 实证：仅按 org 分组把同机构不同 symbol/date 的事件坍缩成一行（长信基金 484 事件 → 1 行，全表 293916 行 → 40115 行，丢失 86%）；复合键在保留去重同时保留每个 (symbol, survey_date, org) 事件；实测 Dolt 2.2.3 对中文列 GROUP BY 无 bug（无需纯 ASCII 键） | 仅按 org 分组破坏事件粒度，是静默数据丢失 |
 
 | backtest_result 表结构（ref #154） | 存每日持仓明细 / 只存每日净值 | PK(trade_date) + strategy_nav/benchmark_nav/update_date | 净值曲线足以支撑绩效复盘；明细体积大且可重算 | 明细持久化无查询需求；全表 DELETE + `dolt table import -a` 单快照替换幂等 |
+| stock_daily 单位换算（ref #201） | 引擎侧换算 / **import 侧 SQL 换算** | import 侧 `volume × 100`、`amount × 1000` | 源库 amount 为千元、volume 为手（茅台 08-03 实证 ratio≈1000）；import 侧修正后所有下游（SEPA/GUI/温度计/回测）一次性拿到元/股，且无需各模块各自换算 | 引擎侧修正只修 SEPA，GUI 与温度计（`total_amount/1e12` 假设元）仍错 |
+| 指数代码剔除（ref #201） | 内存过滤 / **主查询 + 枚举查询 WHERE NOT IN** | 6 个指数（SH000300/SH000852/SH000905/SH000906/SH000985/SZ399300）无条件剔除 | 指数非股票，混入导致 SEPA 硬过滤线被指数占位（修复前 top50 仅 2 只）；双查询过滤使 parquet 与 symbols.txt 一致，COUNT 汇总复用同一 where 自动一致 | 仅内存过滤则 parquet 仍含指数行，下游仍被污染 |
