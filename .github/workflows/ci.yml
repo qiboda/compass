@@ -26,6 +26,8 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold clang
       - run: cargo fmt --check
       - run: cargo build --verbose
       - run: cargo clippy -- -D warnings
@@ -63,6 +65,8 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
           prefix-key: ${{ github.job }}
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold clang
       - run: cargo bench --no-run
 
   python-lint:

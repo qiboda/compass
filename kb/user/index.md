@@ -41,6 +41,7 @@ scripts/run.sh
 ## 前置条件
 
 - **Rust** ≥ 1.85（edition 2024）
+- **mold + clang**（Linux）— 编译链接器（`.cargo/config.toml` 硬编码 `/usr/bin/mold`，缺失时编译失败）。Ubuntu: `sudo apt install mold clang`
 - **显示服务器**（X11 或 Wayland）用于 GUI
 - **Dolt CLI** 用于 `compass-data import`
 - **Dolt 数据库** `investment_data/` 作为导入数据源

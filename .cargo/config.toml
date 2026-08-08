@@ -1,0 +1,78 @@
+# Build configuration: faster linker (mold on Linux).
+#
+# Copy of the layout used by /data/codes/atom/.cargo/config.toml.
+# One of the slowest aspects of compiling large Rust programs is the linking
+# time; mold's high parallelism makes it the fastest option on Linux.
+#
+# Mold installation:
+#   - Ubuntu: `sudo apt-get install mold clang`
+#   - Fedora: `sudo dnf install mold clang`
+#   - Arch:   `sudo pacman -S mold clang`
+#
+# CI installs mold in the `rust` and `bench-check` jobs (see
+# .github/workflows/ci.yml) so the rustflags below resolve everywhere.
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = [
+  # LLD linker (fallback if mold is unavailable)
+  # "-Clink-arg=-fuse-ld=lld",
+
+  # Mold linker
+  "-Clink-arg=-fuse-ld=/usr/bin/mold",
+
+  # Nightly (requires nightly toolchain; project builds on stable)
+  # "-Zshare-generics=y",
+  # "-Zthreads=0",
+]
+
+# mold does not support macOS; the default ld64 linker is used and is faster
+# than LLD there. The LLD line is kept as a commented placeholder for parity
+# with the reference layout.
+[target.x86_64-apple-darwin]
+rustflags = [
+  # LLD linker
+  #
+  # The default ld64 linker is faster, you should continue using it instead.
+  #
+  # Brew: `brew install llvm`
+  # Manually: <https://lld.llvm.org/MachO/index.html>
+  # "-Clink-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld",
+
+  # Nightly
+  # "-Zshare-generics=y",
+  # "-Zthreads=0",
+]
+
+[target.aarch64-apple-darwin]
+rustflags = [
+  # LLD linker
+  #
+  # The default ld64 linker is faster, you should continue using it instead.
+  #
+  # Brew: `brew install llvm`
+  # Manually: <https://lld.llvm.org/MachO/index.html>
+  # "-Clink-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld",
+
+  # Nightly
+  # "-Zshare-generics=y",
+  # "-Zthreads=0",
+]
+
+# mold does not support Windows; rust-lld.exe is the fastest LLD-based option.
+[target.x86_64-pc-windows-msvc]
+# LLD linker
+#
+# You may need to install it:
+#
+# ```
+# cargo install -f cargo-binutils
+# rustup component add llvm-tools
+# ```
+linker = "rust-lld.exe"
+rustdocflags = ["-Clinker=rust-lld.exe"]
+rustflags = [
+  # Nightly
+  # "-Zshare-generics=n", # This needs to be off if you use dynamic linking on Windows.
+  # "-Zthreads=0",
+]

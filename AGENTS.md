@@ -363,6 +363,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 ## Setup
 
 - **Rust edition 2024** — 需要 Rust ≥1.85。当前：1.96。
+- **mold 链接器** — Linux 构建使用 mold（`.cargo/config.toml`，`-fuse-ld=/usr/bin/mold`）。Ubuntu: `sudo apt install mold clang`。缺失时编译失败。
 - **GUI app** — 需要显示服务器（X11/Wayland）。`scripts/run.sh` 一键启动（或 `cargo run --bin compass`）。
 - 日志写入 `logs/compass.log`（每日轮转）。
 - 配置在 `~/.config/compass/config.toml`（缺省回退默认值）。见 `kb/user/config.md`。
