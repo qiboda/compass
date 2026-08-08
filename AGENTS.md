@@ -136,8 +136,8 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 
 ### ui-designer Agent（界面设计）
 
-`.opencode/agent/ui-designer.md` 定义了界面设计 agent **`ui-designer`**（只读、
-deepseek-v4-flash），负责 GUI 布局、视觉风格与交互效果设计，输出设计方案到
+`.opencode/agent/ui-designer.md` 定义了界面设计 agent **`ui-designer`**（只读），
+负责 GUI 布局、视觉风格与交互效果设计，输出设计方案到
 `.omo/designs/<feature>.md`。
 
 **路由规则（强制）**：任何涉及界面设计的工作 —— 布局、视觉风格、交互效果、
@@ -152,6 +152,12 @@ deepseek-v4-flash），负责 GUI 布局、视觉风格与交互效果设计，�
 **最终版沉淀 kb/（强制）**：设计经用户确认后，最终设计要点必须同步到
 `kb/design/ui.md` —— 这是 UI 设计的**权威文档**，与代码同步维护。
 `.omo/designs/` 仅归档原始方案；一切 UI 设计决策以 `kb/design/ui.md` 为准。
+
+**agent 模型配置（ref #200）**：`.opencode/agent/*.md` 的 frontmatter 不写
+`model:` 字段——模型属于运行时配置，写死在 agent 职责定义中会在全局 provider
+迁移后留下 stale 引用（ui-designer 曾硬编码 `deepseek/deepseek-v4-flash`，
+而该 provider 无此模型）。agent 默认继承全局 `model`；需要给某 agent 指定
+非默认模型时，在 `opencode.json` 的 `agent` 段集中配置。
 
 ### Epic & Sub-Issue Workflow
 

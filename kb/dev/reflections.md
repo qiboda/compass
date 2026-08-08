@@ -380,3 +380,22 @@
 - **"完成声明先于验证/声称过期"模式延续**（ref #160 → #174 → 本次 F1 "9 commits" 过期声称）：声明 plan 完成前的证据核实是反复被"学到"但未固化的教训——F1 evidence 应在实现收尾后统一写，且 evidence 本身内容要可复核（commit 计数、grep 结果）
 - **doc-drift 反复出现**（ref #171 陈旧文档、ref #139 决策记录同步、本次 43→BJ 未同步 kb/）：行为变更（规则/启发式/默认值）与 kb/ 文档必须同 commit 提交——"文档任务"兜底模式已被证实两次失败，应固化为 commit 自检
 - **安全/质量修复不完整导致复审 FAIL**（ref #154 两轮修复、本次 security lane 抓到日期注入）：review 发现的修复必须逐条验证覆盖 finding 全部范围——"修了主要实例"不等于"闭合漏洞类"
+
+## 2026-08-08 — ref #200 移除 ui-designer agent 硬编码模型约束
+
+**What was done**: 移除 `.opencode/agent/ui-designer.md` frontmatter 中的 `model: deepseek/deepseek-v4-flash`（该 deepseek provider 只声明 deepseek-chat/deepseek-reasoner，全局迁移到 opencode-go 后引用已 stale）。删除后 agent 继承全局默认模型 `opencode-go/deepseek-v4-flash`，与创建时（ref #114）意图一致。同步更新 AGENTS.md（去掉模型描述 + 新增 agent 模型配置规则）。
+
+**User corrections**（逐字引用对话记录）:
+1. "去掉模型约束。agent使用的模型是不是应该在配置中配置" —— 纠正我提出的"改成 opencode-go/deepseek-v4-flash"修正方案：用户选择**删除**模型约束而非修正引用，并主张模型应配在 `opencode.json` 的 `agent` 段（运行时配置），不写死在 agent 职责定义中。我默认了"修好 stale 值"，没有考虑"这行是否该存在"。
+
+**What went wrong**: No issues.（流程合规：无活跃 worktree 时 master 直提 trivial chore；push 前按流程写反思。唯一偏差是方案偏向——已在 User corrections 记录。）
+
+**Lessons learned**:
+1. 发现 stale 配置时，先问"这行配置是否应该存在"，再问"值应该改成什么"——配置哲学问题（归属）优先于值修正；"删掉让默认接管"往往比"修成新值"更干净、更抗迁移。
+2. opencode agent 的模型是运行时配置：默认继承全局 `model`，需要非默认模型时配在 `opencode.json` 的 `agent` 段，不写进 agent 定义文件——否则 provider 迁移后必然留 stale 引用（本轮已落实为 AGENTS.md 规则）。
+
+**Process improvements**: 
+- 已落实：AGENTS.md 新增「agent 模型配置（ref #200）」规则——`.opencode/agent/*.md` frontmatter 不写 `model:`，非默认模型在 opencode.json `agent` 段配置；同步删除 AGENTS.md 中 ui-designer 的 stale 模型描述。
+
+### Trends (last 10)
+- **用户纠正多指向"原则/归属"而非"值/细节"**（ref #181 "不允许输入层便利" → 本次 "去掉模型约束"）：AI 倾向最小修正（改引用/补便利），用户倾向原则性方案（删约束/禁裸码）——发现异常时应先呈报"该不该存在/边界在哪"，再谈怎么修
