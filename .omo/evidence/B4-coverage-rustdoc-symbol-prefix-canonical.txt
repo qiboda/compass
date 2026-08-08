@@ -1,0 +1,35 @@
+# B4 — Coverage & Rustdoc Verification (symbol-prefix-canonical, ref #181)
+
+Date: 2026-08-08
+Verifier: main agent (orchestrator) — closing review-round fix for the incremental review-work pass
+Branch: fix/symbol-prefix-canonical (13 commits at write time)
+
+## 1. Line coverage — cargo llvm-cov --workspace --json → scripts/check-coverage.sh
+
+Command: `cargo llvm-cov --workspace --json` (raw report → /tmp/opencode/cov-raw.json) + `scripts/check-coverage.sh /tmp/opencode/cov-raw.json`
+
+| Target | Measured | Threshold | Result |
+|---|---|---|---|
+| workspace | 95.42% | 80% | OK |
+| compass-core | 97.96% | 95% | OK |
+| compass-data | 95.06% | 95% | OK (tight, +0.06pp margin — B2 date-validation fix added tests; confirmed GREEN) |
+| compass | 90.60% | 80% | OK |
+| compass-strategy | 96.95% | 80% | OK |
+| compass-types | 89.58% | 80% | OK |
+| compass-ui | 97.14% | 80% | OK |
+
+check-coverage exit = 0 (all thresholds met).
+
+## 2. Rustdoc — cargo doc --workspace --no-deps
+
+Warnings: **0** (grep count = 0). `#![warn(missing_docs)]` compliance holds after the 13 commits.
+
+## 3. Plan success criteria closed by this evidence
+
+- Plan L156 `[x] 全 workspace cargo test / clippy / fmt / rustdoc 门禁通过` — rustdoc now verified on-disk.
+- Plan L157 `[x] CI 覆盖率门槛通过（core/data 95%、workspace 80%）——删除 to_exchange/strip_prefix 等代码后需补测维持` — verified on-disk with the per-target table above (the deleted to_exchange/strip_prefix code was replaced by parse_explicit_prefix/infer_exchange_prefix unit tests; compass-data margin 95.06% confirms the net-new B2 tests held the 95% line).
+
+## Notes
+
+- Full workspace test suite: 675 passed / 0 failed (plus B2's 2 new date-validation tests → see B2 evidence).
+- The coverage run included all 13 commits on the branch (fec8781..41d9de6).
