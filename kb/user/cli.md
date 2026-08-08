@@ -165,7 +165,7 @@ cargo run --bin compass-data -- backup [OPTIONS]
 
 ## Python 采集器（数据源 → Dolt）
 
-`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并存入 CSV，再导入 Dolt `compass_data`。财务表与 SEPA 资金/题材表来自东方财富；`stock_basic` 已切换到三大交易所官网：
+`collectors/` 目录包含 Python 脚本（uv + curl_cffi），从各数据源获取数据并写入原始 CSV（默认输出到 `/data/compass-data/csv/`，可用 `COMPASS_CSV_DIR` 环境变量覆盖），再导入 Dolt `compass_data`。财务表与 SEPA 资金/题材表来自东方财富；`stock_basic` 已切换到三大交易所官网：
 
 ```sh
 cd collectors/
@@ -195,7 +195,8 @@ SEPA 采集器说明：
 - `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照）
 
 `fetch stock_basic` 现在运行 `fetch_stock_basic_official.py`，从三大交易所官网
-（SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`。旧的东财采集器
+（SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`（位于
+`/data/compass-data/csv/`）。旧的东财采集器
 `fetch_stock_basic.py` 仍保留但不再用于 stock_basic——其 EM_FS m:0+t:81 段混入
 6841 只新三板/老三板股票。原先为东财分页设计的 `--resume` / `--max-pages` 标志已移除。
 

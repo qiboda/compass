@@ -679,9 +679,8 @@ class TestImportStockBasic:
         """When stock_basic.csv does not exist, function returns early."""
         import main as main_mod
 
-        csv_dir = tmp_path / "nonexistent"
-        monkeypatch.setattr(main_mod, "COLLECTORS_DIR", csv_dir)
-        # csv_path would be COLLECTORS_DIR / "stock_basic.csv" — doesn't exist
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path / "nonexistent"))
+        # csv_path would be csv_dir() / "stock_basic_official.csv" — doesn't exist
 
         # Should not raise
         main_mod._import_stock_basic()
@@ -697,7 +696,7 @@ class TestImportStockBasic:
         csv_path = tmp_path / "stock_basic_official.csv"
         csv_path.write_text("header\n1\n")
 
-        monkeypatch.setattr(main_mod, "COLLECTORS_DIR", tmp_path)
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
 
         mock_sql = Mock(return_value=Mock(stdout="Count\n100", returncode=0))
         monkeypatch.setattr(common, "dolt_sql", mock_sql)
@@ -725,8 +724,7 @@ class TestImportFinIndicators:
         """When RPT_LICO_FN_CPD.csv does not exist, function returns early."""
         import main as main_mod
 
-        csv_dir = tmp_path / "nonexistent"
-        monkeypatch.setattr(main_mod, "COLLECTORS_DIR", csv_dir)
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path / "nonexistent"))
 
         main_mod._import_fin_indicators()
 
@@ -740,7 +738,7 @@ class TestImportFinIndicators:
         csv_path = tmp_path / "RPT_LICO_FN_CPD.csv"
         csv_path.write_text("SECUCODE,SECURITY_CODE\n000001.SZ,000001\n")
 
-        monkeypatch.setattr(main_mod, "COLLECTORS_DIR", tmp_path)
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
 
         mock_sql = Mock(return_value=Mock(stdout="200 OK", returncode=0))
         monkeypatch.setattr(common, "dolt_sql", mock_sql)
@@ -813,15 +811,13 @@ class TestImportFinIndicatorsMerge:
     def dolt_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> tuple[Path, Callable[[str], str]]:
-        """Init temp Dolt, point COMPASS_DATA_DIR + COLLECTORS_DIR at tmp_path.
+        """Init temp Dolt, point COMPASS_DATA_DIR + COMPASS_CSV_DIR at tmp_path.
 
         Seeds stock_basic (SZ000001/SZ000002), data_updates, and the
         pre-existing fin_indicators table (the legacy import path DELETEs
         from and INSERTs into it — it never creates it).
         Returns (dir, dolt_sql_csv).
         """
-        import main as main_mod
-
         subprocess.run(
             ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
             capture_output=True, text=True,
@@ -853,7 +849,7 @@ class TestImportFinIndicatorsMerge:
         dolt_sql_csv(self._FIN_INDICATORS_DDL)
 
         monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
-        monkeypatch.setattr(main_mod, "COLLECTORS_DIR", tmp_path)
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
         return tmp_path, dolt_sql_csv
 
     @staticmethod

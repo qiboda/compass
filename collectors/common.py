@@ -85,8 +85,14 @@ _DEFAULT_CSV = Path("/data/compass-data/csv")
 
 
 def csv_dir() -> Path:
-    """Resolve the raw CSV output directory at call time (env override + testability)."""
-    return Path(os.environ.get("COMPASS_CSV_DIR", str(_DEFAULT_CSV)))
+    """Resolve the raw CSV output directory at call time (env override + testability).
+
+    Creates the directory (and parents) if missing, so collectors never crash
+    with a bare FileNotFoundError on first write to a fresh COMPASS_CSV_DIR.
+    """
+    path = Path(os.environ.get("COMPASS_CSV_DIR", str(_DEFAULT_CSV)))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 # ── Throttle ────────────────────────────────────────────────────
