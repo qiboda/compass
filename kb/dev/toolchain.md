@@ -259,12 +259,15 @@
   2. 打印该 symbol 完整 series，发现同日多行（两套数据并存）
   3. 对比 Dolt `final_a_stock_eod_price` 正常数据，确认 parquet 侧污染
 - **修复**: 回测入口 `run_backtest` 增加 `dedup_bars`（同 (symbol, date)
-  保留最后一行）——回测代码对真实数据输入防御。**数据管线侧根因未修**：
-  stock_daily.parquet 生成（import）应去重或排除指数代码，跟踪于
-  [issue #181](https://github.com/qiboda/compass/issues/181)
+  保留最后一行）——回测代码对真实数据输入防御。**数据管线侧根因**由
+  [issue #181](https://github.com/qiboda/compass/issues/181) 修复：
+  import 不再剥 SH/SZ/BJ 前缀（恢复 Dolt-native 前缀符号），指数 SH000905
+  与股票 SZ000905 不再汇合为同一 000905，混源行随之消除——该卡片中的
+  建议方向（import 去重或排除指数代码）已被前缀恢复方案取代，未采纳
 - **验证**: 冒烟重跑——strategy -9.63%、benchmark -13.93%、excess +4.30%，
   NAV 曲线合理（0.85-1.01）；`cargo test -p compass-strategy backtest` 含
-  `dedup_bars_keeps_last_row_per_symbol_date` 全绿
+  `dedup_bars_keeps_last_row_per_symbol_date` 全绿；#181 修复后实测
+  stock_daily.parquet (symbol, tradedate) 重复行 = 0
 
 ### [性能] 回测逐日 run_sepa 重复读取 7 份数据（全窗口 40+ 分钟）
 
@@ -298,6 +301,7 @@
   成分的 series 是否有价格跳变
 - **修复**: `compute_benchmark_returns` 加收益合理性守卫——跳过
   `|ret| ≥ 100%` 的成分（A 股单日涨跌停 ≤±30%，>100% 必为数据伪影；
-  数据管线根因仍由 issue #181 跟踪）
+  数据管线根因由 issue #181 修复——import 恢复前缀，指数与股票不再混源）
 - **验证**: 全窗口 benchmark 从 296% → 101.7%，单日最大跳变从 +94% → +4.8%；
-  新增 `benchmark_skips_absurd_returns` 测试锁定
+  新增 `benchmark_skips_absurd_returns` 测试锁定；#181 修复后 benchmark
+  单日收益区间回归 [-9.7%, +4.0%]（F3 实测），无 >100% 伪影残留
