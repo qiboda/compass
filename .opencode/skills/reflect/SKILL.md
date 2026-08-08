@@ -48,13 +48,22 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
    - 范围/方向纠偏（"两个skill合并"、"修复钩子简单"）
 2. **逐条对照反思条目**：每条用户纠正必须出现在 User corrections 章节
    （逐字引用用户原话）。遗漏任何一条 = 反思不完整。
-3. **git 客观流程验证**（命令可查，不凭印象）：
+3. **提取 agent 自身流程摩擦（强制）**：反思输入不限于用户纠正——agent
+   自身执行的摩擦同样必须记录。逐条浏览**本 session 的 assistant 消息**，
+   识别：
+   - 命令/工具用错（错误命令、错误参数、重复尝试才成功）
+   - 流程违反（跳过 gate 步骤、commit 分支归属错误、顺序偏差）
+   - 效果不符预期（测试通过但真实场景失败、返工、修复不完整）
+   - 效率摩擦（同一操作多次尝试、review lane 卡住未及时处理）
+   每条摩擦写入 What went wrong（附客观证据：命令、错误输出、尝试次数）。
+   **对话记录同样适用**：执行者会忘自己返工过几次，对话不会忘。
+4. **git 客观流程验证**（命令可查，不凭印象）：
    - `git branch --contains <commit>` — 本次 commit 落在哪个分支？
      存在活跃 worktree 而 commit 在 master = 流程偏差
    - `git worktree list` — 是否有"创建了但从未使用"的 worktree？
    - `git log --oneline <range>` — commit 数量/范围与预期一致？
-4. 将发现写入反思条目：对话中提取的纠正 → User corrections；git 验证发现的
-   流程偏差 → What went wrong + Lessons learned。
+5. 将发现写入反思条目：对话中提取的纠正 → User corrections；agent 自身
+   摩擦 + git 验证发现的流程偏差 → What went wrong + Lessons learned。
 
 ### 第 1 步：收集上下文
 
@@ -76,7 +85,7 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 
 **User corrections** (if any): [user corrections during this work — replaces the removed friction.md]
 
-**What went wrong** (if any): [process failures, missed steps, surprises]
+**What went wrong**: [agent's own process frictions + process violations + surprises — see step 0.3]
 
 **Lessons learned**: [what to do differently next time]
 ```
@@ -88,7 +97,10 @@ compass-workflow 的 REFLECTION RECORD 章节现改为 `→ Invoke /reflect`，
 - **User corrections**：仅在用户纠正过 AI 时写（可选章节）——记录"用户纠正了什么"（决策过程）。
   注意：`friction.md` 机制已移除（2026-08-01），本小节继承其职责。历史摩擦条目见
   `kb/dev/reflections-archive.md` 归档文件。
-- **What went wrong**：仅在确实出了问题时才写。如果没有问题，写 `**What went wrong**: No issues.` 或直接省略该章节。
+- **What went wrong**：**强制章节**（第 0 步第 3 点）——记录 agent 自身流程摩擦
+  （命令用错、流程违反、效果不符预期、效率摩擦）与 git 验证发现的流程偏差。
+  反思输入**不只来自用户纠正**：第 0 步从 assistant 消息中提取的自身摩擦必须写入。
+  无摩擦时写 `No issues.`——不允许省略章节（省略即漏记，见 ref #206）。
 - **Lessons learned**：可操作的内容 — 下次具体要做出什么改变。不能泛泛而谈（如"更小心"）。至少一条。
 
 ### 第 3 步：落实流程改进（目的核心步骤）
