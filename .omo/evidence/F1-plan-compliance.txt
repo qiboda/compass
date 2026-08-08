@@ -5,9 +5,11 @@ Auditor: main agent (orchestrator)
 Base: master e6fd6b2 | Branch: fix/symbol-prefix-canonical
 Verdict: PASS (all 7 tasks + F1-F4 wave artifacts accounted)
 
-## 1. Commit compliance — all 9 commits reference ref #181
+## 1. Commit compliance — all 11 commits reference ref #181
 
 ```
+bfa6984 docs(kb,evidence): record F1/F4 wave verdicts, mark plan complete, update #181 toolchain cards
+c79564c fix(core,data,ui,strategy): harden symbol validation and rename stale bare-code identifiers
 6a85d48 chore(evidence): record F2 code-quality and F3 real-data QA verdicts
 555bb70 fix(core,gui,strategy): prevent parse_explicit_prefix panic on non-ASCII, align exchange derivation
 5b68b84 docs(kb): sync symbol prefix convention across design/user docs
@@ -18,7 +20,8 @@ Verdict: PASS (all 7 tasks + F1-F4 wave artifacts accounted)
 73422c7 fix(data): prefix stock_basic symbols, drop exchange column
 fec8781 refactor(core,data,strategy,gui): canonicalize symbol prefix parsing, drop bare-code heuristic
 ```
-Check: `git log e6fd6b2..HEAD --format=%B | grep -c "ref #181"` = **9/9** ✓
+Check: `git log e6fd6b2..HEAD --format=%B | grep -c "ref #181"` = **11/11** ✓
+(Note: 此文件初稿写于 6a85d48 后（当时 9 commits），后随 c79564c + bfa6984 补正为 11 commits —— 2026-08-08 复审修正)
 
 ## 2. Plan task checklist — all 7 tasks + F1-F4 complete
 

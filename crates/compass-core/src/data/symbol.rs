@@ -56,7 +56,7 @@ pub fn exchange_of_symbol(symbol: &str) -> &str {
         return exchange;
     }
     // Bare-code fallback delegates to the full shape heuristic (6→SH,
-    // 8/92→BJ, else→SZ) so the two can never drift.
+    // 8/43/92→BJ, else→SZ) so the two can never drift.
     infer_exchange_prefix(symbol).unwrap_or("SZ")
 }
 
