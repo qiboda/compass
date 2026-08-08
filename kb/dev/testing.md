@@ -253,8 +253,9 @@ Rust 侧为 **per-crate 阈值**：数据层（compass-core / compass-data）95%
 workspace 总 80%（2026-08-04，ref #163）：
 
 ```sh
-# Rust：单次 llvm-cov --json 采集，脚本按 per-crate 阈值表校验（7 门槛 1 次运行）
-cargo llvm-cov --json --summary-only --output-path target/llvm-cov/coverage.json
+# Rust：单次 llvm-cov nextest --json 采集（nextest 语义，与 cargo nextest run 同口径），
+# 脚本按 per-crate 阈值表校验（7 门槛 1 次运行）
+cargo llvm-cov nextest --json --summary-only --output-path target/llvm-cov/coverage.json
 bash scripts/check-coverage.sh target/llvm-cov/coverage.json
 
 # Python
@@ -268,8 +269,11 @@ cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=95
   单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
 - Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`
   （`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计；`--cov-fail-under=95`。
-- coverage job 会执行完整测试套件（llvm-cov 插桩运行），因此是 `nextest` 之外的隐式第二次测试。
-- 本地测量：`cargo llvm-cov --json --summary-only > cov.json && bash scripts/check-coverage.sh cov.json`。
+- coverage job 用 `cargo llvm-cov nextest`——**一步完成 nextest 跑测试 + 覆盖率采集**
+  （自 2026-08-08，ref #181 修复 CI 覆盖率漂移后；此前为 `cargo nextest run` + 裸
+  `cargo llvm-cov` 分离两步，llvm-cov 内部用 cargo test 语义造成跑两遍 + 与本地
+  nextest 验证口径不一致的 ~0.2pp 漂移）。
+- 本地测量：`cargo llvm-cov nextest --json --summary-only > cov.json && bash scripts/check-coverage.sh cov.json`。
 
 ### GUI 无头集成测试（egui_kittest）
 
