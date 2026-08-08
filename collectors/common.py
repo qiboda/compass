@@ -31,6 +31,7 @@ __all__ = [
     "CFFI_SESSION",
     "Throttle",
     "build_dates",
+    "csv_dir",
     "dolt_sql",
     "dolt_sql_csv",
     "dolt_table_import",
@@ -75,6 +76,17 @@ _DEFAULT_DOLT = Path("/data/compass-data/compass_data")
 def dolt_dir() -> Path:
     """Resolve the Dolt data directory at call time (env override + testability)."""
     return Path(os.environ.get("COMPASS_DATA_DIR", str(_DEFAULT_DOLT)))
+
+
+# Raw CSV output directory — respects COMPASS_CSV_DIR env, defaults to
+# /data/compass-data/csv (issue #208: keep raw fetched CSVs out of the Dolt
+# repo working tree and out of the collectors source dir).
+_DEFAULT_CSV = Path("/data/compass-data/csv")
+
+
+def csv_dir() -> Path:
+    """Resolve the raw CSV output directory at call time (env override + testability)."""
+    return Path(os.environ.get("COMPASS_CSV_DIR", str(_DEFAULT_CSV)))
 
 
 # ── Throttle ────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Throttle,
+    csv_dir,
     fetch_paginated,
     import_replace_table,
     last_report_date,
@@ -153,7 +154,7 @@ async def run(
         end_date: Last day to fetch (YYYY-MM-DD). Defaults to today.
         page_size: Records per API page.
     """
-    output_path = Path(f"{REPORT_NAME}.csv")
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
     end_date = end_date or datetime.now().strftime("%Y-%m-%d")
 
     since = last_report_date(DOLT_TABLE)
@@ -226,7 +227,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     table is created from the CSV (symbols filtered to stock_basic), and any
     INSERT failure rolls back to the previous data.
     """
-    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import dragon_list]", file=sys.stderr)
 
     return import_replace_table(

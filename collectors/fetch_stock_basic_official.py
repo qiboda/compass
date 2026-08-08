@@ -29,6 +29,8 @@ from typing import Any
 
 import requests
 
+from common import csv_dir
+
 # ── Constants ──────────────────────────────────────────────────────────────
 
 # Dolt stock_basic 表最终 schema（12 列）
@@ -539,8 +541,8 @@ def main() -> None:
     )
     parser.add_argument(
         "-o", "--output",
-        default="stock_basic_official.csv",
-        help="输出 CSV 路径（默认: stock_basic_official.csv）",
+        default=None,
+        help="输出 CSV 路径（默认: csv_dir()/stock_basic_official.csv）",
     )
     parser.add_argument(
         "--update-date",
@@ -550,7 +552,7 @@ def main() -> None:
     args = parser.parse_args()
 
     update_date: str = args.update_date
-    output_path = Path(args.output)
+    output_path = Path(args.output) if args.output else csv_dir() / "stock_basic_official.csv"
 
     # 验证日期格式
     try:

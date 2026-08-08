@@ -29,6 +29,7 @@ from common import (
     EM_MAX_RETRIES,
     AsyncSession,
     Throttle,
+    csv_dir,
     flatten_record,
     import_replace_table,
     write_csv,
@@ -205,7 +206,7 @@ async def run(page_size: int = 100) -> Path:
     Version-tracking semantics: the CSV always holds the *current* version
     (full replace at import time) — nothing is appended per trading day.
     """
-    output_path = Path(f"{REPORT_NAME}.csv")
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
 
     print(f"Report: {REPORT_NAME}", file=sys.stderr)
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
@@ -267,7 +268,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     (``update_date = CURDATE()``), then the old version is dropped.  On
     INSERT failure the previous version is restored.
     """
-    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import concept_member]", file=sys.stderr)
 
     return import_replace_table(

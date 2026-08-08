@@ -16,6 +16,7 @@ from common import (
     AsyncSession,
     Throttle,
     build_dates,
+    csv_dir,
     fetch_paginated,
     import_replace_table,
     last_report_date,
@@ -249,7 +250,7 @@ async def run(
     if years is None:
         years = list(range(START_YEAR, datetime.now().year + 1))
 
-    output_path = Path(f"{REPORT_NAME}.csv")
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
     period_list = [p.strip() for p in periods.split(",")]
     all_dates = build_dates(years, period_list)
 
@@ -519,7 +520,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
     renamed aside, a fresh table is created with the 203-field DDL and
     filled via INSERT SELECT; any failure rolls back to the previous data.
     """
-    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import income]", file=sys.stderr)
 
     return import_replace_table(

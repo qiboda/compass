@@ -23,6 +23,7 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Throttle,
+    csv_dir,
     import_replace_table,
     last_report_date,
     write_csv,
@@ -214,7 +215,7 @@ async def run(page_size: int = 1000) -> Path:
     already today, and after fetching when the response's trade date matches
     the stored one (idempotent re-runs never grow row counts).
     """
-    output_path = Path(f"{REPORT_NAME}.csv")
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
 
     last = last_report_date(DOLT_TABLE)
     if last == _today().isoformat():
@@ -249,7 +250,7 @@ async def run(page_size: int = 1000) -> Path:
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
-    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import main flow]", file=sys.stderr)
 
     return import_replace_table(

@@ -288,6 +288,35 @@ class TestDoltDir:
         assert result == Path("/data/compass-data/compass_data")
 
 
+class TestCsvDir:
+    """Unified raw-CSV output directory (ref #208).
+
+    csv_dir() mirrors dolt_dir(): COMPASS_CSV_DIR env override with a
+    hard-coded default (/data/compass-data/csv) — keeps raw CSVs out of
+    the Dolt repo tree.
+    """
+
+    def test_env_set(self, monkeypatch, tmp_path: Path) -> None:
+        """COMPASS_CSV_DIR overrides the default csv directory."""
+        from common import csv_dir  # noqa: E402 — lazy: RED until csv_dir() lands (ref #208)
+
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        assert csv_dir() == tmp_path
+
+    def test_env_unset_returns_default(self, monkeypatch) -> None:
+        """When COMPASS_CSV_DIR is absent, the unified default is used."""
+        from common import csv_dir  # noqa: E402
+
+        monkeypatch.delenv("COMPASS_CSV_DIR", raising=False)
+        assert csv_dir() == Path("/data/compass-data/csv")
+
+    def test_csv_dir_exported_in_all(self) -> None:
+        """csv_dir must be part of common.__all__ (ref #208)."""
+        import common
+
+        assert "csv_dir" in common.__all__
+
+
 class TestLastReportDate:
     def test_no_dolt_dir_returns_empty(
         self, monkeypatch, tmp_path: Path

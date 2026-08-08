@@ -46,9 +46,9 @@ def _parse_years(s: str) -> list[int] | None:
 
 def _import_stock_basic() -> None:
     """Import stock_basic_official.csv (SSE/SZSE/BSE official) into Dolt."""
-    from common import dolt_sql, dolt_sql_csv, dolt_table_import
+    from common import csv_dir, dolt_sql, dolt_sql_csv, dolt_table_import
 
-    csv_path = COLLECTORS_DIR / "stock_basic_official.csv"
+    csv_path = csv_dir() / "stock_basic_official.csv"
     print("[import stock_basic]", file=sys.stderr)
 
     if not csv_path.exists():
@@ -138,11 +138,11 @@ def _import_fin_indicators() -> int:
     by the PK (symbol, report_date), so incremental-window CSVs append to
     history instead of clobbering it.
     """
-    from common import import_replace_table
+    from common import csv_dir, import_replace_table
 
     print("[import fin_indicators]", file=sys.stderr)
     return import_replace_table(
-        csv_path=COLLECTORS_DIR / "RPT_LICO_FN_CPD.csv",
+        csv_path=csv_dir() / "RPT_LICO_FN_CPD.csv",
         tmp_name="_tmp_fin",
         ddl=FIN_INDICATORS_DDL,
         insert_sql="""INSERT IGNORE INTO fin_indicators (

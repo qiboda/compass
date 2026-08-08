@@ -18,6 +18,7 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Throttle,
+    csv_dir,
     fetch_paginated,
     import_replace_table,
     last_report_date,
@@ -49,7 +50,7 @@ async def run(
     start_date: str | None = None,
     page_size: int = 100,
 ) -> Path:
-    output_path = Path(f"{REPORT_NAME}.csv")
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
 
     since = last_report_date(DOLT_TABLE)
     if since:
@@ -113,7 +114,7 @@ async def run(
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
-    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import institution survey]", file=sys.stderr)
 
     # One stock can receive multiple institutions on the same survey date

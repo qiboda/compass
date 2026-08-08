@@ -40,6 +40,8 @@ from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
 
+from common import csv_dir
+
 # ── Constants ───────────────────────────────────────────────────
 EM_BASE = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 EM_UA = (
@@ -305,7 +307,7 @@ async def main():
             print("No new report periods to fetch.", file=sys.stderr)
             return
 
-    output_path = Path(args.output or f"{report_name}.csv")
+    output_path = Path(args.output) if args.output else csv_dir() / f"{report_name}.csv"
     page_size = args.page_size
 
     print(f"Report: {report_name}", file=sys.stderr)

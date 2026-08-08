@@ -22,6 +22,7 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Throttle,
+    csv_dir,
     fetch_paginated,
     import_replace_table,
     last_report_date,
@@ -75,7 +76,7 @@ async def run(
     if years is None:
         years = list(range(START_YEAR, datetime.now().year + 1))
 
-    output_path = Path(f"{REPORT_NAME}.csv")
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
     all_dates = _daily_dates(years)
 
     since = last_report_date(DOLT_TABLE)
@@ -133,7 +134,7 @@ async def run(
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
-    csv_path = csv_path or Path(f"{REPORT_NAME}.csv")
+    csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import block_trade]", file=sys.stderr)
 
     symbol_expr = "CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)"

@@ -21,6 +21,8 @@ from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
 
+from common import csv_dir
+
 # ── EastMoney API ──────────────────────────────────────────────
 EM_LIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
 EM_UA = (
@@ -172,7 +174,7 @@ async def fetch_page(
 
 async def main():
     parser = argparse.ArgumentParser(description="Fetch A-share stock basic info")
-    parser.add_argument("-o", "--output", default="stock_basic.csv", help="Output CSV path")
+    parser.add_argument("-o", "--output", default=None, help="Output CSV path (default: csv_dir()/stock_basic.csv)")
     parser.add_argument("--page-size", type=int, default=100, help="Items per page")
     parser.add_argument("--max-pages", type=int, default=100, help="Max pages to fetch")
     parser.add_argument(
@@ -180,7 +182,7 @@ async def main():
     )
     args = parser.parse_args()
 
-    output_path = Path(args.output)
+    output_path = Path(args.output) if args.output else csv_dir() / "stock_basic.csv"
     page_size = args.page_size
 
     start_page = 1

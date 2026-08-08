@@ -10,6 +10,19 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_csv_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point COMPASS_CSV_DIR at a per-test temp dir.
+
+    Collectors now default their raw-CSV output to csv_dir()
+    (/data/compass-data/csv in production). Without this isolation every
+    run()/main() test would write into the real data directory; tests that
+    explicitly set COMPASS_CSV_DIR (e.g. the #208 contract tests) override
+    this value with their own monkeypatch.setenv.
+    """
+    monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+
 class StubResponse:
     """Fake curl-cffi Response for unit-testing collector call-sites.
 
