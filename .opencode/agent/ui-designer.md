@@ -1,7 +1,6 @@
 ---
 description: 界面设计 agent — 负责设计 GUI 界面布局、视觉风格与交互效果（动画、hover、快捷键、反馈），输出设计方案（.omo/designs/ 文件 + 对话总结）。当任务涉及界面设计、交互效果、视觉布局时，由主 agent 委派处理。
 mode: subagent
-model: deepseek/deepseek-v4-flash
 permission:
   edit:
     "*": "deny"
