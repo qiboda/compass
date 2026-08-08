@@ -446,3 +446,29 @@
 ### Trends (last 10)
 - **用户纠正指向"顺序/流程语义"**（ref #201 "rebase，然后review"）：AI 倾向于"先做重要的事（review）再做形式步骤（rebase）"，用户关注指令字面顺序——复合指令中的顺序词（先/然后）是硬约束，不是建议；本条与 ref #190（写库后立即 commit）同属"执行顺序纪律"类别
 - **真实数据冒烟暴露格式不一致**（ref #154 → ref #201 matched=0）：跨文件依赖（daily 前缀 ↔ basic 前缀）在 fixture 测试中不可见，只有全链路真实冒烟能暴露——数据管线变更的冒烟清单应从"单命令验证"扩展为"消费链末端验证"
+
+## 2026-08-08 — ref #205 open-worktrees.sh worktree 内 --close 失效修复
+
+**What was done**: 修复 `scripts/open-worktrees.sh` 从 worktree 内部执行 `--close` 时输出 "not a worktree" 的 bug。根因：`PROJECT_ROOT` 用 `dirname "$0"` 相对路径解析，worktree 内调用时 `$0` 相对路径指向 worktree 自身。修复：抽出 `resolve_project_root()` 用 `git rev-parse --git-common-dir` 定位主仓库（worktree 内返回绝对路径），`SELF` 改为基于 PROJECT_ROOT；加守卫防 PROJECT_ROOT 静默为空（Security review 发现）。扩展测试 3 例 + docs 同步。
+
+**User corrections**（逐字引用对话记录）:
+1. "脚本输出'not a worktree'——检查实际状态：关闭worktree的时候发现关闭有问题？" —— 引导我实际检查而非直接假设脚本行为
+2. "是的，在worktree里面执行的。" —— 澄清关键触发条件：脚本是从 worktree 内部（相对路径）执行的，这是复现 bug 的必要前提
+3. "自己新建一个worktree，模拟一下这个脚本运行情况。" —— 纠正我的诊断方式：我此前只做代码分析和 dry-run 复现，用户要求新建 worktree 完整模拟真实执行路径——实际模拟立刻暴露了"测试套件用 sed 提取函数 + eval 通过、但真实执行仍失败"的差异（worktree 内执行的是旧 checkout 副本）
+
+**What went wrong**: 
+- 测试套件（sed 提取函数 + eval）与真实执行的差异未被及时发现：单元测试通过但真实脚本执行仍失败——因为 worktree 内的 `scripts/` 是独立 checkout 副本，测试用的 SCRIPT 是主仓库路径，而用户场景执行的是 worktree 副本。冒烟测试（wt-sim 新建 worktree 从内部执行）才暴露。
+- 修复对"已存在 worktree"（financial-f10）不生效：其脚本副本是旧版，需 merge 后重新同步。已在 docs 中注明该限制。
+
+**Lessons learned**:
+1. bash 脚本的"自包含测试"（sed 提取函数 + eval）无法覆盖顶层初始化逻辑（如 PROJECT_ROOT 解析），此类脚本必须补真实执行冒烟（新建 fixture worktree 从目标 cwd 调用）——测试套件全绿 ≠ 真实场景可用。
+2. worktree 内执行脚本时 `$0` 相对路径解析的是 worktree 副本而非主仓库脚本——涉及"定位主仓库/项目根"的脚本逻辑，一律用 `git rev-parse --git-common-dir` 而非 `dirname $0`；同时注意已存在 worktree 的脚本副本需同步才生效。
+
+**Process improvements**: 
+- 已落实：`scripts/open-worktrees.sh` 抽 `resolve_project_root()`（git-common-dir 定位）+ PROJECT_ROOT 空值守卫；`kb/dev/process.md` 记录 worktree 副本同步注意点。
+- 已落实：测试扩展 3 例（worktree cwd / repo root / 仓库外 fallback），其中 worktree cwd 用例正是本 bug 的回归保护。
+- 建议（可检测）：`open-worktrees-test.sh` 可增加"从 fixture worktree 内部真实执行脚本"的端到端用例（当前 #22 只验证 resolve_project_root 函数，未验证顶层 PROJECT_ROOT 集成）——proposed
+
+### Trends (last 10)
+- **测试全绿 ≠ 真实可用 反复出现**（ref #139 真实数据冒烟、ref #154 冒烟证据、本次 worktree 内执行）：fixture/单测覆盖不到"真实执行路径"（副本、cwd、环境）——脚本类变更必须做真实路径冒烟，不能只看测试套件
+- **用户纠正持续指向"实际验证"而非"代码推理"**（ref #200 "去掉模型约束" → 本次 "新建worktree模拟"）：AI 倾向从代码/测试推导结论，用户倾向真实场景复现——发现"测试通过但用户说不行"时应立即怀疑测试与真实路径的差异
