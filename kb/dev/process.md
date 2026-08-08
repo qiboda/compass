@@ -11,12 +11,12 @@ User raises requirement
   →  OpenCode creates GitHub issue (feature_request or bug_report template)
   →  OpenCode shows issue with gh issue view <N>
   →  /ulw-plan (if multi-step)  →  plan may identify sub-issues for epic decomposition
-  →  For epics: /issue-workflow creates epic + sub-issues upfront, batches by DAG
+  →  For epics: /skwy-github-workflow creates epic + sub-issues upfront, batches by DAG
   →  implement (each sub-issue walks GATE independently)
   →  cargo nextest (tests must pass)
   →  commit with ref #<sub-N> (epic) or ref #N (single issue)
   →  ai-review (/review-work) — per sub-issue + pre-PR
-  →  user confirms push → /reflect (write reflection commit) → push master (one PR with all commits)
+  →  user confirms push → /skwy-reflect (write reflection commit) → push master (one PR with all commits)
   →  CI passes  →  batch close sub-issues + epic with gh issue close
 ```
 
@@ -39,9 +39,9 @@ User raises requirement
 **epic**（父 issue）与 **sub-issues**（子 issue）。
 
 核心规则：epic 创建/批次执行/关闭的完整流程见
-`.opencode/skills/issue-workflow/SKILL.md`。要点：
+`~/.config/opencode/skills/skwy-github-workflow/SKILL.md`。要点：
 
-- Epic + sub-issues 在规划时一次性创建（`/ulw-plan` 识别、`/issue-workflow` 批量创建）
+- Epic + sub-issues 在规划时一次性创建（`/ulw-plan` 识别、`/skwy-github-workflow` 批量创建）
 - `.omo/plans/<epic>.md` 以 `pending | in_progress | done` 表跟踪状态
 - 子任务按依赖 DAG 分批次，批次切换需**人工确认**
 - 一个 epic 一个 PR，每个 sub-issue 一个 commit（`ref #<sub-N>`），regular merge
@@ -82,7 +82,7 @@ feat, fix, test, refactor, docs, chore — all included.
 
 ## OpenCode 工作流
 
-完整流程由 **`compass-workflow` skill** 强制执行（plan → gate → test-first →
+完整流程由 **`skwy-workflow` skill** 强制执行（plan → gate → test-first →
 per-step verify → commit → review → push）。以下是 skill 未覆盖的本地细节：
 
 ### Pre-push hook 检查（`.githooks/pre-push`）
@@ -135,7 +135,7 @@ feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
 直接从目标分支切修复分支，修复后合并回目标分支，各 PR 互不阻塞：
 
 ```sh
-# 1. 从目标分支切修复分支（复用 /worktree skill）
+# 1. 从目标分支切修复分支（复用 /skwy-worktree skill）
 git worktree add -b fix/<desc> .worktrees/<name> <target-branch>
 
 # 2. 修复 + commit（ref #N）
@@ -183,7 +183,7 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 master 工作区的 untracked 文件不会出现在 worktree 中（SEPA 教训：全程在 master 规划
 导致 plan/design 成 untracked、需手动迁移）。
 
-**加载 `/worktree` skill 获取完整流程**（创建、post-creation MANDATORY 步骤、
+**加载 `/skwy-worktree` skill 获取完整流程****（创建、post-creation MANDATORY 步骤、
 handoff 移交、自动启动区域、`--close` 退出清理、合并后清理）。
 主 session 创建 worktree 后仅需写 handoff（用途 + issue URL + 已锁定决策），
 剩余工作全部由 worktree 内 agent 自主完成。
@@ -205,7 +205,7 @@ xfce4-terminal 因单实例守护进程（进程名即 xfce4-terminal）不尝�
 
 **为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco/worktree via OCX），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。
-手动 worktrees + `/worktree` skill 提供了完全的控制，避免了这些问题。
+手动 worktrees + `/skwy-worktree` skill 提供了完全的控制，避免了这些问题。
 
 ## 版本控制
 
@@ -260,7 +260,7 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 commit 中更新相关 `kb/` 文件。如果架构概览发生变化，必须更新 AGENTS.md。
 
 权威的「变更类型 → kb/ 文件」映射表见
-`.opencode/skills/docs/SKILL.md` § Change → kb/ Mapping Table。
+`~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → kb/ 映射表由项目自身定义）。
 
 ### 文档惯例
 

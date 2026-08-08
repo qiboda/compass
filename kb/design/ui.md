@@ -1,7 +1,7 @@
 # UI 设计（权威文档）
 
 **本文件是 compass GUI 的最终权威 UI 设计文档**，累积式维护 —— 每次设计
-（compass-workflow 门禁第 1 步 DESIGN）经用户确认后，将最终设计要点同步至此。
+（skwy-workflow 门禁第 1 步 DESIGN）经用户确认后，将最终设计要点同步至此。
 
 > **归档与权威的区别**：`.omo/designs/<feature>.md` 是 ui-designer 产出的
 > **过程归档**（原始方案）；`.omo/plans/<feature>.md` 是计划归档。
