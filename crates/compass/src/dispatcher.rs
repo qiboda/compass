@@ -170,7 +170,7 @@ mod tests {
     fn drain_citizen_appends_lifecycle_messages_to_log() {
         let mut dispatcher = Dispatcher::new();
         let _registered = register_citizens(&mut dispatcher);
-        let state = SharedState::new("000001", "1d");
+        let state = SharedState::new("SZ000001", "1d");
 
         assert_eq!(state.log.get().log_count(), 0, "log should start empty");
 
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn handle_fetch_bars_sends_request_and_sets_loading() {
-        let state = SharedState::new("000001", "1d");
+        let state = SharedState::new("SZ000001", "1d");
         let (signal, slot) = factory::create_signal_slot::<FetchRequest>();
 
         assert!(!state.loading.get(), "loading should start false");
@@ -215,7 +215,7 @@ mod tests {
             .recv()
             .expect("slot should receive the FetchRequest");
 
-        assert_eq!(request.symbol, "000001");
+        assert_eq!(request.symbol, "SZ000001");
         assert_eq!(request.timeframe, "1w");
     }
 
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn handle_fetch_bars_resets_loading_on_send_failure() {
-        let state = SharedState::new("600519", "1d");
+        let state = SharedState::new("SH600519", "1d");
         let (signal, slot) = factory::create_signal_slot::<FetchRequest>();
 
         // Drop the slot so the receiver is gone — send will fail.
@@ -255,12 +255,12 @@ mod tests {
 
     #[test]
     fn dispatch_symbol_fetch_sets_symbol_and_triggers_fetch() {
-        let state = SharedState::new("000001", "1d");
+        let state = SharedState::new("SZ000001", "1d");
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
 
-        dispatch_symbol_fetch(&state, &work_signal, "600519");
+        dispatch_symbol_fetch(&state, &work_signal, "SH600519");
 
-        assert_eq!(state.symbol.get(), "600519");
+        assert_eq!(state.symbol.get(), "SH600519");
         assert!(
             state.loading.get(),
             "symbol fetch must dispatch a FetchBars request"

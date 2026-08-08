@@ -21,7 +21,20 @@ fn normalize_symbol_filter(filter: &str) -> Result<String, String> {
                 "--symbols entry '{part}' is not exchange-prefixed; use e.g. SH600519 or sz.600519"
             ));
         }
-        normalized.push(format!("{exchange}{code}"));
+        let canonical = format!("{exchange}{code}");
+        // Mirror compass_core::data::parquet::validate_symbol: the canonical
+        // form must be exactly exchange + 6 ASCII digits. Anything else
+        // (non-digit, wrong length, quote chars) would produce broken SQL or
+        // silently empty results in the `symbol IN (...)` clause.
+        let valid = canonical.len() == 8
+            && matches!(&canonical.as_bytes()[..2], b"SH" | b"SZ" | b"BJ")
+            && canonical.as_bytes()[2..].iter().all(u8::is_ascii_digit);
+        if !valid {
+            return Err(format!(
+                "--symbols entry '{part}' is not a valid symbol; expected exchange prefix (SH/SZ/BJ) + exactly 6 digits, e.g. SH600519"
+            ));
+        }
+        normalized.push(canonical);
     }
     Ok(normalized.join(","))
 }
@@ -158,7 +171,12 @@ pub fn run(
     // --symbols: filter by exact Dolt-native symbol (dot form normalized above)
     if let Some(filter) = &symbols_filter {
         let codes: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
-        let quoted: Vec<String> = codes.iter().map(|c| format!("'{c}'")).collect();
+        // Entries are already gate-validated to `SH`/`SZ`/`BJ` + 6 digits, so
+        // quote injection is impossible; doubling quotes is belt-and-suspenders.
+        let quoted: Vec<String> = codes
+            .iter()
+            .map(|c| format!("'{}'", c.replace('\'', "''")))
+            .collect();
         where_parts.push(format!("symbol IN ({})", quoted.join(",")));
     }
 
@@ -476,6 +494,36 @@ mod tests {
             normalize_symbol_filter("SZ000905, sh.000905").unwrap(),
             "SZ000905,SH000905"
         );
+    }
+
+    #[test]
+    fn normalize_symbol_filter_requires_exactly_6_digit_code() {
+        // Full canonical form is exchange + exactly 6 ASCII digits; anything
+        // else (non-digit, wrong length, quote chars) must be rejected with a
+        // clear error instead of producing broken SQL / silent empty results.
+        assert_eq!(normalize_symbol_filter("SH600519").unwrap(), "SH600519");
+        assert_eq!(normalize_symbol_filter("sh.600519").unwrap(), "SH600519");
+        for bad in [
+            "600519",             // bare
+            "SHabc",              // non-digit
+            "SH6005190",          // 7 digits
+            "SH60051",            // 5 digits
+            "SH600519'",          // quote
+            "SH600519;",          // semicolon
+            "SZ000001,SH6005190", // one bad entry poisons the whole filter
+        ] {
+            let result = normalize_symbol_filter(bad);
+            assert!(
+                result.is_err(),
+                "--symbols entry {bad:?} must be rejected, got {:?}",
+                result
+            );
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("--symbols"),
+                "error must name the --symbols flag: {err}"
+            );
+        }
     }
 
     #[test]

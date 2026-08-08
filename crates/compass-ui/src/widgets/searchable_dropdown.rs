@@ -78,7 +78,9 @@ fn normalize_query(query: &str) -> (String, String) {
 /// bare-code display/match terms; unprefixed symbols pass through.
 pub(crate) fn strip_exchange_prefix(symbol: &str) -> &str {
     for prefix in ["sh", "sz", "bj"] {
-        if symbol.len() >= 2 && symbol[..2].eq_ignore_ascii_case(prefix) {
+        if let Some(head) = symbol.get(..2)
+            && head.eq_ignore_ascii_case(prefix)
+        {
             return &symbol[2..];
         }
     }
@@ -489,6 +491,20 @@ mod tests {
     }
 
     // --- format_display (migrated) ---
+
+    #[test]
+    fn strip_exchange_prefix_non_ascii_does_not_panic() {
+        // Multi-byte UTF-8 must not be byte-sliced mid-char (`symbol[..2]`
+        // panicked on non-char-boundary indices; regression: symbols are
+        // validated ASCII at the DAO boundary, but the widget must not
+        // crash on foreign input either).
+        assert_eq!(strip_exchange_prefix("平安银行"), "平安银行");
+        assert_eq!(strip_exchange_prefix("中"), "中");
+        assert_eq!(strip_exchange_prefix("SH600519"), "600519");
+        // Dot form is not special-cased here (normalize_query strips dots
+        // upstream), so the letter prefix alone is stripped.
+        assert_eq!(strip_exchange_prefix("sh.600519"), ".600519");
+    }
 
     #[test]
     fn format_display_full() {

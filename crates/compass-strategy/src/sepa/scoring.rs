@@ -235,12 +235,12 @@ pub(crate) fn score_sepa(
 
     // Concept display names per symbol (deduped, sorted).
     let mut themes: HashMap<String, Vec<String>> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         let mut names: Vec<String> = ms.iter().filter_map(|m| m.concept_name.clone()).collect();
         names.sort();
         names.dedup();
         if !names.is_empty() {
-            themes.insert(bare.clone(), names);
+            themes.insert(symbol.clone(), names);
         }
     }
 
@@ -285,7 +285,7 @@ pub(crate) fn score_sepa(
     // Per symbol keep the concept scoring highest (multi-membership stocks
     // are scored on their best board).
     let mut best_theme: HashMap<String, ThemeComponents> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         let mut best: Option<(f64, ThemeComponents)> = None;
         for m in ms {
             let components = ThemeComponents {
@@ -304,7 +304,7 @@ pub(crate) fn score_sepa(
             }
         }
         if let Some((_, components)) = best {
-            best_theme.insert(bare.clone(), components);
+            best_theme.insert(symbol.clone(), components);
         }
     }
 
@@ -316,7 +316,7 @@ pub(crate) fn score_sepa(
         flow_group.entry(f.symbol.clone()).or_default().push(f);
     }
     let mut flow_5d: HashMap<String, f64> = HashMap::new();
-    for (bare, rows) in &flow_group {
+    for (symbol, rows) in &flow_group {
         let cum: f64 = rows
             .iter()
             .rev()
@@ -324,7 +324,7 @@ pub(crate) fn score_sepa(
             .map(|r| r.main_net_inflow)
             .filter(|v| v.is_finite())
             .sum();
-        flow_5d.insert(bare.clone(), cum);
+        flow_5d.insert(symbol.clone(), cum);
     }
     let flow_values: Vec<f64> = flow_5d.values().copied().collect();
     let main_flow_pct: HashMap<String, f64> = flow_5d
@@ -351,7 +351,7 @@ pub(crate) fn score_sepa(
         block_group.entry(b.symbol.clone()).or_default().push(b);
     }
     let mut block_adj: HashMap<String, f64> = HashMap::new();
-    for (bare, rows) in &block_group {
+    for (symbol, rows) in &block_group {
         let mut discount = false;
         let mut premium = false;
         for r in rows.iter().rev().take(5) {
@@ -371,7 +371,7 @@ pub(crate) fn score_sepa(
         if premium {
             adj -= 5.0;
         }
-        block_adj.insert(bare.clone(), adj);
+        block_adj.insert(symbol.clone(), adj);
     }
 
     // --- RS pass -------------------------------------------------------------
@@ -381,31 +381,31 @@ pub(crate) fn score_sepa(
         .collect();
     let mut sector_momentums: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let mut sector_member_count: HashMap<String, usize> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         for m in ms {
             *sector_member_count
                 .entry(m.concept_code.clone())
                 .or_default() += 1;
-            if let Some(series) = bars_by_symbol.get(bare)
+            if let Some(series) = bars_by_symbol.get(symbol)
                 && let Some(mom) = momentum_for(series)
             {
                 sector_momentums
                     .entry(m.concept_code.clone())
                     .or_default()
-                    .push((bare.clone(), mom));
+                    .push((symbol.clone(), mom));
             }
         }
     }
     // Each symbol's most representative sector (most members) for RS ranking.
     let mut sector_of: HashMap<String, String> = HashMap::new();
-    for (bare, ms) in &memberships {
+    for (symbol, ms) in &memberships {
         if let Some(best) = ms.iter().max_by_key(|m| {
             sector_member_count
                 .get(&m.concept_code)
                 .copied()
                 .unwrap_or(0)
         }) {
-            sector_of.insert(bare.clone(), best.concept_code.clone());
+            sector_of.insert(symbol.clone(), best.concept_code.clone());
         }
     }
 

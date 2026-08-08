@@ -31,13 +31,14 @@ pub fn parse_explicit_prefix(code: &str) -> (&str, &str) {
 }
 
 /// Infer the exchange prefix for a legacy unprefixed 6-digit code
-/// (pre-D10 data, mirroring the pre-D9 heuristic: 6→SH, 8→BJ, 92→BJ,
-/// else→SZ). Non-digit or non-6-digit values return `None`.
+/// (pre-D10 data, mirroring the pre-D9 heuristic: 6→SH, 8/92/43→BJ,
+/// else→SZ — the 43xxxx segment covers real BJ codes like 430047).
+/// Non-digit or non-6-digit values return `None`.
 pub fn infer_exchange_prefix(code: &str) -> Option<&'static str> {
     if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
         if code.starts_with('6') {
             Some("SH")
-        } else if code.starts_with('8') || code.starts_with("92") {
+        } else if code.starts_with('8') || code.starts_with("43") || code.starts_with("92") {
             Some("BJ")
         } else {
             Some("SZ")
@@ -102,6 +103,19 @@ mod tests {
         // An ASCII prefix before a name still parses without panic.
         assert_eq!(parse_explicit_prefix("SZ平安"), ("SZ", "平安"));
         assert_eq!(parse_explicit_prefix("SH平"), ("SH", "平"));
+    }
+
+    #[test]
+    fn infer_exchange_prefix_bj_43_segment() {
+        // Real BJ (北交所/新三板) codes include the 43xxxx segment
+        // (e.g. 430047, 436149); the official collector classifies
+        // 4/8/9-prefixed codes as BJ.
+        assert_eq!(infer_exchange_prefix("430047"), Some("BJ"));
+        assert_eq!(infer_exchange_prefix("436149"), Some("BJ"));
+        assert_eq!(infer_exchange_prefix("920000"), Some("BJ"));
+        assert_eq!(infer_exchange_prefix("600519"), Some("SH"));
+        assert_eq!(infer_exchange_prefix("830799"), Some("BJ"));
+        assert_eq!(infer_exchange_prefix("000001"), Some("SZ"));
     }
 
     #[test]

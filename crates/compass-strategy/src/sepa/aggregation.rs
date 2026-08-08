@@ -49,7 +49,7 @@ pub fn aggregate_concept_daily(
     // Latest two bars per symbol (prefixed symbol keys).
     let mut pct_by_symbol: HashMap<&str, f64> = HashMap::new();
     let mut amount_by_symbol: HashMap<&str, f64> = HashMap::new();
-    for (bare, series) in bars_by_symbol {
+    for (symbol, series) in bars_by_symbol {
         if series.len() < 2 {
             continue;
         }
@@ -59,11 +59,11 @@ pub fn aggregate_concept_daily(
             continue;
         }
         pct_by_symbol.insert(
-            bare.as_str(),
+            symbol.as_str(),
             (latest.close - prev.close) / prev.close * 100.0,
         );
         amount_by_symbol.insert(
-            bare.as_str(),
+            symbol.as_str(),
             if latest.amount.is_finite() {
                 latest.amount
             } else {
