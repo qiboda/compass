@@ -776,3 +776,26 @@
 - **「先猜根因再验证」返工模式持续出现**（#139/#217 布局诊断、本次 #230 宽度观感）：本次因用户明确要求「查根本原因」而走了 kittest 断言先行，直接锁定根因（宽度真实跟随、遮罩观感）——验证「先复现拿证据再二分」有效，建议在 kb/dev/process.md 调试章节固化该排查框架（proposed）。
 - **ui-designer 设计委派流程已成标准路径**（#217 → 本次 #230）：design-first（产出 .omo/designs → 用户逐点确认 → 实现）两次均获认可，无偏差。
 - **并行子代理测试重复**（本次 loading 文字色测试双写）：新出现模式——需在双测试 agent 委派时显式划分边界，观察后续是否再现。
+
+## 2026-08-10 — ref #136 数据质量监控：import/import-compass 校验 + 新鲜度告警
+
+**What was done**: 实现 issue #136——`import` 与 `import-compass` 写盘后自动校验数据质量：import 做源 Dolt 行数（limit>0 预期=min(COUNT,limit)）与 tradedate 日期范围对比（limit>0 跳过），import-compass 做全量路径行数精确对比、merge 路径不丢数据校验、data_updates.last_report_date 新鲜度 warn（fin 120 天/行情 7 天/stock_basic 跳过）。新增 validate.rs 模块（9 个 helper）+ RED/基线/对抗性测试 43 个 + 文档同步。6 commits 全部在 feat/data-quality-monitor worktree，F1-F4 全过，rebase master 后待 push。
+
+**User corrections**（逐字引用对话记录）:
+1. "流程结束，自动push，并关闭worktree"（重复两次）——用户预授权收尾：push 与关闭 worktree 无需再逐次询问。
+
+**What went wrong**: ①**RED 测试委派两次失败**——skwy-requirement-test agent 两次陷入「如何从公开接口制造 faithful write 行数不一致」的分析循环（0 产出、共 8+ 分钟），第三次改用 unspecified-high + 完整测试模板（含 TestWriter 捕获模式）才落地；根因是「faithful write 下 parquet 必然等于源查询结果，从 run() 外部无法自然制造 mismatch」这一事实未在委派 prompt 中预先说明，agent 反复推导不可行路径。②**对抗性测试 agent 无法写 evidence**——权限仅放行 `**/tests/**`，`.omo/evidence/` 写入被拒，agent 回复中输出完整记录、主 agent 代落盘（todo 7/8 两次）。③**pre-commit fmt 卡顿**——对抗性测试文件未 cargo fmt 直接 commit，pre-commit 报 unformatted 拒绝，需手动 fmt 后重提（一次返工）。④**F3 真实 import 超时**——对 18M+ 行 investment_data 跑 import（即使 --limit 5 也先全量枚举 symbols）超 300s，改临时小 Dolt 库验证同一二进制路径；暴露「真实大库 QA 需小样本策略」的摩擦。⑤**F3 fixture schema 过简**——import-compass fin_indicators 初建 2 列表，dolt 报 SELECT 37 列缺失，换完整 FIN_SCHEMA 后通过。
+
+**Lessons learned**:
+1. 委派测试 agent 前，先在自己脑中跑一遍「能否从公开接口制造目标场景」——若不可行（faithful write 语义），直接在 prompt 中声明"此场景不可制造，改用 X 构造"并给完整测试模板，杜绝 agent 空转分析。
+2. 测试 agent 写 evidence 到 `.omo/evidence/` 会遇权限拒绝——委派时明确"回复中输出完整记录，主 agent 代落盘"（本次两次踩坑）。
+3. 新文件（尤其测试文件）commit 前必须 `cargo fmt`——pre-commit 的 fmt --check 会拒绝，避免 commit 返工。
+4. 真实大库（18M+ 行）的 CLI 手动 QA 必须用小样本策略（临时 Dolt 库 + 完整 schema fixture），不要直接跑生产数据仓库。
+
+**Process improvements**: 
+- None（一次性教训为主；#1/#2 属委派 prompt 经验，已在本次后续委派中直接应用；若再次出现测试 agent 空转，在 skwy-requirement-test skill 或 AGENTS.md 委派章节固化"faithful write 不可制造 mismatch"提示）。
+
+### Trends (last 10)
+- **子代理证据落盘权限摩擦**（#217/#226 modal 截图失败 → 本次测试 agent 无法写 evidence）：子代理沙箱权限限制（bash/edit 白名单）反复导致交付物无法落盘，主 agent 代写成为常态——建议在委派 prompt 统一加"权限受限时回复输出完整记录"条款（本次已应用，观察后续）。
+- **委派 prompt 信息不完整导致 agent 空转**（本次 RED 测试 2 次失败）：高风险委派（测试/逆向）前先验证可行性假设再给模板——同类模式（#226 测试 agent gh 命令被 deny）表明子代理工具/语义约束需在 prompt 预声明。
+- **真实数据 QA 超时**（本次 import 18M+ 行 300s 超时）：大库手动验证需小样本 fixture 策略——建议 kb/dev/process.md 调试章节补"大库 CLI QA 用小样本临时库"提示（proposed）。
