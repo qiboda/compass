@@ -644,3 +644,22 @@
 - **"文档已固化但未遵守"模式多条目出现**（#208 测试隔离、#211 hook 独立行、#210 子任务超时）：本次为无违规样本，gate 逐项判定表（显式列出每步跳过理由）有效防止跳步——建议延续"gate 判定表"输出习惯
 - **工具链配置变更的 master 直提判定需显式声明**（#203 先例 → 本次无活跃 worktree + 单模块 chore）：判定依据应在 gate 侦察阶段就向用户展示，本次已照做
 - **无用户纠正的干净执行在近 10 条中少见**（多数条目 1-4 条纠正）：本次 grill 两轮（机制选择 + 删除范围）均获一次性确认，"探索先行 → 单一决策问题 → 推荐方案"节奏有效
+
+## 2026-08-09 — ref #223 项目书与全局 opencode 配置配合修复（jsonc 遮蔽/gate 0.5 步/索引/版本漂移）
+
+**What was done**: 审查 AGENTS.md + kb/ 与全局 opencode 配置的配合度，发现并修复 4 项：①删除 `~/.config/opencode/opencode.jsonc`（旧文件仅含 plugin，与完整 opencode.json 并存存在 jsonc 遮蔽 json 的加载优先级风险，实测当前版本 json 生效但为隐式依赖）；②AGENTS.md gate 表格补 0.5 Worktree 步（对齐 skwy-workflow skill 门禁清单）；③知识库表格补 `kb/design/workflow-skills.md` 索引条目；④Rust 版本 1.96→1.97.1 + Worktrees 章节补「worktree 会话启动后同步原始分支」说明。commit `0c93ef9`（docs 直推 master，ref #223）。
+
+**User corrections**: 用户纠正 master 直接改文件行为："你怎么直接修改了，没有切worktree"——我在 SEPA 问题诊断时直接在 master 工作区添加临时诊断测试文件（diag_sepa_real.rs + main.rs 注册），违反 worktree 规则。已立即恢复 master（删除临时文件、还原 main.rs）并在后续工作中先建 worktree。
+
+**What went wrong**: ①**SEPA 诊断时未切 worktree 直接改 master**——诊断测试属于实现类改动，即使"临时"也应走 worktree 规则；教训：任何写文件的诊断（临时测试、脚本）都按实现类对待。②SEPA 问题排查初期的探索方向偏重引擎/数据层验证（均已验证正常），实际根因可能聚焦渲染环境差异——诊断框架应先快速锁定「用户现场 vs 可复现环境」的差异点（egui_dock 高度/软件渲染），而非先全链路验证。③`opencode debug config` 输出含敏感 API key——审查过程将含 key 的完整输出写入 /tmp 文件，虽在 /tmp 但应避免落盘敏感配置。
+
+**Lessons learned**:
+1. 诊断/排查阶段的任何文件写入（临时测试、临时脚本）等同实现类改动，必须先切 worktree——"临时"不豁免 worktree 规则。
+2. 多疑点排查时，先对比「用户现场环境 vs 可复现环境」的差异（渲染容器/窗口大小/软件渲染），优先复现现场，而非先全链路验证再找差异。
+3. 含密钥的配置输出（`opencode debug config`）避免重定向落盘；确需保存时先脱敏。
+
+**Process improvements**: 无代码变更（纯 docs + 全局配置）。AGENTS.md 已补 0.5 Worktree 步——该步此前在 skill 中存在但项目 gate 表格缺失，正是本次违规（未切 worktree 直接改 master）暴露的流程缺口，补上后 gate 表格与 skill 门禁一致。
+
+### Trends (last 10)
+- **worktree 规则违反在近 10 条中属罕见但高危**（#210 子任务超时、#208 测试隔离均无此问题）：本次因"临时诊断文件"心理豁免触发，教训已固化——AGENTS.md gate 补 0.5 步 + 反思明确"临时 ≠ 豁免"，后续执行中写文件前先自检分支归属
+- **诊断路径效率模式**：多次排查（#139、#160、本次 SEPA）都出现"先验证引擎再找环境差异"的路径，本次教训建议改为"先复现现场"——若后续再次出现同类模式，考虑在 kb/dev/process.md 调试章节补充排查框架
