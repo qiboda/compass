@@ -1,0 +1,49 @@
+# F4 — Scope Fidelity (ui-fixes epic, ref #217)
+
+Date: 2026-08-09
+Auditor: main agent
+Branch: feat/ui-fixes-217
+Verdict: PASS (no scope creep; #222 boundary respected; docs match implementation)
+
+## 1. #222 boundary — no full-GUI i18n work
+
+- Only tooltip prefixes (时间:/开盘:/…/涨跌: + tracking 开:/高:/低:/收:/量:) were
+  localized — these are explicitly #219 scope (user-confirmed decision, recorded
+  in kb/design/ui.md 决策记录 "tooltip 标签中文化（ref #219）"; #222 body credits
+  #219 with the tooltip work).
+- Legend labels, menus, and other UI chrome remain untouched (belong to #222).
+
+## 2. Fork changes — no tick-density/spacing logic touched
+
+- egui-charts a1531ac touches only: time_formatter.rs (format strings),
+  crosshair.rs (format strings + tests), tooltip.rs (prefixes + tiering + tests),
+  timescale_marks.rs (comments + test expectations only).
+- min_spacing/target_density untouched. LocaleTimeFormatter structure untouched.
+
+## 3. No new dependencies / no engine changes
+
+- Cargo.toml untouched (only Cargo.lock fork-pin update + benign windows-targets
+  churn from re-resolution, recorded in security review).
+- SEPA engine / async pipeline untouched (#221 root cause was layout, not engine).
+- Screener condition logic/parameters untouched (#220 was layout-only).
+
+## 4. Docs synced with implementation
+
+- kb/design/ui.md: 8 acceptance-fix decision rows + change-log entry (9d24b57) —
+  all match code (verified per-row against implementation).
+- kb/user/gui.md: SEPA table alignment/percent/wrap, theme switch button color (9d24b57).
+- kb/user/cli.md: concept_member TRIM note (9d24b57).
+- .omo/designs/: ui-fixes-chinese-date.md, ui-fixes-screener-layout.md,
+  ui-fixes-sepa-change-column.md archived as process records.
+
+## 5. Worktree discipline
+
+- All implementation in .worktrees/ui-fixes-217 on feat/ui-fixes-217 (14+1 commits).
+- No implementation commits landed on master (master only has pre-existing docs).
+- Dolt compass_data change (concept_member TRIM of 11 rows) committed and pushed
+  to origin/main on 2026-08-09; `dolt status` clean after push.
+
+## 6. Production code guards
+
+- No unwrap()/as type casts in production code (test modules exempt).
+- clippy -D warnings clean; fmt clean.

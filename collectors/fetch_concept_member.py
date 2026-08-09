@@ -280,7 +280,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
             SELECT
                 NEW_BOARD_CODE,
                 CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-                BOARD_NAME,
+                TRIM(BOARD_NAME),
                 CURDATE()
             FROM _tmp_cm
         """,

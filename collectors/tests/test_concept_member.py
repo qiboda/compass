@@ -150,6 +150,36 @@ class TestImportToDolt:
         ))
         assert du == f"3,{date.today().isoformat()}"
 
+    def test_import_trims_whitespace_from_concept_name(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """EastMoney's BOARD_NAME carries trailing spaces (e.g. '创新医疗服务   ').
+        They must be stripped on import — otherwise the SEPA detail panel's
+        theme tags render with stretched whitespace ('创  新医疗服务')."""
+        from fetch_concept_member import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "cm.csv"
+        self._write_csv(
+            csv_path,
+            [
+                _make_row("600880.SH", "BK1169", "创新医疗服务   "),
+                _make_row("300624.SZ", "BK1170", "  上证50  "),
+            ],
+        )
+
+        assert import_to_dolt(csv_path) == 2
+
+        names = [
+            r["concept_name"]
+            for r in _rows(dolt_sql_csv(
+                "SELECT concept_name FROM concept_member ORDER BY concept_code"
+            ))
+        ]
+        assert names == ["创新医疗服务", "上证50"], (
+            "concept_name must be trimmed of leading/trailing whitespace, got {names!r}"
+        )
+
     def test_rerun_replaces_version_without_stale_members(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:

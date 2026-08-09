@@ -2,7 +2,7 @@
 //! §5.1 `Tag`).
 
 use crate::tokens::ThemeTokens;
-use egui::{Color32, Margin, Response, RichText, Ui};
+use egui::{Color32, Rect, Response, RichText, Sense, Ui};
 
 /// Tag variant; the `Exchange` variant auto-colors by the exchange code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,19 +73,36 @@ impl<'a> Tag<'a> {
     pub fn show(self, ui: &mut Ui) -> Response {
         let tokens = self.tokens;
         let (bg, fg) = self.colors();
-        let frame = egui::Frame::new()
-            .fill(bg)
-            .corner_radius(tokens.radius.pill)
-            .inner_margin(Margin::symmetric(6, 3));
-        frame
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(self.text)
-                        .size(tokens.typography.caption)
-                        .color(fg),
-                )
-            })
-            .response
+        // Measure the label, allocate an exact rect, then paint the pill
+        // background. This must NOT use `Frame::show`: a Frame reports its
+        // response rect to the parent layout, widening a wrapping parent's
+        // max_rect so `horizontal_wrapped` never wraps (SEPA theme tags
+        // sprawled on one line, overflowing the 280px panel). The label is
+        // placed with `ui.put` so it stays in the fixed rect (accesskit
+        // visible) without affecting layout.
+        let galley = ui.painter().layout_no_wrap(
+            self.text.to_owned(),
+            egui::FontId::proportional(tokens.typography.caption),
+            fg,
+        );
+        let padding = egui::vec2(12.0, 6.0);
+        let size = galley.size() + padding;
+        let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(tokens.radius.pill.round() as u8),
+            bg,
+        );
+        let text_rect = Rect::from_min_size(rect.min + egui::vec2(6.0, 2.0), galley.size());
+        ui.put(
+            text_rect,
+            egui::Label::new(
+                RichText::new(self.text)
+                    .size(tokens.typography.caption)
+                    .color(fg),
+            ),
+        );
+        response
     }
 }
 
@@ -159,5 +176,94 @@ mod tests {
         });
         harness.run();
         let _ = harness.get_by_label("SH");
+    }
+
+    /// Many tags inside a wrapping layout must wrap onto multiple rows
+    /// instead of sprawling one line past the container edge (SEPA theme
+    /// tags: "海康威视" carries 35+ concepts; Frame::show widened the
+    /// wrapped parent's max_rect so nothing wrapped).
+    #[test]
+    fn many_tags_wrap_within_container_width() {
+        let tokens = ThemeTokens::dark();
+        let themes = [
+            "AI应用",
+            "HS300_",
+            "MSCI中国",
+            "中特估",
+            "云计算",
+            "人工智能",
+            "光纤概念",
+            "大数据",
+            "大盘股",
+            "央国企改革",
+            "央视50_",
+            "存储芯片",
+            "安防概念",
+            "新型工业化",
+            "无人机",
+            "无人驾驶",
+            "昨日高振幅",
+            "智慧城市",
+            "机器人概念",
+            "权重股",
+            "标准普尔",
+            "深成500",
+            "深股通",
+            "深证100R",
+            "物联网",
+            "生物识别",
+            "科技风格",
+            "茅指数",
+            "虚拟现实",
+            "融资融券",
+            "行业龙头",
+            "超清视频",
+            "趋势股",
+            "车联网(车路云)",
+            "边缘计算",
+        ];
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(280.0, 600.0))
+            .build_ui(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for theme in themes {
+                        Tag::new(&tokens, theme)
+                            .variant(TagVariant::Custom)
+                            .show(ui);
+                    }
+                });
+            });
+        harness.run_steps(2);
+
+        // Every tag's rect must stay inside the 280px container.
+        let all = harness.query_all_by_label_contains("").collect::<Vec<_>>();
+        let mut offenders: Vec<String> = Vec::new();
+        for node in &all {
+            let label = node.value().unwrap_or_default();
+            if !themes.contains(&label.as_str()) {
+                continue;
+            }
+            if node.rect().max.x > 280.0 {
+                offenders.push(format!("'{label}' right {:.1} > 280", node.rect().max.x));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "tags must wrap inside 280px, got overflow: {offenders:?}"
+        );
+
+        // More than one row must have been produced (35 tags cannot fit one line).
+        let mut ys: Vec<f32> = all
+            .iter()
+            .filter(|n| themes.contains(&n.value().unwrap_or_default().as_str()))
+            .map(|n| n.rect().min.y)
+            .collect();
+        ys.sort_by(|a, b| a.total_cmp(b));
+        ys.dedup_by(|a, b| (*a - *b).abs() < 2.0);
+        assert!(
+            ys.len() > 1,
+            "35 tags must wrap onto multiple rows, got {} row(s)",
+            ys.len()
+        );
     }
 }

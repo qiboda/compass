@@ -1,0 +1,61 @@
+# F3 — Behavioral Verification (ui-fixes epic, ref #217)
+
+Date: 2026-08-09
+Verifier: main agent (kittest headless assertions — no visual guessing)
+Branch: feat/ui-fixes-217
+Verdict: PASS (all four sub-issue behaviors + six acceptance fixes verified by assertions)
+
+## 1. #218 timeframe switch reloads immediately
+
+- `segmented_switch_syncs_shared_state_and_triggers_fetch`: Segmented "1w" click →
+  shared_state.timeframe == "1w" AND loading == true (fetch fired unconditionally,
+  even while a previous fetch is in flight — last-request-wins).
+- `digit_key_switch_syncs_shared_state`: Num2/3/1 sync timeframe_index + shared_state.
+- `startup_timeframe_index_matches_default_timeframe`: default "1w" → index 1
+  (toolbar and chart never disagree on startup).
+
+## 2. #219 Chinese chart dates (fork a1531ac)
+
+- fork `cargo test --lib`: 523 passed, 0 failed — incl. new assertions:
+  `daily_crosshair_time_label_is_chinese_date` ("2024年5月15日"),
+  `hourly_crosshair_time_label_is_chinese_date_with_time` ("5月15日 14:30"),
+  `floating_tooltip_prefixes_are_chinese` (时间:/开盘:/最高:/最低:/收盘:/成交量:/涨跌:),
+  `tracking_tooltip_abbreviations_are_chinese` (开:/高:/低:/收:/量:),
+  `floating_tooltip_daily_bar_uses_chinese_date_without_time`.
+- consumer adversarial tests (adversarial_219_fork_formats.rs): 4 passed —
+  month/day de-padded ("6月"/"6月15日"), zero-pad forbidden ("06月" assert_ne),
+  timezone cross-day keeps Chinese ("6月16日" JST).
+
+## 3. #220 screener atomic groups
+
+- `basic_condition_groups_keep_label_and_control_aligned_across_widths` +
+  `technical_condition_groups_keep_label_and_control_aligned_across_widths`:
+  y-alignment (|dy| ≤ 1.0px) swept over 500/600/800/1000/1200px for every label+control pair.
+- `condition_groups_still_wrap_between_on_narrow_width`: groups wrap BETWEEN each
+  other at 500px (dy > 1), labels never split from controls.
+
+## 4. #221 SEPA ranking table in dock
+
+- `sepa_ranking_table_renders_body_rows_in_dock`: "SH600001" + "共 50 行" present
+  in the 1440x900 docked window (50 injected rows).
+- `sepa_table_header_is_above_body_rows`: header "排名" rect.max.y ≤ first-row
+  rect.min.y (body BELOW header — the real-GUI regression "列表在表头右边").
+- `sepa_ranking_table_renders_all_fifty_rows_in_dock`: "SH600050" (row 50) present.
+
+## 5. User-acceptance fixes (kittest, objective)
+
+- Column alignment: numeric cell right-aligned (min.x > 150 in 200px cell),
+  text cell left-aligned (min.x < 50).
+- Percent column: "+2.50%"/"-1.23%" render once; "2.50 +2.50%" absent.
+- Detail panel containment: no text bleeds past panel right edge
+  (was "1437.9 > 1388.0" pre-fix).
+- Button loading/theme: text_primary rendered, text_disabled absent;
+  disabled button dims to text_disabled.
+- Tag wrapping: 35 tags all inside 280px, multiple rows produced.
+- concept_name TRIM: import strips "创新医疗服务   " → "创新医疗服务".
+
+## 6. Real-GUI note
+
+Real GUI was launched (DISPLAY=:1, RTX 4090 Vulkan) and user-acceptance-tested
+for all six fixes; all confirmed visually by the user. Kittest assertions above
+are the durable regression guard (no reliance on manual visual checks).

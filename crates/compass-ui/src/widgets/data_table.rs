@@ -172,59 +172,68 @@ impl DataTable {
         style.visuals.widgets.hovered.bg_fill = c.bg_hover;
         ui.set_style(style);
 
-        let mut table = TableBuilder::new(ui).striped(true).sense(Sense::click());
-        for idx in 0..n_columns {
-            let column = if idx + 1 == n_columns {
-                Column::remainder()
-            } else {
-                Column::auto()
-            };
-            table = table.column(column);
-        }
-
-        table
-            .header(HEADER_HEIGHT, |mut header| {
-                for (idx, col) in columns.iter().enumerate() {
-                    let mut text = col.header.to_string();
-                    if idx == sort_column {
-                        text.push_str(if sort_descending { " ↓" } else { " ↑" });
+        // The auto columns size to their content; wide rows (e.g. SEPA's
+        // "行业 · 题材" cell) would widen the table's min_rect past its
+        // container frame-to-frame and push neighboring panels off the pane
+        // (SEPA detail panel: "右边内容一团乱"). A horizontal ScrollArea
+        // absorbs the overflow so the table stays at its allocated width.
+        let mut scroll = egui::ScrollArea::horizontal().auto_shrink([false, false]);
+        scroll = scroll.id_salt(("data_table", n_columns));
+        scroll.show(ui, |ui| {
+            let mut table = TableBuilder::new(ui).striped(true).sense(Sense::click());
+            for idx in 0..n_columns {
+                let column = if idx + 1 == n_columns {
+                    Column::remainder()
+                } else {
+                    Column::auto()
+                };
+                table = table.column(column);
+            }
+            table
+                .header(HEADER_HEIGHT, |mut header| {
+                    for (idx, col) in columns.iter().enumerate() {
+                        let mut text = col.header.to_string();
+                        if idx == sort_column {
+                            text.push_str(if sort_descending { " ↓" } else { " ↑" });
+                        }
+                        header.col(|ui| {
+                            let layout = if col.numeric {
+                                Layout::right_to_left(Align::Center)
+                            } else {
+                                Layout::left_to_right(Align::Center)
+                            };
+                            ui.with_layout(layout, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        sort_column == idx,
+                                        RichText::new(text.clone()).strong(),
+                                    )
+                                    .clicked()
+                                {
+                                    self.toggle_sort(idx);
+                                }
+                            });
+                        });
                     }
-                    header.col(|ui| {
-                        let layout = if col.numeric {
-                            Layout::right_to_left(Align::Center)
-                        } else {
-                            Layout::left_to_right(Align::Center)
-                        };
-                        ui.with_layout(layout, |ui| {
-                            if ui
-                                .selectable_label(
-                                    sort_column == idx,
-                                    RichText::new(text.clone()).strong(),
-                                )
-                                .clicked()
-                            {
-                                self.toggle_sort(idx);
+                })
+                .body(|mut body| {
+                    for orig_index in sorted {
+                        let is_selected = self.selected == Some(orig_index);
+                        body.row(tokens.spacing.table_row_h, |mut row| {
+                            let cells = &self.rows[orig_index];
+                            for (idx, cell) in cells.iter().enumerate() {
+                                let numeric = self.columns[idx].numeric;
+                                row.col(|ui| {
+                                    render_cell(ui, &tokens, cell, is_selected, numeric);
+                                });
+                            }
+                            if row.response().clicked() {
+                                clicked_row = Some(orig_index);
                             }
                         });
-                    });
-                }
-            })
-            .body(|mut body| {
-                for orig_index in sorted {
-                    let is_selected = self.selected == Some(orig_index);
-                    body.row(tokens.spacing.table_row_h, |mut row| {
-                        let cells = &self.rows[orig_index];
-                        for cell in cells {
-                            row.col(|ui| {
-                                render_cell(ui, &tokens, cell, is_selected);
-                            });
-                        }
-                        if row.response().clicked() {
-                            clicked_row = Some(orig_index);
-                        }
-                    });
-                }
-            });
+                    }
+                });
+        });
 
         ui.set_style(previous_style);
 
@@ -278,14 +287,11 @@ fn compare_cells(a: &DataCell, b: &DataCell) -> Ordering {
 /// `selected` paints the cell background with the selection color (gapless,
 /// matching the internal stripe technique of `egui_extras`) so the row keeps
 /// its per-cell semantic colors (score scale, price up/down) under highlight.
-fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell, selected: bool) {
+/// `numeric` right-aligns the cell like the column header does, so body
+/// values line up with their header (ref #221 verification).
+fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell, selected: bool, numeric: bool) {
     let c = &tokens.color;
-    if selected {
-        let rect = ui.max_rect().expand2(0.5 * ui.spacing().item_spacing);
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::ZERO, c.selection_bg);
-    }
-    match cell {
+    let render = |ui: &mut Ui| match cell {
         DataCell::Text(text) => {
             ui.label(
                 RichText::new(text)
@@ -297,6 +303,13 @@ fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell, selected: boo
             let mut price = PriceText::new(tokens, *value);
             if let Some(change) = change {
                 price = price.change(*change);
+                // A change column (SEPA 涨跌幅 / screener 20日涨跌幅)
+                // carries the percentage as BOTH the sort value and the
+                // change: render a single signed percent form instead of
+                // the duplicated "2.50 +2.50%".
+                if *change == *value {
+                    price = price.percent_only();
+                }
             }
             price.show(ui);
         }
@@ -337,6 +350,19 @@ fn render_cell(ui: &mut Ui, tokens: &ThemeTokens, cell: &DataCell, selected: boo
                     .color(color),
             );
         }
+    };
+    // The selection fill must paint the full cell rect before the widget,
+    // matching the header's alignment scope (both rendered inside the same
+    // cell rect).
+    if selected {
+        let rect = ui.max_rect().expand2(0.5 * ui.spacing().item_spacing);
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, c.selection_bg);
+    }
+    if numeric {
+        ui.with_layout(Layout::right_to_left(Align::Center), render);
+    } else {
+        ui.with_layout(Layout::left_to_right(Align::Center), render);
     }
 }
 
@@ -727,6 +753,55 @@ mod tests {
         let _ = harness.get_by_label_contains("共 3 行");
     }
 
+    /// A percent column (value == change, e.g. SEPA 涨跌幅 / screener
+    /// 20日涨跌幅) must render a single signed percent form, not the
+    /// duplicated "2.50 +2.50%".
+    #[test]
+    fn percent_column_renders_single_signed_form() {
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(
+            &tokens,
+            vec![
+                ColumnSpec {
+                    header: "代码",
+                    numeric: false,
+                },
+                ColumnSpec {
+                    header: "涨跌幅",
+                    numeric: true,
+                },
+            ],
+        );
+        table.set_rows(vec![
+            vec![
+                DataCell::Text("a".into()),
+                DataCell::Price {
+                    value: 2.5,
+                    change: Some(2.5),
+                },
+            ],
+            vec![
+                DataCell::Text("b".into()),
+                DataCell::Price {
+                    value: -1.23,
+                    change: Some(-1.23),
+                },
+            ],
+        ]);
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            table.show(ui);
+        });
+        harness.fit_contents();
+        harness.step();
+        // The single percent form exists and the duplicated form does not.
+        let _ = harness.get_by_label("+2.50%");
+        let _ = harness.get_by_label("-1.23%");
+        assert!(
+            harness.query_all_by_label_contains("2.50 +2.50%").count() == 0,
+            "percent column must not render the duplicated '2.50 +2.50%'"
+        );
+    }
+
     #[test]
     fn set_tokens_updates_theme_after_switch() {
         let dark = ThemeTokens::dark();
@@ -975,6 +1050,53 @@ mod tests {
             .iter()
             .any(|clipped| shapes_contain_fill(&clipped.shape, selection_bg));
         assert!(!highlighted, "no selection must not paint selection_bg");
+    }
+
+    // ------------------------------------------------------------------
+    // Column alignment: numeric cells must share the header's right
+    // alignment (ref #221 verification: columns must line up with their
+    // header).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn numeric_cell_renders_right_aligned() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            ui.set_width(200.0);
+            render_cell(
+                ui,
+                &tokens,
+                &DataCell::Price {
+                    value: 12.34,
+                    change: None,
+                },
+                false,
+                true,
+            );
+        });
+        harness.run();
+        let label = harness.get_by_label("12.34");
+        assert!(
+            label.rect().min.x > 150.0,
+            "numeric cell must right-align like its header, got min.x={:.1} in 200px-wide cell",
+            label.rect().min.x
+        );
+    }
+
+    #[test]
+    fn text_cell_renders_left_aligned() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            ui.set_width(200.0);
+            render_cell(ui, &tokens, &DataCell::Text("代码".into()), false, false);
+        });
+        harness.run();
+        let label = harness.get_by_label("代码");
+        assert!(
+            label.rect().min.x < 50.0,
+            "text cell must stay left-aligned, got min.x={:.1} in 200px-wide cell",
+            label.rect().min.x
+        );
     }
 
     /// Recursively scan emitted shapes for a rect filled with `color`.

@@ -159,7 +159,7 @@ fn main() -> eframe::Result {
                 work_signal,
                 stock_list,
                 stock_picker,
-                timeframe_index: 0usize,
+                timeframe_index: timeframe_index_from_value(&config.app.app.default_timeframe),
                 theme,
                 dock_style,
                 _backend_handle,
@@ -746,8 +746,14 @@ impl CompassApp {
     fn set_timeframe(&mut self, idx: usize) {
         if idx != self.timeframe_index {
             debug!(timeframe = timeframe_label(idx), "timeframe changed");
-            self.timeframe_index = idx;
         }
+        self.timeframe_index = idx;
+        self.shared_state.timeframe.set(timeframe_value(idx));
+        // Reload unconditionally: a fetch already in flight belongs to the
+        // old timeframe, so skipping here would leave chart and toolbar
+        // label disagreeing. The dispatcher sets loading=true synchronously
+        // on every fetch; the last request wins.
+        self.fetch_bars();
     }
 
     /// Widget id of the search input rendered inside [`Sidebar::show`].
@@ -1087,12 +1093,26 @@ impl CompassApp {
     }
 }
 
+/// Map a timeframe index to its label. The inverse mapping is
+/// [`timeframe_index_from_value`] — keep the two matches in sync.
 fn timeframe_label(idx: usize) -> &'static str {
     match idx {
         0 => "1d",
         1 => "1w",
         2 => "1M",
         _ => "1d",
+    }
+}
+
+/// Map a timeframe value back to its index. The inverse mapping is
+/// [`timeframe_label`] — keep the two matches in sync. Unknown values fall
+/// back to 0 ("1d") so the toolbar selection and the chart never disagree
+/// even with an unexpected configured timeframe.
+fn timeframe_index_from_value(value: &str) -> usize {
+    match value {
+        "1w" => 1,
+        "1M" => 2,
+        _ => 0,
     }
 }
 
@@ -1127,11 +1147,8 @@ mod tests {
 
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
-    use crate::citizens::screener::ScreenerPanel;
-    use crate::citizens::sepa::SepaPanel;
     use crate::latest_quote;
     use crate::state::SharedState;
-    use crate::stock_projection;
     use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
@@ -1184,113 +1201,23 @@ mod tests {
     // #79 coverage gate: kittest integration + non-UI function tests
     // ======================================================================
 
-    use crate::CompassApp;
     use crate::WINDOW_INNER_SIZE;
     use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
     use compass_core::model::{AppConfig, AppSection, WatchlistConfig};
     use compass_ui::tokens::ColorTokens;
-    use compass_ui::widgets::modal::Modal;
-    use compass_ui::widgets::searchable_dropdown::StockPicker;
-    use compass_ui::widgets::toast::{ToastLevel, ToastManager};
-    use egui_dock::DockState;
+    use compass_ui::widgets::toast::ToastLevel;
     use egui_kittest::kittest::Queryable;
-    use std::sync::Arc;
 
-    fn build_compass_app_with_stocks(
-        egui_ctx: egui::Context,
-        stocks: Vec<StockBasic>,
-    ) -> CompassApp {
-        let config = AppConfig::default();
-        let shared_state = Arc::new(SharedState::new("SZ000001", "1d"));
-
-        let (work_signal, run_screener_signal, sepa_signal, _backend_handle) =
-            crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
-
-        let mut dispatcher = Dispatcher::new();
-        let registered = crate::dispatcher::register_citizens(&mut dispatcher);
-
-        let theme = CompassTheme::compass_dark();
-        let theme_tokens = *theme.tokens();
-        let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
-        let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
-        let screener = ScreenerPanel::new(
-            CitizenId::new(SCREENER_ID),
-            registered.screener,
-            None,
-            Box::new(|_| {}),
-            &theme_tokens,
-        );
-        let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &theme_tokens);
-        let stock_picker = StockPicker::new(theme_tokens, "SZ000001", stock_projection());
-        let dock_style = egui_dock::Style::default();
-
-        let mut dock_state =
-            DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
-        if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
-            && let Some(tree) = surface.node_tree_mut()
-        {
-            let _ = tree.split_below(
-                egui_dock::NodeIndex::root(),
-                0.75,
-                vec![Tab::new(TabKind::Logger)],
-            );
-            let _ = tree.split_below(
-                egui_dock::NodeIndex::root(),
-                0.5,
-                vec![Tab::new(TabKind::Screener)],
-            );
-        }
-
-        let startup_symbol = shared_state.symbol.get();
-
-        CompassApp {
-            dock_state,
-            dispatcher,
-            chart,
-            logger,
-            screener,
-            sepa,
-            run_screener_signal,
-            sepa_signal,
-            screener_industries: Vec::new(),
-            screener_boards: Vec::new(),
-            shared_state,
-            work_signal,
-            stock_list: stocks,
-            stock_picker,
-            timeframe_index: 0,
-            theme,
-            dock_style,
-            _backend_handle,
-            toast: ToastManager::new(theme_tokens),
-            modal: Modal::new(theme_tokens),
-            file_dialog: egui_file_dialog::FileDialog::new(),
-            last_error: None,
-            last_loading: false,
-            last_screener_error: None,
-            last_sepa_error: None,
-            last_sepa_loading: false,
-            last_screener_synced_symbol: startup_symbol,
-            sidebar_visible: true,
-            sidebar_search: String::new(),
-            status_clock: String::new(),
-            symbol_input_id: None,
-            pending_delete: None,
-            delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
-            startup_modal_shown: false,
-        }
-    }
-
-    fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
-        build_compass_app_with_stocks(egui_ctx, Vec::new())
-    }
-
-    fn sized_harness(app: CompassApp) -> egui_kittest::Harness<'static, CompassApp> {
-        egui_kittest::Harness::builder()
-            .with_size([1440.0, 900.0])
-            .build_eframe(|_| app)
-    }
+    // App-construction helpers are shared with the epic #217 requirement
+    // tests: the canonical builders live in `crate::citizens::ui_fixes_218`
+    // (`build_compass_app_with_timeframe` derives `timeframe_index` from the
+    // configured default — see `timeframe_index_from_value`). Delegating here
+    // keeps one source of truth instead of a second hardcoded copy
+    // (`timeframe_index: 0` used to drift from production).
+    use crate::citizens::ui_fixes_218::{
+        build_compass_app, build_compass_app_with_stocks, sized_harness,
+    };
 
     // --- Non-UI function tests ---
 

@@ -28,6 +28,11 @@ use crate::state::SharedState;
 /// [-3.75, 0]). Used for the inverted color-scale normalization.
 const RISK_MAX: f32 = 3.75;
 
+/// Right-side detail panel fixed width (design §3). Also reserved by the
+/// ranking table in `results_area` so the table and detail panel share the
+/// horizontal row exactly.
+const DETAIL_PANEL_WIDTH: f32 = 280.0;
+
 /// Ranking table columns (design §2: 12 columns, default sort = rank asc,
 /// descending business default for the score columns).
 const COLUMNS: [ColumnSpec; 12] = [
@@ -325,19 +330,50 @@ impl SepaPanel {
             self.table
                 .set_rows(rows.iter().map(Self::row_cells).collect());
             ui.horizontal(|ui| {
-                if let Some(idx) = self.table.show(ui) {
-                    self.selected = Some(idx);
-                    if let Some(row) = rows.get(idx) {
-                        crate::dispatcher::dispatch_symbol_fetch(
-                            shared_state,
-                            work_signal,
-                            &row.symbol,
-                        );
-                    }
-                }
+                // The table must render in a vertical stacking context:
+                // egui_extras TableBuilder assumes its header and body
+                // ScrollArea stack vertically, but `ui::horizontal` treats
+                // them as side-by-side widgets (body rows land to the RIGHT
+                // of the header — the #221 real-GUI regression). Reserve the
+                // detail-panel width and give the table its own vertical ui.
+                //
+                // The table width is a fixed slice of the pane (not the
+                // dynamically-shrinking `available_width`): egui shrinks a
+                // horizontal's available width frame-to-frame as widgets
+                // report their min_rect, and DataTable's auto columns grow,
+                // which would push the detail panel off the pane edge
+                // (user acceptance: "右边内容一团乱").
+                let pane_w = ui.available_width();
+                let table_w = (pane_w - (DETAIL_PANEL_WIDTH + self.tokens.spacing.md)).max(200.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(table_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        if let Some(idx) = self.table.show(ui) {
+                            self.selected = Some(idx);
+                            if let Some(row) = rows.get(idx) {
+                                crate::dispatcher::dispatch_symbol_fetch(
+                                    shared_state,
+                                    work_signal,
+                                    &row.symbol,
+                                );
+                            }
+                        }
+                    },
+                );
                 ui.add_space(self.tokens.spacing.md);
                 let selected_row = self.selected.and_then(|i| rows.get(i));
-                self.detail_panel(ui, selected_row);
+                // Pin the detail panel to its reserved width. `ui.set_width`
+                // inside the frame does not bound it: the `right_to_left`
+                // layouts (rank tag, score/max, factor notes) grow the frame
+                // to their content width and bleed past the panel edge
+                // (user acceptance: "右边内容一团乱"). Allocating a fixed
+                // 280 px container mirrors the table's vertical-context fix.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(DETAIL_PANEL_WIDTH, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.detail_panel(ui, selected_row),
+                );
             });
         } else {
             let tokens = self.tokens;
@@ -408,12 +444,15 @@ impl SepaPanel {
             },
             DataCell::Price {
                 value: row.change_pct as f32,
+                // value == change marks a percent column: the value drives
+                // sorting while render_cell renders a single signed percent
+                // form (e.g. "+2.50%"), not the duplicated "2.50 +2.50%".
                 change: Some(row.change_pct as f32),
             },
         ]
     }
 
-    /// Right-side detail panel (~300 px): header + total score + five module
+    /// Right-side detail panel: header + total score + five module
     /// rows with per-factor sub-items + theme tags (design §3).
     fn detail_panel(&mut self, ui: &mut egui::Ui, row: Option<&SepaRow>) {
         let tokens = self.tokens;
@@ -423,7 +462,7 @@ impl SepaPanel {
             .corner_radius(tokens.radius.md)
             .inner_margin(egui::Margin::symmetric(12, 12))
             .show(ui, |ui| {
-                ui.set_width(280.0);
+                ui.set_width(DETAIL_PANEL_WIDTH);
                 let Some(row) = row else {
                     ui.label(
                         RichText::new("点击排名行查看评分详情")
@@ -854,5 +893,66 @@ mod tests {
         panel.selected = Some(2);
         panel.reset_selection();
         assert!(panel.selected.is_none());
+    }
+
+    /// The detail panel must lay out its content inside its reserved width
+    /// (280 px) with no text bleeding past the right edge or overlapping —
+    /// user acceptance reported "右边内容一团乱" after clicking a ranking row.
+    #[test]
+    fn detail_panel_content_stays_inside_panel_width() {
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(sample_data()));
+        panel.selected = Some(0);
+        panel.table.set_selected(Some(0));
+        let (sepa_signal, work_signal) = signals();
+        let md = panel.tokens.spacing.md;
+
+        // Real-window width (≈1887 px dock pane): the 12-column table needs
+        // ~1100 px, leaving the detail panel its reserved 280 px. Narrower
+        // widths overflow the table itself (separate issue), so test at the
+        // supported width.
+        let pane_w = 1400.0;
+        let harness_panel_right = std::cell::Cell::new(0.0f32);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(pane_w, 600.0))
+            .build_ui(|ui| {
+                // Capture the panel's actual rect: CentralPanel applies its
+                // own margins, so the right edge is not simply pane_w.
+                let probe = ui.allocate_ui_with_layout(
+                    egui::vec2(pane_w, 600.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        panel.show(ui, &shared, &sepa_signal, &work_signal);
+                    },
+                );
+                harness_panel_right.set(probe.response.rect.max.x);
+            });
+        harness.run_steps(2);
+
+        let texts = harness.query_all_by_label_contains("").collect::<Vec<_>>();
+        // The detail panel spans the rightmost 280 px of the panel rect; the
+        // right-aligned score/max text must not bleed past the panel's right
+        // edge (minus the inter-column margin).
+        let panel_right = harness_panel_right.get() - md;
+        let panel_left = panel_right - DETAIL_PANEL_WIDTH;
+        let mut offenders: Vec<String> = Vec::new();
+        for t in &texts {
+            if t.rect().min.x < panel_left - 1.0 {
+                // Table-side text is allowed; only detail-panel text counts.
+                continue;
+            }
+            if t.rect().max.x > panel_right + 1.0 && t.rect().width() > 0.0 {
+                offenders.push(format!(
+                    "'{}' right edge {:.1} > {:.1}",
+                    t.value().unwrap_or_default(),
+                    t.rect().max.x,
+                    panel_right
+                ));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "detail-panel text bleeds past the reserved width: {offenders:?}"
+        );
     }
 }

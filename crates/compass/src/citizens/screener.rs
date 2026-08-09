@@ -147,9 +147,12 @@ impl ScreenerPanel {
             volume_times: VolumeCondition::default().times,
             ..ConditionForm::default()
         };
-        let mut ms_industry = MultiSelect::new(tokens, std::iter::empty::<&str>());
-        let mut ms_exchange = MultiSelect::new(tokens, ["SH", "SZ", "BJ"]);
-        let mut ms_board = MultiSelect::new(tokens, std::iter::empty::<&str>());
+        let mut ms_industry =
+            MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt("screener_industry");
+        let mut ms_exchange =
+            MultiSelect::new(tokens, ["SH", "SZ", "BJ"]).id_salt("screener_exchange");
+        let mut ms_board =
+            MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt("screener_board");
         if let Some(q) = restore {
             form.list_years = q.list_years;
             form.market_cap_min = q.market_cap_min;
@@ -303,6 +306,9 @@ impl ScreenerPanel {
             },
             DataCell::Price {
                 value: row.change_20d as f32,
+                // value == change marks a percent column: the value drives
+                // sorting while render_cell renders a single signed percent
+                // form (e.g. "+2.50%"), not the duplicated "2.50 +2.50%".
                 change: Some(row.change_20d as f32),
             },
             DataCell::Count(row.market_cap.round() as usize),
@@ -336,54 +342,68 @@ impl ScreenerPanel {
 
     /// 基础条件 card: industry/exchange/board multi-selects, listing years,
     /// market-cap range and the delisted-exclusion checkbox.
+    ///
+    /// Each label+control pair is an atomic group rendered in a child ui
+    /// whose `max_rect` is label-width × `control_md` tall. That keeps the
+    /// `SectionTitle` and its control vertically centered on the same row
+    /// (egui 0.35 horizontals are only `interact_size.y` tall and clamp
+    /// taller children to the top), while the outer `horizontal_wrapped`
+    /// only ever breaks between groups.
     fn basic_conditions(&mut self, ui: &mut egui::Ui) {
         let tokens = self.form_tokens();
 
         ui.horizontal_wrapped(|ui| {
-            SectionTitle::new(&tokens, "行业").show(ui);
-            self.ms_industry.show(ui);
+            ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
+
+            basic_group(ui, &tokens, "行业", |ui| {
+                self.ms_industry.show(ui);
+            });
             ui.add_space(tokens.spacing.md);
 
-            SectionTitle::new(&tokens, "交易所").show(ui);
-            self.ms_exchange.show(ui);
+            basic_group(ui, &tokens, "交易所", |ui| {
+                self.ms_exchange.show(ui);
+            });
             ui.add_space(tokens.spacing.md);
 
-            SectionTitle::new(&tokens, "板块").show(ui);
-            self.ms_board.show(ui);
+            basic_group(ui, &tokens, "板块", |ui| {
+                self.ms_board.show(ui);
+            });
             ui.add_space(tokens.spacing.md);
 
-            SectionTitle::new(&tokens, "上市时长").show(ui);
-            let options = ["不限", "≥1年", "≥3年", "≥5年"];
-            let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
-            let current = options
-                .iter()
-                .zip(values.iter())
-                .position(|(_, v)| *v == self.form.list_years)
-                .unwrap_or(0);
-            if let Some(idx) = Dropdown::new(&tokens, options)
-                .selected(current)
-                .width(100.0)
-                .show(ui)
-            {
-                self.form.list_years = values[idx];
-            }
+            basic_group(ui, &tokens, "上市时长", |ui| {
+                let options = ["不限", "≥1年", "≥3年", "≥5年"];
+                let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
+                let current = options
+                    .iter()
+                    .zip(values.iter())
+                    .position(|(_, v)| *v == self.form.list_years)
+                    .unwrap_or(0);
+                if let Some(idx) = Dropdown::new(&tokens, options)
+                    .selected(current)
+                    .width(100.0)
+                    .show(ui)
+                {
+                    self.form.list_years = values[idx];
+                }
+            });
             ui.add_space(tokens.spacing.md);
 
-            SectionTitle::new(&tokens, "市值(亿)").show(ui);
-            let mut min = self.form.market_cap_min.unwrap_or(0.0);
-            if ui
-                .add(egui::DragValue::new(&mut min).speed(1.0).prefix("min "))
-                .changed()
-            {
-                self.form.market_cap_min = (min > 0.0).then_some(min);
-            }
-            let mut max = self.form.market_cap_max.unwrap_or(0.0);
-            if ui
-                .add(egui::DragValue::new(&mut max).speed(1.0).prefix("max "))
-                .changed()
-            {
-                self.form.market_cap_max = (max > 0.0).then_some(max);
-            }
+            basic_group(ui, &tokens, "市值(亿)", |ui| {
+                let mut min = self.form.market_cap_min.unwrap_or(0.0);
+                if ui
+                    .add(egui::DragValue::new(&mut min).speed(1.0).prefix("min "))
+                    .changed()
+                {
+                    self.form.market_cap_min = (min > 0.0).then_some(min);
+                }
+                let mut max = self.form.market_cap_max.unwrap_or(0.0);
+                if ui
+                    .add(egui::DragValue::new(&mut max).speed(1.0).prefix("max "))
+                    .changed()
+                {
+                    self.form.market_cap_max = (max > 0.0).then_some(max);
+                }
+            });
             ui.add_space(tokens.spacing.md);
 
             Checkbox::new(&tokens, &mut self.form.exclude_delisted, "排除退市").show(ui);
@@ -391,63 +411,79 @@ impl ScreenerPanel {
     }
 
     /// 技术面条件 card: MA / breakout / momentum / volume toggles.
+    ///
+    /// Same atomic-group pattern as `basic_group` (a module-level helper,
+    /// not a method — the intra-doc link is omitted because rustdoc cannot
+    /// resolve private free functions): each toggle plus its parameter
+    /// section shares one child ui, so the outer wrapped layout never
+    /// splits a toggle from its parameters across rows.
     fn technical_conditions(&mut self, ui: &mut egui::Ui) {
         let tokens = self.form_tokens();
 
         ui.horizontal_wrapped(|ui| {
-            Checkbox::new(&tokens, &mut self.form.ma_enabled, "均线").show(ui);
-            if self.form.ma_enabled {
-                let current = match self.form.ma_kind {
-                    MaKind::AboveMa20 => 0,
-                    MaKind::AboveMa60 => 1,
-                    MaKind::BullishAlign => 2,
-                };
-                if let Some(idx) = Dropdown::new(
-                    &tokens,
-                    [
-                        MaKind::AboveMa20.label(),
-                        MaKind::AboveMa60.label(),
-                        MaKind::BullishAlign.label(),
-                    ],
-                )
-                .selected(current)
-                .width(210.0)
-                .show(ui)
-                {
-                    self.form.ma_kind = match idx {
-                        1 => MaKind::AboveMa60,
-                        2 => MaKind::BullishAlign,
-                        _ => MaKind::AboveMa20,
+            ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
+
+            technical_group(ui, &tokens, 286.0, |ui| {
+                Checkbox::new(&tokens, &mut self.form.ma_enabled, "均线").show(ui);
+                if self.form.ma_enabled {
+                    let current = match self.form.ma_kind {
+                        MaKind::AboveMa20 => 0,
+                        MaKind::AboveMa60 => 1,
+                        MaKind::BullishAlign => 2,
                     };
+                    if let Some(idx) = Dropdown::new(
+                        &tokens,
+                        [
+                            MaKind::AboveMa20.label(),
+                            MaKind::AboveMa60.label(),
+                            MaKind::BullishAlign.label(),
+                        ],
+                    )
+                    .selected(current)
+                    .width(210.0)
+                    .show(ui)
+                    {
+                        self.form.ma_kind = match idx {
+                            1 => MaKind::AboveMa60,
+                            2 => MaKind::BullishAlign,
+                            _ => MaKind::AboveMa20,
+                        };
+                    }
                 }
-            }
+            });
             ui.add_space(tokens.spacing.md);
 
-            Checkbox::new(&tokens, &mut self.form.breakout_enabled, "突破新高").show(ui);
-            if self.form.breakout_enabled {
-                ui.label("N:");
-                ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
-            }
+            technical_group(ui, &tokens, 158.0, |ui| {
+                Checkbox::new(&tokens, &mut self.form.breakout_enabled, "突破新高").show(ui);
+                if self.form.breakout_enabled {
+                    ui.label("N:");
+                    ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
+                }
+            });
             ui.add_space(tokens.spacing.md);
 
-            Checkbox::new(&tokens, &mut self.form.momentum_enabled, "动量").show(ui);
-            if self.form.momentum_enabled {
-                ui.label("N:");
-                ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
-                ui.label("min%:");
-                ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
-                ui.label("max%:");
-                ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
-            }
+            technical_group(ui, &tokens, 390.0, |ui| {
+                Checkbox::new(&tokens, &mut self.form.momentum_enabled, "动量").show(ui);
+                if self.form.momentum_enabled {
+                    ui.label("N:");
+                    ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
+                    ui.label("min%:");
+                    ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
+                    ui.label("max%:");
+                    ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
+                }
+            });
             ui.add_space(tokens.spacing.md);
 
-            Checkbox::new(&tokens, &mut self.form.volume_enabled, "量能").show(ui);
-            if self.form.volume_enabled {
-                ui.label("N:");
-                ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
-                ui.label("倍数:");
-                ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
-            }
+            technical_group(ui, &tokens, 274.0, |ui| {
+                Checkbox::new(&tokens, &mut self.form.volume_enabled, "量能").show(ui);
+                if self.form.volume_enabled {
+                    ui.label("N:");
+                    ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
+                    ui.label("倍数:");
+                    ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
+                }
+            });
         });
     }
 
@@ -465,6 +501,69 @@ impl ScreenerPanel {
         self.ms_board.set_tokens(tokens);
         self.table.set_tokens(tokens);
     }
+}
+
+/// Render one atomic label+control group. The child ui's `max_rect` is
+/// capped at the measured label width and `control_md` in height, so the
+/// group centers its contents vertically and the parent row cursor only
+/// advances past the actual content. The wrap check uses a generous
+/// width bound (label + 176) covering the widest control pair.
+fn basic_group(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    label: &str,
+    control: impl FnOnce(&mut egui::Ui),
+) {
+    let label_w = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(tokens.typography.heading),
+            tokens.color.text_primary,
+        )
+        .size()
+        .x;
+    if ui.available_size_before_wrap().x < label_w + 176.0 {
+        ui.end_row();
+    }
+    let start = ui.cursor().min;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                start,
+                egui::pos2(start.x + label_w, start.y + tokens.spacing.control_md),
+            ))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            SectionTitle::new(tokens, label).show(ui);
+            control(ui);
+        },
+    );
+}
+/// Render one atomic toggle+params group; `width` is the group's width
+/// estimate used for the wrap check (controls size themselves).
+fn technical_group(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    width: f32,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
+    if ui.available_size_before_wrap().x < width {
+        ui.end_row();
+    }
+    let start = ui.cursor().min;
+    let row_w = ui.available_size_before_wrap().x;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                start,
+                egui::pos2(start.x + row_w, start.y + tokens.spacing.control_md),
+            ))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            contents(ui);
+        },
+    );
 }
 
 /// Row-click linkage: fetch bars for the clicked result row (design §6.6).
@@ -736,6 +835,111 @@ mod tests {
             shared.symbol.get(),
             "SZ000001",
             "out-of-range index is a no-op"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // #220 atomic condition groups: each label+control stays on one row
+    // ------------------------------------------------------------------
+
+    /// Widths swept by the alignment test. 500 px is a stress case below the
+    /// design's supported minimum (>600 px): it must still keep each group's
+    /// label and control on the same row at ANY width.
+    const GROUP_ALIGNMENT_WIDTHS: [f32; 5] = [500.0, 600.0, 800.0, 1000.0, 1200.0];
+
+    fn assert_same_row(
+        harness: &egui_kittest::Harness<'_, ()>,
+        label: &str,
+        control: &egui_kittest::Node<'_>,
+        width: f32,
+    ) {
+        let label_node = harness.get_by_label(label);
+        let dy = (label_node.rect().center().y - control.rect().center().y).abs();
+        assert!(
+            dy <= 1.0,
+            "label {label:?} and its control must share a row at width {width}px, dy={dy}"
+        );
+    }
+
+    #[test]
+    fn basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+        for width in GROUP_ALIGNMENT_WIDTHS {
+            let (mut panel, _shared) = panel_with_form();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([width, 600.0])
+                .build_ui(|ui| panel.basic_conditions(ui));
+            harness.run();
+
+            let selects = harness
+                .query_all_by_label_contains("全部")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selects.len(),
+                3,
+                "three multi-select triggers rendered at width {width}px"
+            );
+            assert_same_row(&harness, "行业", &selects[0], width);
+            assert_same_row(&harness, "交易所", &selects[1], width);
+            assert_same_row(&harness, "板块", &selects[2], width);
+
+            let years = harness
+                .query_by_label_contains("不限")
+                .expect("上市时长 dropdown rendered");
+            assert_same_row(&harness, "上市时长", &years, width);
+        }
+    }
+
+    #[test]
+    fn technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+        for width in GROUP_ALIGNMENT_WIDTHS {
+            let (mut panel, _shared) = panel_with_form();
+            panel.form.ma_enabled = true;
+            panel.form.breakout_enabled = true;
+            panel.form.momentum_enabled = true;
+            panel.form.volume_enabled = true;
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([width, 600.0])
+                .build_ui(|ui| panel.technical_conditions(ui));
+            harness.run();
+
+            let ma_dropdown = harness
+                .query_by_label_contains("站上 MA20")
+                .expect("MA dropdown rendered when ma_enabled");
+            assert_same_row(&harness, "均线", &ma_dropdown, width);
+
+            let n_labels = harness
+                .query_all_by_label_contains("N:")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                n_labels.len(),
+                3,
+                "three N: parameter labels rendered at width {width}px"
+            );
+            assert_same_row(&harness, "突破新高", &n_labels[0], width);
+            assert_same_row(&harness, "动量", &n_labels[1], width);
+            assert_same_row(&harness, "量能", &n_labels[2], width);
+        }
+    }
+
+    #[test]
+    fn condition_groups_still_wrap_between_on_narrow_width() {
+        let (mut panel, _shared) = panel_with_form();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size([500.0, 600.0])
+            .build_ui(|ui| panel.basic_conditions(ui));
+        harness.run();
+
+        let selects = harness
+            .query_all_by_label_contains("全部")
+            .collect::<Vec<_>>();
+        let years = harness
+            .query_by_label_contains("不限")
+            .expect("上市时长 dropdown rendered");
+
+        let dy_between = (selects[0].rect().center().y - years.rect().center().y).abs();
+        assert!(
+            dy_between > 1.0,
+            "industry and 上市时长 groups must wrap to different rows at 500px (groups, not labels, wrap), dy={dy_between}"
         );
     }
 }
