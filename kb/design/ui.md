@@ -215,6 +215,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.omo/designs/gui-upgrade.md` | 已实现（与代码同步） |
 | 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.omo/designs/chart-ma-boll.md` | 已实现（与代码同步） |
 | 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.omo/designs/ui-fixes-chinese-date.md` + `.omo/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
+| 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.omo/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
@@ -249,3 +250,10 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 选股器条件原子组（ref #220） | 单 `horizontal_wrapped` / 每组 `ui::horizontal` + 组间 `add_space(md)` | 每组 `ui::horizontal` 原子单元 + 行距 `item_spacing.y = sm`(8px) | 组内标签+控件永不拆行；换行只发生在组间；egui 0.35 实测 18px 行高钳制 + SectionTitle RTL 空子 ui 游标跳转需 `scope_builder` + 实测标签宽 max_rect 封住 | 自定义换行/表格布局复杂且脆弱 |
 | MultiSelect 弹层 id（ref #220 实测） | 默认空 id_salt / 每实例显式 id_salt | 每实例显式 `id_salt`（screener 三处） | `popup_id = ui.id().with("multi_select_popup").with(&id_salt)`——空 salt 时多弹层 Area id 冲突互相覆盖 | 空 salt 依赖调用方容器 id 区分（同一面板内不成立） |
 | SEPA 表格布局容器（ref #221） | `ui::horizontal` 直接放表格 / `allocate_ui_with_layout` 垂直容器 | 垂直容器（宽 = 可用宽 − 详情 280px − spacing） | egui_extras TableBuilder 假定 header/body ScrollArea 垂直堆叠，horizontal 布局把二者并排（body 行渲染到表头右侧——真实 GUI 回归，坐标断言复现） | horizontal 直放仅 kittest label 存在性断言通过，位置错误漏检 |
+| 数值列对齐（ref #217 验收） | body 一律左对齐 / render_cell 感知列 numeric | `render_cell` 按列 `numeric` 标志右对齐（与 header 同布局） | 表头 numeric 列本就右对齐，body 左对齐导致 9/12 列错位（用户验收：列与表头不对齐）；共享组件一处修复 SEPA + screener | 统一左对齐丢失 numeric 列右对齐惯例 |
+| 涨跌幅列单一百分比（ref #217 验收） | `Price{value, change}` 双值渲染 / `percent_only()` 模式 | `PriceText::percent_only()` + `render_cell` 以 `value == change` 识别 | 调用方 value（排序）+ change（着色）职责正确，缺「值即百分比」渲染模式——原实现同值渲染两次 `2.50 +2.50%`（用户验收）；StatusBar `1500.00 +2.50%` 双值语义不受影响 | 新增 DataCell 变体扩大 API；改调用方传参丢排序/着色语义 |
+| DataTable 宽度约束（ref #217 验收） | auto 列随内容 / 横向 ScrollArea 吸收溢出 | `ScrollArea::horizontal` 包 TableBuilder（auto_shrink false） | auto 列 min_rect 帧间增长撑宽 horizontal，把 SEPA 详情面板推离面板（用户验收：右侧一团乱，kittest 坐标 1437.9 > 1388 复现） | 固定列宽丢失自适应；截断内容 |
+| Tag 渲染方式（ref #217 验收） | `Frame::show` / `allocate_exact_size` + painter + `ui.put` | `allocate_exact_size` 固定 rect + painter 画 pill + `ui.put` 放 Label | Frame 的响应 rect 撑宽 wrapped 父级 max_rect，`horizontal_wrapped` 永不换行——35+ 题材 Tag 单行溢出 280px 面板 4 倍宽（用户验收：海康威视题材换行失败）；`ui.put` 保持 accesskit 可查询 | Frame 简但破坏换行；painter 文本丢失 accesskit |
+| Button 文字主题色（ref #217 验收） | 硬编码 `Color32::WHITE` / 统一 `text_primary` | Primary/Danger 统一 `text_primary`（dark 浅灰 / light 深色） | 硬编码白字不随主题切换（用户验收：fetch 按钮文字颜色不跟随主题）；Default/Ghost 已用 text_primary | 白字在 accent 底对比度虽高但不随主题 |
+| Button loading 文字色（ref #217 验收） | loading 视同 disabled 用 text_disabled / loading 保留变体色 | loading 保留变体文字色，仅真 disabled 用 text_disabled | loading 由 spinner + 遮罩表达状态，文字变灰在 accent 底几乎不可见（用户验收：加载中字体颜色不对） | loading 变灰符合 disabled 惯例但可读性差 |
+| concept_name 空白清理（ref #217 验收） | 原样入库 / INSERT 时 `TRIM(BOARD_NAME)` | 采集器 import 时 TRIM + 清理存量 11 行 | EastMoney BOARD_NAME 带尾随空格（`创新医疗服务   `），SEPA 题材 Tag 渲染拉伸空格（用户验收：第一个字后空格越来越多）；Dolt 数据已同步清理 | 仅 GUI 侧截断掩盖数据质量问题 |

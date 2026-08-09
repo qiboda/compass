@@ -192,7 +192,8 @@ SEPA 采集器说明：
 - `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
 - `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
-- `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照）
+- `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照；导入时
+  `TRIM(BOARD_NAME)` 去除 EastMoney 尾随空格，ref #217 验收）
 
 `fetch stock_basic` 现在运行 `fetch_stock_basic_official.py`，从三大交易所官网
 （SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`（位于
