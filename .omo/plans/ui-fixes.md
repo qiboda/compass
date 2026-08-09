@@ -150,10 +150,10 @@ chrono 0.4.45 的 `%m`/`%d` 是**零填充**（输出 "06月"/"06月15日"），
 
 ## Final verification wave
 
-- [ ] F1. Plan compliance audit — 逐条核对 plan Todos 完成状态；四个子 issue 验收标准逐项勾选；RED 测试已转 GREEN 且有失败→成功证据
-- [ ] F2. Code quality review — review-work 结果无阻塞；clippy/fmt/doc 全绿；无 unwrap()/as 类型逃逸
-- [ ] F3. 行为验证（agent 可执行，零人工）— 四个修复行为全部由 kittest/无头断言验证：① 切换周期 loading+shared_state 断言；② fork 格式串单测（"6月"/"2024年5月15日"）；③ 选股器 y 对齐断言；④ SEPA dock 表格体断言。**不依赖用户手动运行 GUI**——若真实 GUI 冒烟不可行（无 X11），以 kittest 等价验证为准并记录
-- [ ] F4. Scope fidelity — 未做 #222 内容（除 tooltip 前缀）；未改刻度密度/引擎；kb 文档与实现一致
+- [x] F1. Plan compliance audit — 逐条核对 plan Todos 完成状态；四个子 issue 验收标准逐项勾选；RED 测试已转 GREEN 且有失败→成功证据（`.omo/evidence/ui-fixes/F1-plan-compliance.txt`：15/15 commits 含独立 ref # 行；4 子 issue + 6 验收修复全部 RED→GREEN 有测试证据）
+- [x] F2. Code quality review — review-work 结果无阻塞（1 MAJOR 已修复 33b97e1）；clippy/fmt/doc 全绿；无 unwrap()/as 类型逃逸（`.omo/evidence/ui-fixes/F2-code-quality.txt`）
+- [x] F3. 行为验证（agent 可执行，零人工）— 四个修复行为全部由 kittest/无头断言验证 + 真实 GUI 用户验收确认（`.omo/evidence/ui-fixes/F3-behavior-verification.txt`：① 切换周期 loading+shared_state 断言；② fork 格式串单测"6月"/"2024年5月15日"；③ 选股器 y 对齐断言；④ SEPA dock 表格体断言 + 6 项验收修复断言）
+- [x] F4. Scope fidelity — 未做 #222 内容（除 tooltip 前缀）；未改刻度密度/引擎；kb 文档与实现一致（`.omo/evidence/ui-fixes/F4-scope-fidelity.txt`；kb/design/ui.md 决策记录 8 行同步）
 
 ## Commit strategy
 

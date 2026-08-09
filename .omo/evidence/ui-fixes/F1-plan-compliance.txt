@@ -1,0 +1,63 @@
+# F1 — Plan Compliance Audit (ui-fixes epic, ref #217)
+
+Date: 2026-08-09
+Auditor: main agent (orchestrator)
+Base: origin/master | Branch: feat/ui-fixes-217
+Verdict: PASS (4 sub-issues + 6 acceptance fixes + F1-F4 artifacts accounted)
+
+## 1. Commit compliance — all 15 commits reference an open issue (independent line)
+
+```
+9d24b57 docs(ui): record acceptance-fix decisions in design and user docs        ref #217
+d912115 fix(tag): wrap in horizontal layouts instead of sprawling one line       ref #217
+984bc39 fix(button): label color follows theme via text_primary                 ref #217
+e706dfc fix(collectors): trim concept_name whitespace on import                 ref #217
+b0f8069 fix(button): keep variant text color while loading                       ref #217
+f332263 fix(table): bound DataTable width with horizontal scroll for detail panel ref #217
+32b4de8 fix(table): align numeric cells with header and render percent columns once ref #217
+33b97e1 refactor(ui-fixes): consolidate test app-construction helpers           ref #217
+1f92cf7 docs(ui-fixes): record fork CI plan deviation evidence                   ref #219
+d1f1150 fix(chart): update egui-charts fork for Chinese dates                    ref #219
+b9792dc test(ui-fixes): record adversarial-test DEFERRED evidence               ref #217
+5386d52 docs(ui): sync Chinese date format and screener layout decisions         ref #217
+070ae18 fix(sepa): render ranking table in a vertical stacking context           ref #221
+39df1dc fix(screener): wrap each condition label+control in atomic horizontal group ref #220
+371273e fix(timeframe): switch K-line unit reloads immediately and sync shared state ref #218
+```
+Check: `for c in $(git log origin/master..HEAD --format=%h); do git log -1 --format=%B $c | grep -E '^ref #[0-9]+$'; done` = 15/15 ✓
+
+## 2. Sub-issue acceptance — 4/4 achieved (RED→GREEN evidenced)
+
+- [x] #218 切换 K 线单位立即重载: `set_timeframe` 同步 shared_state + 无条件 fetch_bars；
+      `timeframe_index_from_value` 对齐 default_timeframe。ui_fixes_218.rs 3 tests
+      (segmented_switch_syncs_shared_state_and_triggers_fetch /
+      digit_key_switch_syncs_shared_state / startup_timeframe_index_matches_default_timeframe)
+- [x] #219 中文日期: fork a1531ac (DefaultTimeFormatter %-m月/%-m月%-d日, crosshair/tooltip
+      中文, 7 前缀 + tracking 缩写, bar-duration 分档); fork cargo test --lib 523 passed;
+      adversarial_219_fork_formats.rs 4 tests GREEN (was RED vs 2b18acd)
+- [x] #220 选股器原子组: basic_group/technical_group + MultiSelect id_salt;
+      y 对齐断言 5 宽度 (500-1200px) 通过
+- [x] #221 SEPA 表格渲染: dock 复现测试 (sepa_ranking_table_renders_body_rows_in_dock /
+      sepa_table_header_is_above_body_rows / sepa_ranking_table_renders_all_fifty_rows_in_dock)
+      通过; 表格体行内容断言防回归
+
+## 3. User-acceptance fixes — 6/6 (regression tests RED→GREEN)
+
+- [x] 列对齐: render_cell numeric 感知 (numeric_cell_renders_right_aligned /
+      text_cell_renders_left_aligned)
+- [x] 涨跌幅重复: PriceText.percent_only (percent_only_renders_single_signed_percent /
+      percent_column_renders_single_signed_form)
+- [x] 详情面板溢出: DataTable ScrollArea (detail_panel_content_stays_inside_panel_width)
+- [x] Tag 空格: collectors TRIM (test_import_trims_whitespace_from_concept_name)
+- [x] 按钮文字主题色: variant_colors text_primary
+- [x] Button loading 文字色: loading_button_keeps_variant_text_color
+- [x] Tag 换行: many_tags_wrap_within_container_width
+
+## 4. Test evidence (final)
+
+- compass-ui: 214 passed / 0 failed
+- compass: 136 passed / 0 failed (+ 4 adversarial integration)
+- collectors (concept_member): 18 passed / 0 failed
+- fork (egui-charts a1531ac): 523 passed / 0 failed
+- clippy -D warnings: 0 (compass-ui + compass)
+- cargo fmt --check: clean

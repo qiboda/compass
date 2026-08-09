@@ -1,0 +1,44 @@
+# F2 — Code Quality Review (ui-fixes epic, ref #217)
+
+Date: 2026-08-09
+Auditor: review-work (5 parallel agents) + main agent verification
+Branch: feat/ui-fixes-217
+Verdict: PASS (1 MAJOR fixed + MINORs fixed; re-verified)
+
+## 1. review-work 5-agent gate (ran against full PR diff pre-acceptance-fixes)
+
+| Agent | Verdict | Notes |
+|---|---|---|
+| Goal & Constraint | PASS (HIGH) | 4 sub-issues achieved; constraints met; 1 intermittent kittest flake noted (sepa_table_header_is_above_body_rows, 1/14 parallel runs, not reproduced in 20+ subsequent runs) |
+| Code Quality | FAIL → 1 MAJOR | Test-helper duplication: main.rs mod tests duplicated build_compass_app/build_compass_app_with_stocks/sized_harness from ui_fixes_218.rs, with timeframe_index: 0 hardcoded drifting from production's timeframe_index_from_value |
+| Security | PASS (NONE) | No vulnerabilities; 2 LOW info items (branch=compass floating ref mitigated by Cargo.lock pin; windows-targets downgrade benign) |
+| QA Execution | PASS (HIGH) | 15/15 scenarios; idempotency double-runs stable |
+| Context Mining | PASS (HIGH) | No missed requirements; #222 overlap checked (tooltip prefixes are #219 scope) |
+
+## 2. MAJOR fix (33b97e1) — test-helper consolidation
+
+- Deleted main.rs's duplicated build_compass_app_with_stocks/build_compass_app/sized_harness
+  (~90 lines); main.rs mod tests now `use crate::citizens::ui_fixes_218::{...}`
+  (single source of truth, timeframe_index derivation cannot drift).
+- Also fixed: DETAIL_PANEL_WIDTH const (was 280.0 duplicated with stale "~300px" doc),
+  #221 header test disambiguation by x-coordinate, stale adversarial doc (2b18acd→a1531ac).
+- Verified: cargo test -p compass (135+4) green after consolidation; clippy 0.
+
+## 3. Acceptance-fix reviews (per-commit)
+
+Each acceptance fix landed with regression tests; reviewed via targeted re-verification:
+- 32b4de8: render_cell numeric alignment — 2 alignment tests
+- b0f8069/984bc39: Button loading/theme text color — shape-color assertions
+- f332263: DataTable ScrollArea — detail_panel_content_stays_inside_panel_width (was failing
+  "20.0/30.0 right edge 1437.9 > 1388.0" before fix)
+- e706dfc: collectors TRIM — test_import_trims_whitespace_from_concept_name (RED→GREEN)
+- d912115: Tag wrap — many_tags_wrap_within_container_width (35 tags, multi-row)
+
+## 4. Final gates
+
+- cargo clippy -p compass-ui -p compass --all-targets: 0 warnings
+- cargo fmt --check: clean
+- No unwrap()/as casts in production code (only #[cfg(test)] / tests/)
+- No new dependencies (Cargo.toml untouched)
+- Fork CI deviation (ci.yml triggers only on main branch) recorded in
+  .omo/evidence/ui-fixes/task-5-update.txt (plan assumption corrected)
