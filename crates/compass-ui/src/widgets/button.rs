@@ -148,7 +148,10 @@ impl<'a> Button<'a> {
         w.active.weak_bg_fill = pressed_fill;
         w.noninteractive.weak_bg_fill = fill;
 
-        let label_color = if disabled {
+        // Loading keeps the variant's text color (e.g. white on Primary) —
+        // the spinner + dimmed fill already signal the busy state; only a
+        // true `disabled` button dims its label to text_disabled.
+        let label_color = if self.disabled {
             tokens.color.text_disabled
         } else {
             text_color
@@ -298,6 +301,66 @@ mod tests {
         harness.get_by_label("No").click();
         harness.run();
         assert!(!clicked.get(), "disabled button must not fire clicks");
+    }
+
+    /// Loading keeps the variant text color (white on Primary) — the spinner
+    /// and dimmed fill signal the busy state; the label must not fade to
+    /// text_disabled (user acceptance: "加载中的字体颜色不对").
+    #[test]
+    fn loading_button_keeps_variant_text_color() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Button::new(&tokens, "Fetch")
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .show(ui);
+        });
+        harness.step();
+
+        let text_colors: Vec<Color32> = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|clipped| text_shape_color(&clipped.shape))
+            .collect();
+        assert!(
+            text_colors.contains(&Color32::WHITE),
+            "loading Primary button must render white label text, got {text_colors:?}"
+        );
+        assert!(
+            !text_colors.contains(&tokens.color.text_disabled),
+            "loading must not dim the label to text_disabled, got {text_colors:?}"
+        );
+    }
+
+    /// A truly disabled button dims its label to text_disabled.
+    #[test]
+    fn disabled_button_dims_label() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Button::new(&tokens, "No").disabled(true).show(ui);
+        });
+        harness.step();
+
+        let text_colors: Vec<Color32> = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|clipped| text_shape_color(&clipped.shape))
+            .collect();
+        assert!(
+            text_colors.contains(&tokens.color.text_disabled),
+            "disabled button must dim the label to text_disabled, got {text_colors:?}"
+        );
+    }
+
+    /// Recursively collect the color of every text shape.
+    fn text_shape_color(shape: &egui::Shape) -> Option<Color32> {
+        match shape {
+            egui::Shape::Vec(inner) => inner.iter().find_map(text_shape_color),
+            egui::Shape::Text(text) => text.galley.job.sections.first().map(|s| s.format.color),
+            _ => None,
+        }
     }
 
     /// The leading icon is part of the rendered label.
