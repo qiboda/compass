@@ -566,3 +566,31 @@
 - **真实环境隔离反复出现**（ref #190 Dolt 工作区滞留、ref #154 冒烟证据、本次测试污染 /data/compass-data/csv）："测试/写库不得触碰真实数据环境"是反复教训——本次已固化为 conftest autouse fixture，但 Dolt 侧（ref #190）仍是人工纪律；建议将"测试隔离"检查项纳入 compass-workflow 门禁第 4 步（TESTS）的强制清单
 - **review 抓出批量替换残留**（ref #202 三采集器不同构、本次 COLLECTORS_DIR 死代码）：批量/并行改同构代码后，主 agent 必须做"残留模式 grep"自查（旧常量、旧测试机制、同构字段），不能只信子任务自报全绿
 - **用户对范围与顺序的追加要求**（本次 CSV 追加到 #208、ref #202 配套代码、ref #201 顺序语义）：用户在实施中追加需求/纠正顺序是常态——grill 阶段把"影响面"（含测试/文档/数据环境）问透，比实现中追加再改成本低
+
+## 2026-08-09 — ref #211 hook 精准区分 ref #N 引用与叙述性提及（只校验独立行）
+
+**What was done**: 修复 commit-msg / pre-push hook 误伤叙述性提及的问题——hook 原先用宽泛正则提取所有 `ref #N` 并逐个校验 OPEN，行内叙述性提及已关闭 issue（如 "ref #154 教训：…"）被误拒。改为只把**独立成行的 `ref #N`**（该行除 ref 引用外无其他内容，可逗号分隔多 issue）当作引用校验 OPEN；行内 ref 视为叙述性提及不参与校验。新增 mirror 提取逻辑的测试脚本（17 用例 + mirror-drift guard），AGENTS.md/process.md 规则同步。2 commits（be01f48 核心 + f593bbb review 修复），5-way review 两轮通过。
+
+**User corrections**（逐字引用对话记录）:
+1. "又是已关闭 issue 引用——commit message 里的 ref #154（叙述性提及历史教训）被 hook 拒绝。这恰好复现了反思条目里刚记录的摩擦。 这个有办法通过修改检查来精准判定ref #id 吗？" —— 用户报告摩擦复现并主动提议改进方向（修改 hook 检查本身，而非仅靠人工遵守文档约定）
+2. "1. 采用 2. 在master提交吧。" —— 确认独立行方案；并明确指示在 master 直接提交（非 worktree）
+
+**What went wrong**:
+1. **流程违规：实现类提交落在 master 而非 worktree**：存在活跃 worktree（skwy-workflow-migration）时，hook 修复（2 commits）直推 master——违反"实现工作必须在 worktree 内进行，master 只允许 docs/lint/typo/反思直推"规则。用户明确指示"在master提交吧"，我按指示执行但未先向用户说明该违规（AGENTS.md 要求违反规则时应在 reflections 记录）。hook 修复与 skwy 迁移是两个独立 issue，独立处理本身合理，但流程上应创建独立 worktree 或先获用户对违规的知情确认。
+2. **重复摩擦第三次触发（本会话内）**：commit-msg hook 宽泛匹配 `ref #154` 已第三次误伤（历史 ref #119、#172 已记录两次）——前两次靠 AGENTS.md 文档约定规避（"叙述性提及用 #N 不带 ref 前缀"），本次用户消息仍写成 `ref #154`（带 ref 前缀），说明**文档约定 + 人工记忆不足以消除该摩擦**，必须从 hook 检查侧根治。本次已根治（独立行判定），此模式应退役。
+3. **review Round 1 FAIL（MAJOR）**：新测试脚本未设可执行位（100644 vs 兄弟 100755）——git add 未校验 mode，直接随 commit 入库；另 4 个 MINOR（缺大小写/CRLF/重复用例、mirror 漂移无守卫、管线顺序不一致、逗号分隔未入文档）第 2 轮全部修复。
+4. **em-dash 文本替换失败一次**：改 pre-push 报错文案时用 `-`（连字符）匹配实际为 `—`（em-dash）的文本，python replace 返回 OLD NOT FOUND，改为 sed 定位行号才成功——细节字符不匹配导致的无效编辑尝试。
+
+**Lessons learned**:
+1. **用户明确指示与流程规则冲突时，先明示违规再执行**：用户说"在master提交吧"时应回复"这违反 worktree 规则，按你的指示在 master 提交并在反思中记录"，而不是静默照办——知情同意才算合规偏离
+2. **文档约定消除不了的摩擦，从机制侧根治**：同一误伤第三次发生时，正确的做法不是再强化文档措辞，而是改 hook 判定逻辑（本次独立行方案）——"文档已固化但未遵守"模式（ref #104/#208 已识别）的终极解是执行侧钩子
+3. **新增可执行脚本提交前检查 mode**：`git add` 前 `ls -la` 或 `chmod +x` 新脚本，与兄弟文件 mode 对齐（本次 MAJOR 是本可避免的）
+4. **字符串替换先核对精确字符**：python replace 前先 `cat -A`/grep 确认目标文本的精确字节（em-dash vs 连字符），避免 OLD NOT FOUND 无效尝试
+
+**Process improvements**:
+- 已落实（随实现提交）：hook 只校验独立行 ref（commit-msg + pre-push）；AGENTS.md 规则更新（独立成行 + 逗号分隔 + 行内为叙述性提及）；`scripts/tests/hook-standalone-ref-test.sh` 17 用例 + mirror-drift guard（正则字面量存在于两 hook 的断言）——叙述性提及误伤从机制侧根治
+- 教训 1 为流程纪律，写入本条目（None——需 reflect 自身遵守，不新增机制）；教训 3/4 为一次性操作细节，写入本条目
+
+### Trends (last 10)
+- **"文档已固化但未遵守"模式第三次出现并根治**（ref #104 纪律写了没执行、ref #208 测试隔离、本次 ref #154 叙述性提及）：前两次靠强化文档，本次改为 hook 判定逻辑根治——趋势确认"文档 + 人工记忆"不可靠，可检测摩擦必须落执行侧钩子；本次的 mirror-drift guard 是 hook 类修复自带回归测试的先例，值得推广到其他 hook 修改
+- **实现类提交落 master 的流程违规**（本次、ref #202 曾有同类记录）：用户指示"在master提交"时 agent 应明示与 worktree 规则的冲突并获知情确认——当前 worktree 规则对"用户明确指示直推"的边界处理未写明，建议在 AGENTS.md worktree 章节补充"用户明确指示直推时的知情同意流程"

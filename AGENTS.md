@@ -332,6 +332,10 @@ worktree 是独立 checkout，master 工作区的 untracked 文件不会出现�
 （add → 写 handoff → `open-worktrees.sh <name>` 启动），master 上不再继续实现。
 master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree 时实现类提交
 落在 master 即流程违规，在 reflections 中记录。
+**用户明确指示直推时的知情同意**：用户指示实现类提交直推 master（如"在master
+提交吧"）时，agent 必须先明示该指示与 worktree 规则的冲突并确认用户知情
+（"这违反 worktree 规则，按你的指示在 master 提交并在 reflections 记录，确认？"），
+获得确认后才执行（ref #211 教训：静默照办 = 用户不知情的流程偏离）。
 
 ## Knowledge base
 
