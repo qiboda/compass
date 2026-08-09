@@ -5,8 +5,15 @@
 //! the other way around. It provides the design token system ([`tokens`]),
 //! theme mapping, font registration and the base/composite widget library
 //! (the latter added by later sub-issues of epic #119).
+//!
+//! i18n (issue #222): the crate declares its locale data via the shared
+//! `compass-i18n` crate (the single `locales/` directory). `compass-i18n` is
+//! UI infrastructure (a dictionary + rust-i18n re-exports), not a business
+//! crate, so the zero-business-dependency contract is preserved.
 
 #![warn(missing_docs)]
+
+rust_i18n::i18n!("../compass-i18n/locales", fallback = "zh");
 
 /// Design tokens: colors, spacing, typography, radii, shadows and motion durations.
 ///

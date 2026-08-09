@@ -1,0 +1,194 @@
+# Compass GUI — 中文字典（zh）
+#
+# 键树契约来源：.omo/designs/gui-i18n.md §1 + 门禁测试 KEY_TREE。
+# 键 = 点分小写 snake_case；占位符 %{name}；数据（股票/行业/题材名）不翻译。
+# 本文件与 en.yml 键集必须完全对称（键完整性测试强制）。
+
+app:
+  title: "Compass — Stock Chart"
+
+tab:
+  chart: 图表
+  logger: 日志
+  screener: 选股器
+  sepa: 东方SEPA
+
+toolbar:
+  fetch: 获取数据
+  loading: 加载中…
+  adjust: 前复权
+  toggle_sidebar: 切换侧边栏
+
+sidebar:
+  group_watchlist: 自选
+  search_placeholder: 搜索自选
+  add_tooltip: 添加
+  delete_tooltip: 删除
+  empty_title: 自选股为空
+  empty_desc: 点击 + 添加关注的股票
+
+statusbar:
+  loading: 加载中…
+  source: "本地数据源 · %{count} 只"
+
+common:
+  loading: 加载中…
+  refresh: 刷新
+  confirm: 确认
+  cancel: 取消
+  remove: 移除
+  search: 搜索…
+  no_matches: 无匹配结果
+  all: 全部
+
+chart:
+  empty_title: 暂无图表数据
+  empty_desc: 输入代码并点击 Fetch
+
+logger:
+  title: 日志
+  export_tooltip: 导出日志
+  log_fetch_failed: "fetch 失败: %{e}"
+  log_fetch_completed: "fetch 完成: %{count} 根 K 线"
+  log_screener_failed: "选股失败: %{e}"
+  log_screener_completed: "选股完成: %{count} 条匹配"
+  log_sepa_failed: "SEPA 计算失败: %{e}"
+  log_sepa_completed: "SEPA 计算完成: %{count} 条排名"
+
+modal:
+  startup:
+    title: 数据未就绪
+    body: 未在本地数据目录中找到股票列表（stock_basic.parquet）。\n请先用数据管线导入数据：cargo run --bin compass-data -- import-compass --table stock_basic
+    confirm: 知道了
+  remove:
+    title: 移除自选
+    body: "确定要从自选中移除 %{symbol} 吗？"
+    confirm: 移除
+    cancel: 保留
+
+toast:
+  theme_switched: 主题已切换
+  language_switched: 语言已切换
+  fetch_success: 数据获取成功
+  watchlist_added: "已添加 %{symbol} 到自选"
+  watchlist_removed: "已从自选移除 %{symbol}"
+  log_exported: "日志已导出: %{path}"
+  log_export_failed: "日志导出失败: %{error}"
+  sepa_updated: "SEPA 评分已更新 · %{count} 只"
+
+error:
+  duckdb_open: "打开 DuckDB 失败: %{e}"
+  parquet_open: "打开 Parquet 失败: %{e}"
+  no_data: "没有 %{symbol} 的数据"
+  screener_run: "选股运行失败: %{e}"
+  sepa_run: "SEPA 计算失败: %{e}"
+
+screener:
+  filter: 筛选
+  filtering: 筛选进行中…
+  card_basic: 基础条件
+  card_technical: 技术面条件
+  industry: 行业
+  exchange: 交易所
+  board: 板块
+  list_years: 上市时长
+  any: 不限
+  years_1: ≥1年
+  years_3: ≥3年
+  years_5: ≥5年
+  market_cap: 市值(亿)
+  exclude_delisted: 排除退市
+  ma: 均线
+  ma_above20: 站上 MA20
+  ma_above60: 站上 MA60
+  ma_bullish: 多头排列 MA5>MA20>MA60
+  breakout: 突破新高
+  momentum: 动量
+  volume: 量能
+  n_label: "N:"
+  min_pct: "min%:"
+  max_pct: "max%:"
+  times: "倍数:"
+  table:
+    code: 代码
+    name: 名称
+    latest: 最新价
+    change_20d: 20日涨跌幅
+    market_cap: 市值(亿)
+    industry: 行业
+
+sepa:
+  thermometer: 市场温度
+  count: "共 %{shown} 行 · %{date} 评分"
+  no_data: 暂无评分数据
+  computing: 计算中…
+  computing_full: SEPA 评分计算中…（全市场）
+  refresh: 刷新
+  empty_title: 暂无 SEPA 评分数据
+  empty_desc: 点击刷新计算全市场 TOP50 评分
+  detail_hint: 点击排名行查看评分详情
+  total_score: "总分 %{score}"
+  table:
+    rank: 排名
+    code: 代码
+    name: 名称
+    total: 总分
+    trend: 趋势
+    theme: 题材
+    capital: 资金
+    pattern: 形态
+    risk: 风险
+    industry: 行业
+    latest: 最新价
+    change: 涨跌幅
+  module:
+    trend: 趋势
+    theme: 题材
+    capital: 资金
+    pattern: 形态
+    risk: 风险
+  position:
+    full: "80%-100%"
+    mid: "40%-70%"
+    low: "0%-20%"
+  unit:
+    percent: "%{v}%"
+    count: "%{v} 家"
+    trillion: "%{v}万亿"
+  indicator:
+    hs300_trend: 沪深300趋势
+    zz1000_trend: 中证1000趋势
+    limit_up: 涨停数
+    amount: 成交额
+    breadth: 赚钱效应
+  factor:
+    ma_structure: 均线结构
+    price_position: 价格位置
+    relative_strength: 相对强度
+    sector_gain: 板块涨幅
+    sector_amount: 板块成交额
+    sector_diffusion: 板块扩散
+    news_heat: 新闻热度
+    volume_price: 量价配合
+    chip_concentration: 筹码集中
+    big_capital_inflow: 大资金流入
+    vcp_quality: VCP质量
+    breakout_confirm: 突破确认
+    vol_penalty: 波动惩罚(ATR)
+    deep_drawdown: 深度回撤
+    volume_stagnation: 放量滞涨
+  note:
+    drawdown: "距一年高点回撤 %{pct}%"
+    momentum_percentile: "动量分位 %{pct}%"
+    no_sector_data: 无板块数据
+    news_v1: v1 无新闻数据
+    news_default: v1 默认 10/20
+    big_capital: "主力%{main}+龙虎%{dragon}+调研%{survey}+大宗%{block}"
+    thermometer: "温度计 %{score}"
+
+widgets:
+  searchable_dropdown:
+    no_matches: 无匹配结果
+  data_table:
+    count: "共 %{count} 行"
+    empty: 无符合条件

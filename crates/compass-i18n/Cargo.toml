@@ -1,0 +1,13 @@
+[package]
+name = "compass-i18n"
+version = "0.1.0"
+edition = "2024"
+description = "Centralized zh/en locale dictionaries and rust-i18n re-exports for the compass GUI"
+license = "MIT"
+
+[dependencies]
+rust-i18n = { workspace = true, features = ["load-path"] }
+
+[package.metadata.i18n]
+load-path = "locales"
+default-locale = "zh"

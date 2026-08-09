@@ -1,0 +1,196 @@
+# Compass GUI — English dictionary (en)
+#
+# Key tree contract source: .omo/designs/gui-i18n.md §1 + gate-test KEY_TREE.
+# Keys are dotted lowercase snake_case; placeholders %{name}; data (stock/
+# industry/theme names) is NOT translated.
+# Must be exactly key-symmetric with zh.yml (enforced by key-completeness test).
+# No CJK characters allowed in any value (enforced by the adversarial test).
+
+app:
+  title: "Compass — Stock Chart"
+
+tab:
+  chart: Chart
+  logger: Log
+  screener: Screener
+  sepa: East SEPA
+
+toolbar:
+  fetch: Fetch
+  loading: Loading...
+  adjust: Adj.
+  toggle_sidebar: Toggle sidebar
+
+sidebar:
+  group_watchlist: Watchlist
+  search_placeholder: Search watchlist
+  add_tooltip: Add
+  delete_tooltip: Remove
+  empty_title: Watchlist is empty
+  empty_desc: Click + to add stocks
+
+statusbar:
+  loading: Loading...
+  source: "Local data · %{count} symbols"
+
+common:
+  loading: Loading...
+  refresh: Refresh
+  confirm: Confirm
+  cancel: Cancel
+  remove: Remove
+  search: Search…
+  no_matches: No matches
+  all: All
+
+chart:
+  empty_title: No chart data
+  empty_desc: Enter a code and click Fetch
+
+logger:
+  title: Log
+  export_tooltip: Export log
+  log_fetch_failed: "fetch failed: %{e}"
+  log_fetch_completed: "fetch completed: %{count} bars"
+  log_screener_failed: "screener failed: %{e}"
+  log_screener_completed: "screener completed: %{count} matched"
+  log_sepa_failed: "sepa failed: %{e}"
+  log_sepa_completed: "sepa completed: %{count} ranked"
+
+modal:
+  startup:
+    title: Data not ready
+    body: "No stock list found in the local data directory (stock_basic.parquet).\nImport data first: cargo run --bin compass-data -- import-compass --table stock_basic"
+    confirm: Got it
+  remove:
+    title: Remove from watchlist
+    body: "Remove %{symbol} from watchlist?"
+    confirm: Remove
+    cancel: Keep
+
+toast:
+  theme_switched: Theme switched
+  language_switched: Language switched
+  fetch_success: Data fetched successfully
+  watchlist_added: "Added %{symbol} to watchlist"
+  watchlist_removed: "Removed %{symbol} from watchlist"
+  log_exported: "Logs exported: %{path}"
+  log_export_failed: "Log export failed: %{error}"
+  sepa_updated: "SEPA scores updated · %{count}"
+
+error:
+  duckdb_open: "Failed to open DuckDB: %{e}"
+  parquet_open: "Failed to open Parquet: %{e}"
+  no_data: "No data for %{symbol}"
+  screener_run: "Screener run failed: %{e}"
+  sepa_run: "SEPA run failed: %{e}"
+
+screener:
+  filter: Filter
+  filtering: Filtering…
+  card_basic: Basic
+  card_technical: Technical
+  industry: Industry
+  exchange: Exchange
+  board: Board
+  list_years: Listed ≥
+  any: Any
+  years_1: ≥1y
+  years_3: ≥3y
+  years_5: ≥5y
+  market_cap: Mkt Cap(Bn)
+  exclude_delisted: Excl. delisted
+  ma: MA
+  ma_above20: Above MA20
+  ma_above60: Above MA60
+  ma_bullish: Bullish MA5>20>60
+  breakout: New High
+  momentum: Momentum
+  volume: Volume
+  n_label: "N:"
+  min_pct: "min%:"
+  max_pct: "max%:"
+  times: "×:"
+  table:
+    code: Code
+    name: Name
+    latest: Price
+    change_20d: 20D Chg%
+    market_cap: Mkt Cap(Bn)
+    industry: Industry
+
+sepa:
+  thermometer: Market Temp
+  count: "%{shown} rows · scored %{date}"
+  no_data: No score data yet
+  computing: Computing…
+  computing_full: Computing SEPA scores (full market)…
+  refresh: Refresh
+  empty_title: No SEPA score data
+  empty_desc: Click refresh to score the full-market TOP50
+  detail_hint: Click a row to view score details
+  total_score: "Total %{score}"
+  table:
+    rank: Rank
+    code: Code
+    name: Name
+    total: Score
+    trend: Trend
+    theme: Theme
+    capital: Capital
+    pattern: Pattern
+    risk: Risk
+    industry: Industry
+    latest: Price
+    change: Chg%
+  module:
+    trend: Trend
+    theme: Theme
+    capital: Capital
+    pattern: Pattern
+    risk: Risk
+  position:
+    full: "80%-100%"
+    mid: "40%-70%"
+    low: "0%-20%"
+  unit:
+    percent: "%{v}%"
+    count: "%{v}"
+    trillion: "%{v}T"
+  indicator:
+    hs300_trend: HS300 Trend
+    zz1000_trend: CSI1000 Trend
+    limit_up: Limit-ups
+    amount: Turnover
+    breadth: Breadth
+  factor:
+    ma_structure: MA structure
+    price_position: Price position
+    relative_strength: Rel. strength
+    sector_gain: Sector gain
+    sector_amount: Sector turnover
+    sector_diffusion: Sector breadth
+    news_heat: News heat
+    volume_price: Vol-price fit
+    chip_concentration: Chip concentration
+    big_capital_inflow: Big-cap inflow
+    vcp_quality: VCP quality
+    breakout_confirm: Breakout confirm
+    vol_penalty: Vol penalty (ATR)
+    deep_drawdown: Deep drawdown
+    volume_stagnation: Vol up, price stall
+  note:
+    drawdown: "Drawdown %{pct}% from 1y high"
+    momentum_percentile: "Momentum percentile %{pct}%"
+    no_sector_data: No sector data
+    news_v1: "v1: no news data"
+    news_default: "v1: default 10/20"
+    big_capital: "main %{main} + dragon %{dragon} + survey %{survey} + block %{block}"
+    thermometer: "Thermometer %{score}"
+
+widgets:
+  searchable_dropdown:
+    no_matches: No matches
+  data_table:
+    count: "%{count} rows"
+    empty: No matching rows
