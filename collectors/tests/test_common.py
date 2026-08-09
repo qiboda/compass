@@ -304,11 +304,25 @@ class TestCsvDir:
         assert csv_dir() == tmp_path
 
     def test_env_unset_returns_default(self, monkeypatch) -> None:
-        """When COMPASS_CSV_DIR is absent, the unified default is used."""
+        """When COMPASS_CSV_DIR is absent, the unified default is used.
+
+        mkdir is stubbed: the default path may not be writable in CI
+        (/data/compass-data/csv requires root there) — this test asserts the
+        path resolution, not the mkdir side effect (ref #215).
+        """
         from common import csv_dir  # noqa: E402
 
         monkeypatch.delenv("COMPASS_CSV_DIR", raising=False)
+        import common
+
+        calls: list[Path] = []
+        monkeypatch.setattr(
+            common.Path,
+            "mkdir",
+            lambda self, *a, **kw: calls.append(self),
+        )
         assert csv_dir() == Path("/data/compass-data/csv")
+        assert calls == [Path("/data/compass-data/csv")]
 
     def test_csv_dir_exported_in_all(self) -> None:
         """csv_dir must be part of common.__all__ (ref #208)."""
