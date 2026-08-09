@@ -215,9 +215,41 @@
   时间（`open(now: f64)`/`close(now: f64)` 显式收参），测试 harness 改
   `with_step_dt(0.01)` + `run_steps(11)`（modal.rs）或直接删 workaround
 
-  依赖默认 `step_dt=0.25` 一 step 跨过动画（main.rs）。根治后动画路径已无墙钟
-  残留（compass-data/strategy 的 `Instant` 仅剩性能计时，与动画无关）。教训同
-  toast：#171 验证后"重置时间戳"模式在库内已无实例
+   依赖默认 `step_dt=0.25` 一 step 跨过动画（main.rs）。根治后动画路径已无墙钟
+   残留（compass-data/strategy 的 `Instant` 仅剩性能计时，与动画无关）。教训同
+   toast：#171 验证后"重置时间戳"模式在库内已无实例
+
+### [测试] rust-i18n v4.2.1 `[package.metadata.i18n] default-locale` 是 no-op（#222 i18n epic）
+
+- **症状**: compass-ui / compass 单测里 `t!()` 解析到英文而非设计默认中文——
+  例如 `t!("sepa.table.rank")` 得 `"Rank"` 而非 `"排名"`，zh-literal 断言
+  （`get_by_label("排名")`/`"自选股为空"`/`"共 3 行"`）全部失败
+- **根因**: rust-i18n 的 `CURRENT_LOCALE` 初始硬编码 `"en"`
+  （`rust-i18n-4.2.1/src/lib.rs:15`）。`i18n!` 宏按 `default-locale` 生成的
+  初始化分支是
+  ```rust
+  if "zh" != rust_i18n::locale().deref() {
+      rust_i18n::set_locale(rust_i18n::locale().deref()); // 保持当前
+  } else {
+      rust_i18n::set_locale("zh");
+  }
+  ```
+  当 current="en"、default="zh" 时走 if 分支 `set_locale("en")` → 默认值
+  **永不生效**（两分支都保持现状）。`[package.metadata.i18n]` 官方文档标注
+  仅服务于 `cargo i18n` CLI，宏虽读它生成此分支但行为如上——不是我们配置错
+- **排查路径**: 用最小 /tmp 工程复现（Cargo.toml 含
+  `[package.metadata.i18n] default-locale = "zh"` + zh/en 各一 key）：
+  `cargo run` 打印 `initial locale: en` / `resolved: Chart`；`RUST_I18N_DEBUG=1
+  cargo check` 确认宏生成的 `set_locale` 分支文本
+- **修复（当前）**: 各 crate 仍加 `[package.metadata.i18n] default-locale = "zh"`
+  （compass-i18n 已有；T6 补 compass-ui + compass）——无运行时副作用、表达
+  契约意图、上游修复后即刻生效。**单测要 zh 默认必须显式 `set_locale("zh")`**
+  （产品路径 `main()` 已显式调用，无碍；测试需 LANG_LOCK 串行保护，见 #222
+  plan T14/T15）。勿依赖 metadata 让测试静默变 zh
+- **验证**: /tmp 复现工程输出 locale=en 即证；workspace 内 `cargo check` 通过
+  不证明运行期 locale（宏展开产物在 RUST_I18N_DEBUG=1 下可查）
+- **教训**: 第三方 i18n 库的 "default-locale" 配置不一定改运行期初始 locale——
+  任何"默认 zh"的测试契约都要在测试侧显式 set_locale，不能赌配置生效
 
 ---
 
