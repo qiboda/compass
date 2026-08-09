@@ -622,3 +622,25 @@
 - **"文档已固化但未遵守"模式第三次出现**（ref #96/#104 → ref #154 已记录 → 本次子代理超时+commit-msg 引用）：纪律写进文档 ≠ 行为固化——子任务超时判定与已关闭 issue 引用规则都已写入，但执行时未查阅。上次（ref #154）已提出"~30min 判定失活"，本次仍未主动执行。
 - **review/lane 超时模式**（ref #154 goal lane 1h10m → 本次 explore/context 各 30min）：后台子任务失活判定阈值应固化为 skill 步骤——建议 skwy-workflow「委派纪律」增加"后台任务 30 分钟无 WORKING 更新即判定失活并替换"，将 ref #154 教训从条目级提升为流程级（proposed）。
 - **commit-msg 已关闭 issue 引用复发**（ref #119 → #172 → 本次 #205）：三次摩擦同一规则（叙述性引用用 #N 不带 ref）——规则已在 AGENTS.md，但 commit message 起草无检查步骤；可考虑在 skwy-git-workflow skill 的提交纪律中加"引用 issue 前查状态"步骤。
+
+## 2026-08-09 — ref #216 项目侧 trash-rm 插件移除（已全局化）
+
+**What was done**: 将 trash-rm 插件（bash 工具调用中 `rm` → `trash-put` 改写）复制到全局 `~/.config/opencode/plugins/` 并注册到全局 `opencode.json`（grill 选项 A），随后按用户确认完整删除项目侧副本（`.opencode/plugins/trash-rm.ts` + `opencode.json` 注册 + 本地 package.json/lock/node_modules 物理清理），保留全局侧。1 commit（93c3d74，push 前 rebase 到 origin/master 之上）。
+
+**User corrections**（逐字引用对话记录）:
+1. 无——5 条用户消息均为请求/确认（"rm也作为插件放入全局"、"A"、"这个项目的是不是可以删除了"、"当前项目的完整删除，并使用全局的rm plugin。"、"push"），无纠正。
+
+**What went wrong**: No issues.（流程合规：gate 逐项判定表（Design 跳过/Issue #216/Plan 跳过——单模块/4-Tests 无逻辑变更/5a-5c 不涉及）→ 删除 → commit ref #216 → rebase → 反思 → push。master 直提判定已在 gate 侦察阶段声明：无活跃 worktree + 单模块 `.opencode/` 配置 chore，符合 #203"工具链配置变更直推 master 需显式声明"先例。）
+
+**Lessons learned**:
+1. opencode 插件全局化标准动作：复制到 `~/.config/opencode/plugins/` + 全局 opencode.json 注册 `./plugins/<name>.ts`（相对全局配置解析）；删除项目侧副本必须**删文件**而非仅删注册——`.opencode/plugins/` 是 auto-discovery 目录（任何 `*.ts` 自动加载），只删注册等于没删（本次 Q1 已向用户明示此坑）。
+2. 全局配置（`~/.config/opencode/`）变更不属于仓库 git 变更，无需走 gate；但涉及仓库文件的移除（哪怕只是 `.opencode/` 下的工具链文件）必须走完整 gate（issue + `ref #N`）——"配置 vs 仓库变更"边界在实施前就应判明。
+3. 项目内插件与全局插件并存 = 冗余双加载（hook 幂等无害但没必要），全局化后应主动向用户提出清理项目侧副本——"删干净"比"留着冗余"更符合单一事实源原则。
+
+**Process improvements**: 
+- None（一次性教训：customize-opencode skill 已文档化 auto-discovery 与 `./plugins/` 相对路径规则；AGENTS.md gate 已覆盖"任何代码变更"含 chores——无需新机制）
+
+### Trends (last 10)
+- **"文档已固化但未遵守"模式多条目出现**（#208 测试隔离、#211 hook 独立行、#210 子任务超时）：本次为无违规样本，gate 逐项判定表（显式列出每步跳过理由）有效防止跳步——建议延续"gate 判定表"输出习惯
+- **工具链配置变更的 master 直提判定需显式声明**（#203 先例 → 本次无活跃 worktree + 单模块 chore）：判定依据应在 gate 侦察阶段就向用户展示，本次已照做
+- **无用户纠正的干净执行在近 10 条中少见**（多数条目 1-4 条纠正）：本次 grill 两轮（机制选择 + 删除范围）均获一次性确认，"探索先行 → 单一决策问题 → 推荐方案"节奏有效
