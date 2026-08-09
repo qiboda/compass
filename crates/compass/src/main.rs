@@ -1449,6 +1449,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_renders_segmented_and_theme_dropdown() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         let harness = egui_kittest::Harness::new_ui(|ui| {
             app.render_toolbar(ui);
@@ -1460,6 +1463,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_renders_adjusted_price_tag() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         let harness = egui_kittest::Harness::new_ui(|ui| {
             app.render_toolbar(ui);
@@ -1470,6 +1476,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_timeframe_switch_changes_index() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
@@ -1486,6 +1495,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_theme_switch_changes_theme_and_rebuilds_dock_style() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
@@ -1509,6 +1521,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_fetch_sets_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
@@ -1533,6 +1548,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_sidebar_toggle_flips_visibility() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
@@ -1551,6 +1569,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_error_transition_pushes_toast() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         app.shared_state.error.set(Some("test error".to_string()));
 
@@ -1583,6 +1604,9 @@ default_timeframe = "1w"
 
     #[test]
     fn render_toolbar_success_transition_pushes_toast() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         app.last_loading = true;
         app.shared_state.loading.set(false);
@@ -1603,6 +1627,9 @@ default_timeframe = "1w"
 
     #[test]
     fn compass_app_ui_renders_no_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut harness =
             egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
         harness.step();
@@ -1610,6 +1637,9 @@ default_timeframe = "1w"
 
     #[test]
     fn compass_app_ui_multiple_frames_no_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut harness =
             egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
 
@@ -1820,6 +1850,9 @@ default_timeframe = "1w"
 
     #[test]
     fn layout_renders_three_columns() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -1865,6 +1898,9 @@ default_timeframe = "1w"
 
     #[test]
     fn status_bar_is_bottom_anchored_with_source_and_clock() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -1922,6 +1958,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_empty_state_shows_when_no_stock_list() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -1930,6 +1969,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_row_click_fetches_selected_symbol() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let stocks = vec![StockBasic {
             symbol: "SH600519".to_string(),
             name: "贵州茅台".to_string(),
@@ -1984,6 +2026,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_add_button_adds_current_symbol_to_watchlist_and_persists() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
@@ -2030,6 +2075,9 @@ default_timeframe = "1w"
 
     #[test]
     fn add_to_watchlist_deduplicates_and_sorts() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
@@ -2076,6 +2124,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_delete_opens_danger_modal_and_removes_on_confirm() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
@@ -2143,6 +2194,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_delete_modal_cancel_keeps_watchlist() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![stock_basic("SH600519", "贵州茅台")],
@@ -2203,6 +2257,9 @@ default_timeframe = "1w"
 
     #[test]
     fn startup_modal_skipped_when_stock_list_present() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![stock_basic("SH600519", "贵州茅台")],
@@ -2273,6 +2330,9 @@ default_timeframe = "1w"
 
     #[test]
     fn handle_log_export_pick_pushes_success_toast_and_writes_file() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         {
             let logger = egui_lens::ReactiveEventLogger::new(&app.shared_state.log);
@@ -2298,6 +2358,9 @@ default_timeframe = "1w"
 
     #[test]
     fn handle_log_export_pick_pushes_error_toast_on_failure() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         // Writing into a path whose parent is a file must fail.
         let tmp = tempfile::tempdir().unwrap();
@@ -2320,6 +2383,9 @@ default_timeframe = "1w"
 
     #[test]
     fn logger_export_button_triggers_save_dialog() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![stock_basic("SH600519", "贵州茅台")],
@@ -2337,6 +2403,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_watchlist_restores_from_config() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![
@@ -2394,6 +2463,9 @@ default_timeframe = "1w"
 
     #[test]
     fn status_bar_renders_price_and_change_from_bars() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         app.shared_state
             .bars
@@ -2406,6 +2478,9 @@ default_timeframe = "1w"
 
     #[test]
     fn status_bar_omits_price_when_no_bars() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2421,6 +2496,9 @@ default_timeframe = "1w"
 
     #[test]
     fn slash_focuses_symbol_input() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2440,6 +2518,9 @@ default_timeframe = "1w"
 
     #[test]
     fn ctrl_k_focuses_sidebar_search_input() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2457,6 +2538,9 @@ default_timeframe = "1w"
 
     #[test]
     fn ctrl_enter_triggers_fetch() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2472,6 +2556,9 @@ default_timeframe = "1w"
 
     #[test]
     fn digit_keys_switch_timeframe() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2491,6 +2578,9 @@ default_timeframe = "1w"
 
     #[test]
     fn digit_keys_do_not_switch_timeframe_while_typing_in_input() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -2515,6 +2605,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sync_picker_from_symbol_syncs_prefixed_symbol_and_exchange() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         app.shared_state.symbol.set("SH600519".to_string());
         app.last_screener_synced_symbol = "SZ000001".to_string();
@@ -2531,6 +2624,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sync_picker_from_symbol_ignores_non_symbol_values() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         app.shared_state.symbol.set("not-a-symbol".to_string());
         app.last_screener_synced_symbol = "SZ000001".to_string();
@@ -2549,6 +2645,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sync_picker_from_symbol_noop_when_symbol_unchanged() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         // marker == symbol at startup → no-op, picker untouched.
         app.sync_picker_from_symbol();
@@ -2562,6 +2661,9 @@ default_timeframe = "1w"
 
     #[test]
     fn fetch_bars_sends_prefixed_symbol_when_exchange_selected() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         app.stock_picker.selected_symbol = "SZ000001".to_string();
         app.stock_picker.selected_exchange = "SZ".to_string();
@@ -2577,6 +2679,9 @@ default_timeframe = "1w"
 
     #[test]
     fn fetch_bars_sends_prefixed_symbol_when_no_exchange_selected() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         app.stock_picker.selected_symbol = "SH600519".to_string();
         app.stock_picker.selected_exchange.clear();
