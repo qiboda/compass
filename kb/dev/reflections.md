@@ -663,3 +663,30 @@
 ### Trends (last 10)
 - **worktree 规则违反在近 10 条中属罕见但高危**（#210 子任务超时、#208 测试隔离均无此问题）：本次因"临时诊断文件"心理豁免触发，教训已固化——AGENTS.md gate 补 0.5 步 + 反思明确"临时 ≠ 豁免"，后续执行中写文件前先自检分支归属
 - **诊断路径效率模式**：多次排查（#139、#160、本次 SEPA）都出现"先验证引擎再找环境差异"的路径，本次教训建议改为"先复现现场"——若后续再次出现同类模式，考虑在 kb/dev/process.md 调试章节补充排查框架
+
+## 2026-08-09 — ref #224 补齐 AGENTS.md 全局 skills 引用并标注强制加载
+
+**What was done**: 崩溃恢复后继续 epic #217 worktree 工作；用户指出全局 skills 在 AGENTS.md 中引用且须强制加载。在 compass 项目 AGENTS.md 的 Available Skills 表补充 `subagent-compile` 引用（此前全局技能组已有但未列出），并新增「强制加载（MANDATORY）」段落明确所有全局 skills 在其对应场景触发时必须加载（此前仅 grill-me ALWAYS 与 skwy-workflow MUST 有成文标注）。commit `fd87c03`（docs 直推 master，ref #224），Issue: https://github.com/qiboda/compass/issues/224。
+
+**User corrections**（逐字引用对话记录）:
+1. "你不打开worktree？"——崩溃恢复时我用 `workdir` 参数在 master session 里直接跑 worktree 目录的 cargo test，而非先启动 worktree 区域（open-worktrees.sh）。worktree 工作流：主 session 不 `cd` 进 worktree，剩余工作移交 worktree agent。
+2. "那些全局的skills 在agents.md 中引用，要求强制加载。"——AGENTS.md 引用的全局 skills 须强制加载；我当时只加载了 grill-me，未按 AGENTS.md 要求加载其余全局 skills（skwy-workflow 等）。
+3. "agents.md 的改变提交。"——我检查 compass 仓库无未提交 AGENTS.md 变更后，误判为 home dotfiles 仓库的 AGENTS.md（GBrain 章节），提交了 `985ae1c` 到 /home/skwy 仓库。
+4. "不是在当前项目的agents.md 中引用skill吗？"——纠正提交错仓库：应修改当前项目（compass）的 AGENTS.md 引用全局 skills，而非 home dotfiles 仓库。
+5. "也标注为强制加载"——补齐 subagent-compile 引用后，还须把所有全局 skills 标注为强制加载（不能只列出来）。
+
+**What went wrong**: ①**worktree 区域未启动即操作**——崩溃恢复后直接 `workdir` 跑 worktree 内测试，违反「主 session 不 cd 进 worktree」规则；应先运行 open-worktrees.sh 启动 worktree 区域（用户纠正 #1）。②**全局 skills 未按 AGENTS.md 强制加载**——只加载 grill-me 就继续，AGENTS.md 明确要求所有全局 skills 按场景强制加载（用户纠正 #2）。③**提交错仓库**——用户说"agents.md 的改变提交"时，我检查 compass 工作树干净后误转向 home dotfiles 仓库的 AGENTS.md（GBrain 内容），实际用户指当前项目 AGENTS.md 的全局 skills 引用（用户纠正 #3/#4）；该误判还浪费一轮 commit（`985ae1c`，虽为真实存在的修改但非用户所指）。
+
+**Lessons learned**:
+1. 崩溃恢复/继续 worktree 工作时：第一步检查 `git worktree list` + handoff，有活跃 worktree 必须用 open-worktrees.sh 启动区域，剩余工作移交 worktree agent——绝不在主 session 用 workdir 直接操作 worktree 目录。
+2. AGENTS.md 是项目书权威：其引用的全局 skills 必须按其标注强制加载（grill-me ALWAYS、skwy-workflow MUST、其余按场景），先加载 skill 再继续工作，不跳步。
+3. 用户提到"AGENTS.md/项目书"相关变更时，默认指**当前项目仓库**的 AGENTS.md，而非 home dotfiles 仓库；home 仓库的 AGENTS.md（GBrain 等）只在用户明确指向时处理——先用问题确认变更对象再动手，避免提交错仓库。
+
+**Process improvements**: 
+- AGENTS.md 本次已补：Available Skills 表 `subagent-compile` 行 + 「强制加载（MANDATORY）」段落（所有全局 skills 场景触发必须加载）——直接落实用户纠正 #2/#5。
+- worktree 启动规范已在 AGENTS.md Worktrees 章节（open-worktrees.sh 启动 + 主 session 不参与实现），本次违规为执行层面未遵守，无新机制缺口。
+
+### Trends (last 10)
+- **worktree 规则违反连续两条反思出现**（#223「SEPA 诊断未切 worktree 直接改 master」→ 本次「恢复后未启动 worktree 区域即操作」）：同一模式第二次出现 = 上次教训未固化。已在本条 Lessons learned #1 明确恢复流程第一步动作，若第三次出现需在 kb/dev/process.md 固化「崩溃恢复 checklist」。
+- **「未加载 skill 就执行」模式**（#210 迁移时技能加载不全、本次全局 skills 未按 AGENTS.md 强制加载）：AGENTS.md 已补「强制加载（MANDATORY）」段落成文约束，待验证后续执行是否遵守。
+- **提交对象误判**（本次把 home dotfiles 仓库 AGENTS.md 误当变更对象）：教训 #3 固化「AGENTS.md 相关变更默认指当前项目仓库，先用问题确认」，避免同类误判。
