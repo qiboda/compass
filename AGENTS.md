@@ -131,9 +131,15 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 | `skwy-reflect` | `/skwy-reflect` | 写事后反思（含 User corrections + 趋势分析） |
 | `skwy-worktree` | `/skwy-worktree` | 管理 PR 开发的 git worktrees（创建/删除/启动区域） |
 | `product` | `/product` | Sprint 候选分析（只读，milestone 提议） |
+| `subagent-compile` | `/subagent-compile` | 委派 subagent 时的编译权限分级——subagent 允许 `cargo check`，禁止重型编译（test/clippy/build） |
 
 所有 skill 位于 `~/.config/opencode/skills/<name>/SKILL.md`（全局技能组，可被
 OpenCode 自动发现）；项目本地技能位于 `.opencode/skills/`。无需注册。
+
+**强制加载（MANDATORY）**：上表所有全局 skills 在其对应场景触发时**必须加载**
+（`/skwy-workflow` 等斜杠命令或 `skill` 工具），无例外——grill-me 每次用户
+消息强制加载（见上），skwy-workflow 对 feature/bugfix 强制加载，其余 skills
+按其描述的使用场景强制加载。加载后立即按其指引执行，一步不跳。
 
 ### ui-designer Agent（界面设计）
 
