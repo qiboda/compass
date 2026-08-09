@@ -277,6 +277,7 @@ impl SepaPanel {
                     .variant(ButtonVariant::Primary)
                     .size(ButtonSize::Md)
                     .icon(egui_phosphor::regular::ARROW_CLOCKWISE)
+                    .min_width(96.0)
                     .loading(loading)
                     .show(ui)
                     .clicked()

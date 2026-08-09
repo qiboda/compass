@@ -116,9 +116,9 @@ Badge::new(&tokens, 3).tone(BadgeTone::Accent).show(ui);
 
 **适用场景**：一切可点击的操作入口。选型：带文字的操作 → Button；纯图标操作 → IconButton；分段互斥选择 → Segmented；弹层内确认 → Modal 内嵌 Button。
 
-**变体**：`ButtonVariant` — `Default`（bg_panel_alt 底 + border）/ `Primary`（accent 底 + **`text_primary` 字**，页面主操作）/ `Danger`（error 底 + **`text_primary` 字**，破坏性操作）/ `Ghost`（透明底 + border，次级/弹层内操作）。**全部变体文字色统一 `text_primary`**（主题感知：dark 浅灰 / light 深色，不硬编码白字——ref #217 验收「fetch 按钮文字颜色跟随主题」）。`ButtonSize` — `Sm`（24px）/ `Md`（32px，默认）/ `Lg`（40px）。选择规则：每屏**一个 Primary**（工具栏 Fetch、SEPA 刷新、筛选）；删除/移除类一律 Danger；Modal 内 Cancel 用 Ghost、Confirm 用 Primary/Danger；常规次要操作 Default。
+**变体**：`ButtonVariant` — `Default`（bg_panel_alt 底 + border）/ `Primary`（accent 底 + **`on_accent` 字**，页面主操作）/ `Danger`（error 底 + **`on_error` 字**，破坏性操作）/ `Ghost`（透明底 + border，次级/弹层内操作）。文字色分工：**Default/Ghost 用 `text_primary`**（浅底/透明底深字，主题感知）；**Primary/Danger 用 `on_accent`/`on_error`**（彩色实底上的对比前景，两主题均纯白 #FFFFFF）——ref #217 验收「fetch 按钮文字颜色跟随主题」由 token 体系保证（两主题各定义独立值），而 light 下 `text_primary` 深字落在 accent/error 底上对比不足（3.19/3.28:1 < WCAG AA 4.5），白字 4.90/4.77:1 达标（issue #230）。`ButtonSize` — `Sm`（24px）/ `Md`（32px，默认）/ `Lg`（40px）。选择规则：每屏**一个 Primary**（工具栏 Fetch、SEPA 刷新、筛选）；删除/移除类一律 Danger；Modal 内 Cancel 用 Ghost、Confirm 用 Primary/Danger；常规次要操作 Default。
 
-**API 要点**：`new(tokens, text)`；`.variant(ButtonVariant)`；`.size(ButtonSize)`；`.icon(&str)`（phosphor 字形，渲染为 label 前缀）；`.loading(bool)`（内嵌右缘 spinner + 变暗 + `Sense::hover()` 忽略点击；**loading 保留变体文字色，由 spinner + 遮罩表达状态，不转灰**——ref #217 验收）；`.disabled(bool)`（禁用色 + 忽略点击；`disabled || loading` 合并判断；**仅真 disabled 将文字降为 `text_disabled`**）；`height() -> f32`；`show(ui) -> Response`（用 `.clicked()` 取点击）。
+**API 要点**：`new(tokens, text)`；`.variant(ButtonVariant)`；`.size(ButtonSize)`；`.icon(&str)`（phosphor 字形，渲染为 label 前缀）；`.min_width(f32)`（最小宽度下限，**文本在两态间切换（如「刷新」→「计算中…」）时保持宽度稳定**——SEPA 刷新 96 / Fetch 104，宽度 = max(文本自然宽, min_width)，min 是下限非钳制，issue #230）；`.loading(bool)`（内嵌右缘 spinner + 变暗 + `Sense::hover()` 忽略点击；**loading 保留变体文字色，由 spinner + 遮罩表达状态，不转灰**——ref #217 验收）；`.disabled(bool)`（禁用色 + 忽略点击；`disabled || loading` 合并判断；**仅真 disabled 将文字降为 `text_disabled`**）；`height() -> f32`；`show(ui) -> Response`（用 `.clicked()` 取点击）。
 
 **示例**（源自 main.rs 工具栏 Fetch）：
 ```rust
@@ -137,14 +137,14 @@ if Button::new(&tokens, if loading { "加载中…" } else { "Fetch" })
 **反模式**：
 - **loading 与 disabled 同时手动设**——loading 已内含禁用语义（测试 `loading_button_ignores_clicks`）；
 - **loading 时仍响应点击**——`loading_button_ignores_clicks` 断言禁止；
-- **loading 时期望文字变灰（`text_disabled`）**——loading 语义由 spinner + 遮罩表达，文字保留变体色（测试 `loading_button_keeps_variant_text_color` 断言 loading 渲染 `text_primary` 而非 `text_disabled`）；只有真 `disabled` 才降级文字色；
+- **loading 时期望文字变灰（`text_disabled`）**——loading 语义由 spinner + 遮罩表达，文字保留变体色（测试 `loading_button_keeps_variant_text_color` 断言 loading 渲染 `on_accent` 而非 `text_disabled`）；只有真 `disabled` 才降级文字色；
 - 一屏多个 Primary 并列（稀释主操作层级）；
 - 用 Button 替代 IconButton（图标+文字是 Button 的形态，纯图标请用 IconButton + tooltip）；
 - 硬编码颜色——variant 色全部来自 token（`variant_colors()`），禁止自行传 `Color32`。
 
 **相关组件**：IconButton（纯图标）、Modal（Confirm/Cancel 内嵌）、EmptyState（action 参数接收 Button）、MultiSelect（「完成」用 Primary+Sm）、Segmented（互斥选择替代）。
 
-**测试锚点**：`widgets/button.rs` `mod tests`（L197）——`variant_colors_follow_design`（含各变体文字色 = `text_primary`）/ `sizes_map_to_control_tokens` / `primary_button_click_fires` / `loading_button_ignores_clicks` / `disabled_button_ignores_clicks` / `loading_button_keeps_variant_text_color` / `disabled_button_dims_label` / `icon_is_rendered_in_label`。
+**测试锚点**：`widgets/button.rs` `mod tests`（L197）——`variant_colors_follow_design`（含 Primary/Danger 文字色 = `on_accent`/`on_error`）/ `sizes_map_to_control_tokens` / `primary_button_click_fires` / `loading_button_ignores_clicks` / `disabled_button_ignores_clicks` / `loading_button_keeps_variant_text_color`（loading 渲染 `on_accent`）/ `disabled_button_dims_label` / `icon_is_rendered_in_label` / `primary_variant_text_follows_on_accent_token` / `danger_variant_text_follows_on_error_token` / `default_ghost_variants_keep_text_primary` / `loading_button_keeps_on_accent_variant_text` / `min_width_sets_floor_on_rendered_width` / `sepa_refresh_idle_loading_width_stable_with_min_width` / `default_min_width_zero_keeps_text_driven_width` / `text_wider_than_min_width_grows_naturally`；集成测试 `tests/button_230_theme_width.rs`（on_* token 对比度契约 + min_width 几何）。
 
 #### 3. Card（`widgets/card.rs`）
 

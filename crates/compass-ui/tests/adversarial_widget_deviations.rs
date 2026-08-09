@@ -1,11 +1,13 @@
-//! Adversarial tests for widget deviation fixes #226 / #227 / #228.
+//! Adversarial tests for widget deviation fixes #226 / #227 / #228 / #230.
 //!
 //! These target the *contract gaps* the requirement tests do not cover:
 //! rendered geometry (not just private fields), non-default token values
 //! (the "coincidence trap": a hardcoded literal that happens to equal the
 //! default token, so plain `==` assertions cannot distinguish a token read
-//! from a lucky hardcode), and component identity (the dropdown popup search
-//! box must be rendered by the `Input` component, not a native `TextEdit`).
+//! from a lucky hardcode), component identity (the dropdown popup search
+//! box must be rendered by the `Input` component, not a native `TextEdit`),
+//! and — for #230 — the *rendered* WCAG contrast of button labels on their
+//! fill (a contract the token-level tests cannot prove until the fix lands).
 //!
 //! Values like 43.0 / 27.0 for `control_md` / `control_sm` are deliberately
 //! non-round: they cannot be produced by a coincidental hardcode of the
@@ -13,6 +15,7 @@
 
 use compass_ui::tokens::ThemeTokens;
 use compass_ui::widgets::badge::Badge;
+use compass_ui::widgets::button::{Button, ButtonVariant};
 use compass_ui::widgets::dropdown::Dropdown;
 use compass_ui::widgets::icon_button::IconButton;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -226,4 +229,91 @@ fn non_searchable_popup_has_no_search_input() {
             .is_none(),
         "non-searchable popup must not render a search input"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #230 — Button theme-aware text color: rendered WCAG contrast floor.
+// ---------------------------------------------------------------------------
+
+/// Render one button and return the color of its rendered text label.
+fn button_text_color(tokens: &ThemeTokens, variant: ButtonVariant) -> egui::Color32 {
+    let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+        Button::new(tokens, "Fetch").variant(variant).show(ui);
+    });
+    harness.run();
+    harness
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| text_shape_color(&clipped.shape))
+        .next()
+        .expect("button must render a text label")
+}
+
+fn text_shape_color(shape: &egui::Shape) -> Option<egui::Color32> {
+    match shape {
+        egui::Shape::Vec(inner) => inner.iter().find_map(text_shape_color),
+        egui::Shape::Text(text) => text.galley.job.sections.first().map(|s| s.format.color),
+        _ => None,
+    }
+}
+
+fn linearize_channel(c: u8) -> f32 {
+    let v = f32::from(c) / 255.0;
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn relative_luminance(c: egui::Color32) -> f32 {
+    0.2126 * linearize_channel(c.r())
+        + 0.7152 * linearize_channel(c.g())
+        + 0.0722 * linearize_channel(c.b())
+}
+
+fn contrast_ratio(fg: egui::Color32, bg: egui::Color32) -> f32 {
+    let (l_fg, l_bg) = (relative_luminance(fg), relative_luminance(bg));
+    let (hi, lo) = if l_fg >= l_bg {
+        (l_fg, l_bg)
+    } else {
+        (l_bg, l_fg)
+    };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// The rendered Primary label must clear WCAG AA on the accent fill in BOTH
+/// themes. Today the label is text_primary — #1B2430 on light accent (3.19:1)
+/// and #D1D4DC on dark accent (3.30:1) — both below AA. This test uses only
+/// the pre-fix public API, so it compiles and fails by assertion TODAY; the
+/// fix (white on_accent = 4.90:1) turns it green.
+#[test]
+fn rendered_primary_text_meets_wcag_contrast_on_accent_both_themes() {
+    for tokens in [ThemeTokens::dark(), ThemeTokens::light()] {
+        let text_color = button_text_color(&tokens, ButtonVariant::Primary);
+        let ratio = contrast_ratio(text_color, tokens.color.accent);
+        assert!(
+            ratio >= 4.5,
+            "rendered Primary label {text_color:?} on accent {:?} must be >= 4.5:1 (AA), \
+             got {ratio:.2}:1",
+            tokens.color.accent
+        );
+    }
+}
+
+/// The #230 fix must only touch Primary/Danger — Default and Ghost keep
+/// rendering text_primary (浅底/透明底深字). A match refactor that
+/// accidentally rewires them is caught here.
+#[test]
+fn default_and_ghost_keep_rendering_text_primary_both_themes() {
+    for tokens in [ThemeTokens::dark(), ThemeTokens::light()] {
+        for variant in [ButtonVariant::Default, ButtonVariant::Ghost] {
+            let color = button_text_color(&tokens, variant);
+            assert_eq!(
+                color, tokens.color.text_primary,
+                "{variant:?} label must keep text_primary in both themes, got {color:?}"
+            );
+        }
+    }
 }
