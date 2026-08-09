@@ -328,14 +328,14 @@ impl ScreenerPanel {
 
         ui.vertical(|ui| {
             Card::new(&tokens)
-                .title("基础条件")
+                .title(&t!("screener.card_basic"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
                     self.basic_conditions(ui);
                 });
             ui.add_space(tokens.spacing.sm);
             Card::new(&tokens)
-                .title("技术面条件")
+                .title(&t!("screener.card_technical"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
                     self.technical_conditions(ui);
@@ -358,23 +358,28 @@ impl ScreenerPanel {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
 
-            basic_group(ui, &tokens, "行业", |ui| {
+            basic_group(ui, &tokens, &t!("screener.industry"), |ui| {
                 self.ms_industry.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "交易所", |ui| {
+            basic_group(ui, &tokens, &t!("screener.exchange"), |ui| {
                 self.ms_exchange.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "板块", |ui| {
+            basic_group(ui, &tokens, &t!("screener.board"), |ui| {
                 self.ms_board.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "上市时长", |ui| {
-                let options = ["不限", "≥1年", "≥3年", "≥5年"];
+            basic_group(ui, &tokens, &t!("screener.list_years"), |ui| {
+                let options = [
+                    t!("screener.any"),
+                    t!("screener.years_1"),
+                    t!("screener.years_3"),
+                    t!("screener.years_5"),
+                ];
                 let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
                 let current = options
                     .iter()
@@ -391,17 +396,25 @@ impl ScreenerPanel {
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "市值(亿)", |ui| {
+            basic_group(ui, &tokens, &t!("screener.market_cap"), |ui| {
                 let mut min = self.form.market_cap_min.unwrap_or(0.0);
                 if ui
-                    .add(egui::DragValue::new(&mut min).speed(1.0).prefix("min "))
+                    .add(
+                        egui::DragValue::new(&mut min)
+                            .speed(1.0)
+                            .prefix(t!("screener.min_pct")),
+                    )
                     .changed()
                 {
                     self.form.market_cap_min = (min > 0.0).then_some(min);
                 }
                 let mut max = self.form.market_cap_max.unwrap_or(0.0);
                 if ui
-                    .add(egui::DragValue::new(&mut max).speed(1.0).prefix("max "))
+                    .add(
+                        egui::DragValue::new(&mut max)
+                            .speed(1.0)
+                            .prefix(t!("screener.max_pct")),
+                    )
                     .changed()
                 {
                     self.form.market_cap_max = (max > 0.0).then_some(max);
@@ -409,7 +422,12 @@ impl ScreenerPanel {
             });
             ui.add_space(tokens.spacing.md);
 
-            Checkbox::new(&tokens, &mut self.form.exclude_delisted, "排除退市").show(ui);
+            Checkbox::new(
+                &tokens,
+                &mut self.form.exclude_delisted,
+                t!("screener.exclude_delisted"),
+            )
+            .show(ui);
         });
     }
 
@@ -427,7 +445,7 @@ impl ScreenerPanel {
             ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
 
             technical_group(ui, &tokens, 286.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.ma_enabled, "均线").show(ui);
+                Checkbox::new(&tokens, &mut self.form.ma_enabled, t!("screener.ma")).show(ui);
                 if self.form.ma_enabled {
                     let current = match self.form.ma_kind {
                         MaKind::AboveMa20 => 0,
@@ -457,33 +475,48 @@ impl ScreenerPanel {
             ui.add_space(tokens.spacing.md);
 
             technical_group(ui, &tokens, 158.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.breakout_enabled, "突破新高").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.breakout_enabled,
+                    t!("screener.breakout"),
+                )
+                .show(ui);
                 if self.form.breakout_enabled {
-                    ui.label("N:");
+                    ui.label(t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
                 }
             });
             ui.add_space(tokens.spacing.md);
 
             technical_group(ui, &tokens, 390.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.momentum_enabled, "动量").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.momentum_enabled,
+                    t!("screener.momentum"),
+                )
+                .show(ui);
                 if self.form.momentum_enabled {
-                    ui.label("N:");
+                    ui.label(t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
-                    ui.label("min%:");
+                    ui.label(t!("screener.min_pct"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
-                    ui.label("max%:");
+                    ui.label(t!("screener.max_pct"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
                 }
             });
             ui.add_space(tokens.spacing.md);
 
             technical_group(ui, &tokens, 274.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.volume_enabled, "量能").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.volume_enabled,
+                    t!("screener.volume"),
+                )
+                .show(ui);
                 if self.form.volume_enabled {
-                    ui.label("N:");
+                    ui.label(t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
-                    ui.label("倍数:");
+                    ui.label(t!("screener.times"));
                     ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
                 }
             });
@@ -585,6 +618,7 @@ fn dispatch_row_fetch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
     use compass_ui::tokens::ThemeTokens;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
@@ -867,6 +901,9 @@ mod tests {
 
     #[test]
     fn basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
             let mut harness = egui_kittest::Harness::builder()
@@ -895,6 +932,9 @@ mod tests {
 
     #[test]
     fn technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
             panel.form.ma_enabled = true;
@@ -927,6 +967,9 @@ mod tests {
 
     #[test]
     fn condition_groups_still_wrap_between_on_narrow_width() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _shared) = panel_with_form();
         let mut harness = egui_kittest::Harness::builder()
             .with_size([500.0, 600.0])
@@ -945,5 +988,82 @@ mod tests {
             dy_between > 1.0,
             "industry and 上市时长 groups must wrap to different rows at 500px (groups, not labels, wrap), dy={dy_between}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // #222 i18n (T15): the same alignment sweeps must hold in English —
+    // wider en labels (Industry/Exchange/…) must not push the control off
+    // the row. Each test holds LANG_LOCK so it is serialized against the
+    // zh sweeps and the en-locale tests in other modules.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn en_basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for width in GROUP_ALIGNMENT_WIDTHS {
+            let (mut panel, _shared) = panel_with_form();
+            compass_i18n::set_locale("en");
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([width, 600.0])
+                .build_ui(|ui| panel.basic_conditions(ui));
+            harness.run();
+
+            let selects = harness
+                .query_all_by_label_contains("All")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selects.len(),
+                3,
+                "three multi-select triggers rendered at width {width}px"
+            );
+            assert_same_row(&harness, "Industry", &selects[0], width);
+            assert_same_row(&harness, "Exchange", &selects[1], width);
+            assert_same_row(&harness, "Board", &selects[2], width);
+
+            let years = harness
+                .query_by_label_contains("Any")
+                .expect("上市时长 dropdown rendered in en");
+            assert_same_row(&harness, "Listed ≥", &years, width);
+        }
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn en_technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for width in GROUP_ALIGNMENT_WIDTHS {
+            let (mut panel, _shared) = panel_with_form();
+            compass_i18n::set_locale("en");
+            panel.form.ma_enabled = true;
+            panel.form.breakout_enabled = true;
+            panel.form.momentum_enabled = true;
+            panel.form.volume_enabled = true;
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([width, 600.0])
+                .build_ui(|ui| panel.technical_conditions(ui));
+            harness.run();
+
+            let ma_dropdown = harness
+                .query_by_label_contains("Above MA20")
+                .expect("MA dropdown rendered when ma_enabled");
+            assert_same_row(&harness, "MA", &ma_dropdown, width);
+
+            let n_labels = harness
+                .query_all_by_label_contains("N:")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                n_labels.len(),
+                3,
+                "three N: parameter labels rendered at width {width}px"
+            );
+            assert_same_row(&harness, "New High", &n_labels[0], width);
+            assert_same_row(&harness, "Momentum", &n_labels[1], width);
+            assert_same_row(&harness, "Volume", &n_labels[2], width);
+        }
+        compass_i18n::set_locale("zh");
     }
 }

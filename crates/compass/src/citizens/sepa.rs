@@ -1064,6 +1064,61 @@ mod tests {
         );
     }
 
+    /// Same 1400 px detail-panel sweep in English (plan T15): wider en
+    /// strings must not bleed past the reserved panel width either.
+    #[test]
+    fn en_detail_panel_content_stays_inside_panel_width() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(sample_data()));
+        panel.selected = Some(0);
+        panel.table.set_selected(Some(0));
+        let (sepa_signal, work_signal) = signals();
+        let md = panel.tokens.spacing.md;
+
+        let pane_w = 1400.0;
+        let harness_panel_right = std::cell::Cell::new(0.0f32);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(pane_w, 600.0))
+            .build_ui(|ui| {
+                let probe = ui.allocate_ui_with_layout(
+                    egui::vec2(pane_w, 600.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        panel.show(ui, &shared, &sepa_signal, &work_signal);
+                    },
+                );
+                harness_panel_right.set(probe.response.rect.max.x);
+            });
+        harness.run_steps(2);
+
+        let texts = harness.query_all_by_label_contains("").collect::<Vec<_>>();
+        let panel_right = harness_panel_right.get() - md;
+        let panel_left = panel_right - DETAIL_PANEL_WIDTH;
+        let mut offenders: Vec<String> = Vec::new();
+        for t in &texts {
+            if t.rect().min.x < panel_left - 1.0 {
+                continue;
+            }
+            if t.rect().max.x > panel_right + 1.0 && t.rect().width() > 0.0 {
+                offenders.push(format!(
+                    "'{}' right edge {:.1} > {:.1}",
+                    t.value().unwrap_or_default(),
+                    t.rect().max.x,
+                    panel_right
+                ));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "en detail-panel text bleeds past the reserved width: {offenders:?}"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
     // ------------------------------------------------------------------
     // #222 i18n acceptance (RED).
     // - T6: the 12 COLUMNS headers become key constants ("sepa.table.rank"
