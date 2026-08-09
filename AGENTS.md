@@ -143,9 +143,9 @@ OpenCode 自动发现）；项目本地技能位于 `.opencode/skills/`。无需
 
 ### ui-designer Agent（界面设计）
 
-`.opencode/agent/ui-designer.md` 定义了界面设计 agent **`ui-designer`**（只读），
-负责 GUI 布局、视觉风格与交互效果设计，输出设计方案到
-`.omo/designs/<feature>.md`。
+`~/.config/opencode/agent/ui-designer.md` 定义了界面设计 agent **`ui-designer`**
+（只读，全局技能组，OpenCode 自动发现），负责 GUI 布局、视觉风格与交互效果
+设计，输出设计方案到 `.omo/designs/<feature>.md`。
 
 **路由规则（强制）**：任何涉及界面设计的工作 —— 布局、视觉风格、交互效果、
 动画、hover/快捷键/反馈状态 —— 主 agent 必须先委派 `ui-designer` 产出
