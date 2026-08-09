@@ -71,6 +71,16 @@ impl<'a> Input<'a> {
         let placeholder = self.placeholder.unwrap_or("");
         let hint = RichText::new(placeholder).color(c.text_weak);
 
+        // Reserve horizontal space for the prefix/suffix icon slots only when
+        // icons are actually present; icon-less inputs (e.g. the Dropdown
+        // popup search box) otherwise render ~48 px narrower than `width`.
+        let icon_budget = if self.prefix_icon.is_some() || self.suffix_icon.is_some() {
+            56.0
+        } else {
+            8.0 // frame inner margin only (4 px each side)
+        };
+        let field_width = self.width - icon_budget;
+
         // Draw prefix/suffix icons beside the field inside the same border.
         let mut text_edit = TextEdit::singleline(self.value)
             .id_salt("compass_input")
@@ -78,8 +88,8 @@ impl<'a> Input<'a> {
             .background_color(Color32::TRANSPARENT)
             .text_color(c.text_primary)
             .margin(egui::Margin::symmetric(8, 4))
-            .desired_width(self.width - 56.0)
-            .min_size(Vec2::new(self.width - 56.0, height - 8.0));
+            .desired_width(field_width)
+            .min_size(Vec2::new(field_width, height - 8.0));
         if self.monospace {
             text_edit = text_edit.font(FontSelection::FontId(FontId::monospace(
                 tokens.typography.mono,
@@ -160,5 +170,53 @@ mod tests {
             .type_text("a");
         harness.run();
         assert_eq!(value.borrow().as_str(), "a");
+    }
+
+    /// Icon-less inputs must not reserve the 56 px icon budget: the field
+    /// renders at `width − 8` (frame inner margin only), not `width − 56`
+    /// (issue #228 regression — the Dropdown popup search box was ~48 px
+    /// narrower than the options below it).
+    #[test]
+    fn iconless_input_does_not_reserve_icon_budget() {
+        let tokens = ThemeTokens::dark();
+        let mut value = String::new();
+        let rect = std::rc::Rc::new(std::cell::Cell::new(egui::Rect::ZERO));
+        let r = rect.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            r.set(Input::new(&tokens, &mut value).width(200.0).show(ui).rect);
+        });
+        harness.run();
+        let width = rect.get().width();
+        assert!(
+            (width - 192.0).abs() <= 1.0,
+            "icon-less Input width(200.0) must render the field at ≈192 px \
+             (200 − 8 frame margin), got {width}"
+        );
+    }
+
+    /// Inputs with an icon keep the reserved icon budget (prefix icon still
+    /// occupies its slot beside the field).
+    #[test]
+    fn prefixed_input_reserves_icon_budget() {
+        let tokens = ThemeTokens::dark();
+        let mut value = String::new();
+        let rect = std::rc::Rc::new(std::cell::Cell::new(egui::Rect::ZERO));
+        let r = rect.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            r.set(
+                Input::new(&tokens, &mut value)
+                    .prefix_icon("\u{E200}")
+                    .width(200.0)
+                    .show(ui)
+                    .rect,
+            );
+        });
+        harness.run();
+        let width = rect.get().width();
+        assert!(
+            (width - 144.0).abs() <= 1.0,
+            "prefixed Input width(200.0) must keep the 56 px icon budget \
+             (field ≈144 px), got {width}"
+        );
     }
 }

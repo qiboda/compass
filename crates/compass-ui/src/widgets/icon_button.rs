@@ -109,7 +109,7 @@ mod tests {
     fn small_size_uses_control_sm_token() {
         let tokens = ThemeTokens::dark();
         let big = IconButton::new(&tokens, "\u{E20C}");
-        assert_eq!(big.side, 32.0);
+        assert_eq!(big.side, tokens.spacing.control_md);
         assert_eq!(big.small().side, tokens.spacing.control_sm);
     }
 
