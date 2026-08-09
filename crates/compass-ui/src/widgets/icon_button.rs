@@ -4,7 +4,8 @@
 use crate::tokens::ThemeTokens;
 use egui::{Color32, CornerRadius, RichText, Stroke, Ui, Vec2};
 
-/// Square icon button: 32×32 by default, 24×24 when small.
+/// Square icon button: `control_md` × `control_md` by default,
+/// `control_sm` × `control_sm` when small.
 pub struct IconButton<'a> {
     tokens: &'a ThemeTokens,
     icon: &'a str,
@@ -19,7 +20,7 @@ impl<'a> IconButton<'a> {
             tokens,
             icon,
             tooltip: None,
-            side: 32.0,
+            side: tokens.spacing.control_md,
         }
     }
 
@@ -110,6 +111,31 @@ mod tests {
         let big = IconButton::new(&tokens, "\u{E20C}");
         assert_eq!(big.side, 32.0);
         assert_eq!(big.small().side, tokens.spacing.control_sm);
+    }
+
+    /// Default side reads the `control_md` token, not a hardcoded literal
+    /// (issue #226). Token change must propagate to the default size.
+    #[test]
+    fn default_side_follows_control_md_token() {
+        let mut tokens = ThemeTokens::dark();
+        tokens.spacing.control_md = 40.0;
+        let big = IconButton::new(&tokens, "\u{E20C}");
+        assert_eq!(
+            big.side, tokens.spacing.control_md,
+            "default side must follow the control_md token, not a hardcoded 32.0"
+        );
+        assert_eq!(big.small().side, tokens.spacing.control_sm);
+    }
+
+    /// An explicit `.size()` override wins over the default (issue #226).
+    #[test]
+    fn size_override_wins_over_default() {
+        let tokens = ThemeTokens::dark();
+        assert_eq!(IconButton::new(&tokens, "\u{E20C}").size(40.0).side, 40.0);
+        assert_eq!(
+            IconButton::new(&tokens, "\u{E20C}").small().size(40.0).side,
+            40.0
+        );
     }
 
     /// A tooltip attaches without affecting clicks.
