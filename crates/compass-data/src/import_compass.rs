@@ -10,6 +10,13 @@ use tracing::{info, warn};
 
 use crate::import_dolt::run_dolt_sql_parquet;
 
+/// Freshness warn thresholds (issue #136, Q5: warn-only).
+///
+/// Financial tables report quarterly, so 120 days covers a missed quarter;
+/// SEPA market tables update daily and go stale within a week.
+const FIN_FRESHNESS_DAYS: i64 = 120;
+const MARKET_FRESHNESS_DAYS: i64 = 7;
+
 /// Tables in compass_data that can be imported.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CompassTable {
@@ -70,54 +77,90 @@ pub fn run(
             import_financial_table("fin_cash_flow", &dolt_dir, &output, overwrite, since)
         }
         CompassTable::ConceptMember => import_concept_member(&dolt_dir, &output),
-        CompassTable::MainFlow => import_append_table(
-            AppendTableSpec {
-                table_name: "capital_main_flow",
-                date_col: "trade_date",
-                partition_cols: "symbol, trade_date",
-                prefer_new: true,
-            },
-            &dolt_dir,
-            &output,
-            overwrite,
-            since,
-        ),
-        CompassTable::DragonList => import_append_table(
-            AppendTableSpec {
-                table_name: "dragon_list",
-                date_col: "trade_date",
-                partition_cols: "symbol, trade_date, seat_type",
-                prefer_new: true,
-            },
-            &dolt_dir,
-            &output,
-            overwrite,
-            since,
-        ),
-        CompassTable::BlockTrade => import_append_table(
-            AppendTableSpec {
-                table_name: "block_trade",
-                date_col: "trade_date",
-                partition_cols: "symbol, trade_date, price",
-                prefer_new: true,
-            },
-            &dolt_dir,
-            &output,
-            overwrite,
-            since,
-        ),
-        CompassTable::InstitutionSurvey => import_append_table(
-            AppendTableSpec {
-                table_name: "institution_survey",
-                date_col: "survey_date",
-                partition_cols: "symbol, survey_date, org_name",
-                prefer_new: true,
-            },
-            &dolt_dir,
-            &output,
-            overwrite,
-            since,
-        ),
+        CompassTable::MainFlow => {
+            import_append_table(
+                AppendTableSpec {
+                    table_name: "capital_main_flow",
+                    date_col: "trade_date",
+                    partition_cols: "symbol, trade_date",
+                    prefer_new: true,
+                },
+                &dolt_dir,
+                &output,
+                overwrite,
+                since,
+            )?;
+            warn_if_stale(&dolt_dir, "capital_main_flow", MARKET_FRESHNESS_DAYS);
+            Ok(())
+        }
+        CompassTable::DragonList => {
+            import_append_table(
+                AppendTableSpec {
+                    table_name: "dragon_list",
+                    date_col: "trade_date",
+                    partition_cols: "symbol, trade_date, seat_type",
+                    prefer_new: true,
+                },
+                &dolt_dir,
+                &output,
+                overwrite,
+                since,
+            )?;
+            warn_if_stale(&dolt_dir, "dragon_list", MARKET_FRESHNESS_DAYS);
+            Ok(())
+        }
+        CompassTable::BlockTrade => {
+            import_append_table(
+                AppendTableSpec {
+                    table_name: "block_trade",
+                    date_col: "trade_date",
+                    partition_cols: "symbol, trade_date, price",
+                    prefer_new: true,
+                },
+                &dolt_dir,
+                &output,
+                overwrite,
+                since,
+            )?;
+            warn_if_stale(&dolt_dir, "block_trade", MARKET_FRESHNESS_DAYS);
+            Ok(())
+        }
+        CompassTable::InstitutionSurvey => {
+            import_append_table(
+                AppendTableSpec {
+                    table_name: "institution_survey",
+                    date_col: "survey_date",
+                    partition_cols: "symbol, survey_date, org_name",
+                    prefer_new: true,
+                },
+                &dolt_dir,
+                &output,
+                overwrite,
+                since,
+            )?;
+            warn_if_stale(&dolt_dir, "institution_survey", MARKET_FRESHNESS_DAYS);
+            Ok(())
+        }
+    }
+}
+
+/// Warn when the source data is stale (issue #136, Q5: warn-only).
+///
+/// Thresholds: fin_* tables 120 days (quarterly reports), market tables
+/// (main_flow/dragon_list/block_trade/institution_survey/concept_member)
+/// 7 days. `stock_basic` is skipped: its data_updates row has a NULL
+/// last_report_date (collectors write only 4 columns, main.py:79-85).
+fn warn_if_stale(dolt_dir: &Path, table: &str, threshold_days: i64) {
+    let Ok(Some(last)) = crate::validate::data_updates_last_report_date(dolt_dir, table) else {
+        return; // no data_updates row / NULL / missing table -> nothing to compare
+    };
+    let Ok(days) = crate::validate::freshness_days(&last, crate::validate::today_cn()) else {
+        return; // unparseable date -> skip
+    };
+    if days > threshold_days {
+        warn!(
+            "freshness: {table} last_report_date {last} is {days} days old (threshold {threshold_days})"
+        );
     }
 }
 
@@ -140,6 +183,13 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
     )?;
     let path = output.join("stock_basic.parquet");
     std::fs::write(&path, &data)?;
+    let src_count = crate::validate::dolt_count(
+        dolt_dir,
+        "stock_basic",
+        "WHERE symbol LIKE 'SH%' OR symbol LIKE 'SZ%' OR symbol LIKE 'BJ%'",
+    )?;
+    let parquet_count = crate::validate::parquet_row_count(&path)?;
+    crate::validate::verify_row_count(src_count, parquet_count, "stock_basic")?;
     info!("  → {}", path.display());
     Ok(())
 }
@@ -201,6 +251,10 @@ fn import_fin_indicators(
         info!("Merging incremental data with existing parquet...");
         std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
+        // Row-count baseline for the no-loss check. A corrupt old parquet
+        // (the fallback's recovery trigger) yields None, skipping the check.
+        let old_count = crate::validate::parquet_row_count(&path).ok();
+
         let new_path = unique_work_path("fin.new");
         std::fs::write(&new_path, &new_data)?;
 
@@ -218,16 +272,34 @@ fn import_fin_indicators(
         if let Err(e) = duck.execute_batch(&sql) {
             warn!("DuckDB merge failed: {e}, falling back to full export");
             std::fs::write(&path, &new_data)?;
+            // Fallback overwrites with since-filtered data (recovery); the
+            // no-loss check is skipped — validate against the filtered source.
+            let src_count = crate::validate::dolt_count(dolt_dir, "fin_indicators", &date_filter)?;
+            let parquet_count = crate::validate::parquet_row_count(&path)?;
+            crate::validate::verify_row_count(src_count, parquet_count, "fin_indicators")?;
         } else {
             std::fs::copy(&tmp_path, &path)?;
+            let merged_count = crate::validate::parquet_row_count(&path)?;
+            if let Some(old_rows) = old_count
+                && merged_count < old_rows
+            {
+                return Err(format!(
+                    "row count mismatch: merge lost rows old={old_rows} parquet={merged_count} (table fin_indicators)"
+                )
+                .into());
+            }
         }
         let _ = std::fs::remove_file(&new_path);
         let _ = std::fs::remove_file(&tmp_path);
     } else {
         std::fs::write(&path, &new_data)?;
+        let src_count = crate::validate::dolt_count(dolt_dir, "fin_indicators", &date_filter)?;
+        let parquet_count = crate::validate::parquet_row_count(&path)?;
+        crate::validate::verify_row_count(src_count, parquet_count, "fin_indicators")?;
     }
 
     info!("  → {}", path.display());
+    warn_if_stale(dolt_dir, "fin_indicators", FIN_FRESHNESS_DAYS);
     Ok(())
 }
 
@@ -249,7 +321,9 @@ fn import_financial_table(
         output,
         overwrite,
         since,
-    )
+    )?;
+    warn_if_stale(dolt_dir, table_name, FIN_FRESHNESS_DAYS);
+    Ok(())
 }
 
 /// Table definition for [`import_append_table`].
@@ -306,6 +380,10 @@ fn import_append_table<'a>(
         info!("Merging incremental data with existing parquet...");
         std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
+        // Row-count baseline for the no-loss check. A corrupt old parquet
+        // (the fallback's recovery trigger) yields None, skipping the check.
+        let old_count = crate::validate::parquet_row_count(&path).ok();
+
         let new_path = unique_work_path(&format!("{table_name}.new"));
         std::fs::write(&new_path, &new_data)?;
 
@@ -328,13 +406,30 @@ fn import_append_table<'a>(
         if let Err(e) = duck.execute_batch(&sql) {
             warn!("DuckDB merge failed: {e}, falling back to full export");
             std::fs::write(&path, &new_data)?;
+            // Fallback overwrites with since-filtered data (recovery); the
+            // no-loss check is skipped — validate against the filtered source.
+            let src_count = crate::validate::dolt_count(dolt_dir, table_name, &date_filter)?;
+            let parquet_count = crate::validate::parquet_row_count(&path)?;
+            crate::validate::verify_row_count(src_count, parquet_count, table_name)?;
         } else {
             std::fs::copy(&tmp_path, &path)?;
+            let merged_count = crate::validate::parquet_row_count(&path)?;
+            if let Some(old_rows) = old_count
+                && merged_count < old_rows
+            {
+                return Err(format!(
+                    "row count mismatch: merge lost rows old={old_rows} parquet={merged_count} (table {table_name})"
+                )
+                .into());
+            }
         }
         let _ = std::fs::remove_file(&new_path);
         let _ = std::fs::remove_file(&tmp_path);
     } else {
         std::fs::write(&path, &new_data)?;
+        let src_count = crate::validate::dolt_count(dolt_dir, table_name, &date_filter)?;
+        let parquet_count = crate::validate::parquet_row_count(&path)?;
+        crate::validate::verify_row_count(src_count, parquet_count, table_name)?;
     }
 
     info!("  → {}", path.display());
@@ -356,7 +451,11 @@ fn import_concept_member(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn s
     )?;
     let path = output.join("concept_member.parquet");
     std::fs::write(&path, &data)?;
+    let src_count = crate::validate::dolt_count(dolt_dir, "concept_member", "")?;
+    let parquet_count = crate::validate::parquet_row_count(&path)?;
+    crate::validate::verify_row_count(src_count, parquet_count, "concept_member")?;
     info!("  → {}", path.display());
+    warn_if_stale(dolt_dir, "concept_member", MARKET_FRESHNESS_DAYS);
     Ok(())
 }
 #[cfg(test)]

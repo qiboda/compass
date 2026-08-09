@@ -317,6 +317,34 @@ pub fn run(
     );
     info!("==============================");
 
+    // ------------------------------------------------------------------
+    // 6. Data quality validation (issue #136)
+    // ------------------------------------------------------------------
+    // Row count: source Dolt COUNT (same WHERE) vs actual parquet rows.
+    // With --limit>0 the expectation is min(COUNT, limit) — "at most N rows".
+    let src_count =
+        crate::validate::dolt_count(&dolt_dir, "final_a_stock_eod_price", &where_clause)?;
+    let parquet_count = crate::validate::parquet_row_count(&final_path)?;
+    let expected = if limit > 0 {
+        src_count.min(limit)
+    } else {
+        src_count
+    };
+    crate::validate::verify_row_count(expected, parquet_count, "final_a_stock_eod_price")?;
+
+    // Date range: source vs target tradedate MIN/MAX. Skipped when --limit>0
+    // (LIMIT truncates rows so MIN/MAX semantics break).
+    if limit == 0 {
+        let src_range = crate::validate::dolt_date_range(
+            &dolt_dir,
+            "final_a_stock_eod_price",
+            &where_clause,
+            "tradedate",
+        )?;
+        let parquet_range = crate::validate::parquet_date_range(&final_path, "tradedate")?;
+        crate::validate::verify_date_range(src_range, parquet_range, "final_a_stock_eod_price")?;
+    }
+
     Ok(())
 }
 
