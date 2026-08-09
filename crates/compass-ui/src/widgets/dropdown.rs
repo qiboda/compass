@@ -2,9 +2,8 @@
 //! (design doc §5.1 `Dropdown`).
 
 use crate::tokens::ThemeTokens;
-use egui::{
-    Area, Color32, CornerRadius, Frame, Margin, Order, RichText, Sense, Stroke, TextEdit, Ui,
-};
+use crate::widgets::input::Input;
+use egui::{Area, Color32, CornerRadius, Frame, Margin, Order, RichText, Sense, Stroke, Ui};
 
 /// Dropdown with a unified trigger and popup look. Selection state is
 /// returned as the new index; popup open/close is tracked in egui memory.
@@ -98,18 +97,16 @@ impl<'a> Dropdown<'a> {
                 .show(ui.ctx(), |ui| {
                     ui.set_min_width(self.width);
                     frame.show(ui, |ui| {
-                        // Optional search field.
+                        // Optional search field (Input component: unified
+                        // appearance + focus border, per design doc §5.1).
                         if self.searchable {
                             let mut query: String = ui.ctx().data(|d| {
                                 d.get_temp::<String>(ui.id().with("query"))
                                     .unwrap_or_default()
                             });
-                            let te = TextEdit::singleline(&mut query)
-                                .id_salt("search")
-                                .hint_text(RichText::new("搜索…").color(c.text_weak))
-                                .desired_width(self.width - 8.0)
-                                .min_size(egui::Vec2::new(self.width - 8.0, 24.0));
-                            ui.add(te);
+                            Input::new(tokens, &mut query)
+                                .width(self.width - 8.0)
+                                .show(ui);
                             ui.add_space(tokens.spacing.xs);
                             ui.ctx()
                                 .data_mut(|d| d.insert_temp(ui.id().with("query"), query.clone()));
@@ -246,5 +243,98 @@ mod tests {
         let _ = harness.get_by_label("1d");
         let _ = harness.get_by_label("1w");
         let _ = harness.get_by_label("1M");
+    }
+
+    /// The searchable popup renders a text-input search box (issue #228).
+    #[test]
+    fn searchable_popup_has_text_input() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Dropdown::new(&tokens, ["1d", "1w", "1M"])
+                .searchable(true)
+                .show(ui);
+        });
+        harness.run();
+        harness.get_by_label_contains("1d").click();
+        harness.run();
+        let _ = harness.get_by_role(egui::accesskit::Role::TextInput);
+    }
+
+    /// The popup search box must not carry the hardcoded「搜索…」hint
+    /// (issue #228).
+    #[test]
+    fn search_box_has_no_hardcoded_hint() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Dropdown::new(&tokens, ["1d", "1w", "1M"])
+                .searchable(true)
+                .show(ui);
+        });
+        harness.run();
+        harness.get_by_label_contains("1d").click();
+        harness.run();
+        assert!(
+            harness
+                .query_all_by(|n| n.placeholder() == Some("搜索…"))
+                .next()
+                .is_none(),
+            "the popup search box must not hardcode the '搜索…' hint (issue #228)"
+        );
+    }
+
+    /// Typing in the search box filters the option list; the behavior must
+    /// survive the Input swap (issue #228).
+    #[test]
+    fn searchable_typing_filters_options() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Dropdown::new(&tokens, ["1d", "1w", "1M"])
+                .searchable(true)
+                .show(ui);
+        });
+        harness.run();
+        harness.get_by_label_contains("1d").click();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .focus();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .type_text("1w");
+        harness.run();
+        let _ = harness.get_by_label("1w");
+        assert!(
+            harness.query_by_label("1d").is_none(),
+            "non-matching '1d' must be filtered out"
+        );
+        assert!(
+            harness.query_by_label("1M").is_none(),
+            "non-matching '1M' must be filtered out"
+        );
+    }
+
+    /// The「无匹配结果」empty state renders when no option matches; the
+    /// behavior must survive the Input swap (issue #228).
+    #[test]
+    fn empty_state_renders_when_no_match() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Dropdown::new(&tokens, ["1d", "1w", "1M"])
+                .searchable(true)
+                .show(ui);
+        });
+        harness.run();
+        harness.get_by_label_contains("1d").click();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .focus();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .type_text("zzz");
+        harness.run();
+        let _ = harness.get_by_label("无匹配结果");
     }
 }
