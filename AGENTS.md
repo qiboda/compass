@@ -367,6 +367,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/design/backtest.md` | SEPA 历史回测 — 架构、组合模拟/基准代理口径、绩效指标、决策记录 |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
 | `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.omo/designs/` 仅归档） |
+| `kb/design/ui-widgets.md` | UI 组件使用规范权威文档 — 24 个组件 × 8 字段模板（用途/适用场景/变体/API/示例/反模式/相关组件/测试锚点）、三层组织、状态所有权、偏差跟踪 |
 | `kb/design/workflow-skills.md` | skwy- 技能组设计决策（issue #210）— 全局技能迁移范围、门禁 3.5 步、脚本自包含等 |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、重置 |

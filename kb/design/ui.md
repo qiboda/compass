@@ -3,6 +3,9 @@
 **本文件是 compass GUI 的最终权威 UI 设计文档**，累积式维护 —— 每次设计
 （skwy-workflow 门禁第 1 步 DESIGN）经用户确认后，将最终设计要点同步至此。
 
+> **组件使用规范**：逐组件的使用规范（何时用、用哪个变体、怎么组合、反模式）
+> 见 `kb/design/ui-widgets.md`（权威文档）——24 个组件 × 8 字段统一模板。
+
 > **归档与权威的区别**：`.omo/designs/<feature>.md` 是 ui-designer 产出的
 > **过程归档**（原始方案）；`.omo/plans/<feature>.md` 是计划归档。
 > 本文件才是 UI 设计的**最终版本**，与代码保持同步。归档文件不删不改，
@@ -214,6 +217,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 2026-08-02 | 初始骨架：基于现有 GUI 提炼设计系统/布局/交互（ref #129） | — | 已实现（与代码同步） |
 | 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.omo/designs/gui-upgrade.md` | 已实现（与代码同步） |
 | 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.omo/designs/chart-ma-boll.md` | 已实现（与代码同步） |
+| 2026-08-09 | 新增组件使用规范权威文档 `kb/design/ui-widgets.md`（24 组件 × 8 字段模板，与本文分工：本文管 token/布局/交互，组件文档管组件粒度用法） | `.omo/designs/ui-widgets.md` | 已同步（与代码同步） |
 | 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.omo/designs/ui-fixes-chinese-date.md` + `.omo/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
 | 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.omo/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
 
