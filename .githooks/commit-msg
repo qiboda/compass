@@ -1,27 +1,38 @@
 #!/bin/bash
 # commit-msg hook — enforce issue references for all commits.
 #
-# Every commit MUST reference an issue via "ref #N".
+# Every commit MUST reference an issue via "ref #N" on its own line.
 # No exceptions — feat, fix, test, docs, chore all included.
+#
+# Only a ref that occupies an entire line counts as the commit's issue
+# reference and is OPEN-validated. Inline "ref #N" (e.g. "ref #154 lesson:")
+# is a narrative mention and is deliberately NOT validated — it may reference
+# closed issues (ref #211).
 
 COMMIT_MSG_FILE="$1"
 
 # Skip merge and revert commits
 head -1 "$COMMIT_MSG_FILE" | grep -qE "^(Merge|Revert)" && exit 0
 
-if ! grep -qiE "ref[[:space:]]+#[0-9]+" "$COMMIT_MSG_FILE"; then
-    echo "ERROR: every commit must reference a GitHub issue with 'ref #N'."
+# Existence: at least one standalone-line "ref #N" reference required.
+# Standalone = the line contains nothing but the ref reference (optionally
+# comma-separated multiple issues, optionally padded with whitespace).
+if ! grep -qiE '^[[:space:]]*ref[[:space:]]+#[0-9]+([[:space:]]*,[[:space:]]*#[0-9]+)*[[:space:]]*$' "$COMMIT_MSG_FILE"; then
+    echo "ERROR: every commit must reference a GitHub issue with 'ref #N' on its own line."
     echo ""
     echo "  Example:"
     echo "    feat: add thing"
     echo ""
     echo "    ref #1"
     echo ""
+    echo "  Inline 'ref #N' in prose is treated as a narrative mention and"
+    echo "  does not count — put the reference on a standalone line."
+    echo ""
     exit 1
 fi
 
-# Validate issue references exist and are OPEN
-issues=$(grep -ioE "ref[[:space:]]+#[0-9]+" "$COMMIT_MSG_FILE" \
+# Validate issue references exist and are OPEN — standalone-line refs only.
+issues=$(grep -iE '^[[:space:]]*ref[[:space:]]+#[0-9]+([[:space:]]*,[[:space:]]*#[0-9]+)*[[:space:]]*$' "$COMMIT_MSG_FILE" \
     | grep -oE '#[0-9]+' \
     | tr -d '#' \
     | sort -u \

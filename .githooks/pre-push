@@ -121,9 +121,12 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         continue
     fi
 
-    # Extract issue references from all commits in the range
+    # Extract issue references from all commits in the range.
+    # Only standalone-line refs count (ref #211): a line containing nothing but
+    # the ref reference. Inline "ref #N" in prose is a narrative mention and is
+    # deliberately excluded — it may reference closed issues.
     issues=$(git log "$range" $excl_origin --format="%B" 2>/dev/null \
-        | grep -ioE '(^|[[:space:](])ref[[:space:]]+#[0-9]+' \
+        | grep -iE '^[[:space:]]*ref[[:space:]]+#[0-9]+([[:space:]]*,[[:space:]]*#[0-9]+)*[[:space:]]*$' \
         | grep -oE '#[0-9]+' \
         | sort -u \
         | tr -d '#' \
@@ -133,7 +136,8 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         echo ""
         echo "ERROR: push rejected — no 'ref #N' found in commit messages."
         echo "  Every commit must reference an open GitHub issue."
-        echo "  Add 'ref #N' to at least one commit in this push."
+        echo "  Add 'ref #N' on its own line to at least one commit in this push."
+        echo "  Inline 'ref #N' in prose does not count (ref #211)."
         echo ""
         has_error=1
         continue

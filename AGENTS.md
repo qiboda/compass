@@ -197,10 +197,11 @@ commit，`ref #<sub-N>`）、一个 worktree、按依赖 DAG 分批处理（手�
 **每个 commit 必须引用 GitHub issue。** 无例外 —— 包括 chores、docs、scripts。
 pre-push hook 拒绝没有 `ref #N` 的 commit。
 
-**`ref #N` 必须指向 OPEN issue。** commit-msg hook 会把 commit message 中的
-`ref #N` 提取为 issue 引用并校验状态，指向已关闭/合并 issue 直接拒绝。
-叙述性提及已关闭/合并 issue 时（如讲解历史背景），用 `#N` 不带 `ref` 前缀
-（ref #119 正文示例误判、ref #172 正文引用已合并 issue 两次摩擦）。
+**`ref #N` 必须指向 OPEN issue，且必须独立成行。** commit-msg / pre-push hook
+只把**独立成行的 `ref #N`**（该行除 ref 引用外无其他内容）当作 issue 引用提取
+并校验状态，指向已关闭/合并 issue 直接拒绝。**行内 `ref #N`（如 "ref #154
+教训：…"）视为叙述性提及，不参与校验**——叙述性提及已关闭/合并 issue（如讲解
+历史背景）可以直接写 `ref #N` 或 `#N`（ref #211 修复了叙述性提及被误伤的摩擦）。
 
 epic 工作的每个 commit 引用其子 issue（`ref #<sub-N>`）。
 

@@ -93,7 +93,7 @@ push 前按顺序执行：
 1. **cargo fmt --check**
 2. **cargo clippy -- -D warnings**
 3. **cargo doc --no-deps**（必须无警告）
-4. **Issue 引用**：`ref #N` 必须指向 open issues
+4. **Issue 引用**：`ref #N` 必须**独立成行**且指向 open issues（行内 `ref #N` 视为叙述性提及，不参与校验，ref #211）
 5. **Python 检查**（若存在 `collectors/pyproject.toml`）：`uv run ruff check *.py tests/` + `uv run pytest tests/ -q`
 
 > **CI 门槛在 merge 侧，不在 push 侧（ref #172）**：master 的 branch protection
