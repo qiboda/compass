@@ -1780,7 +1780,7 @@ dependencies = [
 [[package]]
 name = "egui-charts"
 version = "0.2.0"
-source = "git+https://github.com/qiboda/egui-charts.git?branch=compass#a1531ac4e6d92b6f61d7ec6f58a7ed49e8f02ba9"
+source = "git+https://github.com/qiboda/egui-charts.git?branch=compass#cc59f1f49799d8c6852802eb7adbe495227bc1a7"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1792,6 +1792,7 @@ dependencies = [
  "once_cell",
  "rand 0.10.2",
  "ron",
+ "rust-i18n",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -6223,7 +6224,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69fff37da548239c3bf9e64a12193d261e8b22b660991c6fd2df057c168f435f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -6233,7 +6234,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
