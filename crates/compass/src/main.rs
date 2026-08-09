@@ -186,6 +186,7 @@ fn main() -> eframe::Result {
                 pending_delete: None,
                 delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
                 startup_modal_shown: false,
+                language: normalize_language(&config.app.language).to_string(),
             }))
         }),
     )
@@ -600,6 +601,9 @@ struct CompassApp {
     delete_confirmed: std::rc::Rc<std::cell::RefCell<bool>>,
     /// Whether the startup data-missing modal has been offered this session.
     startup_modal_shown: bool,
+    /// Current UI language (`"zh"` | `"en"`), mirroring the process-global
+    /// rust-i18n locale so the toolbar dropdown can render the selection.
+    language: String,
 }
 
 impl eframe::App for CompassApp {
@@ -1111,6 +1115,7 @@ impl CompassApp {
                     .position(|n| *n == self.theme.name())
                     .unwrap_or(0);
                 if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
+                    .id_salt("theme")
                     .selected(theme_idx)
                     .width(140.0)
                     .show(ui)
@@ -1129,6 +1134,34 @@ impl CompassApp {
                         self.sepa.set_tokens(tokens);
                         self.toast
                             .push(ToastLevel::Info, t!("toast.theme_switched"));
+                    }
+                }
+
+                // Language dropdown: native-name options (中文/English), not
+                // keyed — the option strings are the visible labels in both
+                // locales. Switching applies the process-global locale
+                // immediately; the window title stays the English brand.
+                let lang_options = ["中文", "English"];
+                let lang_idx = if self.language == "en" { 1 } else { 0 };
+                if let Some(idx) = Dropdown::new(&tokens, lang_options.to_vec())
+                    .id_salt("language")
+                    .selected(lang_idx)
+                    .width(76.0)
+                    .show(ui)
+                {
+                    let new_lang = if idx == 1 { "en" } else { "zh" };
+                    if new_lang != self.language {
+                        self.language = new_lang.to_string();
+                        compass_i18n::set_locale(new_lang);
+                        ui.ctx().request_repaint();
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
+                            "Compass — Stock Chart".to_string(),
+                        ));
+                        self.toast
+                            .push(ToastLevel::Info, t!("toast.language_switched"));
+                        if let Err(e) = save_language_config(new_lang) {
+                            tracing::warn!(error = %e, "failed to save language config");
+                        }
                     }
                 }
             });
@@ -1808,6 +1841,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_panel_is_left_anchored_at_240px() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -3809,17 +3845,34 @@ symbols = ["SZ000001"]
             std::env::set_var("HOME", tmp.path());
         }
 
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-        let _ = harness.get_by_label("获取数据");
+        let mut app = build_compass_app(egui::Context::default());
+        let fetch_zh = format!(
+            "{} {}",
+            egui_phosphor::regular::DOWNLOAD_SIMPLE,
+            tr("toolbar.fetch")
+        );
+        let fetch_en = format!("{} {}", egui_phosphor::regular::DOWNLOAD_SIMPLE, "Fetch");
+
+        // Interact via a new_ui harness rendering the toolbar — the same
+        // pattern as the theme-dropdown test, where kittest pointer clicks
+        // reliably open the Area popup and select an option.
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            app.render_toolbar(ui);
+        });
+        harness.run();
         // The trigger label is "{selected} ▾"; the popup items are exact
         // option strings (dropdown.rs renders egui::Button::new(option)).
         harness.get_by_label_contains("中文").click();
-        harness.step();
+        harness.run();
+        // The popup must be open with the English option visible.
         harness.get_by_label("English").click();
-        harness.step();
-        let _ = harness.get_by_label("Fetch");
+        harness.run();
+        assert_eq!(
+            compass_i18n::locale().to_string(),
+            "en",
+            "selecting English must switch the process-global locale"
+        );
+        let _ = harness.get_by_label(&fetch_en);
 
         let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
         assert!(
@@ -3831,11 +3884,16 @@ symbols = ["SZ000001"]
             "other config sections must survive the language write-back, got: {raw}"
         );
 
-        harness.get_by_label("English").click();
-        harness.step();
+        harness.get_by_label_contains("English").click();
+        harness.run();
         harness.get_by_label("中文").click();
-        harness.step();
-        let _ = harness.get_by_label("获取数据");
+        harness.run();
+        assert_eq!(
+            compass_i18n::locale().to_string(),
+            "zh",
+            "selecting 中文 must switch the locale back"
+        );
+        let _ = harness.get_by_label(&fetch_zh);
 
         if let Some(h) = saved_home {
             unsafe {

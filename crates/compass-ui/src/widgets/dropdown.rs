@@ -14,6 +14,9 @@ pub struct Dropdown<'a> {
     selected: usize,
     width: f32,
     searchable: bool,
+    /// Popup-state salt; distinguishes multiple Dropdown instances rendered
+    /// in the same `Ui` (their `ui.id()` would otherwise collide).
+    id_salt: &'a str,
 }
 
 impl<'a> Dropdown<'a> {
@@ -28,6 +31,7 @@ impl<'a> Dropdown<'a> {
             selected: 0,
             width: 160.0,
             searchable: false,
+            id_salt: "",
         }
     }
 
@@ -43,6 +47,12 @@ impl<'a> Dropdown<'a> {
         self
     }
 
+    /// Set a unique popup-state salt (default empty).
+    pub fn id_salt(mut self, id_salt: &'a str) -> Self {
+        self.id_salt = id_salt;
+        self
+    }
+
     /// Enable a search box inside the popup that filters options.
     pub fn searchable(mut self, searchable: bool) -> Self {
         self.searchable = searchable;
@@ -55,7 +65,9 @@ impl<'a> Dropdown<'a> {
         let c = &tokens.color;
         let height = tokens.spacing.control_md;
 
-        let popup_id = ui.id().with("compass_dropdown_popup");
+        let popup_id = ui
+            .id()
+            .with(format!("compass_dropdown_popup:{}", self.id_salt));
         let mut open = ui
             .ctx()
             .data(|d| d.get_temp::<bool>(popup_id).unwrap_or(false));
