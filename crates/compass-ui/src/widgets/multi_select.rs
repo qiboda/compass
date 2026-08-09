@@ -328,6 +328,40 @@ mod tests {
     }
 
     #[test]
+    fn distinct_id_salts_allow_two_popups_open_simultaneously() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let tokens = ThemeTokens::dark();
+        let a = Rc::new(RefCell::new(
+            MultiSelect::new(&tokens, ["银行"]).id_salt("a"),
+        ));
+        let b = Rc::new(RefCell::new(
+            MultiSelect::new(&tokens, ["白酒"]).id_salt("b"),
+        ));
+        a.borrow_mut().open = true;
+        b.borrow_mut().open = true;
+        let ac = a.clone();
+        let bc = b.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            ui.horizontal(|ui| {
+                ac.borrow_mut().show(ui);
+                bc.borrow_mut().show(ui);
+            });
+        });
+        harness.fit_contents();
+        harness.step();
+
+        // Both popups are open with distinct Area ids — neither may shadow
+        // the other. The screener bug: three MultiSelects shared the default
+        // empty id_salt, so their popup Areas collided (only one rendered).
+        // With distinct salts both option labels must be reachable.
+        assert!(a.borrow().open, "first popup stays open");
+        assert!(b.borrow().open, "second popup stays open");
+        let _ = harness.get_by_label("银行");
+        let _ = harness.get_by_label("白酒");
+    }
+
+    #[test]
     fn set_tokens_updates_theme_after_switch() {
         let dark = ThemeTokens::dark();
         let light = ThemeTokens::light();
