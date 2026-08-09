@@ -690,3 +690,36 @@
 - **worktree 规则违反连续两条反思出现**（#223「SEPA 诊断未切 worktree 直接改 master」→ 本次「恢复后未启动 worktree 区域即操作」）：同一模式第二次出现 = 上次教训未固化。已在本条 Lessons learned #1 明确恢复流程第一步动作，若第三次出现需在 kb/dev/process.md 固化「崩溃恢复 checklist」。
 - **「未加载 skill 就执行」模式**（#210 迁移时技能加载不全、本次全局 skills 未按 AGENTS.md 强制加载）：AGENTS.md 已补「强制加载（MANDATORY）」段落成文约束，待验证后续执行是否遵守。
 - **提交对象误判**（本次把 home dotfiles 仓库 AGENTS.md 误当变更对象）：教训 #3 固化「AGENTS.md 相关变更默认指当前项目仓库，先用问题确认」，避免同类误判。
+
+## 2026-08-09 — ref #217 GUI 四问题修复 epic：实现 + 用户验收 6 项修复
+
+**What was done**: 完成 epic #217（4 个子 issue：#218 K线切换立即重载、#219 图表中文日期（fork a1531ac）、#220 选股器原子组、#221 SEPA 表格渲染）+ 用户验收发现的 6 项修复（列对齐、涨跌幅重复、SEPA 详情面板溢出、Tag 空格、Button 文字主题色/loading 色、Tag 换行）。16 commits（15 实现+1 F1-F4 evidence），全部在 feat/ui-fixes-217 worktree。review-work 5-agent 门禁通过（1 MAJOR 已修）。F1-F4 证据落盘 `.omo/evidence/ui-fixes/`。
+
+**User corrections**（逐字引用对话记录）:
+1. "sepa表格的列和表头没有严格对齐，是不是内部cell的文字align没有一致？，而且涨跌幅，为什么显示了两次，一次还没有%和正负号"——验收发现列对齐与涨跌幅重复两个问题；用户正确预判了 cell align 根因。
+2. "还是同时渲染 value和change，修复bug即可。这个的样式和表头也重新设计一下？看不出来是值和百分比。。。"——涨跌幅列保持 PriceText 双值语义，只修重复显示 bug；样式/表头需重新设计。
+3. "这个让设计师设计去。它设计完再找我"——问题 2 的样式设计委派 ui-designer，设计完展示给用户确认。
+4. "表格好了。 espa点击排行，刷新出来的表格右边的内容是什么，看起来一团乱。"——SEPA 详情面板布局乱。
+5. "右侧详细面板的最下面的tag。第一个字后面的空格越来越多。。。。。例如上     证，创           新医疗服务"——题材 Tag 文字含拉伸空格。
+6. "fetch点击后，加载中的字体颜色不对。。"——Button loading 文字颜色错误。
+7. "继续查，fetch按钮的颜色没有跟随主题改变颜色，也需要修。"——Button 文字不随主题切换。
+8. "文字的颜色"——纠正：要修的是按钮文字颜色（非填充色）。
+9. "好了，看来是换行的问题。"——确认 Tag 换行修复通过（验收全部完成）。
+
+**What went wrong**: ①**ui-designer 委派中断一次**——首次委派 `task(subagent_type="ui-designer")` 同步调用被 abort（用户问"这么慢/卡了？"），重试改用 `run_in_background=true` 成功；同步委派设计 agent 可能因长耗时被中断，应直接用后台模式。②**kittest 诊断多次返工**——诊断 detail_panel 溢出时，先断言文本越界（RED），尝试 allocate_ui_with_layout 修复无效，经 probe 逐步定位到「DataTable 的 Column::auto min_rect 帧间增长撑宽 horizontal」；中途还有 Node API 误用（`label()`/`color()` 不存在，改用 `value()`/shapes 扫描）。③**Tag 空格根因先查渲染后查数据**——先怀疑 justify/Frame 撑宽，最后定位到 Dolt concept_name 尾随空格（EastMoney BOARD_NAME 未 TRIM），经历了一轮方向偏差。④**Tag 换行根因**——`Frame::show` 的响应 rect 撑宽 wrapped 父级 max_rect，horizontal_wrapped 永不换行（35 个 Tag 单行溢出 4 倍宽）；probe 纯 label 对照才确认。⑤**多次 question 确认**——问题 2 方案问了 2 次、主题按钮色问了 1 次才对齐用户意图；第一次 question 选项未命中用户"字体颜色"的真实关注点。
+
+**Lessons learned**:
+1. 委派 ui-designer 等长任务 agent 一律 `run_in_background=true`，避免同步调用被中断。
+2. UI 布局/渲染异常诊断：优先用最小 kittest probe（固定尺寸 + 打印实际 rect/文本 shape）建立基线，再对照怀疑点二分；不要先猜渲染机制再验证。
+3. 数据驱动的渲染异常（如 Tag 空格）：先查数据源头（Dolt/采集器字段是否含脏数据），再查渲染层。
+4. egui wrapped 布局中，`Frame::show` 会撑宽父级 max_rect 破坏换行——Tag 类 pill 组件用 `allocate_exact_size` + painter 背景 + `ui.put` Label（保 accesskit）。
+5. kittest 查询：Node 无 `label()`/`color()` 方法，文本用 `value()`，颜色用 `harness.output().shapes` 扫描 galley job sections。
+
+**Process improvements**: 
+- kb/dev/testing.md 待补：kittest Node API 限制（value()/shapes 扫描）+ egui wrapped 布局 Frame 撑宽陷阱 + `allocate_exact_size` pill 模式（本次直接改进，后续按门禁建 issue 落档）。
+- 已直接落实：.omo/evidence/ui-fixes/F1-F4 落盘（ref #174 要求）、kb/design/ui.md 8 条决策记录（9d24b57）、kb/user/gui.md/cli.md 同步。
+
+### Trends (last 10)
+- **UI 布局诊断路径改进**（#139 SEPA、#221、本次 #217 多次）：多次出现"先猜渲染机制再验证"导致返工（Tag 空格先查渲染后查数据、detail 溢出经 probe 才定位 Frame 撑宽）。教训 #2/#3 建议改为"先复现现场拿证据再二分"——若后续再出现同类返工，在 kb/dev/process.md 调试章节固化排查框架。
+- **ui-designer 委派中断**（本次）：同步委派设计 agent 被 abort 一次。教训 #1 已固化"长任务一律后台"，观察后续是否遵守。
+- **数据层脏数据导致 GUI 渲染异常**（本次 Tag 空格）：教训 #3 固化"数据驱动渲染异常先查源头"——同类模式（上游未清洗 → GUI 异常）可能在其他采集器字段重现，建议采集器侧统一 TRIM 字符串字段（proposed）。
