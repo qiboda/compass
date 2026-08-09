@@ -484,10 +484,19 @@ mod tests {
         );
         let err = state.error.get();
         assert!(err.is_some(), "error should be set for unknown symbol");
+        // The error template is resolved on the backend worker thread, which
+        // does not hold LANG_LOCK — its locale can differ from this test's en
+        // under parallel runs. Assert the language-neutral parts instead: the
+        // symbol always appears, and the template never degrades to the raw
+        // missing-key fallback (the key string itself).
+        let msg = err.as_deref().unwrap();
         assert!(
-            err.as_deref().unwrap().to_lowercase().contains("no data"),
-            "error should contain 'no data': got {:?}",
-            err
+            msg.contains("999999"),
+            "error must mention the requested symbol, got: {msg:?}"
+        );
+        assert!(
+            !msg.contains("error.no_data"),
+            "error must resolve via the key (not the missing-key fallback), got: {msg:?}"
         );
         rust_i18n::set_locale("zh");
     }
