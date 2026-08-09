@@ -17,7 +17,9 @@
 > 6 项）同步更新受影响条目：Button 文字色统一 `text_primary` + loading 保留变体色、
 > PriceText `percent_only()`、Tag 换行渲染 + `Sense::hover()`、DataTable numeric
 > 右对齐 + 横向滚动 + percent_only 识别、MultiSelect id_salt（screener 三实例）。
-> 之前的 6 条 ⚠️ 偏差标注不受影响，仍有效。
+> 之前的 6 条 ⚠️ 偏差标注不受影响，仍有效（其中偏差 #4/#5/#6 已转 issue
+> #226/#227/#228 并于 2026-08-09 修复关闭，对应 ⚠️ 标注已从正文移除，历史记录
+> 见文末「偏差跟踪」）。
 
 ---
 
@@ -104,11 +106,9 @@ Badge::new(&tokens, 3).tone(BadgeTone::Accent).show(ui);
 - 用 Badge 显示非数字文本（如交易所代码）——那是 Tag 的职责；
 - 给 Badge 加交互（点击）——Badge 是**纯展示**：无交互语义（无 `Sense`、无点击 API）、响应仅用于查询/测试；任何「可点击角标」需求先与设计确认，不要自行给 Badge 挂 `on_hover_text`/点击。
 
-> ⚠️ 设计意图 vs 代码现状：见偏差清单 #5（设计规格「min-width 16px」当前未实现；原稿「Sense::hover() 语义」表述与实现不符——组件未设置任何 Sense）。
-
 **相关组件**：Badge（数字计数 pill）↔ Tag（短文本标签 pill，20px 高）↔ Label（行内文本层级）。规则：**数字 → Badge；枚举/分类文本 → Tag；正文/说明文字 → Label**。
 
-**测试锚点**：`widgets/badge.rs` `#[cfg(test)] mod tests`（L72）——`tone_colors_follow_design` / `count_is_queryable`。
+**测试锚点**：`widgets/badge.rs` `#[cfg(test)] mod tests`（L72）——`tone_colors_follow_design` / `count_is_queryable` / `single_digit_badge_meets_min_width_spec` / `badge_is_pure_display_without_click_semantics`。
 
 #### 2. Button（`widgets/button.rs`）
 
@@ -224,8 +224,6 @@ Divider::new(&tokens).vertical(true).strong(true).show(ui);
 
 **变体**：无 enum 变体；`searchable(bool)` 开关（popup 顶部加搜索输入框——**复用 `Input` 组件**，统一外观与 focus 描边约定——过滤 + 空过滤显示「无匹配结果」）。
 
-> ⚠️ 设计意图 vs 代码现状：见偏差清单 #6（弹层搜索框当前为原生 `TextEdit`，未走 `Input` 组件）。
-
 **API 要点**：`new(tokens, options: impl IntoIterator<Item: Into<String>>)`；`.selected(usize)`（初始索引）；`.width(f32)`（默认 160）；`.searchable(bool)`；`show(ui) -> Option<usize>`（**选中变化时**返回新索引；popup 开合状态存 egui memory，组件无状态）。
 
 **示例**（源自 main.rs 主题切换）：
@@ -246,7 +244,7 @@ if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
 
 **相关组件**：SearchableDropdown（可输入+键盘导航的下拉）、MultiSelect（多选下拉）、Segmented（互斥短选项）。
 
-**测试锚点**：`widgets/dropdown.rs` `mod tests`（L194）——`initial_selection_is_first_option` / `clicking_option_changes_selection` / `searchable_filters_and_shows_empty_hint`。
+**测试锚点**：`widgets/dropdown.rs` `mod tests`（L194）——`initial_selection_is_first_option` / `clicking_option_changes_selection` / `searchable_filters_and_shows_empty_hint` / `searchable_popup_has_text_input` / `search_box_has_no_hardcoded_hint` / `searchable_typing_filters_options` / `empty_state_renders_when_no_match`。
 
 #### 7. EmptyState（`widgets/empty_state.rs`）
 
@@ -301,19 +299,15 @@ if IconButton::new(&tokens, egui_phosphor::regular::SIDEBAR_SIMPLE)
 - 用 IconButton 承载带文字的操作（那是 Button 的职责）；
 - 用 `.size()` 做非标准尺寸（优先默认或 `small()`——默认尺寸须对齐 `control_md` token、`small()` 对齐 `control_sm` token，不得硬编码尺寸字面量）。
 
-> ⚠️ 设计意图 vs 代码现状：见偏差清单 #4（默认 32px 当前为硬编码字面量 `32.0`，未走 `control_md` token）。
-
 **相关组件**：Button（带文字操作）、SectionTitle（action 参数接收 IconButton）、Sidebar（行内 hover 删除 ×）、Tooltip（IconButton 内部用 `on_hover_text`；富文本提示用 Tooltip 组件）。
 
-**测试锚点**：`widgets/icon_button.rs` `mod tests`（L81）——`icon_button_click_fires` / `small_size_uses_control_sm_token` / `tooltip_does_not_block_clicks`。
+**测试锚点**：`widgets/icon_button.rs` `mod tests`（L81）——`icon_button_click_fires` / `small_size_uses_control_sm_token` / `default_side_follows_control_md_token` / `size_override_wins_over_default` / `tooltip_does_not_block_clicks`。
 
 #### 9. Input（`widgets/input.rs`）
 
 **用途**：文本输入框——统一外观（bg_panel_alt + border + radius_sm，focus 时 accent 1.5px 描边），可选前后缀图标与等宽字体。
 
 **适用场景**：一切自由文本输入（Sidebar 搜索、Dropdown/SearchableDropdown/MultiSelect 的弹层搜索框）；代码/价格等需要等宽对齐的输入用 `monospace(true)`。
-
-> ⚠️ 设计意图 vs 代码现状：见偏差清单 #6（Dropdown 弹层搜索框当前用原生 `TextEdit`，未走本组件，focus 描边等约定缺失）。
 
 **变体**：无 enum 变体；开关：`placeholder` / `prefix_icon` / `suffix_icon` / `monospace(bool)` / `width(f32)`（默认 220）。
 
@@ -842,7 +836,8 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 > 本节记录「设计意图 vs 代码现状」审查（用户修正：规范应规定**应然**，
 > 不得固化代码**实然**）发现的偏差条目——均已按设计意图改写文档并加 ⚠️ 标注。
-> **偏差 #4/#5/#6 已转 issue（#226/#227/#228），修复后回填关闭。**
+> **偏差 #4/#5/#6 已转 issue（#226/#227/#228）并修复关闭（2026-08-09），
+> 文档 ⚠️ 标注已移除，下文仅留历史记录。**
 
 1. **偏差 #1（BUG）** — ScreenerPanel 组合：筛选按钮变体。文档原写 `Default`，
    代码现状即 `Primary`（screener.rs:247），且与本文 Button 选择规则「每屏一个
@@ -852,21 +847,21 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 3. **偏差 #3（BUG）** — EmptyState 示例编造：原示例 title/描述互换并虚构
    「数据来自本地数据源」（代码库无此文案）。实际/设计意图：title「暂无图表数据」
    + 描述「输入代码并点击 Fetch」（chart.rs:88-94）。→ 文档已重写。
-4. **偏差 #4（权宜实现）** — IconButton 默认尺寸硬编码 `32.0`
+4. **偏差 #4（权宜实现，已修复 #226）** — IconButton 默认尺寸硬编码 `32.0`
    （icon_button.rs:22），未走 `control_md` token（`small()` 才走 `control_sm`）；
-   文档声称「与 control_sm/control_md token 对齐」仅部分成立。→ **issue #226**：
-   实现改为 `tokens.spacing.control_md`，并同步 `small_size_uses_control_sm_token`
-   测试对默认值的断言。
-5. **偏差 #5（缺失能力）** — Badge 设计规格「min-width 16px」（gui-upgrade.md
-   §5.1）未实现（badge.rs:52-69 无 `min_size`）；另文档「Sense::hover() 语义」表述
-   与实现不符（组件未设任何 Sense）。→ **issue #227**：实现 min-width 16px；
-   Badge 目前待接入，影响低。
-6. **偏差 #6（权宜实现）** — Dropdown 弹层搜索框用原生 `TextEdit`
+   文档声称「与 control_sm/control_md token 对齐」仅部分成立。→ 已实现
+   `tokens.spacing.control_md` 并同步测试断言（`default_side_follows_control_md_token`）。
+5. **偏差 #5（缺失能力，已修复 #227）** — Badge 设计规格「min-width 16px」
+   （gui-upgrade.md §5.1）未实现（badge.rs:52-69 无 `min_size`）；另文档
+   「Sense::hover() 语义」表述与实现不符（组件未设任何 Sense）。→ 已实现 min-width
+   16px（`ui.set_min_width(16.0)`），测试覆盖 `single_digit_badge_meets_min_width_spec`。
+6. **偏差 #6（权宜实现，已修复 #228）** — Dropdown 弹层搜索框用原生 `TextEdit`
    （dropdown.rs:107），绕过 `Input` 组件的统一外观/focus 描边约定（Input 适用场景
-   应为「一切自由文本输入」）。→ **issue #228**：复用 `Input` 组件；searchable
-   路径当前仅测试覆盖，影响低。
+   应为「一切自由文本输入」）。→ 已复用 `Input` 组件并移除硬编码 hint「搜索…」；
+   测试覆盖 `search_box_has_no_hardcoded_hint` / `searchable_typing_filters_options`。
 
-> 偏差 #1/#2/#3 为文档自身修正，无代码改动；#4/#5/#6 转 issue（#226/#227/#228）。
+> 偏差 #1/#2/#3 为文档自身修正，无代码改动；#4/#5/#6 转 issue（#226/#227/#228）
+> 并已修复关闭（2026-08-09 PR #229）。
 
 ---
 
