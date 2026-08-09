@@ -172,60 +172,68 @@ impl DataTable {
         style.visuals.widgets.hovered.bg_fill = c.bg_hover;
         ui.set_style(style);
 
-        let mut table = TableBuilder::new(ui).striped(true).sense(Sense::click());
-        for idx in 0..n_columns {
-            let column = if idx + 1 == n_columns {
-                Column::remainder()
-            } else {
-                Column::auto()
-            };
-            table = table.column(column);
-        }
-
-        table
-            .header(HEADER_HEIGHT, |mut header| {
-                for (idx, col) in columns.iter().enumerate() {
-                    let mut text = col.header.to_string();
-                    if idx == sort_column {
-                        text.push_str(if sort_descending { " ↓" } else { " ↑" });
+        // The auto columns size to their content; wide rows (e.g. SEPA's
+        // "行业 · 题材" cell) would widen the table's min_rect past its
+        // container frame-to-frame and push neighboring panels off the pane
+        // (SEPA detail panel: "右边内容一团乱"). A horizontal ScrollArea
+        // absorbs the overflow so the table stays at its allocated width.
+        let mut scroll = egui::ScrollArea::horizontal().auto_shrink([false, false]);
+        scroll = scroll.id_salt(("data_table", n_columns));
+        scroll.show(ui, |ui| {
+            let mut table = TableBuilder::new(ui).striped(true).sense(Sense::click());
+            for idx in 0..n_columns {
+                let column = if idx + 1 == n_columns {
+                    Column::remainder()
+                } else {
+                    Column::auto()
+                };
+                table = table.column(column);
+            }
+            table
+                .header(HEADER_HEIGHT, |mut header| {
+                    for (idx, col) in columns.iter().enumerate() {
+                        let mut text = col.header.to_string();
+                        if idx == sort_column {
+                            text.push_str(if sort_descending { " ↓" } else { " ↑" });
+                        }
+                        header.col(|ui| {
+                            let layout = if col.numeric {
+                                Layout::right_to_left(Align::Center)
+                            } else {
+                                Layout::left_to_right(Align::Center)
+                            };
+                            ui.with_layout(layout, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        sort_column == idx,
+                                        RichText::new(text.clone()).strong(),
+                                    )
+                                    .clicked()
+                                {
+                                    self.toggle_sort(idx);
+                                }
+                            });
+                        });
                     }
-                    header.col(|ui| {
-                        let layout = if col.numeric {
-                            Layout::right_to_left(Align::Center)
-                        } else {
-                            Layout::left_to_right(Align::Center)
-                        };
-                        ui.with_layout(layout, |ui| {
-                            if ui
-                                .selectable_label(
-                                    sort_column == idx,
-                                    RichText::new(text.clone()).strong(),
-                                )
-                                .clicked()
-                            {
-                                self.toggle_sort(idx);
+                })
+                .body(|mut body| {
+                    for orig_index in sorted {
+                        let is_selected = self.selected == Some(orig_index);
+                        body.row(tokens.spacing.table_row_h, |mut row| {
+                            let cells = &self.rows[orig_index];
+                            for (idx, cell) in cells.iter().enumerate() {
+                                let numeric = self.columns[idx].numeric;
+                                row.col(|ui| {
+                                    render_cell(ui, &tokens, cell, is_selected, numeric);
+                                });
+                            }
+                            if row.response().clicked() {
+                                clicked_row = Some(orig_index);
                             }
                         });
-                    });
-                }
-            })
-            .body(|mut body| {
-                for orig_index in sorted {
-                    let is_selected = self.selected == Some(orig_index);
-                    body.row(tokens.spacing.table_row_h, |mut row| {
-                        let cells = &self.rows[orig_index];
-                        for (idx, cell) in cells.iter().enumerate() {
-                            let numeric = self.columns[idx].numeric;
-                            row.col(|ui| {
-                                render_cell(ui, &tokens, cell, is_selected, numeric);
-                            });
-                        }
-                        if row.response().clicked() {
-                            clicked_row = Some(orig_index);
-                        }
-                    });
-                }
-            });
+                    }
+                });
+        });
 
         ui.set_style(previous_style);
 
