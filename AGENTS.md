@@ -60,6 +60,7 @@ Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成�
 
 | Step | 动作 | 所需证据 |
 |---|---|---|
+| **0.5. Worktree** | 需求是否需要 worktree？（feature/epic、2+ 模块、将产出 `.omo/plans/*.md` 或 `.omo/designs/*.md`）→ 需要则**立即创建并切换**（`/skwy-worktree`），plan/design 直接在 worktree 内创建；不需要则跳过 | worktree 名称 + `.omo/handoff.md` 已写入 |
 | **1. Design** | 涉及界面设计时：委派 `ui-designer` 产出 `.omo/designs/<feature>.md` 方案并经用户确认；纯逻辑/数据变更可跳过 | 展示方案要点 + 用户确认 |
 | **2. Issue** | 调用 `/skwy-github-workflow` 创建/管理 issue | 向用户展示 issue URL |
 | **3. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.omo/plans/*.md` 文件创建 + 用户批准 |
@@ -333,7 +334,9 @@ worktree 是独立 checkout，master 工作区的 untracked 文件不会出现�
 `~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh <name>` 自动启动工作树区域（探测默认终端 + setsid
 脱离进程组，无需手动解绑当前 session）。剩余工作（设计/计划/实现/commit/PR）
 全部由 worktree 内的 agent 自主完成——worktree 会话启动后**第一步读取
-`.omo/handoff.md`** 获取上下文契约。opencode 仍占用目录无法删除时用
+`.omo/handoff.md`** 获取上下文契约。worktree 创建后其原始分支（master）可能继续
+推进，**worktree 会话启动后先同步原始分支**（`git fetch origin master && git rebase origin/master`，
+冲突解决后再开始），避免基于过期基点开发。opencode 仍占用目录无法删除时用
 `~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh --close <name>` 终止并清理
 （从 worktree 内执行时自动转为 detached 清理，含关闭承载终端窗口，见 `kb/dev/process.md`）。
 **加载 `/skwy-worktree` skill 获取完整流程****（含 post-creation MANDATORY 步骤与清理）。
@@ -358,6 +361,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/design/backtest.md` | SEPA 历史回测 — 架构、组合模拟/基准代理口径、绩效指标、决策记录 |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
 | `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.omo/designs/` 仅归档） |
+| `kb/design/workflow-skills.md` | skwy- 技能组设计决策（issue #210）— 全局技能迁移范围、门禁 3.5 步、脚本自包含等 |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `kb/dev/process.md` | 开发流程、命令、配置、调试、重置 |
 | `kb/dev/database.md` | 数据库开发信息 — Dolt 查询/同步/提交、Parquet/DuckDB 生成、布局 |
@@ -399,7 +403,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 
 ## Setup
 
-- **Rust edition 2024** — 需要 Rust ≥1.85。当前：1.96。
+- **Rust edition 2024** — 需要 Rust ≥1.85。当前工具链：1.97.1。
 - **mold 链接器** — Linux 构建使用 mold（`.cargo/config.toml`，`-fuse-ld=/usr/bin/mold`）。Ubuntu: `sudo apt install mold clang`。缺失时编译失败。
 - **GUI app** — 需要显示服务器（X11/Wayland）。`scripts/run.sh` 一键启动（或 `cargo run --bin compass`）。
 - 日志写入 `logs/compass.log`（每日轮转）。
