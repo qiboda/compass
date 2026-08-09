@@ -98,16 +98,20 @@ impl<'a> Button<'a> {
     }
 
     /// (variant, base fill, hover fill, pressed fill, text color).
+    ///
+    /// All variants share the theme's `text_primary` label color so button
+    /// text follows the theme switch (dark 浅灰 / light 深色) instead of a
+    /// hardcoded white (user acceptance: "fetch按钮的文字颜色没有跟随主题").
     fn variant_colors(&self) -> (Color32, Color32, Color32, Color32) {
         let c = &self.tokens.color;
         match self.variant {
             ButtonVariant::Default => (c.bg_panel_alt, c.bg_hover, c.bg_active, c.text_primary),
-            ButtonVariant::Primary => (c.accent, c.accent_hover, c.accent_pressed, Color32::WHITE),
+            ButtonVariant::Primary => (c.accent, c.accent_hover, c.accent_pressed, c.text_primary),
             ButtonVariant::Danger => (
                 c.error,
                 c.error.gamma_multiply(1.15),
                 c.error.gamma_multiply(0.85),
-                Color32::WHITE,
+                c.text_primary,
             ),
             ButtonVariant::Ghost => (
                 Color32::TRANSPARENT,
@@ -205,7 +209,8 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    /// Default variant uses the panel-alt fill; primary uses the accent.
+    /// Variants follow the design; all label colors use the theme's
+    /// text_primary (theme-switch aware, not hardcoded white).
     #[test]
     fn variant_colors_follow_design() {
         let tokens = ThemeTokens::dark();
@@ -216,12 +221,15 @@ mod tests {
         assert_eq!(primary.variant_colors().0, tokens.color.accent);
         assert_eq!(primary.variant_colors().1, tokens.color.accent_hover);
         assert_eq!(primary.variant_colors().2, tokens.color.accent_pressed);
+        assert_eq!(primary.variant_colors().3, tokens.color.text_primary);
 
         let danger = Button::new(&tokens, "x").variant(ButtonVariant::Danger);
         assert_eq!(danger.variant_colors().0, tokens.color.error);
+        assert_eq!(danger.variant_colors().3, tokens.color.text_primary);
 
         let ghost = Button::new(&tokens, "x").variant(ButtonVariant::Ghost);
         assert_eq!(ghost.variant_colors().0, Color32::TRANSPARENT);
+        assert_eq!(ghost.variant_colors().3, tokens.color.text_primary);
     }
 
     /// Sizes map to the control spacing tokens.
@@ -303,9 +311,9 @@ mod tests {
         assert!(!clicked.get(), "disabled button must not fire clicks");
     }
 
-    /// Loading keeps the variant text color (white on Primary) — the spinner
-    /// and dimmed fill signal the busy state; the label must not fade to
-    /// text_disabled (user acceptance: "加载中的字体颜色不对").
+    /// Loading keeps the variant's text color (text_primary) — the spinner
+    /// and dimmed fill already signal the busy state; the label must not
+    /// fade to text_disabled (user acceptance: "加载中的字体颜色不对").
     #[test]
     fn loading_button_keeps_variant_text_color() {
         let tokens = ThemeTokens::dark();
@@ -324,8 +332,8 @@ mod tests {
             .filter_map(|clipped| text_shape_color(&clipped.shape))
             .collect();
         assert!(
-            text_colors.contains(&Color32::WHITE),
-            "loading Primary button must render white label text, got {text_colors:?}"
+            text_colors.contains(&tokens.color.text_primary),
+            "loading Primary button must render the theme text_primary label, got {text_colors:?}"
         );
         assert!(
             !text_colors.contains(&tokens.color.text_disabled),
