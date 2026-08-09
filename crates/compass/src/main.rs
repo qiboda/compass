@@ -159,7 +159,7 @@ fn main() -> eframe::Result {
                 work_signal,
                 stock_list,
                 stock_picker,
-                timeframe_index: 0usize,
+                timeframe_index: timeframe_index_from_value(&config.app.app.default_timeframe),
                 theme,
                 dock_style,
                 _backend_handle,
@@ -746,8 +746,14 @@ impl CompassApp {
     fn set_timeframe(&mut self, idx: usize) {
         if idx != self.timeframe_index {
             debug!(timeframe = timeframe_label(idx), "timeframe changed");
-            self.timeframe_index = idx;
         }
+        self.timeframe_index = idx;
+        self.shared_state.timeframe.set(timeframe_value(idx));
+        // Reload unconditionally: a fetch already in flight belongs to the
+        // old timeframe, so skipping here would leave chart and toolbar
+        // label disagreeing. The dispatcher sets loading=true synchronously
+        // on every fetch; the last request wins.
+        self.fetch_bars();
     }
 
     /// Widget id of the search input rendered inside [`Sidebar::show`].
@@ -1087,12 +1093,26 @@ impl CompassApp {
     }
 }
 
+/// Map a timeframe index to its label. The inverse mapping is
+/// [`timeframe_index_from_value`] — keep the two matches in sync.
 fn timeframe_label(idx: usize) -> &'static str {
     match idx {
         0 => "1d",
         1 => "1w",
         2 => "1M",
         _ => "1d",
+    }
+}
+
+/// Map a timeframe value back to its index. The inverse mapping is
+/// [`timeframe_label`] — keep the two matches in sync. Unknown values fall
+/// back to 0 ("1d") so the toolbar selection and the chart never disagree
+/// even with an unexpected configured timeframe.
+fn timeframe_index_from_value(value: &str) -> usize {
+    match value {
+        "1w" => 1,
+        "1M" => 2,
+        _ => 0,
     }
 }
 
