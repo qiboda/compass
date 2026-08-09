@@ -8,10 +8,11 @@ set -euo pipefail
 
 FAIL=0
 
-# Mirrors the hook's detection greps. grep exits 1 on no match — coerce to 0
-# so the counting works under set -euo pipefail.
-count_all()    { printf '%s\n' "$1" | grep -ciE '(^|[[:space:](])ref[[:space:]]+' || true; }
-count_valid()  { printf '%s\n' "$1" | grep -ciE '(^|[[:space:](])ref[[:space:]]+#[0-9]+' || true; }
+# Mirrors the hook's detection greps (ref #211): only line-leading "ref"
+# counts as an intended reference. Mid-sentence "ref" is prose and is ignored.
+# grep exits 1 on no match — coerce to 0 so counting works under pipefail.
+count_all()    { printf '%s\n' "$1" | grep -ciE '^[[:space:]]*ref[[:space:]]+' || true; }
+count_valid()  { printf '%s\n' "$1" | grep -ciE '^[[:space:]]*ref[[:space:]]+#[0-9]+' || true; }
 
 check() {
     local name="$1" msg="$2" expect_all="$3" expect_valid="$4"
@@ -46,9 +47,9 @@ check "term plus legal ref" \
 
 ref #96" 1 1
 
-# 5. ref in parentheses followed by #N — counts as valid
-check "ref #N in parentheses" \
-    "Review (ref #96) found an issue" 1 1
+# 5. ref in parentheses (mid-line prose) — NOT counted as an intended reference
+check "ref #N in parentheses is prose" \
+    "Review (ref #96) found an issue" 0 0
 
 # 6. 'refactored' / 'references' / 'refactor' — word fragment, must NOT count
 check "refactored not counted" \
@@ -68,9 +69,25 @@ ref
 
 more text" 0 0
 
-# 8. 'ref #97' mid-sentence — valid
-check "ref #N mid-sentence" \
-    "this references ref #97 in the middle" 1 1
+# 8. 'ref #97' mid-sentence (narrative prose) — NOT counted as intended reference
+check "ref #N mid-sentence is prose" \
+    "this references ref #97 in the middle" 0 0
+
+# 9. Narrative prose with bare 'ref' word mid-sentence — NOT counted (ref #211 regression)
+check "bare ref word in prose ignored" \
+    "Only a ref that occupies its own line counts" 0 0
+
+# 10. Bare 'ref' at line start without #N — counted as malformed (intended reference missing number)
+check "bare ref at line start without number is malformed" \
+    "fix: thing
+
+ref 23" 1 0
+
+# 11. Standalone 'ref #96' + prose 'ref' word — only the standalone line counts
+check "standalone ref plus prose ref word" \
+    "A ref that is mid-sentence is prose.
+
+ref #96" 1 1
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then

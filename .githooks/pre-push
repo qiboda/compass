@@ -103,12 +103,13 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     # Exclusion applied at call sites: git log $range --not origin/master
     excl_origin="--not origin/master"
 
-    # Detect malformed ref references: standalone "ref" not followed by #N.
-    # ref must be preceded by line start, whitespace, or '(' — legal refs only
-    # appear there. This excludes code/term fragments like --abbrev-ref,
-    # \<ref\>, or refactored (ref #97).
-    all_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '(^|[[:space:](])ref[[:space:]]+')
-    valid_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '(^|[[:space:](])ref[[:space:]]+#[0-9]+')
+    # Detect malformed ref references: a line that starts with "ref" (the
+    # intended-reference form) but is NOT followed by #N. Only line-leading
+    # "ref" counts — mid-sentence "ref" is prose (narrative mention, ref #211)
+    # and must not trigger this. This excludes code/term fragments like
+    # --abbrev-ref, \<ref\>, refactored, or narrative prose (ref #97, ref #211).
+    all_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '^[[:space:]]*ref[[:space:]]+')
+    valid_refs=$(git log "$range" $excl_origin --format="%B" 2>/dev/null | grep -ciE '^[[:space:]]*ref[[:space:]]+#[0-9]+')
 
     if [ "$all_refs" -gt "$valid_refs" ]; then
         echo ""
