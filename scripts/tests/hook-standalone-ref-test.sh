@@ -116,6 +116,29 @@ check_extract "ref at line start followed by prose" \
 
 ref #210 something else" ""
 
+# 9. Uppercase "REF #N" — case-insensitive match (hooks use grep -i).
+check_extract "uppercase REF #210" \
+    "fix: thing
+
+REF #210" "210"
+
+# 10. CRLF line endings — \r is [[:space:]] so the standalone line still matches.
+check_extract "CRLF line endings" \
+    "$(printf 'fix: thing\r\n\r\nref #210\r\n')" "210"
+
+# 11. Duplicate standalone refs across lines — sort -u dedupes to one.
+check_extract "duplicate refs deduped" \
+    "fix: thing
+
+ref #210
+ref #210" "210"
+
+# 12. Trailing comma after ref — NOT a standalone ref (group requires #N after comma).
+check_extract "trailing comma after ref" \
+    "fix: thing
+
+ref #210," ""
+
 # --- Existence check (has_standalone_ref) ---
 
 check_has "canonical standalone ref present" \
@@ -132,6 +155,20 @@ check_has "parenthesized narrative only — no standalone" \
     "fix: thing
 
 (see ref #119)" no
+
+# --- Mirror-drift guard: the exact regex must be present in both hook files ---
+
+REPO_ROOT=$(git -C "$(dirname "$0")/../.." rev-parse --show-toplevel 2>/dev/null || echo ".")
+STANDALONE_REGEX='^[[:space:]]*ref[[:space:]]+#[0-9]+([[:space:]]*,[[:space:]]*#[0-9]+)*[[:space:]]*$'
+
+for hook in "$REPO_ROOT/.githooks/commit-msg" "$REPO_ROOT/.githooks/pre-push"; do
+    if grep -Fq "$STANDALONE_REGEX" "$hook"; then
+        echo "PASS: mirror-drift guard — regex present in $(basename "$hook")"
+    else
+        echo "FAIL: mirror-drift guard — regex MISSING from $(basename "$hook")"
+        FAIL=1
+    fi
+done
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then
