@@ -412,9 +412,11 @@ impl ScreenerPanel {
 
     /// 技术面条件 card: MA / breakout / momentum / volume toggles.
     ///
-    /// Same atomic-group pattern as [`Self::basic_group`]: each toggle plus
-    /// its parameter section shares one child ui, so the outer wrapped
-    /// layout never splits a toggle from its parameters across rows.
+    /// Same atomic-group pattern as `basic_group` (a module-level helper,
+    /// not a method — the intra-doc link is omitted because rustdoc cannot
+    /// resolve private free functions): each toggle plus its parameter
+    /// section shares one child ui, so the outer wrapped layout never
+    /// splits a toggle from its parameters across rows.
     fn technical_conditions(&mut self, ui: &mut egui::Ui) {
         let tokens = self.form_tokens();
 
