@@ -15,7 +15,7 @@ description: 产品 agent，分析代码库状态并为冲刺规划提出里程�
 
 ## 触发条件
 
-- **自动运行**：周一冲刺规划（通过 compass-workflow 冲刺 hook）
+- **自动运行**：周一冲刺规划（通过 skwy-workflow 冲刺 hook）
 - **手动触发**：`/product brainstorm` — 按需运行，获取候选建议
 
 ## 工作流
@@ -97,9 +97,9 @@ Based on analysis of <N open issues, M recent commits>:
 - **覆盖用户决策** — 候选是建议，不是命令
 - **运行编译或测试** — 仅分析，不执行构建步骤
 
-## 与 compass-workflow 的协作
+## 与 skwy-workflow 的协作
 
-1. compass-workflow 冲刺 hook（规则 10）：周一 → 调用 product agent
+1. skwy-workflow 冲刺 hook（规则 10）：周一 → 调用 product agent
 2. Product agent 扫描并提议 → 用户 review 和选择
 3. 用户从选中的候选需求创建里程碑（手动步骤）
 4. Product agent 不创建里程碑 — 仅提议

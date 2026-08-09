@@ -1,0 +1,4 @@
+task-14: kb reference sync
+- process.md: 9 refs -> skwy-* (incl. L42/L263 path refs -> global), L274 rustdoc convention line untouched
+- ui.md L4, impl.md L38, fix.md L56, product/SKILL.md L18/L100/L102: compass-workflow/docs path -> skwy-workflow
+- anchored-pattern grep: 0 residual in 5 files (opencode-worktree plugin name kept, non-skill)

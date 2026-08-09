@@ -1,0 +1,7 @@
+tasks 3-7: 5 global skills created in ~/.config/opencode/skills/ (Commit: N, evidence ledger)
+- skwy-workflow/SKILL.md (452 lines): gate 3.5 adversarial step (4), skwy- refs (24), no old names (0)
+- skwy-github-workflow/SKILL.md (311 lines): no qiboda/compass (0), <owner>/<repo> (2), 永远追加 (1)
+- skwy-git-workflow/SKILL.md (156 lines): ref #N (13), Never auto-push (4), no ref #[0-9] (0)
+- skwy-requirement-test/SKILL.md (180 lines): name (1), no compass residue (0), RED skeleton (5)
+- skwy-adversarial-test/SKILL.md (82 lines): name (1), hard constraints (4), attack dims (6), DEFERRED (2)
+verified independently via grep (not agent self-report)

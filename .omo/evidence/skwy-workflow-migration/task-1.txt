@@ -1,0 +1,3 @@
+task-1: issue #210 body synced (7 skills, 2 agents, gate 3.5)
+- gh issue edit 210 --body-file OK
+- handoff.md: decisions 9-13 appended, skill list 6->7, skwy-test removed (0 residual)

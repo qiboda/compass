@@ -1,0 +1,8 @@
+tasks 8-11: skwy-reflect skill + skwy-worktree skill/scripts + 2 global agents (Commit: N, evidence ledger)
+- skwy-reflect/SKILL.md (241 lines): no kb/dev/reflections (0), no ref #[0-9] (0), session_read (1)
+- skwy-worktree/SKILL.md (203 lines): 9 absolute script paths, no relative refs, bash -n OK
+- skwy-worktree/scripts/open-worktrees.sh: SELF=dirname form, usage absolute, bash -n OK
+- skwy-worktree/scripts/tests/open-worktrees-test.sh: bash -n OK, test suite PASSED
+- agent/skwy-requirement-test.md (56 lines): name (1), no compass residue (0), skwy-workflow (1)
+- agent/skwy-adversarial-test.md (103 lines): name (1), constraints (6), bash deny (1), DEFERRED (4)
+verified independently via grep + bash -n (not agent self-report)

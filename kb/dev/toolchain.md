@@ -309,3 +309,17 @@
 - **验证**: 全窗口 benchmark 从 296% → 101.7%，单日最大跳变从 +94% → +4.8%；
   新增 `benchmark_skips_absurd_returns` 测试锁定；#181 修复后 benchmark
   单日收益区间回归 [-9.7%, +4.0%]（F3 实测），无 >100% 伪影残留
+
+### [CI] Python Test 失败：/data 权限（GitHub runner 无 /data 写权限）
+
+- **症状**: PR CI 的 Python Test job 失败——`tests/test_common.py::TestCsvDir::test_env_unset_returns_default`
+  `PermissionError: [Errno 13] Permission denied: '/data'` + `FileNotFoundError: /data/compass-data/csv`；1 failed, 326 passed
+- **根因**: `csv_dir()` 默认返回 `/data/compass-data/csv`（master commit 8d7bca4 引入统一 CSV 目录），
+  该测试在 env 未设 COMPASS_CSV_DIR 时断言默认路径——**GitHub runner 无 /data 权限**（Errno 13），
+  而本地（有 /data）3 个 TestCsvDir 测试全部通过。与 #210 技能迁移无关（该 PR 零 Python 变更）。
+- **排查路径**: `gh pr checks 212` 看失败 job → `gh run view <id> --log-failed` 定位失败测试与
+  PermissionError → 本地 `uv run pytest tests/test_common.py::TestCsvDir -q` 通过（有权限）→
+  git diff 确认 PR 无 Python 变更 → 判定为预存 CI 环境问题（源自 8d7bca4）
+- **修复**: 待处理——CI runner 需创建 `/data/compass-data/csv` 并授权，或测试改为 mock
+  csv_dir 的默认路径（不依赖真实 /data）。**影响所有后续 PR 的 Python Test job**。
+- **验证**: 本地测试通过；CI 需环境修复后重跑

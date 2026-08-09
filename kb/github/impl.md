@@ -35,7 +35,7 @@
 
 ### 4. 文档
 - 如果行为、API 或配置变更：更新相关 `kb/` 文件
-- 根据 `.opencode/skills/docs/SKILL.md` § 变更 → kb/ 映射表确定对应的 kb 文件
+- 根据 `~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → kb/ 映射表由项目自身定义）确定对应的 kb 文件
 
 ### 5. 创建 PR
 
