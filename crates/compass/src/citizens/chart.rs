@@ -1,6 +1,7 @@
 use crate::citizens::indicators::MaBollIndicator;
 use crate::state::SharedState;
 use crate::theme::CompassTheme;
+use compass_i18n::t;
 use compass_ui::widgets::empty_state::EmptyState;
 use egui::Color32;
 use egui_charts::ChartType;
@@ -85,12 +86,14 @@ impl ChartCitizen {
 
         let bars = state.bars.get();
         if bars.is_empty() {
+            let empty_title = t!("chart.empty_title");
+            let empty_desc = t!("chart.empty_desc");
             EmptyState::new(
                 app_theme.tokens(),
                 egui_phosphor::regular::CHART_LINE,
-                "暂无图表数据",
+                &empty_title,
             )
-            .description("输入代码并点击 Fetch")
+            .description(&empty_desc)
             .show(ui);
             return;
         }
@@ -313,10 +316,17 @@ impl ChartCitizen {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use compass_i18n::t;
     use egui_charts::model::Bar;
     use egui_charts::studies::IndicatorValue;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
+
+    /// Key-resolution test helper (plan T4): resolves a key through the
+    /// shared compass-i18n dictionary.
+    fn tr(key: &str) -> String {
+        t!(key).to_string()
+    }
 
     fn make_bar(
         time: chrono::DateTime<Utc>,
@@ -352,8 +362,8 @@ mod tests {
             citizen.show(ui, &shared, &theme);
         });
         harness.run();
-        let _ = harness.get_by_label("暂无图表数据");
-        let _ = harness.get_by_label_contains("输入代码并点击 Fetch");
+        let _ = harness.get_by_label(&tr("chart.empty_title"));
+        let _ = harness.get_by_label_contains(&tr("chart.empty_desc"));
     }
 
     #[test]
@@ -397,7 +407,7 @@ mod tests {
         });
         harness.run();
         assert!(
-            harness.query_by_label("暂无图表数据").is_none(),
+            harness.query_by_label(&tr("chart.empty_title")).is_none(),
             "chart must render instead of the empty state when bars exist"
         );
     }

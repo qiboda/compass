@@ -3,6 +3,7 @@
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 use egui_mobius::signals::Signal;
 
+use compass_i18n::t;
 use compass_types::{
     BreakoutCondition, MaCondition, MomentumCondition, ScreenerQuery, VolumeCondition,
 };
@@ -50,37 +51,39 @@ enum MaKind {
 impl MaKind {
     fn label(self) -> &'static str {
         match self {
-            Self::AboveMa20 => "站上 MA20",
-            Self::AboveMa60 => "站上 MA60",
-            Self::BullishAlign => "多头排列 MA5>MA20>MA60",
+            Self::AboveMa20 => "screener.ma_above20",
+            Self::AboveMa60 => "screener.ma_above60",
+            Self::BullishAlign => "screener.ma_bullish",
         }
     }
 }
 
-/// Results table column specs (design §6.6).
+/// Results table column specs (design §6.6). Headers hold **i18n keys**
+/// (design `.omo/designs/gui-i18n.md` §1); `DataTable::show` resolves them
+/// via `t!()` every frame.
 const COLUMNS: [ColumnSpec; 6] = [
     ColumnSpec {
-        header: "代码",
+        header: "screener.table.code",
         numeric: false,
     },
     ColumnSpec {
-        header: "名称",
+        header: "screener.table.name",
         numeric: false,
     },
     ColumnSpec {
-        header: "最新价",
+        header: "screener.table.latest",
         numeric: true,
     },
     ColumnSpec {
-        header: "20日涨跌幅",
+        header: "screener.table.change_20d",
         numeric: true,
     },
     ColumnSpec {
-        header: "市值(亿)",
+        header: "screener.table.market_cap",
         numeric: true,
     },
     ColumnSpec {
-        header: "行业",
+        header: "screener.table.industry",
         numeric: false,
     },
 ];
@@ -434,9 +437,9 @@ impl ScreenerPanel {
                     if let Some(idx) = Dropdown::new(
                         &tokens,
                         [
-                            MaKind::AboveMa20.label(),
-                            MaKind::AboveMa60.label(),
-                            MaKind::BullishAlign.label(),
+                            t!(MaKind::AboveMa20.label()),
+                            t!(MaKind::AboveMa60.label()),
+                            t!(MaKind::BullishAlign.label()),
                         ],
                     )
                     .selected(current)
@@ -587,6 +590,7 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     fn panel_with_form() -> (ScreenerPanel, SharedState) {
+        rust_i18n::set_locale("zh");
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();

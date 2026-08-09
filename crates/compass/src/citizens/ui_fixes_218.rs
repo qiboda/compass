@@ -32,10 +32,22 @@ use crate::stock_projection;
 use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
 use crate::theme::CompassTheme;
 
+/// Serializes `set_locale` calls across ALL test modules — `rust_i18n::set_locale`
+/// is a process-global; parallel tests in different modules (main.rs, sepa.rs)
+/// would otherwise corrupt each other's locale (plan T15 `LANG_LOCK`). This is
+/// the single shared lock; modules must not define their own.
+pub(crate) static LANG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub(crate) fn build_compass_app_with_timeframe(
     egui_ctx: egui::Context,
     default_timeframe: &str,
 ) -> CompassApp {
+    // rust-i18n's default locale is "en" and its `default-locale` metadata is a
+    // no-op in 4.2.1 (the generated init keeps the current locale). GUI tests
+    // built through this constructor expect the zh dictionary by default, so
+    // pin zh here; en-locale tests override AFTER building, before running the
+    // harness (ui_fixes_218 is the single construction point for kittest).
+    rust_i18n::set_locale("zh");
     let config = AppConfig::default();
     let shared_state = Arc::new(SharedState::new("SZ000001", default_timeframe));
 

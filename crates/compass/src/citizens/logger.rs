@@ -1,3 +1,4 @@
+use compass_i18n::t;
 use compass_ui::tokens::ThemeTokens;
 use compass_ui::widgets::icon_button::IconButton;
 use compass_ui::widgets::section_title::SectionTitle;
@@ -43,8 +44,11 @@ impl LoggerPanel {
     /// button was clicked (the caller opens the save-file dialog).
     pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, tokens: &ThemeTokens) -> bool {
         let count = state.log.get().log_count();
-        let export = IconButton::new(tokens, egui_phosphor::regular::EXPORT).tooltip("导出日志");
-        let export_clicked = SectionTitle::new(tokens, "日志")
+        let export_tooltip = t!("logger.export_tooltip");
+        let title = t!("logger.title");
+        let export =
+            IconButton::new(tokens, egui_phosphor::regular::EXPORT).tooltip(&export_tooltip);
+        let export_clicked = SectionTitle::new(tokens, &title)
             .count(count)
             .action(export)
             .show(ui)
@@ -59,8 +63,15 @@ impl LoggerPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use compass_i18n::t;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
+
+    /// Key-resolution test helper (plan T4): resolves a key through the
+    /// shared compass-i18n dictionary.
+    fn tr(key: &str) -> String {
+        t!(key).to_string()
+    }
 
     #[test]
     fn new_creates_panel_with_correct_id() {
@@ -109,7 +120,7 @@ mod tests {
             panel.show(ui, &shared, &tokens);
         });
         harness.run();
-        let _ = harness.get_by_label("日志");
+        let _ = harness.get_by_label(&tr("logger.title"));
         let _ = harness.get_by_label("0");
         let _ = harness.get_by_label(egui_phosphor::regular::EXPORT);
     }

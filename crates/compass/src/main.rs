@@ -33,6 +33,12 @@ mod state;
 mod tabs;
 mod theme;
 
+// i18n (issue #222): shared locale data from compass-i18n. `fallback = "zh"`
+// keeps every t!() call Chinese when the active locale misses a key; the
+// process-global set_locale (wired in main) switches zh/en for the whole GUI.
+rust_i18n::i18n!("../compass-i18n/locales", fallback = "zh");
+use compass_i18n::t;
+
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
 use citizens::screener::ScreenerPanel;
@@ -50,6 +56,7 @@ const WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(1440.0, 900.0);
 fn main() -> eframe::Result {
     let _file_guard = init_tracing();
     let config = load_config();
+    compass_i18n::set_locale(normalize_language(&config.app.language));
 
     // Create reactive shared state
     let shared_state = Arc::new(state::SharedState::new(
@@ -236,6 +243,21 @@ struct FullConfig {
     screener: ScreenerQuery,
     #[serde(default)]
     watchlist: WatchlistConfig,
+}
+
+/// Normalize a raw config language value to the two supported codes ("zh" /
+/// "en"), falling back to "zh" for anything else — including the empty string
+/// produced by `AppConfig::default()` on a parse failure (derive `Default`
+/// yields ""). Emits a warning for unrecognized values (issue #222).
+fn normalize_language(raw: &str) -> &'static str {
+    match raw {
+        "zh" => "zh",
+        "en" => "en",
+        other => {
+            tracing::warn!(language = %other, "unrecognized language, falling back to zh");
+            "zh"
+        }
+    }
 }
 
 /// Reads `~/.config/compass/config.toml`. Falls back to `AppConfig::default()`
@@ -439,7 +461,34 @@ fn save_watchlist_config(symbols: &[String]) -> Result<(), String> {
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
 
-/// Projection mapping `StockBasic` rows into the searchable dropdown's fields.
+/// Persist the GUI language to the top-level `language` key of config.toml
+/// (issue #222). Mirrors [`save_watchlist_config`]: read-modify-write keeps
+/// every other config section (`[app]`, `[watchlist]`, `[screener]`, ...)
+/// intact; creates the file when it does not exist.
+fn save_language_config(language: &str) -> Result<(), String> {
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    let mut doc = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents
+            .parse::<toml::Value>()
+            .map_err(|e| format!("failed to parse config.toml: {e}"))?,
+        Err(_) => toml::Value::Table(Default::default()),
+    };
+    doc.as_table_mut().expect("value is a table").insert(
+        "language".to_string(),
+        toml::Value::String(language.to_string()),
+    );
+
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&config_path, serialized)
+        .map_err(|e| format!("failed to write config.toml: {e}"))
+}
 ///
 /// The UI crate stays free of business-crate dependencies; the binary adapts
 /// its own row type through projection functions.
@@ -564,13 +613,11 @@ impl eframe::App for CompassApp {
         if !self.startup_modal_shown {
             self.startup_modal_shown = true;
             if self.stock_list.is_empty() {
-                self.modal.set_title("数据未就绪");
-                self.modal.set_body(
-                    "未在本地数据目录中找到股票列表（stock_basic.parquet）。\n请先用数据管线导入数据：cargo run --bin compass-data -- import-compass --table stock_basic",
-                );
+                self.modal.set_title(t!("modal.startup.title"));
+                self.modal.set_body(t!("modal.startup.body"));
                 self.modal.set_danger(false);
-                self.modal.set_confirm_text("知道了");
-                self.modal.set_cancel_text("取消");
+                self.modal.set_confirm_text(t!("modal.startup.confirm"));
+                self.modal.set_cancel_text(t!("common.cancel"));
                 self.modal.set_on_confirm(|| {});
                 self.modal.open(ui.ctx().input(|i| i.time));
             }
@@ -683,7 +730,7 @@ impl eframe::App for CompassApp {
                         .map(|d| d.rows.len())
                         .unwrap_or(0);
                     self.toast
-                        .push(ToastLevel::Success, format!("SEPA 评分已更新 · {count} 只"));
+                        .push(ToastLevel::Success, t!("toast.sepa_updated", count = count));
                 }
             }
             self.last_sepa_loading = current_sepa_loading;
@@ -858,7 +905,7 @@ impl CompassApp {
             }
         }
         let groups = [SidebarGroup {
-            title: "自选".to_string(),
+            title: t!("sidebar.group_watchlist").to_string(),
             items,
         }];
 
@@ -893,8 +940,10 @@ impl CompassApp {
         if let Err(e) = save_watchlist_config(&watchlist) {
             tracing::warn!(error = %e, "failed to save watchlist config");
         }
-        self.toast
-            .push(ToastLevel::Success, format!("已添加 {symbol} 到自选"));
+        self.toast.push(
+            ToastLevel::Success,
+            t!("toast.watchlist_added", symbol = symbol),
+        );
     }
 
     /// Remove `symbol` from the watchlist and persist it.
@@ -909,8 +958,10 @@ impl CompassApp {
         if let Err(e) = save_watchlist_config(&watchlist) {
             tracing::warn!(error = %e, "failed to save watchlist config");
         }
-        self.toast
-            .push(ToastLevel::Success, format!("已从自选移除 {symbol}"));
+        self.toast.push(
+            ToastLevel::Success,
+            t!("toast.watchlist_removed", symbol = symbol),
+        );
     }
 
     /// Open the danger confirm modal for removing `symbol` from the watchlist
@@ -925,12 +976,12 @@ impl CompassApp {
         }
         self.pending_delete = Some(symbol.to_string());
         *self.delete_confirmed.borrow_mut() = false;
-        self.modal.set_title("移除自选");
+        self.modal.set_title(t!("modal.remove.title"));
         self.modal
-            .set_body(format!("确定要从自选中移除 {symbol} 吗？"));
+            .set_body(t!("modal.remove.body", symbol = symbol));
         self.modal.set_danger(true);
-        self.modal.set_confirm_text("移除");
-        self.modal.set_cancel_text("保留");
+        self.modal.set_confirm_text(t!("modal.remove.confirm"));
+        self.modal.set_cancel_text(t!("modal.remove.cancel"));
         let confirmed = self.delete_confirmed.clone();
         self.modal.set_on_confirm(move || {
             *confirmed.borrow_mut() = true;
@@ -945,12 +996,12 @@ impl CompassApp {
             Ok(()) => {
                 self.toast.push(
                     ToastLevel::Success,
-                    format!("日志已导出: {}", path.display()),
+                    t!("toast.log_exported", path = path.display().to_string()),
                 );
             }
             Err(e) => {
                 self.toast
-                    .push(ToastLevel::Error, format!("日志导出失败: {e}"));
+                    .push(ToastLevel::Error, t!("toast.log_export_failed", error = e));
             }
         }
     }
@@ -971,7 +1022,7 @@ impl CompassApp {
         let loading = self.shared_state.loading.get();
         let error = self.shared_state.error.get();
         let (status, status_text) = if loading {
-            (StatusKind::Loading, "加载中…".to_string())
+            (StatusKind::Loading, t!("statusbar.loading").to_string())
         } else if let Some(err) = error {
             (StatusKind::Error, err)
         } else {
@@ -994,7 +1045,7 @@ impl CompassApp {
                 }),
                 status,
                 status_text,
-                source: format!("本地数据源 · {} 只", self.stock_list.len()),
+                source: t!("statusbar.source", count = self.stock_list.len()).to_string(),
                 clock: self.status_clock.clone(),
             },
         );
@@ -1019,7 +1070,8 @@ impl CompassApp {
                 {
                     self.set_timeframe(idx);
                 }
-                Tag::new(&tokens, "前复权")
+                let adjust = t!("toolbar.adjust");
+                Tag::new(&tokens, &adjust)
                     .variant(TagVariant::Custom)
                     .color(tokens.color.info)
                     .show(ui);
@@ -1027,7 +1079,12 @@ impl CompassApp {
 
             // Group C — 操作: primary Fetch button with loading state.
             tb.group(ui, |ui| {
-                let fetch_clicked = Button::new(&tokens, if loading { "加载中…" } else { "Fetch" })
+                let fetch_label = if loading {
+                    t!("toolbar.loading")
+                } else {
+                    t!("toolbar.fetch")
+                };
+                let fetch_clicked = Button::new(&tokens, fetch_label)
                     .variant(ButtonVariant::Primary)
                     .size(ButtonSize::Lg)
                     .icon(egui_phosphor::regular::DOWNLOAD_SIMPLE)
@@ -1042,8 +1099,9 @@ impl CompassApp {
 
             // Group D — 显示: sidebar toggle + theme dropdown.
             tb.group(ui, |ui| {
+                let toggle_sidebar = t!("toolbar.toggle_sidebar");
                 if IconButton::new(&tokens, egui_phosphor::regular::SIDEBAR_SIMPLE)
-                    .tooltip("切换侧边栏")
+                    .tooltip(&toggle_sidebar)
                     .show(ui)
                 {
                     self.sidebar_visible = !self.sidebar_visible;
@@ -1069,7 +1127,8 @@ impl CompassApp {
                         self.modal.set_tokens(tokens);
                         self.screener.set_tokens(tokens);
                         self.sepa.set_tokens(tokens);
-                        self.toast.push(ToastLevel::Info, "主题已切换");
+                        self.toast
+                            .push(ToastLevel::Info, t!("toast.theme_switched"));
                     }
                 }
             });
@@ -1088,7 +1147,7 @@ impl CompassApp {
         let current_loading = self.shared_state.loading.get();
         if self.last_loading && !current_loading && self.shared_state.error.get().is_none() {
             self.toast
-                .push(ToastLevel::Success, "Data fetched successfully");
+                .push(ToastLevel::Success, t!("toast.fetch_success"));
         }
         self.last_loading = current_loading;
     }
@@ -1373,7 +1432,7 @@ default_timeframe = "1w"
             app.render_toolbar(ui);
         });
 
-        let _ = harness.get_by_label("前复权");
+        let _ = harness.get_by_label(&tr("toolbar.adjust"));
     }
 
     #[test]
@@ -1424,7 +1483,11 @@ default_timeframe = "1w"
                 app.render_toolbar(ui);
             });
             harness.run();
-            let fetch_label = format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE);
+            let fetch_label = format!(
+                "{} {}",
+                egui_phosphor::regular::DOWNLOAD_SIMPLE,
+                t!("toolbar.fetch")
+            );
             harness.get_by_label(&fetch_label).click();
             harness.step();
         }
@@ -1672,7 +1735,8 @@ default_timeframe = "1w"
         // Click the 东方SEPA tab (located via its rendered title) — the same
         // interaction path a user performs; it focuses the leaf and raises
         // the tab with the accent ring while Chart turns inactive.
-        let sepa_title = text_pos_containing(&shapes, "东方SEPA").expect("sepa tab title rendered");
+        let sepa_title =
+            text_pos_containing(&shapes, &tr("tab.sepa")).expect("sepa tab title rendered");
         harness.event(egui::Event::PointerMoved(
             sepa_title + egui::vec2(10.0, 10.0),
         ));
@@ -1727,10 +1791,15 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let fetch_label = format!("{} Fetch", egui_phosphor::regular::DOWNLOAD_SIMPLE);
+        let fetch_label = format!(
+            "{} {}",
+            egui_phosphor::regular::DOWNLOAD_SIMPLE,
+            t!("toolbar.fetch")
+        );
         let _ = harness.get_by_label(&fetch_label);
-        let _ = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
-        let _ = harness.get_by_label("本地数据源 · 0 只");
+        let _ =
+            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
+        let _ = harness.get_by_label(&t!("statusbar.source", count = 0));
         // Dock area renders: the logger citizen's "Logs: n/1000" counter is
         // visible (egui_dock paints tab buttons without accesskit labels, so
         // tab titles are asserted at the TabViewer::title unit level).
@@ -1743,7 +1812,8 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let search = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        let search =
+            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
         assert!(
             search.rect().min.x < 60.0,
             "sidebar must hug the left edge, got min.x={}",
@@ -1763,7 +1833,8 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let source = harness.get_by_label("本地数据源 · 0 只");
+        let source_label = t!("statusbar.source", count = 0);
+        let source = harness.get_by_label(&source_label);
         let rect = source.rect();
         assert!(
             rect.max.y > 870.0,
@@ -1778,6 +1849,9 @@ default_timeframe = "1w"
 
     #[test]
     fn sidebar_toggle_hides_and_reshows_sidebar() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -1785,7 +1859,7 @@ default_timeframe = "1w"
         // Dismiss the startup data-missing modal so its backdrop stops
         // blocking clicks (the 100 ms fade completes within one 0.25 s step
         // of egui virtual time).
-        harness.get_by_label("知道了").click();
+        harness.get_by_label(&tr("modal.startup.confirm")).click();
         harness.step();
         harness.step();
         assert!(!harness.state().modal.is_open());
@@ -1796,7 +1870,7 @@ default_timeframe = "1w"
         harness.step();
         assert!(
             harness
-                .query_all_by(|n| n.placeholder() == Some("搜索自选"))
+                .query_all_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()))
                 .next()
                 .is_none(),
             "sidebar must be hidden after toggle click"
@@ -1806,7 +1880,8 @@ default_timeframe = "1w"
             .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
             .click();
         harness.step();
-        let _ = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        let _ =
+            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
     }
 
     #[test]
@@ -1814,7 +1889,7 @@ default_timeframe = "1w"
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
-        let _ = harness.get_by_label("自选股为空");
+        let _ = harness.get_by_label(&tr("sidebar.empty_title"));
     }
 
     #[test]
@@ -2002,9 +2077,9 @@ default_timeframe = "1w"
         // completes the 120/150 ms entry animation (egui virtual time) so
         // hit-testing is restored.
         harness.step();
-        let _ = harness.get_by_label("移除自选");
+        let _ = harness.get_by_label(&tr("modal.remove.title"));
         assert!(harness.state().modal.is_open());
-        harness.get_by_label("移除").click();
+        harness.get_by_label(&tr("modal.remove.confirm")).click();
         harness.step();
         harness.step();
 
@@ -2047,7 +2122,7 @@ default_timeframe = "1w"
         // One 0.25 s step completes the entry animation so the Cancel button
         // is clickable.
         harness.step();
-        harness.get_by_label("保留").click();
+        harness.get_by_label(&tr("modal.remove.cancel")).click();
         harness.step();
 
         assert_eq!(
@@ -2075,12 +2150,15 @@ default_timeframe = "1w"
 
     #[test]
     fn startup_modal_opens_when_stock_list_empty() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let _ = harness.get_by_label("数据未就绪");
-        let _ = harness.get_by_label("知道了");
+        let _ = harness.get_by_label(&tr("modal.startup.title"));
+        let _ = harness.get_by_label(&tr("modal.startup.confirm"));
         assert!(
             harness.state().modal.is_open(),
             "data-missing modal must open on first frame"
@@ -2097,18 +2175,21 @@ default_timeframe = "1w"
         harness.run_steps(3);
 
         assert!(
-            harness.query_by_label("数据未就绪").is_none(),
+            harness.query_by_label(&tr("modal.startup.title")).is_none(),
             "no startup modal when stock data is present"
         );
     }
 
     #[test]
     fn startup_modal_dismisses_with_confirm() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        harness.get_by_label("知道了").click();
+        harness.get_by_label(&tr("modal.startup.confirm")).click();
         harness.step();
         assert!(
             harness.state().modal.closing,
@@ -2169,7 +2250,9 @@ default_timeframe = "1w"
         let toast = app.toast.pop().expect("success toast pushed");
         assert_eq!(toast.level, ToastLevel::Success);
         assert!(
-            toast.message.contains("日志已导出"),
+            toast
+                .message
+                .contains(t!("toast.log_exported", path = "").as_ref()),
             "message: {}",
             toast.message
         );
@@ -2191,7 +2274,9 @@ default_timeframe = "1w"
         let toast = app.toast.pop().expect("error toast pushed");
         assert_eq!(toast.level, ToastLevel::Error);
         assert!(
-            toast.message.contains("日志导出失败"),
+            toast
+                .message
+                .contains(t!("toast.log_export_failed", error = "").as_ref()),
             "message: {}",
             toast.message
         );
@@ -2326,7 +2411,8 @@ default_timeframe = "1w"
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
         harness.run_steps(3);
 
-        let search = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        let search =
+            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
         assert!(
             search.is_focused(),
             "Ctrl+K must focus the sidebar search input"
@@ -2932,5 +3018,854 @@ default_timeframe = "1w"
 
         assert_eq!(config.app.app.default_symbol, "SH600519");
         assert_eq!(config.watchlist.symbols, vec!["SZ000001".to_string()]);
+    }
+
+    // ======================================================================
+    // #222 GUI full-i18n acceptance tests (RED until T1/T2/T3/T5/T14 land).
+    //
+    // These tests reference the not-yet-existing `compass-i18n` crate
+    // (t!/set_locale), the not-yet-added `AppConfig::language` field, and
+    // the not-yet-written `normalize_language` / `save_language_config`
+    // functions — the resulting compile failure IS the RED state.
+    //
+    // `set_locale` is process-global: every test that touches it takes
+    // `LANG_LOCK` (the plan's T15 lock, modeled on `HOME_LOCK` above), and
+    // every en-locale test resets to zh before releasing so the default
+    // zh-locale contract stays stable under parallel execution.
+    // ======================================================================
+
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
+    use compass_i18n::t;
+
+    /// Key-resolution test helper (plan T4 `tr()`): resolves a key through
+    /// the shared compass-i18n dictionary.
+    fn tr(key: &str) -> String {
+        compass_i18n::t!(key).to_string()
+    }
+
+    /// Full key tree from .omo/designs/gui-i18n.md §1 (compass-side
+    /// domains only — the fork `chart.tooltip.*`/`chart.date.*`/
+    /// `chart.realtime`/`chart.legend.*` keys live in the fork's own
+    /// locales and are covered by the fork-side contract tests). Plain keys
+    /// without interpolation; interpolated keys are asserted separately.
+    const KEY_TREE: &[(&str, &str, &str)] = &[
+        (
+            "app.title",
+            "Compass — Stock Chart",
+            "Compass — Stock Chart",
+        ),
+        ("tab.chart", "图表", "Chart"),
+        ("tab.logger", "日志", "Log"),
+        ("tab.screener", "选股器", "Screener"),
+        ("tab.sepa", "东方SEPA", "East SEPA"),
+        ("toolbar.fetch", "获取数据", "Fetch"),
+        ("toolbar.loading", "加载中…", "Loading..."),
+        ("toolbar.adjust", "前复权", "Adj."),
+        ("toolbar.toggle_sidebar", "切换侧边栏", "Toggle sidebar"),
+        ("sidebar.group_watchlist", "自选", "Watchlist"),
+        ("sidebar.search_placeholder", "搜索自选", "Search watchlist"),
+        ("sidebar.add_tooltip", "添加", "Add"),
+        ("sidebar.delete_tooltip", "删除", "Remove"),
+        ("sidebar.empty_title", "自选股为空", "Watchlist is empty"),
+        (
+            "sidebar.empty_desc",
+            "点击 + 添加关注的股票",
+            "Click + to add stocks",
+        ),
+        ("statusbar.loading", "加载中…", "Loading..."),
+        ("common.loading", "加载中…", "Loading..."),
+        ("common.refresh", "刷新", "Refresh"),
+        ("common.confirm", "确认", "Confirm"),
+        ("common.cancel", "取消", "Cancel"),
+        ("common.remove", "移除", "Remove"),
+        ("common.search", "搜索…", "Search…"),
+        ("common.no_matches", "无匹配结果", "No matches"),
+        ("common.all", "全部", "All"),
+        ("chart.empty_title", "暂无图表数据", "No chart data"),
+        (
+            "chart.empty_desc",
+            "输入代码并点击 Fetch",
+            "Enter a code and click Fetch",
+        ),
+        ("logger.title", "日志", "Log"),
+        ("logger.export_tooltip", "导出日志", "Export log"),
+        ("modal.startup.title", "数据未就绪", "Data not ready"),
+        ("modal.startup.confirm", "知道了", "Got it"),
+        ("modal.remove.title", "移除自选", "Remove from watchlist"),
+        ("modal.remove.confirm", "移除", "Remove"),
+        ("modal.remove.cancel", "保留", "Keep"),
+        ("toast.theme_switched", "主题已切换", "Theme switched"),
+        ("toast.language_switched", "语言已切换", "Language switched"),
+        (
+            "toast.fetch_success",
+            "数据获取成功",
+            "Data fetched successfully",
+        ),
+        ("screener.filter", "筛选", "Filter"),
+        ("screener.filtering", "筛选进行中…", "Filtering…"),
+        ("screener.card_basic", "基础条件", "Basic"),
+        ("screener.card_technical", "技术面条件", "Technical"),
+        ("screener.industry", "行业", "Industry"),
+        ("screener.exchange", "交易所", "Exchange"),
+        ("screener.board", "板块", "Board"),
+        ("screener.list_years", "上市时长", "Listed ≥"),
+        ("screener.any", "不限", "Any"),
+        ("screener.years_1", "≥1年", "≥1y"),
+        ("screener.years_3", "≥3年", "≥3y"),
+        ("screener.years_5", "≥5年", "≥5y"),
+        ("screener.market_cap", "市值(亿)", "Mkt Cap(Bn)"),
+        ("screener.exclude_delisted", "排除退市", "Excl. delisted"),
+        ("screener.ma", "均线", "MA"),
+        ("screener.ma_above20", "站上 MA20", "Above MA20"),
+        ("screener.ma_above60", "站上 MA60", "Above MA60"),
+        (
+            "screener.ma_bullish",
+            "多头排列 MA5>MA20>MA60",
+            "Bullish MA5>20>60",
+        ),
+        ("screener.breakout", "突破新高", "New High"),
+        ("screener.momentum", "动量", "Momentum"),
+        ("screener.volume", "量能", "Volume"),
+        ("screener.n_label", "N:", "N:"),
+        ("screener.min_pct", "min%:", "min%:"),
+        ("screener.max_pct", "max%:", "max%:"),
+        ("screener.times", "倍数:", "×:"),
+        ("screener.table.code", "代码", "Code"),
+        ("screener.table.name", "名称", "Name"),
+        ("screener.table.latest", "最新价", "Price"),
+        ("screener.table.change_20d", "20日涨跌幅", "20D Chg%"),
+        ("screener.table.market_cap", "市值(亿)", "Mkt Cap(Bn)"),
+        ("screener.table.industry", "行业", "Industry"),
+        ("sepa.thermometer", "市场温度", "Market Temp"),
+        ("sepa.no_data", "暂无评分数据", "No score data yet"),
+        ("sepa.computing", "计算中…", "Computing…"),
+        (
+            "sepa.computing_full",
+            "SEPA 评分计算中…（全市场）",
+            "Computing SEPA scores (full market)…",
+        ),
+        ("sepa.refresh", "刷新", "Refresh"),
+        (
+            "sepa.empty_title",
+            "暂无 SEPA 评分数据",
+            "No SEPA score data",
+        ),
+        (
+            "sepa.empty_desc",
+            "点击刷新计算全市场 TOP50 评分",
+            "Click refresh to score the full-market TOP50",
+        ),
+        (
+            "sepa.detail_hint",
+            "点击排名行查看评分详情",
+            "Click a row to view score details",
+        ),
+        ("sepa.table.rank", "排名", "Rank"),
+        ("sepa.table.code", "代码", "Code"),
+        ("sepa.table.name", "名称", "Name"),
+        ("sepa.table.total", "总分", "Score"),
+        ("sepa.table.trend", "趋势", "Trend"),
+        ("sepa.table.theme", "题材", "Theme"),
+        ("sepa.table.capital", "资金", "Capital"),
+        ("sepa.table.pattern", "形态", "Pattern"),
+        ("sepa.table.risk", "风险", "Risk"),
+        ("sepa.table.industry", "行业", "Industry"),
+        ("sepa.table.latest", "最新价", "Price"),
+        ("sepa.table.change", "涨跌幅", "Chg%"),
+        ("sepa.module.trend", "趋势", "Trend"),
+        ("sepa.module.theme", "题材", "Theme"),
+        ("sepa.module.capital", "资金", "Capital"),
+        ("sepa.module.pattern", "形态", "Pattern"),
+        ("sepa.module.risk", "风险", "Risk"),
+        ("sepa.position.full", "80%-100%", "80%-100%"),
+        ("sepa.position.mid", "40%-70%", "40%-70%"),
+        ("sepa.position.low", "0%-20%", "0%-20%"),
+        ("sepa.indicator.hs300_trend", "沪深300趋势", "HS300 Trend"),
+        (
+            "sepa.indicator.zz1000_trend",
+            "中证1000趋势",
+            "CSI1000 Trend",
+        ),
+        ("sepa.indicator.limit_up", "涨停数", "Limit-ups"),
+        ("sepa.indicator.amount", "成交额", "Turnover"),
+        ("sepa.indicator.breadth", "赚钱效应", "Breadth"),
+        ("sepa.factor.ma_structure", "均线结构", "MA structure"),
+        ("sepa.factor.price_position", "价格位置", "Price position"),
+        ("sepa.factor.relative_strength", "相对强度", "Rel. strength"),
+        ("sepa.factor.sector_gain", "板块涨幅", "Sector gain"),
+        ("sepa.factor.sector_amount", "板块成交额", "Sector turnover"),
+        ("sepa.factor.sector_diffusion", "板块扩散", "Sector breadth"),
+        ("sepa.factor.news_heat", "新闻热度", "News heat"),
+        ("sepa.factor.volume_price", "量价配合", "Vol-price fit"),
+        (
+            "sepa.factor.chip_concentration",
+            "筹码集中",
+            "Chip concentration",
+        ),
+        (
+            "sepa.factor.big_capital_inflow",
+            "大资金流入",
+            "Big-cap inflow",
+        ),
+        ("sepa.factor.vcp_quality", "VCP质量", "VCP quality"),
+        (
+            "sepa.factor.breakout_confirm",
+            "突破确认",
+            "Breakout confirm",
+        ),
+        (
+            "sepa.factor.vol_penalty",
+            "波动惩罚(ATR)",
+            "Vol penalty (ATR)",
+        ),
+        ("sepa.factor.deep_drawdown", "深度回撤", "Deep drawdown"),
+        (
+            "sepa.factor.volume_stagnation",
+            "放量滞涨",
+            "Vol up, price stall",
+        ),
+        ("sepa.note.no_sector_data", "无板块数据", "No sector data"),
+        ("sepa.note.news_v1", "v1 无新闻数据", "v1: no news data"),
+        (
+            "sepa.note.news_default",
+            "v1 默认 10/20",
+            "v1: default 10/20",
+        ),
+        (
+            "widgets.searchable_dropdown.no_matches",
+            "无匹配结果",
+            "No matches",
+        ),
+        ("widgets.data_table.empty", "无符合条件", "No matching rows"),
+    ];
+
+    // ------------------------------------------------------------------
+    // Contract (a): DEFAULT LANGUAGE — no config file (or no language key)
+    // → the GUI is Chinese; the config defaults to language="zh".
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn default_locale_is_zh_without_set_locale() {
+        // kittest constructs CompassApp directly without main() (Metis M5),
+        // so no set_locale call ever runs on that path. The rust-i18n
+        // macro must therefore default to zh (`default = "zh"` — a bare
+        // `fallback = "zh"` is NOT enough: rust-i18n's default locale is
+        // "en" and en.yml contains every key, so the fallback never fires).
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(tr("tab.chart"), "图表");
+        assert_eq!(tr("app.title"), "Compass — Stock Chart");
+    }
+
+    #[test]
+    fn load_config_language_missing_defaults_to_zh() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"SH600519\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.app.language, "zh",
+            "config without a language key must default to zh"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (b): CONFIG KEY — `language = "en"` → "en", `"zh"` → "zh",
+    // missing → "zh", invalid values fall back to "zh" WITH a warn.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn load_config_language_en_parses() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), "language = \"en\"\n").unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.app.language, "en",
+            "top-level language = \"en\" must parse into the config struct"
+        );
+    }
+
+    #[test]
+    fn load_config_language_invalid_passes_raw_to_normalize_guard() {
+        // `"fr"` parses as an ordinary String — load_config keeps it raw;
+        // the T3 `normalize_language` guard is the single place that falls
+        // back to zh + warn (asserted in `normalize_language_*` below).
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), "language = \"fr\"\n").unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.app.language, "fr",
+            "load_config must NOT normalize — the T3 guard owns the fallback"
+        );
+    }
+
+    /// Collects the `tracing::warn!` output written while `f` runs, so tests
+    /// can assert that invalid language values emit a warning (T3).
+    fn capture_warns(f: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::Arc;
+
+        #[derive(Clone, Default)]
+        struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl tracing_subscriber::fmt::MakeWriter<'_> for Buf {
+            type Writer = Self;
+            fn make_writer(&self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = Buf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buf.clone())
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        String::from_utf8_lossy(&buf.0.lock().unwrap()).to_string()
+    }
+
+    #[test]
+    fn normalize_language_maps_valid_and_invalid_values() {
+        assert_eq!(crate::normalize_language("zh"), "zh");
+        assert_eq!(crate::normalize_language("en"), "en");
+        assert_eq!(
+            crate::normalize_language(""),
+            "zh",
+            "empty string must fall back"
+        );
+        assert_eq!(
+            crate::normalize_language("fr"),
+            "zh",
+            "unknown language must fall back"
+        );
+        assert_eq!(
+            crate::normalize_language("ZH"),
+            "zh",
+            "matching is case-sensitive"
+        );
+        assert_eq!(crate::normalize_language("EN"), "zh");
+    }
+
+    #[test]
+    fn normalize_language_invalid_value_warns() {
+        let logs = capture_warns(|| {
+            let _ = crate::normalize_language("fr");
+        });
+        assert!(
+            logs.contains("fr"),
+            "invalid language must emit a tracing::warn! mentioning the value, got: {logs}"
+        );
+    }
+
+    #[test]
+    fn normalize_language_empty_value_warns() {
+        let logs = capture_warns(|| {
+            let _ = crate::normalize_language("");
+        });
+        assert!(
+            logs.contains("falling back") || logs.contains("normalize"),
+            "empty language must warn during normalization, got: {logs}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (c): KEY TREE — every key in the design §1 tree resolves to
+    // the design's zh column (zh locale) and en column (en locale). This is
+    // the acceptance test that the dictionary faithfully implements the
+    // approved design.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn key_tree_zh_values_match_approved_design() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        for (key, zh, _en) in KEY_TREE {
+            assert_eq!(
+                tr(key),
+                *zh,
+                "zh value of `{key}` must match the approved design"
+            );
+        }
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn key_tree_en_values_match_approved_design() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        for (key, _zh, en) in KEY_TREE {
+            assert_eq!(
+                tr(key),
+                *en,
+                "en value of `{key}` must match the approved design"
+            );
+        }
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn key_tree_interpolated_values_match_approved_design() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        assert_eq!(t!("statusbar.source", count = 5324), "本地数据源 · 5324 只");
+        assert_eq!(
+            t!("modal.remove.body", symbol = "SH600519"),
+            "确定要从自选中移除 SH600519 吗？"
+        );
+        assert_eq!(
+            t!("toast.watchlist_added", symbol = "SH600519"),
+            "已添加 SH600519 到自选"
+        );
+        assert_eq!(
+            t!("toast.watchlist_removed", symbol = "SH600519"),
+            "已从自选移除 SH600519"
+        );
+        assert_eq!(
+            t!("toast.log_exported", path = "/tmp/log.txt"),
+            "日志已导出: /tmp/log.txt"
+        );
+        assert_eq!(
+            t!("toast.log_export_failed", error = "IO"),
+            "日志导出失败: IO"
+        );
+        assert_eq!(
+            t!("toast.sepa_updated", count = 50),
+            "SEPA 评分已更新 · 50 只"
+        );
+        assert_eq!(t!("error.duckdb_open", e = "IO"), "打开 DuckDB 失败: IO");
+        assert_eq!(t!("error.parquet_open", e = "IO"), "打开 Parquet 失败: IO");
+        assert_eq!(
+            t!("error.no_data", symbol = "SH600519"),
+            "没有 SH600519 的数据"
+        );
+        assert_eq!(t!("error.screener_run", e = "IO"), "选股运行失败: IO");
+        assert_eq!(t!("error.sepa_run", e = "IO"), "SEPA 计算失败: IO");
+        assert_eq!(
+            t!("sepa.count", shown = 12, date = "2026-08-02"),
+            "共 12 行 · 2026-08-02 评分"
+        );
+        assert_eq!(t!("sepa.total_score", score = 80.5), "总分 80.5");
+        assert_eq!(t!("sepa.unit.percent", v = 62.4), "62.4%");
+        assert_eq!(t!("sepa.unit.count", v = 2000), "2000 家");
+        assert_eq!(t!("sepa.unit.trillion", v = 1.2), "1.2万亿");
+        assert_eq!(t!("sepa.note.drawdown", pct = 12.3), "距一年高点回撤 12.3%");
+        assert_eq!(
+            t!("sepa.note.momentum_percentile", pct = 75),
+            "动量分位 75%"
+        );
+        assert_eq!(t!("widgets.data_table.count", count = 12), "共 12 行");
+
+        compass_i18n::set_locale("en");
+        assert_eq!(
+            t!("statusbar.source", count = 5324),
+            "Local data · 5324 symbols"
+        );
+        assert_eq!(
+            t!("modal.remove.body", symbol = "SH600519"),
+            "Remove SH600519 from watchlist?"
+        );
+        assert_eq!(
+            t!("toast.watchlist_added", symbol = "SH600519"),
+            "Added SH600519 to watchlist"
+        );
+        assert_eq!(
+            t!("toast.watchlist_removed", symbol = "SH600519"),
+            "Removed SH600519 from watchlist"
+        );
+        assert_eq!(
+            t!("toast.log_exported", path = "/tmp/log.txt"),
+            "Logs exported: /tmp/log.txt"
+        );
+        assert_eq!(
+            t!("toast.log_export_failed", error = "IO"),
+            "Log export failed: IO"
+        );
+        assert_eq!(
+            t!("toast.sepa_updated", count = 50),
+            "SEPA scores updated · 50"
+        );
+        assert_eq!(
+            t!("error.duckdb_open", e = "IO"),
+            "Failed to open DuckDB: IO"
+        );
+        assert_eq!(
+            t!("error.parquet_open", e = "IO"),
+            "Failed to open Parquet: IO"
+        );
+        assert_eq!(
+            t!("error.no_data", symbol = "SH600519"),
+            "No data for SH600519"
+        );
+        assert_eq!(
+            t!("error.screener_run", e = "IO"),
+            "Screener run failed: IO"
+        );
+        assert_eq!(t!("error.sepa_run", e = "IO"), "SEPA run failed: IO");
+        assert_eq!(
+            t!("sepa.count", shown = 12, date = "2026-08-02"),
+            "12 rows · scored 2026-08-02"
+        );
+        assert_eq!(t!("sepa.total_score", score = 80.5), "Total 80.5");
+        assert_eq!(t!("sepa.unit.percent", v = 62.4), "62.4%");
+        assert_eq!(t!("sepa.unit.count", v = 2000), "2000");
+        assert_eq!(t!("sepa.unit.trillion", v = 1.2), "1.2T");
+        assert_eq!(
+            t!("sepa.note.drawdown", pct = 12.3),
+            "Drawdown 12.3% from 1y high"
+        );
+        assert_eq!(
+            t!("sepa.note.momentum_percentile", pct = 75),
+            "Momentum percentile 75%"
+        );
+        assert_eq!(t!("widgets.data_table.count", count = 12), "12 rows");
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn c5_c7_supplement_keys_resolve_to_real_text() {
+        // Metis C5/C7 supplement keys have no design-table values (they are
+        // derived from current literals); the missing-key fallback (t!()
+        // returns the key string itself) is a silent false positive and is
+        // explicitly rejected by the plan (Metis A7).
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        for key in [
+            "sepa.note.big_capital",
+            "sepa.note.thermometer",
+            "logger.log_fetch_failed",
+            "logger.log_fetch_completed",
+            "logger.log_screener_failed",
+            "logger.log_screener_completed",
+            "logger.log_sepa_failed",
+            "logger.log_sepa_completed",
+        ] {
+            let resolved = tr(key);
+            assert_ne!(
+                resolved, key,
+                "`{key}` must resolve to real text, not the missing-key fallback"
+            );
+            assert!(
+                !resolved.is_empty(),
+                "`{key}` must not resolve to empty text"
+            );
+        }
+        compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (d): WINDOW TITLE — the native title stays the English brand
+    // "Compass — Stock Chart" in BOTH locales; it is not keyed.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn window_title_stays_english_brand_not_keyed() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.contains("Compass — Stock Chart"),
+            "the run_native title literal must stay in the source (not keyed)"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (e): FETCH BUTTON — zh shows 「获取数据」(Q2 change), en shows
+    // "Fetch".
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn fetch_button_zh_shows_get_data() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        let _ = harness
+            .query_all_by_label_contains("获取数据")
+            .next()
+            .expect("fetch button in zh");
+    }
+
+    #[test]
+    fn fetch_button_en_shows_fetch() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        // Override AFTER build — build_compass_app pins zh for the default
+        // GUI-test baseline (rust-i18n 4.2.1 default-locale is a no-op).
+        compass_i18n::set_locale("en");
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        let _ = harness
+            .query_all_by_label_contains("Fetch")
+            .next()
+            .expect("fetch button in en");
+        compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (g): PERSISTENCE — language selection persists: write
+    // language="en", load, and the app starts in English; the save function
+    // preserves the other config sections.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn save_language_config_roundtrip_preserves_other_sections() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"[app]
+default_symbol = "SH600519"
+
+[watchlist]
+symbols = ["SZ000001"]
+"#,
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        crate::save_language_config("en").unwrap();
+        let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(
+            raw.contains("language = \"en\""),
+            "language key must be written to config.toml, got: {raw}"
+        );
+        assert_eq!(
+            config.app.language, "en",
+            "load must round-trip the saved language"
+        );
+        assert_eq!(
+            config.app.app.default_symbol, "SH600519",
+            "[app] section must be preserved by the read-modify-write"
+        );
+        assert_eq!(
+            config.watchlist.symbols,
+            vec!["SZ000001".to_string()],
+            "[watchlist] section must be preserved by the read-modify-write"
+        );
+    }
+
+    #[test]
+    fn app_starts_in_english_when_config_language_is_en() {
+        // Simulates the startup path (T3): load_config → normalize_language
+        // → set_locale → all t!() resolution lands in English.
+        let _lang = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _home = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), "language = \"en\"\n").unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+        let locale = crate::normalize_language(&config.app.language);
+        compass_i18n::set_locale(locale);
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(locale, "en");
+        assert_eq!(tr("tab.chart"), "Chart");
+        assert_eq!(tr("toolbar.fetch"), "Fetch");
+        compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (h): LIVE SWITCH — toolbar language dropdown (中文/English
+    // native names); selecting English switches the UI immediately within
+    // the same kittest run (no restart); selecting 中文 switches back; the
+    // choice is persisted to config.toml.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn language_dropdown_switches_ui_immediately_and_persists() {
+        let _lang = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _home = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[watchlist]\nsymbols = [\"SZ000001\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        let _ = harness.get_by_label("获取数据");
+        // The trigger label is "{selected} ▾"; the popup items are exact
+        // option strings (dropdown.rs renders egui::Button::new(option)).
+        harness.get_by_label_contains("中文").click();
+        harness.step();
+        harness.get_by_label("English").click();
+        harness.step();
+        let _ = harness.get_by_label("Fetch");
+
+        let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+        assert!(
+            raw.contains("language = \"en\""),
+            "language selection must persist to config.toml, got: {raw}"
+        );
+        assert!(
+            raw.contains("SZ000001"),
+            "other config sections must survive the language write-back, got: {raw}"
+        );
+
+        harness.get_by_label("English").click();
+        harness.step();
+        harness.get_by_label("中文").click();
+        harness.step();
+        let _ = harness.get_by_label("获取数据");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+        compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (j): ERROR STRINGS — translated templates with %{e}
+    // passthrough; the underlying DataError Display (ASCII) is NOT
+    // translated (covered in compass-core).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn error_template_passthroughs_e_verbatim() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        let detail = "database: IO error";
+        assert_eq!(
+            t!("error.duckdb_open", e = detail),
+            "打开 DuckDB 失败: database: IO error"
+        );
+        compass_i18n::set_locale("zh");
     }
 }
