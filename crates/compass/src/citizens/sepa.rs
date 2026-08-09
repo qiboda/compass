@@ -34,57 +34,91 @@ const RISK_MAX: f32 = 3.75;
 const DETAIL_PANEL_WIDTH: f32 = 280.0;
 
 /// Ranking table columns (design §2: 12 columns, default sort = rank asc,
-/// descending business default for the score columns).
+/// descending business default for the score columns). Each header holds a
+/// `sepa.table.*` i18n key resolved by the renderer via `t!()` (issue #222).
 const COLUMNS: [ColumnSpec; 12] = [
     ColumnSpec {
-        header: "排名",
+        header: "sepa.table.rank",
         numeric: true,
     },
     ColumnSpec {
-        header: "代码",
+        header: "sepa.table.code",
         numeric: false,
     },
     ColumnSpec {
-        header: "名称",
+        header: "sepa.table.name",
         numeric: false,
     },
     ColumnSpec {
-        header: "总分",
+        header: "sepa.table.total",
         numeric: true,
     },
     ColumnSpec {
-        header: "趋势",
+        header: "sepa.table.trend",
         numeric: true,
     },
     ColumnSpec {
-        header: "题材",
+        header: "sepa.table.theme",
         numeric: true,
     },
     ColumnSpec {
-        header: "资金",
+        header: "sepa.table.capital",
         numeric: true,
     },
     ColumnSpec {
-        header: "形态",
+        header: "sepa.table.pattern",
         numeric: true,
     },
     ColumnSpec {
-        header: "风险",
+        header: "sepa.table.risk",
         numeric: true,
     },
     ColumnSpec {
-        header: "行业",
+        header: "sepa.table.industry",
         numeric: false,
     },
     ColumnSpec {
-        header: "最新价",
+        header: "sepa.table.latest",
         numeric: true,
     },
     ColumnSpec {
-        header: "涨跌幅",
+        header: "sepa.table.change",
         numeric: true,
     },
 ];
+
+/// Format an indicator raw value per its unit precision contract (Metis C6:
+/// percent 1 decimal, count integer, trillion 2 decimals). The locale unit
+/// templates interpolate the number via `%{v}`.
+fn format_indicator_value(value: f64, unit_key: &str) -> String {
+    match unit_key {
+        "sepa.unit.count" => format!("{value:.0}"),
+        "sepa.unit.trillion" => format!("{value:.2}"),
+        _ => format!("{value:.1}"),
+    }
+}
+
+/// Resolve a factor note from its key + positional numeric args. Args map
+/// positionally onto the note template names (drawdown/momentum → `pct`,
+/// big_capital → main/dragon/survey/block, thermometer → score).
+fn factor_note_text(note_key: &'static str, args: &[f64]) -> String {
+    let arg = |i: usize| args.get(i).copied().unwrap_or(0.0);
+    match note_key {
+        "sepa.note.drawdown" | "sepa.note.momentum_percentile" => {
+            compass_i18n::t!(note_key, pct = arg(0)).into_owned()
+        }
+        "sepa.note.big_capital" => compass_i18n::t!(
+            note_key,
+            main = arg(0),
+            dragon = arg(1),
+            survey = arg(2),
+            block = arg(3)
+        )
+        .into_owned(),
+        "sepa.note.thermometer" => compass_i18n::t!(note_key, score = arg(0)).into_owned(),
+        _ => compass_i18n::t!(note_key).into_owned(),
+    }
+}
 
 /// SEPA panel citizen.
 ///
@@ -182,7 +216,8 @@ impl SepaPanel {
                     );
                     ui.add_space(tokens.spacing.md);
                     let pos_color = score_color(&tokens, t.position_pct as f32 / 100.0);
-                    Tag::new(&tokens, &t.position)
+                    let pos = compass_i18n::t!(t.position_key);
+                    Tag::new(&tokens, &pos)
                         .variant(TagVariant::Custom)
                         .color(pos_color)
                         .show(ui);
@@ -212,10 +247,13 @@ impl SepaPanel {
     /// One thermometer indicator chip: label + mono value + A-share-colored
     /// delta arrow; the pill tint follows the heat color scale while the
     /// arrow follows the red-up/green-down convention (two semantics, one
-    /// chip — design §4).
+    /// chip — design §4). Label/unit render through `t!()` from the semantic
+    /// keys; the value is formatted per the unit precision contract.
     fn indicator_chip(ui: &mut egui::Ui, tokens: &ThemeTokens, ind: &SepaIndicator) {
         let c = &tokens.color;
         let heat = score_color(tokens, ind.heat as f32);
+        let value = format_indicator_value(ind.value, ind.unit_key);
+        let value_label = compass_i18n::t!(ind.unit_key, v = value);
         egui::Frame::new()
             .fill(tint(heat, 0.18))
             .corner_radius(tokens.radius.pill)
@@ -223,12 +261,12 @@ impl SepaPanel {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(&ind.label)
+                        RichText::new(compass_i18n::t!(ind.label_key))
                             .size(tokens.typography.caption)
                             .color(c.text_secondary),
                     );
                     ui.label(
-                        RichText::new(&ind.value_text)
+                        RichText::new(value_label)
                             .monospace()
                             .size(tokens.typography.mono)
                             .color(heat),
@@ -512,13 +550,43 @@ impl SepaPanel {
 
                 let theme_norm = row.theme as f32 / 25.0;
                 for (label, score, max, factors, inverted) in [
-                    ("趋势", row.trend, 30.0, &row.details.trend, false),
-                    ("题材", row.theme, 25.0, &row.details.theme, false),
-                    ("资金", row.capital, 20.0, &row.details.capital, false),
-                    ("形态", row.pattern, 20.0, &row.details.pattern, false),
-                    ("风险", row.risk, RISK_MAX as f64, &row.details.risk, true),
+                    (
+                        compass_i18n::t!("sepa.module.trend"),
+                        row.trend,
+                        30.0,
+                        &row.details.trend,
+                        false,
+                    ),
+                    (
+                        compass_i18n::t!("sepa.module.theme"),
+                        row.theme,
+                        25.0,
+                        &row.details.theme,
+                        false,
+                    ),
+                    (
+                        compass_i18n::t!("sepa.module.capital"),
+                        row.capital,
+                        20.0,
+                        &row.details.capital,
+                        false,
+                    ),
+                    (
+                        compass_i18n::t!("sepa.module.pattern"),
+                        row.pattern,
+                        20.0,
+                        &row.details.pattern,
+                        false,
+                    ),
+                    (
+                        compass_i18n::t!("sepa.module.risk"),
+                        row.risk,
+                        RISK_MAX as f64,
+                        &row.details.risk,
+                        true,
+                    ),
                 ] {
-                    self.module_row(ui, label, score, max, factors, inverted);
+                    self.module_row(ui, label.as_ref(), score, max, factors, inverted);
                     ui.add_space(tokens.spacing.sm);
                 }
 
@@ -585,12 +653,14 @@ impl SepaPanel {
         for factor in factors {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(&factor.label)
+                    RichText::new(compass_i18n::t!(factor.label_key))
                         .size(tokens.typography.caption)
                         .color(c.text_secondary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(note) = &factor.note {
+                    if let Some(note_key) = factor.note_key {
+                        let note =
+                            factor_note_text(note_key, factor.note_args.as_deref().unwrap_or(&[]));
                         ui.label(
                             RichText::new(note)
                                 .size(tokens.typography.caption)
@@ -631,9 +701,16 @@ impl SepaPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use compass_i18n::t;
     use compass_types::{SepaData, SepaDetails, SepaFactor, SepaIndicator};
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
+
+    /// Key-resolution test helper (plan T4): resolves a key through the
+    /// shared compass-i18n dictionary.
+    fn tr(key: &str) -> String {
+        t!(key).to_string()
+    }
 
     fn panel() -> (SepaPanel, SharedState) {
         let id = CitizenId::new("sepa");
@@ -670,19 +747,21 @@ mod tests {
             change_pct: 2.5,
             details: SepaDetails {
                 trend: vec![SepaFactor {
-                    label: "VCP质量分".into(),
+                    label_key: "sepa.factor.vcp_quality",
                     score: 9.2,
                     max: 10.0,
-                    note: Some("+1.2亿".into()),
+                    note_key: Some("sepa.note.drawdown"),
+                    note_args: Some(vec![12.3]),
                 }],
                 theme: vec![],
                 capital: vec![],
                 pattern: vec![],
                 risk: vec![SepaFactor {
-                    label: "高位放量".into(),
+                    label_key: "sepa.factor.volume_stagnation",
                     score: 0.0,
                     max: 2.0,
-                    note: None,
+                    note_key: None,
+                    note_args: None,
                 }],
             },
         }
@@ -697,18 +776,20 @@ mod tests {
             ],
             thermometer: MarketThermometer {
                 score: 72.0,
-                position: "半仓 50%".to_string(),
-                position_pct: 50.0,
+                position_key: "sepa.position.full",
+                position_pct: 90.0,
                 indicators: vec![
                     SepaIndicator {
-                        label: "上涨占比".into(),
-                        value_text: "62%".into(),
+                        label_key: "sepa.indicator.hs300_trend",
+                        value: 62.4,
+                        unit_key: "sepa.unit.percent",
                         delta_pct: Some(2.0),
                         heat: 0.8,
                     },
                     SepaIndicator {
-                        label: "涨停家数".into(),
-                        value_text: "45".into(),
+                        label_key: "sepa.indicator.limit_up",
+                        value: 45.0,
+                        unit_key: "sepa.unit.count",
                         delta_pct: Some(-3.0),
                         heat: 0.6,
                     },
@@ -728,6 +809,10 @@ mod tests {
 
     #[test]
     fn show_renders_empty_state_without_data() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let (mut panel, shared) = panel();
         let (sepa_signal, work_signal) = signals();
 
@@ -736,12 +821,16 @@ mod tests {
         });
         harness.fit_contents();
         harness.step();
-        let _ = harness.get_by_label("暂无 SEPA 评分数据");
-        let _ = harness.get_by_label_contains("点击刷新计算全市场 TOP50 评分");
+        let _ = harness.get_by_label(&tr("sepa.empty_title"));
+        let _ = harness.get_by_label_contains(&tr("sepa.empty_desc"));
     }
 
     #[test]
     fn refresh_button_click_sets_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let (mut panel, shared) = panel();
         // The sepa slot must stay alive so the signal send succeeds.
         let (sepa_signal, _sepa_slot) =
@@ -754,8 +843,9 @@ mod tests {
         harness.fit_contents();
         // "刷新" appears both in the toolbar and in the empty-state action;
         // the toolbar renders first — click that one.
+        let refresh_label = tr("sepa.refresh");
         let btn = harness
-            .query_all_by_label_contains("刷新")
+            .query_all_by_label_contains(&refresh_label)
             .next()
             .expect("refresh button rendered");
         btn.click();
@@ -769,6 +859,10 @@ mod tests {
 
     #[test]
     fn results_renders_rows_thermometer_and_detail() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let (mut panel, shared) = panel();
         shared.sepa_data.set(Some(sample_data()));
         shared.sepa_loading.set(false);
@@ -780,15 +874,19 @@ mod tests {
         harness.fit_contents();
         harness.step();
 
-        let _ = harness.get_by_label_contains("共 3 行 · 2026-08-02 评分");
-        let _ = harness.get_by_label("市场温度");
+        let _ = harness.get_by_label_contains(&t!("sepa.count", shown = 3, date = "2026-08-02"));
+        let _ = harness.get_by_label(&tr("sepa.thermometer"));
         let _ = harness.get_by_label("72.0");
-        let _ = harness.get_by_label_contains("上涨占比");
-        let _ = harness.get_by_label_contains("点击排名行查看评分详情");
+        let _ = harness.get_by_label_contains(&tr("sepa.indicator.hs300_trend"));
+        let _ = harness.get_by_label_contains(&tr("sepa.detail_hint"));
     }
 
     #[test]
     fn top_n_truncates_local_copy_only() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let (mut panel, shared) = panel();
         let full = sample_data();
         shared.sepa_data.set(Some(full.clone()));
@@ -803,7 +901,7 @@ mod tests {
 
         // The date suffix makes the toolbar label unique — the table renders
         // its own "共 2 行" counter too.
-        let _ = harness.get_by_label_contains("共 2 行 · 2026-08-02 评分");
+        let _ = harness.get_by_label_contains(&t!("sepa.count", shown = 2, date = "2026-08-02"));
         assert_eq!(
             shared.sepa_data.get().unwrap().rows.len(),
             3,
@@ -813,6 +911,10 @@ mod tests {
 
     #[test]
     fn detail_panel_shows_selected_row_content() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let (mut panel, shared) = panel();
         shared.sepa_data.set(Some(sample_data()));
         panel.selected = Some(0);
@@ -827,9 +929,10 @@ mod tests {
 
         // Name/symbol also render as table cells — assert the detail-only
         // content instead.
-        let _ = harness.get_by_label_contains("总分 79.0");
+        let _ =
+            harness.get_by_label_contains(&t!("sepa.total_score", score = format!("{:.1}", 79.0)));
         let _ = harness.get_by_label("#1");
-        let _ = harness.get_by_label_contains("VCP质量分");
+        let _ = harness.get_by_label_contains(&tr("sepa.factor.vcp_quality"));
         let _ = harness.get_by_label("茅指数");
     }
 
@@ -901,6 +1004,10 @@ mod tests {
     /// user acceptance reported "右边内容一团乱" after clicking a ranking row.
     #[test]
     fn detail_panel_content_stays_inside_panel_width() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let (mut panel, shared) = panel();
         shared.sepa_data.set(Some(sample_data()));
         panel.selected = Some(0);
@@ -955,5 +1062,98 @@ mod tests {
             offenders.is_empty(),
             "detail-panel text bleeds past the reserved width: {offenders:?}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // #222 i18n acceptance (RED).
+    // - T6: the 12 COLUMNS headers become key constants ("sepa.table.rank"
+    //   etc.) — assertion-RED now (they are zh literals).
+    // - T7/T8/T10: SepaIndicator/MarketThermometer carry semantic key
+    //   fields (label_key/unit_key/value, position_key) and the renderers
+    //   resolve them via t!() — compile-RED (fields not yet added).
+    // set_locale is process-global; T15 must unify LANG_LOCK with the one
+    // in main.rs tests.
+    // ------------------------------------------------------------------
+
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
+
+    #[test]
+    fn sepa_columns_headers_are_key_constants() {
+        assert_eq!(COLUMNS[0].header, "sepa.table.rank");
+        assert_eq!(COLUMNS[1].header, "sepa.table.code");
+        assert_eq!(COLUMNS[2].header, "sepa.table.name");
+        assert_eq!(COLUMNS[3].header, "sepa.table.total");
+        assert_eq!(COLUMNS[4].header, "sepa.table.trend");
+        assert_eq!(COLUMNS[5].header, "sepa.table.theme");
+        assert_eq!(COLUMNS[6].header, "sepa.table.capital");
+        assert_eq!(COLUMNS[7].header, "sepa.table.pattern");
+        assert_eq!(COLUMNS[8].header, "sepa.table.risk");
+        assert_eq!(COLUMNS[9].header, "sepa.table.industry");
+        assert_eq!(COLUMNS[10].header, "sepa.table.latest");
+        assert_eq!(COLUMNS[11].header, "sepa.table.change");
+    }
+
+    fn keyed_sample_data() -> SepaData {
+        SepaData {
+            rows: vec![],
+            thermometer: MarketThermometer {
+                score: 72.0,
+                position_key: "sepa.position.full",
+                position_pct: 90.0,
+                indicators: vec![SepaIndicator {
+                    label_key: "sepa.indicator.hs300_trend",
+                    value: 62.4,
+                    unit_key: "sepa.unit.percent",
+                    delta_pct: Some(2.0),
+                    heat: 0.8,
+                }],
+            },
+            date: "2026-08-02".to_string(),
+        }
+    }
+
+    #[test]
+    fn thermometer_renders_label_key_in_zh() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(keyed_sample_data()));
+        shared.sepa_loading.set(false);
+        let (sepa_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        let _ = harness.get_by_label("沪深300趋势");
+        let _ = harness.get_by_label("62.4%");
+        let _ = harness.get_by_label("80%-100%");
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn thermometer_renders_label_key_in_en() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(keyed_sample_data()));
+        shared.sepa_loading.set(false);
+        let (sepa_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        let _ = harness.get_by_label("HS300 Trend");
+        let _ = harness.get_by_label("80%-100%");
+        compass_i18n::set_locale("zh");
     }
 }

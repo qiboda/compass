@@ -36,11 +36,14 @@ fn run_sepa_over_real_parquet() {
     );
     assert_eq!(data.thermometer.indicators.len(), 5);
     println!(
-        "thermometer: score={:.1} position={} pct={:.0}",
-        data.thermometer.score, data.thermometer.position, data.thermometer.position_pct
+        "thermometer: score={:.1} position_key={} pct={:.0}",
+        data.thermometer.score, data.thermometer.position_key, data.thermometer.position_pct
     );
     for ind in &data.thermometer.indicators {
-        println!("  {}: {} (heat {:.2})", ind.label, ind.value_text, ind.heat);
+        println!(
+            "  {}: {:.2} {} (heat {:.2})",
+            ind.label_key, ind.value, ind.unit_key, ind.heat
+        );
     }
 
     println!("top {} rows:", data.rows.len());

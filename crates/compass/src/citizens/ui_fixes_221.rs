@@ -11,12 +11,19 @@
 //! `src/main.rs`); the main agent can move this into `mod tests` when
 //! committing.
 
+use compass_i18n::t;
 use compass_types::{MarketThermometer, SepaData, SepaDetails, SepaFactor, SepaIndicator, SepaRow};
 use egui_kittest::kittest::Queryable;
 
-use super::ui_fixes_218::{build_compass_app_with_stocks, sized_harness};
+use super::ui_fixes_218::{LANG_LOCK, build_compass_app_with_stocks, sized_harness};
 use crate::CompassApp;
 use crate::tabs::{Tab, TabKind};
+
+/// Key-resolution test helper (plan T4): resolves a key through the shared
+/// compass-i18n dictionary.
+fn tr(key: &str) -> String {
+    t!(key).to_string()
+}
 
 fn sample_row(rank: usize, symbol: &str, name: &str) -> SepaRow {
     SepaRow {
@@ -35,19 +42,21 @@ fn sample_row(rank: usize, symbol: &str, name: &str) -> SepaRow {
         change_pct: 2.5,
         details: SepaDetails {
             trend: vec![SepaFactor {
-                label: "VCP质量分".into(),
+                label_key: "sepa.factor.vcp_quality",
                 score: 9.2,
                 max: 10.0,
-                note: Some("+1.2亿".into()),
+                note_key: None,
+                note_args: None,
             }],
             theme: vec![],
             capital: vec![],
             pattern: vec![],
             risk: vec![SepaFactor {
-                label: "高位放量".into(),
+                label_key: "sepa.factor.volume_stagnation",
                 score: 0.0,
                 max: 2.0,
-                note: None,
+                note_key: None,
+                note_args: None,
             }],
         },
     }
@@ -56,11 +65,12 @@ fn sample_row(rank: usize, symbol: &str, name: &str) -> SepaRow {
 fn thermometer() -> MarketThermometer {
     MarketThermometer {
         score: 72.0,
-        position: "半仓 50%".to_string(),
-        position_pct: 50.0,
+        position_key: "sepa.position.full",
+        position_pct: 90.0,
         indicators: vec![SepaIndicator {
-            label: "上涨占比".into(),
-            value_text: "62%".into(),
+            label_key: "sepa.indicator.hs300_trend",
+            value: 62.4,
+            unit_key: "sepa.unit.percent",
             delta_pct: Some(2.0),
             heat: 0.8,
         }],
@@ -83,6 +93,9 @@ fn sepa_data_50() -> SepaData {
 /// be present in the accesskit tree of the 1440x900 window.
 #[test]
 fn sepa_ranking_table_renders_body_rows_in_dock() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app_with_stocks(egui::Context::default(), Vec::new());
     app.shared_state.sepa_data.set(Some(sepa_data_50()));
     app.shared_state.sepa_loading.set(false);
@@ -91,7 +104,9 @@ fn sepa_ranking_table_renders_body_rows_in_dock() {
     harness.run_steps(3);
 
     let _ = harness.get_by_label("SH600001");
-    let count = harness.query_all_by_label_contains("共 50 行").count();
+    let count = harness
+        .query_all_by_label_contains(&t!("widgets.data_table.count", count = 50))
+        .count();
     assert!(
         count >= 1,
         "the 50-row count label must render in the docked SEPA panel"
@@ -108,6 +123,9 @@ fn sepa_ranking_table_renders_body_rows_in_dock() {
 /// 右边") — earlier tests only asserted label existence, never position.
 #[test]
 fn sepa_table_header_is_above_body_rows() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app_with_stocks(egui::Context::default(), Vec::new());
     app.shared_state.sepa_data.set(Some(sepa_data_50()));
     app.shared_state.sepa_loading.set(false);
@@ -118,8 +136,9 @@ fn sepa_table_header_is_above_body_rows() {
     // "排名" also appears inside the detail-panel hint ("点击排名行查看
     // 评分详情"), so disambiguate by x: the table header sits left of the
     // detail panel, while the hint is in the right-side detail panel.
+    let rank_header = tr("sepa.table.rank");
     let header = harness
-        .query_all_by_label_contains("排名")
+        .query_all_by_label_contains(&rank_header)
         .min_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
         .expect("header '排名' cell must exist");
     let first_row = harness.get_by_label("SH600001");
@@ -147,6 +166,9 @@ fn sepa_table_header_is_above_body_rows() {
 /// the visible viewport): the last row's code must exist too.
 #[test]
 fn sepa_ranking_table_renders_all_fifty_rows_in_dock() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app_with_stocks(egui::Context::default(), Vec::new());
     app.shared_state.sepa_data.set(Some(sepa_data_50()));
     app.shared_state.sepa_loading.set(false);
@@ -175,6 +197,9 @@ fn activate_sepa_tab(app: &mut CompassApp) {
 /// cannot be blamed on the fixture.
 #[test]
 fn sepa_dock_test_data_is_deterministic() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let data = sepa_data_50();
     assert_eq!(data.rows.len(), 50);
     assert_eq!(data.rows[0].symbol, "SH600001");

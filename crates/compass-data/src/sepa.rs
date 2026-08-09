@@ -130,7 +130,9 @@ pub fn run_temperature(reader: &ParquetReader, dolt_dir: &Path) -> Result<(), Bo
     );
     println!(
         "市场温度: {:.1} | 仓位建议: {} | 日期: {}",
-        tm.score, tm.position, data.date
+        tm.score,
+        position_band(tm.position_key),
+        data.date
     );
     write_back(dolt_dir, &data, &["market_temperature"])
 }
@@ -160,45 +162,52 @@ pub fn format_top_table(rows: &[SepaRow]) -> String {
 }
 
 /// Serialize the thermometer as one CSV data row (header excluded).
+///
+/// The model carries semantic keys and raw values (issue #222); the CSV
+/// columns keep the exact pre-i18n values, derived from `value` + `unit_key`
+/// with the locked per-unit precision (percent 1 decimal, count integer,
+/// trillion yuan as full integer).
 fn thermometer_csv_row(tm: &MarketThermometer, date: NaiveDate) -> String {
-    let find = |label: &str| {
-        tm.indicators
-            .iter()
-            .find(|i| i.label == label)
-            .map(|i| i.value_text.as_str())
+    let find = |label_key: &str| tm.indicators.iter().find(|i| i.label_key == label_key);
+    // Percent values are already in percent units.
+    let pct = |label_key: &str| {
+        find(label_key)
+            .map(|i| format!("{:.6}", i.value))
+            .unwrap_or_default()
+    };
+    // Count values are integer counts carried as f64.
+    let count = |label_key: &str| {
+        find(label_key)
+            .map(|i| format!("{}", i.value.round() as i64))
+            .unwrap_or_default()
+    };
+    // Trillion values are stored as trillion-yuan; the CSV column is yuan.
+    let trillion = |label_key: &str| {
+        find(label_key)
+            .map(|i| format!("{:.6}", i.value * 1e12))
             .unwrap_or_default()
     };
     format!(
-        "{date},{:.6},{:.6},{:.6},{},{:.6},{:.6},{},{}",
+        "{date},{:.6},{},{},{},{},{},{},{}",
         tm.score,
-        parse_pct(find("沪深300趋势")),
-        parse_pct(find("中证1000趋势")),
-        parse_count(find("涨停数")),
-        parse_trillion(find("成交额")),
-        parse_pct(find("赚钱效应")),
-        csv_field(&tm.position),
+        pct("sepa.indicator.hs300_trend"),
+        pct("sepa.indicator.zz1000_trend"),
+        count("sepa.indicator.limit_up"),
+        trillion("sepa.indicator.amount"),
+        pct("sepa.indicator.breadth"),
+        csv_field(position_band(tm.position_key)),
         Utc::now().date_naive(),
     )
 }
 
-/// Parse a `"{:.1}%"` value text (e.g. `"45.6%"`) into 0..100 percent.
-fn parse_pct(value: &str) -> f64 {
-    value.trim_end_matches('%').trim().parse().unwrap_or(0.0)
-}
-
-/// Parse a `"{n} 家"` value text (e.g. `"42 家"`) into a count.
-fn parse_count(value: &str) -> i64 {
-    value
-        .split_whitespace()
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
-}
-
-/// Parse a `"{:.2}万亿"` value text (e.g. `"1.20万亿"`) into yuan.
-fn parse_trillion(value: &str) -> f64 {
-    let num: f64 = value.trim_end_matches("万亿").trim().parse().unwrap_or(0.0);
-    num * 1e12
+/// Map a thermometer position-band i18n key back to the locked CSV band
+/// string — the `position_suggestion` column stays a data-neutral value.
+fn position_band(position_key: &str) -> &'static str {
+    match position_key {
+        "sepa.position.full" => "80%-100%",
+        "sepa.position.mid" => "40%-70%",
+        _ => "0%-20%",
+    }
 }
 
 /// Quote a CSV field: wrap in double quotes and double inner quotes.
@@ -1038,36 +1047,41 @@ mod tests {
     fn thermometer_row_extracts_all_five_components() {
         let tm = MarketThermometer {
             score: 63.4,
-            position: "40%-70%".to_string(),
+            position_key: "sepa.position.mid",
             position_pct: 55.0,
             indicators: vec![
                 compass_types::SepaIndicator {
-                    label: "沪深300趋势".to_string(),
-                    value_text: "45.6%".to_string(),
+                    label_key: "sepa.indicator.hs300_trend",
+                    value: 45.6,
+                    unit_key: "sepa.unit.percent",
                     delta_pct: None,
                     heat: 0.5,
                 },
                 compass_types::SepaIndicator {
-                    label: "中证1000趋势".to_string(),
-                    value_text: "30.0%".to_string(),
+                    label_key: "sepa.indicator.zz1000_trend",
+                    value: 30.0,
+                    unit_key: "sepa.unit.percent",
                     delta_pct: None,
                     heat: 0.3,
                 },
                 compass_types::SepaIndicator {
-                    label: "涨停数".to_string(),
-                    value_text: "42 家".to_string(),
+                    label_key: "sepa.indicator.limit_up",
+                    value: 42.0,
+                    unit_key: "sepa.unit.count",
                     delta_pct: None,
                     heat: 0.5,
                 },
                 compass_types::SepaIndicator {
-                    label: "成交额".to_string(),
-                    value_text: "1.20万亿".to_string(),
+                    label_key: "sepa.indicator.amount",
+                    value: 1.20,
+                    unit_key: "sepa.unit.trillion",
                     delta_pct: None,
                     heat: 1.0,
                 },
                 compass_types::SepaIndicator {
-                    label: "赚钱效应".to_string(),
-                    value_text: "64.3%".to_string(),
+                    label_key: "sepa.indicator.breadth",
+                    value: 64.3,
+                    unit_key: "sepa.unit.percent",
                     delta_pct: None,
                     heat: 0.6,
                 },
@@ -1110,36 +1124,41 @@ mod tests {
             rows: Vec::new(),
             thermometer: MarketThermometer {
                 score: 50.0,
-                position: "40%-70%".to_string(),
+                position_key: "sepa.position.mid",
                 position_pct: 55.0,
                 indicators: vec![
                     compass_types::SepaIndicator {
-                        label: "沪深300趋势".to_string(),
-                        value_text: "50.0%".to_string(),
+                        label_key: "sepa.indicator.hs300_trend",
+                        value: 50.0,
+                        unit_key: "sepa.unit.percent",
                         delta_pct: None,
                         heat: 0.5,
                     },
                     compass_types::SepaIndicator {
-                        label: "中证1000趋势".to_string(),
-                        value_text: "50.0%".to_string(),
+                        label_key: "sepa.indicator.zz1000_trend",
+                        value: 50.0,
+                        unit_key: "sepa.unit.percent",
                         delta_pct: None,
                         heat: 0.5,
                     },
                     compass_types::SepaIndicator {
-                        label: "涨停数".to_string(),
-                        value_text: "0 家".to_string(),
+                        label_key: "sepa.indicator.limit_up",
+                        value: 0.0,
+                        unit_key: "sepa.unit.count",
                         delta_pct: None,
                         heat: 0.0,
                     },
                     compass_types::SepaIndicator {
-                        label: "成交额".to_string(),
-                        value_text: "0万亿".to_string(),
+                        label_key: "sepa.indicator.amount",
+                        value: 0.0,
+                        unit_key: "sepa.unit.trillion",
                         delta_pct: None,
                         heat: 0.0,
                     },
                     compass_types::SepaIndicator {
-                        label: "赚钱效应".to_string(),
-                        value_text: "50.0%".to_string(),
+                        label_key: "sepa.indicator.breadth",
+                        value: 50.0,
+                        unit_key: "sepa.unit.percent",
                         delta_pct: None,
                         heat: 0.5,
                     },

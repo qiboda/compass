@@ -705,7 +705,7 @@ fn empty_market_returns_empty_sepa_data() {
     let data = run_sepa(&default_query(), &reader, date(2026, 7, 31)).expect("run sepa");
     assert!(data.rows.is_empty());
     assert_eq!(data.thermometer.score, 0.0);
-    assert_eq!(data.thermometer.position, "0%-20%");
+    assert_eq!(data.thermometer.position_key, "sepa.position.low");
     assert_eq!(data.date, "2026-07-31");
 }
 

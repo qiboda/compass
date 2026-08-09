@@ -164,44 +164,49 @@ pub fn compute_market_thermometer(
     let s5 = up_ratio * 10.0;
 
     let score = (s1 + s2 + s3 + s4 + s5).clamp(0.0, 100.0);
-    let (position, position_pct) = if score >= 80.0 {
-        ("80%-100%", 90.0)
+    let (position_key, position_pct) = if score >= 80.0 {
+        ("sepa.position.full", 90.0)
     } else if score >= 60.0 {
-        ("40%-70%", 55.0)
+        ("sepa.position.mid", 55.0)
     } else {
-        ("0%-20%", 10.0)
+        ("sepa.position.low", 10.0)
     };
 
     // heat = contribution / contribution max, clamped into 0..1.
     let heat = |contribution: f64, max: f64| (contribution / max).clamp(0.0, 1.0);
     let indicators = vec![
         SepaIndicator {
-            label: "沪深300趋势".to_string(),
-            value_text: format!("{:.1}%", ratio1 * 100.0),
+            label_key: "sepa.indicator.hs300_trend",
+            value: ratio1 * 100.0,
+            unit_key: "sepa.unit.percent",
             delta_pct: None,
             heat: heat(s1, 30.0),
         },
         SepaIndicator {
-            label: "中证1000趋势".to_string(),
-            value_text: format!("{:.1}%", ratio2 * 100.0),
+            label_key: "sepa.indicator.zz1000_trend",
+            value: ratio2 * 100.0,
+            unit_key: "sepa.unit.percent",
             delta_pct: None,
             heat: heat(s2, 30.0),
         },
         SepaIndicator {
-            label: "涨停数".to_string(),
-            value_text: format!("{limit_up} 家"),
+            label_key: "sepa.indicator.limit_up",
+            value: limit_up as f64,
+            unit_key: "sepa.unit.count",
             delta_pct: None,
             heat: heat(s3, 15.0),
         },
         SepaIndicator {
-            label: "成交额".to_string(),
-            value_text: format!("{:.2}万亿", total_amount / 1e12),
+            label_key: "sepa.indicator.amount",
+            value: total_amount / 1e12,
+            unit_key: "sepa.unit.trillion",
             delta_pct: None,
             heat: heat(s4, 15.0),
         },
         SepaIndicator {
-            label: "赚钱效应".to_string(),
-            value_text: format!("{:.1}%", up_ratio * 100.0),
+            label_key: "sepa.indicator.breadth",
+            value: up_ratio * 100.0,
+            unit_key: "sepa.unit.percent",
             delta_pct: None,
             heat: heat(s5, 10.0),
         },
@@ -209,7 +214,7 @@ pub fn compute_market_thermometer(
 
     MarketThermometer {
         score,
-        position: position.to_string(),
+        position_key,
         position_pct,
         indicators,
     }
@@ -329,11 +334,12 @@ mod tests {
         let (bars, basics) = refs(&market);
         let tm = compute_market_thermometer(&bars, &basics);
         assert_eq!(tm.score, 100.0, "score {:.4}", tm.score);
-        assert_eq!(tm.position, "80%-100%");
+        assert_eq!(tm.position_key, "sepa.position.full");
         assert_eq!(tm.position_pct, 90.0);
         assert_eq!(tm.indicators.len(), 5);
         assert!((tm.indicators[0].heat - 1.0).abs() < 1e-9);
-        assert_eq!(tm.indicators[2].value_text, "2000 家");
+        assert_eq!(tm.indicators[2].value, 2000.0);
+        assert_eq!(tm.indicators[2].unit_key, "sepa.unit.count");
     }
 
     #[test]
@@ -344,11 +350,12 @@ mod tests {
         let (bars, basics) = refs(&market);
         let tm = compute_market_thermometer(&bars, &basics);
         assert!((tm.score - 2.5).abs() < 1e-9, "score {:.9}", tm.score);
-        assert_eq!(tm.position, "0%-20%");
+        assert_eq!(tm.position_key, "sepa.position.low");
         assert_eq!(tm.position_pct, 10.0);
         // No limit-ups → component ③ is exactly 0.
         assert_eq!(tm.indicators[2].heat, 0.0);
-        assert_eq!(tm.indicators[2].value_text, "0 家");
+        assert_eq!(tm.indicators[2].value, 0.0);
+        assert_eq!(tm.indicators[2].unit_key, "sepa.unit.count");
         // No rising stocks → component ⑤ is exactly 0.
         assert_eq!(tm.indicators[4].heat, 0.0);
     }
@@ -376,7 +383,7 @@ mod tests {
             "score {:.4} must be in [60, 80)",
             tm.score
         );
-        assert_eq!(tm.position, "40%-70%");
+        assert_eq!(tm.position_key, "sepa.position.mid");
         assert_eq!(tm.position_pct, 55.0);
         assert_eq!(tm.indicators.len(), 5);
     }
@@ -387,7 +394,7 @@ mod tests {
         let basics: HashMap<String, &StockBasic> = HashMap::new();
         let tm = compute_market_thermometer(&bars, &basics);
         assert_eq!(tm.score, 0.0);
-        assert_eq!(tm.position, "0%-20%");
+        assert_eq!(tm.position_key, "sepa.position.low");
         assert_eq!(tm.position_pct, 10.0);
         assert_eq!(tm.indicators.len(), 5);
         assert!(tm.indicators.iter().all(|i| i.heat == 0.0));
@@ -405,7 +412,7 @@ mod tests {
         let tm = compute_market_thermometer(&bars, &basics);
         let expected = 30.0 + 15.0 / 80.0 + 1.0e8 / 1e12 / 1.2 * 15.0 + 10.0;
         assert!((tm.score - expected).abs() < 1e-9, "score {:.9}", tm.score);
-        assert_eq!(tm.position, "0%-20%");
+        assert_eq!(tm.position_key, "sepa.position.low");
         assert_eq!(tm.indicators.len(), 5);
     }
 
@@ -442,7 +449,7 @@ mod tests {
         assert!(tm.score.is_finite());
         // 1 limit-up (0.1875) + turnover 1e8→0.00125 + breadth 10 → ~10.19.
         assert!((tm.score - (15.0 / 80.0 + 1.0e8 / 1e12 / 1.2 * 15.0 + 10.0)).abs() < 1e-9);
-        assert_eq!(tm.position, "0%-20%");
+        assert_eq!(tm.position_key, "sepa.position.low");
     }
 
     /// An index-like symbol (SH000905) with bars but no basics row must not
@@ -476,7 +483,7 @@ mod tests {
             .collect();
         let with_index = compute_market_thermometer(&bars2_refs, &basics);
         assert_eq!(with_index.score, baseline.score, "score must be identical");
-        assert_eq!(with_index.position, baseline.position);
+        assert_eq!(with_index.position_key, baseline.position_key);
         assert_eq!(with_index.position_pct, baseline.position_pct);
         assert_eq!(with_index.indicators, baseline.indicators);
     }
