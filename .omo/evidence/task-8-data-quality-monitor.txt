@@ -1,0 +1,32 @@
+# Task 8 — Independent QA Review (issue #136)
+
+## 状态：完成（验证者 ≠ 实现者）
+
+skwy-requirement-test agent 独立读代码 + 独立跑测试 + 覆盖率检查（agent 因权限无法写入 evidence，主 agent 代落盘）。
+
+## 测试结果：156/156 全绿（lib 88 + main 68）
+
+## 覆盖率：compass-data 96.70% ≥ 95% 门槛 PASS
+
+逐文件 line 覆盖：validate.rs 97.42%、import_dolt.rs 97.56%、import_compass.rs 98.20%、main.rs 86.91%（单文件低于门槛但 per-crate 聚合达标——如实标注，不构成 gate 失败）。
+
+## 契约逐条核对（7 项全部通过，file:line 证据）
+
+1. import 行数校验：import_dolt.rs:325-333（expected = min(COUNT, limit)）+ validate.rs:182-184 消息格式
+2. import 日期范围：import_dolt.rs:337（if limit == 0 守卫）+ validate.rs:50-51 CAST 规范化 + 双 None==Ok
+3. import-compass 全量行数：import_compass.rs:186-192（stock_basic COUNT 镜像 symbol-prefix WHERE）、:296-298、:430-432、:454-456
+4. merge 不丢数据：old_count 先读 :256/:385；no-loss Err :282-290/:415-424；corrupt→.ok() :256；fallback→按 date_filter 校验 :272-279/:406-413
+5. 新鲜度：常量 :17-18；warn_if_stale :153-165（warn 不 Err）；路由 :93/:109/:125/:141/:302/:325/:458；stock_basic 无调用
+6. tiny-skip（<500B）不触校验：:244-247、:374-377 校验前 return
+7. Scope OUT：仅改 crates/compass-data；无新依赖；无配置项；merge SQL 语义未改；tiny-skip 阈值未改
+
+## Q1-Q6 全对齐（handoff grill-me 决策）
+
+## 缺口观察项（无真实 bug）
+
+- G1（次要）：import_dolt.rs:306-310 仍保留旧 .unwrap_or(0) COUNT 解析——仅用于 info 日志，校验走严格 dolt_count，不可能掩盖 mismatch。可作死代码简化。
+- G2（透明性）：main.rs 单文件 86.91%，per-crate 聚合 96.70% 达标。
+- G3（已接受设计）：limit>0 完全跳过日期校验（D3 锁定）。
+- G4（已接受设计）：data_updates_last_report_date 吞所有查询错误为 Ok(None)（Q5 warn-only 意图）。
+
+## 结论：实现符合 plan 契约，可进入 F 波验证 / push

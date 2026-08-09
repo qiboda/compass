@@ -1,0 +1,26 @@
+# Task 3 — validate.rs helper module (issue #136)
+
+## 状态：完成（Sisyphus-Junior worker 实现 + 主 session 验证）
+
+新建 crates/compass-data/src/validate.rs（610 行）+ lib.rs 注册 `pub mod validate;`。
+
+## 9 个 pub 函数（全部 Result<_, Box<dyn Error>>）
+
+parquet_row_count / parquet_date_range（CAST AS DATE 规范化 TIMESTAMP）/
+dolt_count（严格 CSV 解析，弃用 unwrap_or(0) 静默降级）/
+dolt_date_range（NULL→None）/ data_updates_last_report_date（任何错误→Ok(None)）/
+today_cn（Asia/Shanghai 固定 +8，无 DST）/
+verify_row_count / verify_date_range（纯逻辑，错误消息契约含 table 名）/
+freshness_days（未来日期 clamp 0）
+
+## 验证
+
+cargo test -p compass-data validate → 23 passed; 0 failed
+cargo check -p compass-data → 通过
+cargo clippy -p compass-data -- -D warnings → 0 错误
+
+## 关键设计（Metis BLOCKING 修复）
+
+- 严格解析：dolt_count CSV 第二行必须 parse::<usize>() 成功，失败返回 Err
+- 时区：today_cn = Utc::now() + 8h 取日期（Metis BLOCKING#5）
+- data_updates 缺失表/列 → Ok(None)（新鲜度永不阻断导入，Q5）
