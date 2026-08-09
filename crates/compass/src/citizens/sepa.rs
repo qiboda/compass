@@ -325,16 +325,30 @@ impl SepaPanel {
             self.table
                 .set_rows(rows.iter().map(Self::row_cells).collect());
             ui.horizontal(|ui| {
-                if let Some(idx) = self.table.show(ui) {
-                    self.selected = Some(idx);
-                    if let Some(row) = rows.get(idx) {
-                        crate::dispatcher::dispatch_symbol_fetch(
-                            shared_state,
-                            work_signal,
-                            &row.symbol,
-                        );
-                    }
-                }
+                // The table must render in a vertical stacking context:
+                // egui_extras TableBuilder assumes its header and body
+                // ScrollArea stack vertically, but `ui::horizontal` treats
+                // them as side-by-side widgets (body rows land to the RIGHT
+                // of the header — the #221 real-GUI regression). Reserve the
+                // detail-panel width and give the table its own vertical ui.
+                let detail_w = 280.0 + self.tokens.spacing.md;
+                let table_w = (ui.available_width() - detail_w).max(200.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(table_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        if let Some(idx) = self.table.show(ui) {
+                            self.selected = Some(idx);
+                            if let Some(row) = rows.get(idx) {
+                                crate::dispatcher::dispatch_symbol_fetch(
+                                    shared_state,
+                                    work_signal,
+                                    &row.symbol,
+                                );
+                            }
+                        }
+                    },
+                );
                 ui.add_space(self.tokens.spacing.md);
                 let selected_row = self.selected.and_then(|i| rows.get(i));
                 self.detail_panel(ui, selected_row);
