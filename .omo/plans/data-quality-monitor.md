@@ -205,10 +205,10 @@ Your next move: approve, or run a high-accuracy review. Full execution detail fo
 
 ## Final verification wave
 > Runs in parallel after ALL todos. ALL must APPROVE. Surface results and wait for the user's explicit okay before declaring complete.
-- [ ] F1. Plan compliance audit
-- [ ] F2. Code quality review
-- [ ] F3. Real manual QA
-- [ ] F4. Scope fidelity
+- [x] F1. Plan compliance audit
+- [x] F2. Code quality review
+- [x] F3. Real manual QA
+- [x] F4. Scope fidelity
 
 ## Commit strategy
 - 每 todo 独立 commit，消息含 `ref #136`（独立成行，AGENTS.md 规则）；类型前缀：test / feat / docs
