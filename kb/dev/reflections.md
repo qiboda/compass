@@ -723,3 +723,30 @@
 - **UI 布局诊断路径改进**（#139 SEPA、#221、本次 #217 多次）：多次出现"先猜渲染机制再验证"导致返工（Tag 空格先查渲染后查数据、detail 溢出经 probe 才定位 Frame 撑宽）。教训 #2/#3 建议改为"先复现现场拿证据再二分"——若后续再出现同类返工，在 kb/dev/process.md 调试章节固化排查框架。
 - **ui-designer 委派中断**（本次）：同步委派设计 agent 被 abort 一次。教训 #1 已固化"长任务一律后台"，观察后续是否遵守。
 - **数据层脏数据导致 GUI 渲染异常**（本次 Tag 空格）：教训 #3 固化"数据驱动渲染异常先查源头"——同类模式（上游未清洗 → GUI 异常）可能在其他采集器字段重现，建议采集器侧统一 TRIM 字符串字段（proposed）。
+
+## 2026-08-09 — ref #226/#227/#228 UI 组件规范偏差修复 epic：test-first + review MAJOR 修复 + GUI 冒烟
+
+**What was done**: 修复 compass-ui 三个组件规范偏差（issue #226 IconButton 默认尺寸改读 control_md token、#227 Badge min-width 16px、#228 Dropdown 弹层搜索框复用 Input 组件）。门禁 3.5/4 步委派双测试 agent 写 7 个 RED 测试（3 内嵌 + 4 集成），实现 GREEN（224 lib + 9 集成全绿）。review-work 第 1 轮 Code Quality FAIL（MAJOR：Input 无条件 -56px icon 预算导致无 icon 输入窄 48px），修复 + 第 2 轮 5/5 PASS。6 commits 全部在 fix/ui-widgets-deviations worktree。文档同步 kb/design/ui-widgets.md 偏差回填。GUI 冒烟验证（像素采样）。完成交付后用户报告新 UI 问题 → 委派 ui-designer 产出 #230 设计方案（issue https://github.com/qiboda/compass/issues/230）。
+
+**User corrections**（逐字引用对话记录）:
+1. "开始"（多次）——确认执行 handoff 锁定方案。
+2. "按推荐"（多次）——同意门禁跳步建议、根因修复 Input 方案、GUI 冒烟验证、dark 纯白方案。
+3. "primary 按钮始终是蓝色的，这样亮色下，文本就是黑色的，看起来看不清。然后按钮的大小也没有跟随文本的改变而改变宽度（sepa的刷新按钮点击效果）。 让设计师设计一下。"——GUI 冒烟后用户发现新 UI 问题（#230）：Primary 按钮 light 主题下蓝底黑字看不清 + SEPA 刷新按钮宽度不随文本；要求 ui-designer 设计。暴露 ref #217「统一 text_primary」决策在 light 主题下的退化。
+4. "1. 暗主题用白色合适吗？？我不确定啊 2. 微调 3. 为什么？ 4. 需要查根本原因，也许是被其他ui遮挡了？？？？需要后续确认。"——对 #230 设计方案的 4 点质疑：dark 纯白不确定、min_width 数值微调、空态按钮为何不加 min_width、宽度问题必须查根因（怀疑被遮挡）。
+5. "1. push 2. 在当前worktree处理。"——确认先 push #226-#228 PR；#230 在当前 worktree 处理（不开新 worktree）。
+
+**What went wrong**: ①**GUI 冒烟截图多次失败**——`import` 参数顺序错误（-window 后需紧跟窗口名）、`xwininfo` 无输出（Wayland 环境）、主模型 `look_at` 不支持图像输入、委派 multimodal-looker 也因 read 权限被拒失败——最终改用 `grim`（Wayland）截图 + ImageMagick 像素采样（颜色直方图）客观验证，多轮尝试浪费约 5 分钟。②**`pgrep -f "target/debug/compass"` 自匹配自身命令**——PID 持续变化的假象（每次 pgrep 都匹配到自己新起的 bash），多轮 kill 误判「有进程在重启」，最后用 `pgrep -x compass` 才确认干净（#105 已有 pgrep 自匹配教训，本次复发说明未固化）。③**review 第 1 轮 Code Quality FAIL**——Input `desired_width(width - 56)` 无条件预留 icon 槽空间，无 icon 输入（dropdown 搜索框）渲染窄 48px，实现阶段未发现、review 兜底；「组件内部宽度语义」静态分析盲区。④**需求测试 agent 工具摩擦**——`gh` 命令被 bash deny，改用 GitHub MCP 读 issue（子代理权限与工具选择）。
+
+**Lessons learned**:
+1. **pgrep 自匹配规避**：`pgrep -f "<pattern>"` 会匹配到命令行含该字符串的自身进程（含 bash -c 包装）——用 `pgrep -x <binary>`（精确进程名）或 `ps aux | grep -v grep` 且 pattern 不含会自匹配的路径。#105 已踩过，本次复发，须固化到 toolchain 排查卡。
+2. **GUI 视觉验证手段分级**：无图像输入能力的模型/agent 下，委派视觉 agent 前先确认其 read 权限与图像附件支持；`grim`（Wayland）/`import`（X11）+ ImageMagick `convert -colors 直方图` 像素采样是可靠客观证据，不依赖视觉模型。
+3. **组件宽度/尺寸语义必须用渲染断言覆盖**：封装组件（Input/Button）内部宽度计算（icon 预算、min_size、布局传递）不能用字段级断言（side==32.0）代替渲染级断言（rect.width()）——本次 Input 56px 预算回归正是字段测试全绿而渲染错位的典型案例。
+4. **ref #217「统一 text_primary」决策有 light 主题边界条件**——「跟随主题」验收在 dark 成立、light 退化（深字在亮蓝底对比不足）；语义分层的 on_* token 是正确演进方向（#230 设计已采纳）。
+
+**Process improvements**: 
+- proposed：kb/dev/toolchain.md 排查卡补「pgrep 自匹配」条目（#105 教训未固化导致本次复发）；kb/dev/testing.md 补「GUI 冒烟像素采样验证法（grim + ImageMagick histogram）+ 渲染断言 vs 字段断言」——代码/文档变更走 gate 建 issue 落档。
+
+### Trends (last 10)
+- **pgrep 自匹配复发**（#105 2026-08-01 → 本次 2026-08-09）：同一模式第二次出现，教训未固化到 toolchain 排查卡——必须在本次 Process improvements 落实（proposed）。
+- **UI 验证手段摩擦反复出现**（#217 kittest Node API 误用/`value()` 扫描 → 本次截图工具链 grim/import 踩坑）：GUI 验证方法多次返工，应统一固化「验证手段速查」（kittest 断言 + 像素采样）到 kb/dev/testing.md。
+- **设计委派流程稳定**（#217「让设计师设计去」→ 本次「让设计师设计一下」）：design-first（ui-designer 产出 .omo/designs → 用户确认 → 实现）已成为 UI 问题标准路径，两次均获用户认可。
