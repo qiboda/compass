@@ -115,6 +115,10 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
   资金 `Score{max:20}` / 形态 `Score{max:20}` / 风险 `Score{inverted}`（带符号 `-x.x`，
   按 `1-|v|/max` 反向色阶：0 扣分绿 → 满扣分红）/ 行业 `Text`（有题材时拼
   `行业 · 题材1 · 题材2`）/ 最新价 `Price` / 涨跌幅 `Price`
+  **布局约束（ref #221）**：表格必须渲染在**垂直堆叠上下文**中（`allocate_ui_with_layout`
+  固定宽度容器，宽 = 可用宽 − 详情面板 280px − spacing）——egui_extras TableBuilder
+  假定 header 与 body ScrollArea 垂直堆叠，若直接放 `ui::horizontal` 会被并排
+  （body 行渲染到表头右侧，真实 GUI 回归）。
 - **④ 右侧详情面板**（~300px，行点击刷新 + 行高亮）：名称 + 排名 Tag + 总分大字 +
   五模块行（标签 + `score/max` + `ProgressBar`，`fill = score_color(norm)`）+
   子项 `SepaFactor` 列表（label + `score/max` + note）+ 题材 Tag 区
@@ -135,7 +139,11 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 
 - 标的：可搜索输入框（`SearchableDropdown`），`交易所 | 代码 | 名称` 格式，
   弹窗列匹配项，↑↓/Enter 键盘导航，空过滤显示「无匹配结果」
-- 周期：`Segmented` 分段选择器 `1d | 1w | 1M`
+- 周期：`Segmented` 分段选择器 `1d | 1w | 1M`——**切换立即重载**（ref #218）：
+  `set_timeframe` 同步 `shared_state.timeframe` 并无条件触发 `fetch_bars()`
+  （loading 守卫不拦截切换——旧周期数据与标签不一致）；启动时 `timeframe_index`
+  从配置 `default_timeframe` 派生（`timeframe_index_from_value`，与
+  `timeframe_label` 双向同步）
 - Fetch：`Button(Primary)` 主操作按钮，loading 时禁用 + 内嵌 spinner +「加载中…」
 - 主题：`Dropdown` 下拉切换，即时全局生效 + Info toast「主题已切换」
 
@@ -158,6 +166,12 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 - **十字准线**：悬停 K 线显示 OHLCV 详情
 - **空态**：未加载数据时显示 EmptyState 引导
 - 数据源：本地 DuckDB `read_parquet()`，**无在线回退**
+- **日期格式（中文，ref #219）**：所有日期显示中文——x 轴刻度紧凑式
+  （`1月`/`5月15日`/`2024`，按 TickMarkType 固定映射、`%-m`/`%-d` 去填充），
+  十字光标与 tooltip 完整式（`2024年5月15日`，按 bar 周期分档：日线+ 纯日期、
+  盘中带时间）；tooltip 前缀全中文化（`时间:`/`开盘:`/`最高:`/`最低:`/`收盘:`/
+  `成交量:`/`涨跌:`）。实现在 egui-charts fork（`DefaultTimeFormatter` +
+  crosshair/tooltip 格式串），compass 侧零配置。
 - **MA/BOLL 叠加层**（ref #174）：K 线上叠加 MA(5/10/60/120/250) 五条均线 +
   BOLL(20, 2.0) 三线（8 色暗/亮两套，`IndicatorTokens`）。指标**实时计算不存储**
   （compass-core 纯函数，GUI 每帧经缓存指纹重算）；缓存指纹
@@ -200,6 +214,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 2026-08-02 | 初始骨架：基于现有 GUI 提炼设计系统/布局/交互（ref #129） | — | 已实现（与代码同步） |
 | 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.omo/designs/gui-upgrade.md` | 已实现（与代码同步） |
 | 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.omo/designs/chart-ma-boll.md` | 已实现（与代码同步） |
+| 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.omo/designs/ui-fixes-chinese-date.md` + `.omo/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
@@ -227,3 +242,10 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 图例数值格式（ref #178 review） | 复用 vendored `format_price` 规则 / 固定 2 位小数 | format_price 规则（≥100→2 位、≥1→4 位、<1→6 位） | 与上方 OHLC legend 精度一致；低价股不失真 | 固定精度在 <1 元股失真 |
 | 指标重算时机（ref #174/#178） | 每帧重算 / 数据变化缓存重算 | 缓存重算，键 = `(symbol, len, 首末 bar time, 末根 close)` | 每帧 O(n) 分配浪费；symbol 防切标的碰撞、close 防前复权重算同窗口价格修正后的陈旧叠加 | 每帧重算虽量级小但属工程浪费 |
 | 指标色 token 组织（ref #177） | 新增 `IndicatorTokens` 子结构 / 扩展 `ChartTokens` | 新增 `IndicatorTokens`（8 色暗亮两套） | 指标色与图表骨架色语义独立；`ChartTokens` 已被 `apply_to_chart` 逐字段消费 | 扩 ChartTokens 使 apply_to_chart 与指标色映射耦合 |
+| 图表日期格式（ref #219） | 全英文 / 仅 x 轴中文 / 全部中文（x 轴紧凑 + 十字光标/tooltip 完整） | 全部中文：x 轴 `1月`/`5月15日`/`2024`（`%-m`/`%-d` 去填充）；十字光标/tooltip `2024年5月15日`（按 bar 周期分档） | 用户确认；A 股终端（同花顺/东财）惯例；紧凑式概览 + 完整式精确双层，日线不再显示无意义 00:00:00 | 仅 x 轴中文留 tooltip 英文混排；统一格式日线显示 00:00:00 |
+| 图表日期实现位置（ref #219） | fork `DefaultTimeFormatter` 直接改中文 / LocaleTimeFormatter 中文分支 / compass 侧覆写 | fork `DefaultTimeFormatter` 直接改 + crosshair/tooltip 格式串 | compass 无 locale 配置，fork 默认路径最小改动；LocaleTimeFormatter 是死代码路径 | Locale 分支需 compass 加 `.with_locale()` 扩大改动面 |
+| tooltip 标签中文化（ref #219） | 保持英文 / 一并中文化 | 一并中文化（`时间:`/`开盘:`/`最高:`/`最低:`/`收盘:`/`成交量:`/`涨跌:` + tracking 缩写） | 用户确认；避免 "Time: 2024年5月15日" 混排 | 保持英文留混排（#222 全 GUI i18n 另立） |
+| K 线切换立即重载（ref #218） | 仅同步 index / 同步 + 触发 fetch / loading 时延迟 | `set_timeframe` 同步 `shared_state.timeframe` 并无条件 `fetch_bars()` | 切换即重载符合直觉；loading 中的数据属旧周期，跳过则图表与标签不一致 | loading 延迟语义复杂且切换被吞 |
+| 选股器条件原子组（ref #220） | 单 `horizontal_wrapped` / 每组 `ui::horizontal` + 组间 `add_space(md)` | 每组 `ui::horizontal` 原子单元 + 行距 `item_spacing.y = sm`(8px) | 组内标签+控件永不拆行；换行只发生在组间；egui 0.35 实测 18px 行高钳制 + SectionTitle RTL 空子 ui 游标跳转需 `scope_builder` + 实测标签宽 max_rect 封住 | 自定义换行/表格布局复杂且脆弱 |
+| MultiSelect 弹层 id（ref #220 实测） | 默认空 id_salt / 每实例显式 id_salt | 每实例显式 `id_salt`（screener 三处） | `popup_id = ui.id().with("multi_select_popup").with(&id_salt)`——空 salt 时多弹层 Area id 冲突互相覆盖 | 空 salt 依赖调用方容器 id 区分（同一面板内不成立） |
+| SEPA 表格布局容器（ref #221） | `ui::horizontal` 直接放表格 / `allocate_ui_with_layout` 垂直容器 | 垂直容器（宽 = 可用宽 − 详情 280px − spacing） | egui_extras TableBuilder 假定 header/body ScrollArea 垂直堆叠，horizontal 布局把二者并排（body 行渲染到表头右侧——真实 GUI 回归，坐标断言复现） | horizontal 直放仅 kittest label 存在性断言通过，位置错误漏检 |
