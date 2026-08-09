@@ -46,6 +46,12 @@ cargo run --bin compass-data -- import [OPTIONS]
 
 **⚠️ 过滤参数不是增量**：`import` 是「全量直写」命令——任何过滤参数（`--symbols`/`--limit`/`--start-date`/`--end-date`/`--since`）都只是 WHERE 过滤查询后**整体覆盖** `stock_daily.parquet`，旧数据不保留。需要增量/merge 语义请用 `import-compass`。
 
+**数据质量校验（ref #136）**：`import` 写盘 `stock_daily.parquet` 后自动校验数据完整性，不一致即命令报错退出（exit 1）：
+
+- **行数对比**：源 Dolt `final_a_stock_eod_price` 的 COUNT（同一 WHERE 过滤条件）vs parquet 实际行数，不一致 → 报错退出
+- **`--limit>0` 时的预期**：`min(源 COUNT, limit)`（LIMIT 语义是"至多 N 行"）
+- **日期范围**：源 vs 目标 `tradedate` MIN/MAX 对比（parquet 侧 `tradedate` 为 TIMESTAMP，经 `CAST AS DATE` 规范化为 `YYYY-MM-DD` 后再与 Dolt 侧 DATE 比较）；`--limit>0` 时跳过（LIMIT 截断行会破坏 MIN/MAX 语义）
+
 ### 输出结构
 
 ```
@@ -110,6 +116,12 @@ cargo run --bin compass-data -- import-compass --table fin_indicators --since 20
 # 强制覆盖
 cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 ```
+
+**数据质量校验（ref #136）**：`import-compass` 写盘后自动校验数据完整性：
+
+- **全量导入**（无 `--since`/`--overwrite`/首次）：源 Dolt COUNT（含过滤条件）vs parquet 行数精确对比，不一致 → 报错退出（exit 1）
+- **增量 merge**：校验"不丢数据"——merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败走 fallback 时跳过此校验（fallback 是修复损坏文件的恢复机制，改为对比过滤后的源 COUNT）
+- **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/institution_survey/concept_member）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，collectors 写库时不填）
 
 ---
 

@@ -249,6 +249,8 @@ SEPA 扩展（epic #139）加入 `open`/`high`/`low`/`amount`：形态（VCP）�
 注意：parquet 的 `tradedate` 列实际类型是 **TIMESTAMP**（非 DATE），
 `CAST AS VARCHAR` 产出 `"1991-04-04 00:00:00"` 带时间分量。解析必须用
 `date_str_to_utc`（兼容 DATE 与 TIMESTAMP 两种格式），不能只用 `%F`。
+`import` 的数据质量校验（ref #136）做日期范围对比时，parquet 侧 `tradedate`
+先 `CAST AS DATE` 规范化为 `YYYY-MM-DD`，再与 Dolt 侧的 DATE 值比较。
 
 ### SEPA 数据表读取原语（epic #139）
 

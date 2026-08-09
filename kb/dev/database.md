@@ -39,6 +39,23 @@
 | SEPA 采集 | `block_trade`、`capital_main_flow`、`concept_member`、`dragon_list`、`institution_survey` | 龙虎榜/大宗/主力资金/概念/机构调研 |
 | 计算产物 | `final_score`、`market_temperature`、`capital_factor`、`industry_factor`、`technical_factor`、`data_updates` | SEPA 评分与因子输出、抓取状态 |
 
+**data_updates 表（抓取/计算状态登记）**：schema 权威定义见
+`crates/compass-data/src/sepa.rs:73-79`（table_name PK + last_updated + source +
+row_count + last_report_date）。消费方：
+
+- **collectors 增量锚点**（`collectors/common.py:171-185`）：各采集器以
+  `last_report_date` 为增量起点，只抓 `>= 最新已抓报告期` 的窗口
+- **sepa_daily.sh 增量锚点**（`scripts/sepa_daily.sh:157-158`）：取 SEPA 行情表
+  最新 `last_report_date` 判断当日是否需采集
+- **import-compass 新鲜度校验（ref #136）**：导入后读 `last_report_date`，过期
+  仅 warn 不退出（财务表 120 天 / 行情表 7 天 / stock_basic 不检查）
+
+`last_report_date` 语义（collectors 写库时按表类填写）：`fin_*` 财务表
+（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）= `MAX(report_date)`；
+行情表 capital_main_flow/dragon_list/block_trade = `MAX(trade_date)`、
+institution_survey = `MAX(survey_date)`；concept_member = `CURDATE()`；
+stock_basic = NULL（写库只填 4 列，`collectors/main.py:79-85`）。
+
 ## investment_data 同步（pull → push → import）
 
 investment_data 是第三方只读库，**每次使用前都应同步**：从 chenditc 上游
