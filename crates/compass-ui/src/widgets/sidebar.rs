@@ -9,6 +9,7 @@
 use egui::{Align, Color32, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 
 use crate::tokens::ThemeTokens;
+use compass_i18n::t;
 
 use super::empty_state::EmptyState;
 use super::icon_button::IconButton;
@@ -90,16 +91,18 @@ impl<'a> Sidebar<'a> {
 
         // Search row: input + add button.
         ui.horizontal(|ui| {
+            let placeholder = t!("sidebar.search_placeholder");
             let search_resp = Input::new(tokens, search)
-                .placeholder("搜索自选")
+                .placeholder(&placeholder)
                 .prefix_icon(ICON_SEARCH)
                 .width(tokens.spacing.sidebar_w - 40.0)
                 .show(ui);
             if search_resp.changed() {
                 events.push(SidebarEvent::Search(search.clone()));
             }
+            let add_tooltip = t!("sidebar.add_tooltip");
             if IconButton::new(tokens, ICON_PLUS)
-                .tooltip("添加")
+                .tooltip(&add_tooltip)
                 .small()
                 .show(ui)
             {
@@ -110,8 +113,10 @@ impl<'a> Sidebar<'a> {
 
         let total: usize = groups.iter().map(|g| g.items.len()).sum();
         if total == 0 {
-            EmptyState::new(tokens, ICON_STAR, "自选股为空")
-                .description("点击 + 添加关注的股票")
+            let empty_title = t!("sidebar.empty_title");
+            let empty_desc = t!("sidebar.empty_desc");
+            EmptyState::new(tokens, ICON_STAR, &empty_title)
+                .description(&empty_desc)
                 .show(ui);
             return events;
         }
@@ -199,9 +204,10 @@ impl<'a> Sidebar<'a> {
                     .variant(TagVariant::Exchange)
                     .show(ui);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let delete_tooltip = t!("sidebar.delete_tooltip");
                     if (hovering || item.selected)
                         && IconButton::new(tokens, ICON_X)
-                            .tooltip("删除")
+                            .tooltip(&delete_tooltip)
                             .small()
                             .show(ui)
                     {
@@ -287,6 +293,7 @@ mod tests {
 
     #[test]
     fn empty_groups_show_empty_state() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let sidebar = Sidebar::new(&tokens);
         let mut search = String::new();

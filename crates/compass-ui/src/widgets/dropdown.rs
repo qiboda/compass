@@ -3,6 +3,7 @@
 
 use crate::tokens::ThemeTokens;
 use crate::widgets::input::Input;
+use compass_i18n::t;
 use egui::{Area, Color32, CornerRadius, Frame, Margin, Order, RichText, Sense, Stroke, Ui};
 
 /// Dropdown with a unified trigger and popup look. Selection state is
@@ -104,7 +105,9 @@ impl<'a> Dropdown<'a> {
                                 d.get_temp::<String>(ui.id().with("query"))
                                     .unwrap_or_default()
                             });
+                            let search_hint = t!("common.search");
                             Input::new(tokens, &mut query)
+                                .placeholder(&search_hint)
                                 .width(self.width - 8.0)
                                 .show(ui);
                             ui.add_space(tokens.spacing.xs);
@@ -179,7 +182,7 @@ impl<'a> Dropdown<'a> {
         }
         if !any {
             ui.label(
-                RichText::new("无匹配结果")
+                RichText::new(t!("common.no_matches"))
                     .color(c.text_weak)
                     .size(tokens.typography.caption),
             );

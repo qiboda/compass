@@ -13,6 +13,7 @@ use egui::{Align2, Area, Color32, Frame, Id, LayerId, Margin, Order, Rect, Sense
 
 use crate::tokens::ThemeTokens;
 use crate::widgets::button::{Button, ButtonVariant};
+use compass_i18n::t;
 
 /// Backdrop fade-in duration (design §7 #3, 120 ms linear).
 const BACKDROP_DURATION: Duration = Duration::from_millis(120);
@@ -73,9 +74,9 @@ pub struct Modal {
     body: String,
     /// Whether the confirm button uses the Danger variant (default Primary).
     danger: bool,
-    /// Confirm button label (default "Confirm").
+    /// Confirm button label (default `t!("common.confirm")`, locale-resolved).
     confirm_text: String,
-    /// Cancel button label (default "Cancel").
+    /// Cancel button label (default `t!("common.cancel")`, locale-resolved).
     cancel_text: String,
     /// Optional callback invoked when the user clicks the confirm button.
     /// Consumed on use — set to `None` after calling.
@@ -107,8 +108,8 @@ impl Modal {
             title: String::new(),
             body: String::new(),
             danger: false,
-            confirm_text: "Confirm".to_string(),
-            cancel_text: "Cancel".to_string(),
+            confirm_text: t!("common.confirm").into_owned(),
+            cancel_text: t!("common.cancel").into_owned(),
             on_confirm: None,
         }
     }
@@ -174,12 +175,12 @@ impl Modal {
         self.danger = danger;
     }
 
-    /// Override the confirm button label (default `"Confirm"`).
+    /// Override the confirm button label (default `t!("common.confirm")`).
     pub fn set_confirm_text(&mut self, text: impl Into<String>) {
         self.confirm_text = text.into();
     }
 
-    /// Override the cancel button label (default `"Cancel"`).
+    /// Override the cancel button label (default `t!("common.cancel")`).
     pub fn set_cancel_text(&mut self, text: impl Into<String>) {
         self.cancel_text = text.into();
     }
@@ -574,6 +575,7 @@ mod tests {
 
     #[test]
     fn show_open_renders_buttons() {
+        rust_i18n::set_locale("zh");
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
         modal.borrow_mut().open(0.0);
         modal.borrow_mut().set_title("Test");
@@ -583,13 +585,15 @@ mod tests {
         harness.run();
 
         assert!(modal.borrow().is_open());
-        // Buttons must exist in the rendered tree.
-        let _cancel = harness.get_by_label("Cancel");
-        let _confirm = harness.get_by_label("Confirm");
+        // Buttons must exist in the rendered tree (defaults resolve via the
+        // active locale — zh "确认"/"取消").
+        let _cancel = harness.get_by_label(&t!("common.cancel"));
+        let _confirm = harness.get_by_label(&t!("common.confirm"));
     }
 
     #[test]
     fn cancel_closes_modal_without_calling_callback() {
+        rust_i18n::set_locale("zh");
         let called = Rc::new(Cell::new(false));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
         modal.borrow_mut().open(0.0);
@@ -603,7 +607,7 @@ mod tests {
         let mut harness = harness_for_modal(&modal);
         harness.run();
 
-        harness.get_by_label("Cancel").click();
+        harness.get_by_label(&t!("common.cancel")).click();
         harness.run();
 
         assert!(
@@ -629,6 +633,7 @@ mod tests {
 
     #[test]
     fn confirm_button_calls_callback_and_closes() {
+        rust_i18n::set_locale("zh");
         let called = Rc::new(Cell::new(false));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
         modal.borrow_mut().open(0.0);
@@ -642,7 +647,7 @@ mod tests {
         let mut harness = harness_for_modal(&modal);
         harness.run();
 
-        harness.get_by_label("Confirm").click();
+        harness.get_by_label(&t!("common.confirm")).click();
         harness.run();
 
         assert!(called.get(), "callback should have been called");
@@ -662,6 +667,7 @@ mod tests {
 
     #[test]
     fn confirm_button_consumes_callback_exactly_once() {
+        rust_i18n::set_locale("zh");
         let call_count = Rc::new(Cell::new(0u32));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
         modal.borrow_mut().open(0.0);
@@ -676,7 +682,7 @@ mod tests {
         harness.run();
 
         // First click — callback runs.
-        harness.get_by_label("Confirm").click();
+        harness.get_by_label(&t!("common.confirm")).click();
         harness.run();
         assert_eq!(call_count.get(), 1);
 
@@ -691,7 +697,7 @@ mod tests {
         // not affect the click below: the scale transform only shifts painted
         // shapes, never the interaction rects. Steps just render deterministically.
         harness.run_steps(16);
-        harness.get_by_label("Confirm").click();
+        harness.get_by_label(&t!("common.confirm")).click();
         harness.run();
         assert_eq!(
             call_count.get(),

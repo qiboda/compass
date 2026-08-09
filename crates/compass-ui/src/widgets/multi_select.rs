@@ -8,6 +8,7 @@
 use egui::{Align, Area, Layout, Margin, Order, RichText, ScrollArea, Stroke, Ui};
 
 use crate::tokens::ThemeTokens;
+use compass_i18n::t;
 
 use super::button::{Button, ButtonSize, ButtonVariant};
 use super::checkbox::Checkbox;
@@ -70,11 +71,17 @@ impl MultiSelect {
         self
     }
 
-    /// The summary text of the trigger: `全部` when nothing is selected,
-    /// `已选 N 个` otherwise.
+    /// The summary text of the trigger: `全部` (via `common.all`) when nothing
+    /// is selected, `已选 N 个` otherwise.
+    ///
+    /// The `已选 N 个` interpolated form is intentionally **not** keyed: the
+    /// approved key tree (`.omo/designs/gui-i18n.md` §1) defines no
+    /// `widgets.multi_select.*` / selected-count key, and locale files are
+    /// frozen by the KEY_TREE completeness contract (owned by T4/T5).
+    /// Scoped out until the design adds a key (plan T6 resolution).
     pub fn summary(&self) -> String {
         if self.selected.is_empty() {
-            "全部".to_string()
+            t!("common.all").into_owned()
         } else {
             format!("已选 {} 个", self.selected.len())
         }
@@ -151,8 +158,9 @@ impl MultiSelect {
         let tokens = &self.tokens;
         let mut changed = false;
 
+        let search_hint = t!("common.search");
         Input::new(tokens, &mut self.filter)
-            .placeholder("搜索…")
+            .placeholder(&search_hint)
             .width(POPUP_MIN_WIDTH - 16.0)
             .show(ui);
         ui.add_space(tokens.spacing.xs);
@@ -176,6 +184,10 @@ impl MultiSelect {
 
         ui.add_space(tokens.spacing.sm);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // "完成" is intentionally not keyed: the approved key tree
+            // (`.omo/designs/gui-i18n.md` §1) defines no widgets.multi_select.*
+            // key for it; locale files are frozen by the KEY_TREE contract
+            // (owned by T4/T5). Scoped out (plan T6 resolution).
             if Button::new(tokens, "完成")
                 .variant(ButtonVariant::Primary)
                 .size(ButtonSize::Sm)
@@ -207,6 +219,7 @@ mod tests {
 
     #[test]
     fn summary_shows_all_when_empty() {
+        rust_i18n::set_locale("zh");
         let ms = MultiSelect::new(&tokens(), ["a", "b", "c"]);
         assert_eq!(ms.summary(), "全部");
     }
@@ -271,6 +284,7 @@ mod tests {
 
     #[test]
     fn trigger_opens_and_escape_closes_the_popup() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();

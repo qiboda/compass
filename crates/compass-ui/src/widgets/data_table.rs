@@ -11,6 +11,7 @@
 use std::cmp::Ordering;
 
 use crate::tokens::ThemeTokens;
+use compass_i18n::t;
 use egui::{Align, Color32, Layout, RichText, Sense, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -58,10 +59,15 @@ pub enum DataCell {
     Rank(usize),
 }
 
-/// Column specification: header text + numeric alignment.
+/// Column specification: i18n key for the header text + numeric alignment.
+///
+/// `header` holds an **i18n key** (e.g. `"sepa.table.rank"`), NOT the display
+/// text — [`Self::show`] resolves it via `t!()` every frame, so a locale
+/// switch is visible on the next frame with no stale stored translations
+/// (design `.omo/designs/gui-i18n.md` §1 key-holding contract).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColumnSpec {
-    /// Header label rendered in the 22 px header row.
+    /// i18n key resolved to the header label via `t!()` at render time.
     pub header: &'static str,
     /// Right-aligns cells and uses the monospace font for numeric columns.
     pub numeric: bool,
@@ -148,13 +154,14 @@ impl DataTable {
         let mut clicked_row = None;
 
         if self.rows.is_empty() {
-            EmptyState::new(&tokens, EMPTY_ICON, "无符合条件").show(ui);
+            let empty = t!("widgets.data_table.empty");
+            EmptyState::new(&tokens, EMPTY_ICON, &empty).show(ui);
             return None;
         }
 
         // Row count label.
         ui.label(
-            RichText::new(format!("共 {} 行", self.rows.len()))
+            RichText::new(t!("widgets.data_table.count", count = self.rows.len()))
                 .size(tokens.typography.caption)
                 .color(c.text_secondary),
         );
@@ -192,7 +199,7 @@ impl DataTable {
             table
                 .header(HEADER_HEIGHT, |mut header| {
                     for (idx, col) in columns.iter().enumerate() {
-                        let mut text = col.header.to_string();
+                        let mut text = t!(col.header).into_owned();
                         if idx == sort_column {
                             text.push_str(if sort_descending { " ↓" } else { " ↑" });
                         }
@@ -706,8 +713,44 @@ mod tests {
         ]
     }
 
+    // ------------------------------------------------------------------
+    // #222 i18n (T6): `ColumnSpec.header` holds a KEY ("sepa.table.rank"
+    // etc.) and the renderer resolves it via t!() — the column header must
+    // render the resolved zh text, never the raw key string. RED now: the
+    // renderer still prints col.header verbatim.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn keyed_header_resolves_through_dictionary() {
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let mut table = DataTable::new(
+            &tokens,
+            vec![ColumnSpec {
+                header: "sepa.table.rank",
+                numeric: true,
+            }],
+        );
+        table.set_rows(vec![vec![DataCell::Text("贵州茅台".into())]]);
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            table.show(ui);
+        });
+        harness.fit_contents();
+        harness.step();
+        let _ = harness
+            .query_all_by_label_contains("排名")
+            .next()
+            .expect("header resolves via t!()");
+        assert_eq!(
+            harness.query_all_by_label_contains("排名").count(),
+            1,
+            "sepa.table.rank header must render exactly one 排名 label"
+        );
+    }
+
     #[test]
     fn empty_table_shows_empty_state() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let mut table = DataTable::new(&tokens, columns());
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
@@ -742,6 +785,7 @@ mod tests {
 
     #[test]
     fn renders_rows_with_price_cells_without_panic() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let mut table = DataTable::new(&tokens, columns());
         table.set_rows(price_rows());
