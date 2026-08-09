@@ -484,7 +484,7 @@ dolt status                            # 确认工作区干净、与 origin 同�
 
 见 `kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
-**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 80%，per-crate 阈值——compass-core / compass-data **95%**，compass / compass-strategy / compass-types / compass-ui 80%（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 内嵌阈值表校验）；Python collectors `--cov=.` 全量计入 ≥95%（`--cov-fail-under=95`）。GUI 用 egui_kittest 无头集成测试，Python 用 stub AsyncSession 模拟网络。详见 `kb/dev/testing.md` 覆盖率章节。
+**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 80%，per-crate 阈值——compass-core / compass-data **95%**，compass / compass-strategy / compass-types / compass-ui / compass-i18n 80%（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 内嵌阈值表校验）；Python collectors `--cov=.` 全量计入 ≥95%（`--cov-fail-under=95`）。GUI 用 egui_kittest 无头集成测试，Python 用 stub AsyncSession 模拟网络。详见 `kb/dev/testing.md` 覆盖率章节。
 
 ## API reference
 

@@ -63,7 +63,7 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 ## 布局结构
 
 ```
-┌─ 工具栏 (40px, Toolbar 组件)：[标的] [周期 1d|1w|1M] | [操作 Fetch] | [显示 侧栏/主题] ┐
+┌─ 工具栏 (40px, Toolbar 组件)：[标的] [周期 1d|1w|1M] | [操作 Fetch] | [显示 侧栏/主题/语言] ┐
 ├──────────┬──────────────────────────────────────────────────────────────┤
 │ Sidebar  │  DockArea（egui_dock，可拖拽/关/开标签页）                      │
 │ 240px    │  标签页: 图表 | 日志 | 选股器（中文标题 + Phosphor 图标）        │
@@ -77,7 +77,7 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 - **工具栏**：`compass-ui::widgets::Toolbar` 组件（40px），逻辑四组：
   **标的**（`SearchableDropdown`，Symbol 搜索）/ **周期**（`Segmented` 1d|1w|1M）/
   **操作**（`Button(Primary)` Fetch，loading 禁用+spinner）/ **显示**（侧栏切换
-  `IconButton` + 主题 `Dropdown`）；组间强分隔线 + 16px 间距（ref #130）
+  `IconButton` + 主题 `Dropdown` + 语言 `Dropdown`）；组间强分隔线 + 16px 间距（ref #130）
 - **Sidebar**：`SidePanel::left` 240px（resizable 200–320），自选股分组列表
   （名称 + mono 代码 + 交易所标签），行点击切图表、hover 删除（Modal 确认）、
   顶部搜索 + 添加按钮；watchlist 持久化到 `[watchlist]` 配置节（ref #131）
@@ -147,8 +147,13 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
   （loading 守卫不拦截切换——旧周期数据与标签不一致）；启动时 `timeframe_index`
   从配置 `default_timeframe` 派生（`timeframe_index_from_value`，与
   `timeframe_label` 双向同步）
-- Fetch：`Button(Primary)` 主操作按钮，loading 时禁用 + 内嵌 spinner +「加载中…」
+- Fetch：`Button(Primary)` 主操作按钮，loading 时禁用 + 内嵌 spinner +「加载中…」；
+  按钮文案键化（`t!("toolbar.fetch")`，zh「获取数据」/ en "Fetch"）
 - 主题：`Dropdown` 下拉切换，即时全局生效 + Info toast「主题已切换」
+- 语言（ref #222）：`Dropdown` 下拉（Group D，主题右侧，76px，选项为母语原生名
+  「中文」/「English」），切换即 `set_locale` + 全界面立即刷新 + Info toast
+  「语言已切换」+ 写回 config.toml 顶层 `language` 键（`save_language_config`）；
+  窗口标题保持英文品牌 "Compass — Stock Chart" 不变
 
 ### 快捷键
 
@@ -169,12 +174,14 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 - **十字准线**：悬停 K 线显示 OHLCV 详情
 - **空态**：未加载数据时显示 EmptyState 引导
 - 数据源：本地 DuckDB `read_parquet()`，**无在线回退**
-- **日期格式（中文，ref #219）**：所有日期显示中文——x 轴刻度紧凑式
-  （`1月`/`5月15日`/`2024`，按 TickMarkType 固定映射、`%-m`/`%-d` 去填充），
-  十字光标与 tooltip 完整式（`2024年5月15日`，按 bar 周期分档：日线+ 纯日期、
-  盘中带时间）；tooltip 前缀全中文化（`时间:`/`开盘:`/`最高:`/`最低:`/`收盘:`/
-  `成交量:`/`涨跌:`）。实现在 egui-charts fork（`DefaultTimeFormatter` +
-  crosshair/tooltip 格式串），compass 侧零配置。
+- **日期格式（ref #219，locales 键化 ref #222）**：日期显示随语言环境切换——
+  zh 下全部中文：x 轴刻度紧凑式（`1月`/`5月15日`/`2024`，按 TickMarkType 固定
+  映射、`%-m`/`%-d` 去填充），十字光标与 tooltip 完整式（`2024年5月15日`，按
+  bar 周期分档：日线+ 纯日期、盘中带时间），tooltip 前缀全中文（`时间:`/`开盘:`/
+  `最高:`/`最低:`/`收盘:`/`成交量:`/`涨跌:`）；en 下为 TradingView 风格短格式
+  （`Jan`/`May 15`/`Time:`/`Open:`…）。格式串与标签在 egui-charts fork **自带
+  locales** 中键化（`chart.date.*` 等，fork 独立 rust-i18n 字典），`set_locale`
+  全局切换同日生效，compass 侧零配置。
 - **MA/BOLL 叠加层**（ref #174）：K 线上叠加 MA(5/10/60/120/250) 五条均线 +
   BOLL(20, 2.0) 三线（8 色暗/亮两套，`IndicatorTokens`）。指标**实时计算不存储**
   （compass-core 纯函数，GUI 每帧经缓存指纹重算）；缓存指纹
@@ -220,6 +227,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 2026-08-09 | 新增组件使用规范权威文档 `kb/design/ui-widgets.md`（24 组件 × 8 字段模板，与本文分工：本文管 token/布局/交互，组件文档管组件粒度用法） | `.omo/designs/ui-widgets.md` | 已同步（与代码同步） |
 | 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.omo/designs/ui-fixes-chinese-date.md` + `.omo/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
 | 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.omo/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
+| 2026-08-10 | GUI 全面中文化 + 多语言 i18n（rust-i18n 键表 + 工具栏语言下拉 + config language 键 + fork 图表日期/tooltip 键化）（ref #222） | `.omo/designs/gui-i18n.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
@@ -262,3 +270,9 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | Button 宽度稳定（ref #230） | 跟随文本增长 / 固定宽度防跳 / **最小宽度 min_width** | `.min_width(f32)` 应用 min_size，SEPA 刷新 96 / Fetch 104 | 两态文本切换（「刷新」→「计算中…」）时宽度稳定；min 是下限非钳制（长文本仍增长）；根因调查证实宽度本跟随文本（33.7→59.0），「未变」是 loading 遮罩观感 | 跟随增长在 right_to_left 布局向左挤压抖动；固定宽度在短文本态右侧留白大 |
 | Button loading 文字色（ref #217 验收） | loading 视同 disabled 用 text_disabled / loading 保留变体色 | loading 保留变体文字色，仅真 disabled 用 text_disabled | loading 由 spinner + 遮罩表达状态，文字变灰在 accent 底几乎不可见（用户验收：加载中字体颜色不对） | loading 变灰符合 disabled 惯例但可读性差 |
 | concept_name 空白清理（ref #217 验收） | 原样入库 / INSERT 时 `TRIM(BOARD_NAME)` | 采集器 import 时 TRIM + 清理存量 11 行 | EastMoney BOARD_NAME 带尾随空格（`创新医疗服务   `），SEPA 题材 Tag 渲染拉伸空格（用户验收：第一个字后空格越来越多）；Dolt 数据已同步清理 | 仅 GUI 侧截断掩盖数据质量问题 |
+| 键命名空间（ref #222） | 模块前缀点分 / 扁平键 / 数字 id | 模块前缀点分（app./tab./toolbar./chart.* 等，独立 crate `compass-i18n` 承键表） | 与现有领域划分一一对应（citizens 即域）；IDE/文档可读；未来加语言零重构 | 扁平键难分组易冲突；数字 id 不可读 |
+| 语言切换机制（ref #222） | 仅 config 重启生效 / 应用内下拉即时切换 + config 持久化 | 应用内下拉 + config 持久化 | 主题 Dropdown 先例（即时 + Info toast + 持久化）已建立心智；`set_locale` 进程级 + 每帧 `t!()` 使即时切换成本极低；重启后保留选择 | 仅 config 无法即时预览，UX 差 |
+| 语言下拉位置（ref #222） | 工具栏 Group D / 状态栏 / 设置页 | 工具栏 Group D（主题旁） | 与主题并列，用户已熟悉「下拉即全局生效」交互；工具栏有空间；选项用母语原生名（中文/English），宽度 76px | 状态栏位偏角落发现性差；无设置页 |
+| 切换后窗口标题（ref #222） | 保持启动标题 / `ViewportCommand::Title` 更新 | `ViewportCommand::Title` 更新（保持英文品牌 "Compass — Stock Chart"） | egui 官方示例同款；标题即 `t!("app.title")` 键，切换重发一次即可 | 保持启动标题则切换后标题与 locale 不一致 |
+| fork 日期格式键化（ref #222） | fork 内嵌格式串写死 / fork 自带 locales 键化 | fork 自带 locales 键化（`chart.date.*` 等键，fork 独立 locales/ 目录） | 锁定决策：fork 用自身 rust-i18n + 自带 locales；`set_locale` 全局同日生效 | fork 写死无法随语言切换 |
+| en locale 测试并发（ref #222） | 并行 / LANG_LOCK 串行 | `LANG_LOCK: Mutex` 串行（ui_fixes_218.rs 定义） | `set_locale` 进程全局，并行测试互相污染 locale 造成 flaky；复用 HOME_LOCK 先例 | 并行省时但不可靠 |

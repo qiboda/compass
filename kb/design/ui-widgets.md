@@ -224,7 +224,12 @@ Divider::new(&tokens).vertical(true).strong(true).show(ui);
 
 **变体**：无 enum 变体；`searchable(bool)` 开关（popup 顶部加搜索输入框——**复用 `Input` 组件**，统一外观与 focus 描边约定——过滤 + 空过滤显示「无匹配结果」）。
 
-**API 要点**：`new(tokens, options: impl IntoIterator<Item: Into<String>>)`；`.selected(usize)`（初始索引）；`.width(f32)`（默认 160）；`.searchable(bool)`；`show(ui) -> Option<usize>`（**选中变化时**返回新索引；popup 开合状态存 egui memory，组件无状态）。
+**API 要点**：`new(tokens, options: impl IntoIterator<Item: Into<String>>)`；`.selected(usize)`（初始索引）；`.width(f32)`（默认 160）；`.searchable(bool)`；`.id_salt(&str)`（弹层 id 盐，见下方反模式）；`show(ui) -> Option<usize>`（**选中变化时**返回新索引；popup 开合状态存 egui memory，组件无状态）。
+
+> ⚠️ **`Dropdown::id_salt()` 是必需项**：同一 `Ui` 渲染多个 Dropdown 时必须显式
+> 指定（如工具栏 主题/语言 两个下拉，main.rs 分别 `id_salt("theme")` /
+> `id_salt("language")`）——弹层 id 由 `ui.id()` + `compass_dropdown_popup:{salt}`
+> 派生，缺省 salt 时同 Ui 多弹层 `Area` id 冲突、互相覆盖（ref #222 T14）。
 
 **示例**（源自 main.rs 主题切换）：
 ```rust
@@ -551,7 +556,7 @@ if let Some(orig_idx) = table.show(ui) { /* 行点击联动详情 */ }
 
 **适用场景**：需要用户阻断确认/引导的场景（kb/design/ui.md 已锁定三个真实绑定：启动数据缺失引导、日志导出、移除自选确认）。**一次只允许一个 Modal 实例**（main.rs 单实例复用）。
 
-**变体**：无 enum 变体；开关——`set_danger(bool)`（Confirm 变 Danger）、`set_confirm_text`/`set_cancel_text` 文案覆盖。
+**变体**：无 enum 变体；开关——`set_danger(bool)`（Confirm 变 Danger）、`set_confirm_text`/`set_cancel_text` 文案覆盖。**默认 Confirm/Cancel 文案经 `t!()` 键化**（`common.confirm`/`common.cancel`，zh 确认/取消、en Confirm/Cancel，ref #222）——调用方未覆盖时随当前语言环境。
 
 **API 要点**：`new(tokens)`；`is_open()`；`set_tokens(ThemeTokens)`；`open(now: f64)` / `close(now)` / `toggle(now)`（**now 为 egui 虚拟时间** `ctx.input(|i| i.time)`，动画确定性契约 ref #171）；`set_title` / `set_body` / `set_danger` / `set_confirm_text` / `set_cancel_text`；`set_on_confirm(FnOnce)`（**消费一次**）；进度访问器 `entry_progress/panel_progress/close_progress`；`show(&mut self, ctx)`（每帧调用，关闭状态机在 show 内完成）。
 

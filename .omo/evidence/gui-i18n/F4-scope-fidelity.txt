@@ -1,0 +1,33 @@
+# F4 — Scope fidelity (gui-i18n, ref #222)
+
+Date: 2026-08-10
+
+## Fork diff scope (fork repo, a1531ac → cc59f1f)
+
+`git diff a1531ac..HEAD --stat` shows exactly:
+- Cargo.toml (+rust-i18n dep, +[package.metadata.i18n])
+- locales/en.yml, locales/zh.yml (new, 16 chart.* keys)
+- src/chart/renderers/crosshair.rs (t!() dates)
+- src/chart/renderers/tooltip.rs (t!() prefixes/dates + RED tests)
+- src/chart/rendering/overlays/realtime_btn.rs (t!("chart.realtime"))
+- src/lib.rs (i18n! + re-exports)
+- src/scales/time_formatter.rs (DefaultTimeFormatter t!())
+- src/scales/timescale_marks.rs (test set_locale)
+- labels.rs: **0 changes** (locale-neutral O/H/L/C kept literal, Metis C3)
+- src/ui/: **0 changes** (feature-gated, unreachable — Metis C3)
+
+## Scope OUT verification
+
+- [x] fork src/ui/ zero changes
+- [x] compass-data CSV export contract unchanged (golden tests green)
+- [x] key completeness test green (149 keys symmetric zh/en)
+- [x] zh UI unchanged except the two approved items:
+  - toolbar.fetch: "Fetch" → 「获取数据」(Q2 decision)
+  - fork realtime button: "Go to Realtime" → 「实时」(chart.realtime key)
+- [x] No data translation, no CLI translation, no third language, no font change
+
+## Approximate-change check (zh UI surface)
+
+Verified via tests: fetch_button_zh_shows_get_data, tracking_tooltip_labels_are_chinese,
+crosshair date tests, screener/SEPA zh tests — all assert the pre-existing zh literals
+unchanged (except the two approved items above).
