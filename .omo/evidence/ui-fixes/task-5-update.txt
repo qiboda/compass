@@ -1,0 +1,24 @@
+# task-5: fork push + cargo update evidence
+
+## fork push
+- fork origin/compass: 2b18acd..a1531ac (feat(l10n): render chart dates in Chinese compact/full formats)
+- fork cargo test --lib: 523 passed, 0 failed (incl. new crosshair/tooltip Chinese assertions)
+- fork clippy --lib: clean
+- fork fmt: only interaction.rs / color_picker.rs show pre-existing diffs (fork upstream, not part of this change)
+
+## PLAN DEVIATION: fork CI
+- plan assumed pushing fork compass branch triggers fork CI (ci.yml)
+- Actual: fork .github/workflows/ci.yml triggers only on push/PR to `main` branch
+- push to `compass` branch does NOT trigger CI; no CI red/green evidence available for a1531ac
+- Mitigation: full local verification (test/clippy) + consumer-side adversarial tests
+  (adversarial_219_fork_formats.rs) pass against the pinned fork commit
+
+## cargo update
+- Cargo.lock: egui-charts 2b18acd4 -> a1531ac4e6d92b6f61d7ec6f58a7ed49e8f02ba9
+- compass cargo test: all green (incl. adversarial_219_fork_formats: 4 passed)
+- clippy --all-targets: clean; fmt --check: clean
+
+## Commit
+- d27407b fix(chart): update egui-charts fork for Chinese dates (ref #219)
+  - Cargo.lock (fork pin update)
+  - crates/compass/tests/adversarial_219_fork_formats.rs (adversarial RED->GREEN)
