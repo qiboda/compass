@@ -136,6 +136,10 @@ pub struct ColorTokens {
     pub accent_hover: Color32,
     /// Accent pressed state.
     pub accent_pressed: Color32,
+    /// Contrast foreground on an accent fill (e.g. Primary button label).
+    pub on_accent: Color32,
+    /// Contrast foreground on an error fill (e.g. Danger button label).
+    pub on_error: Color32,
     /// Up (A-share: red).
     pub up: Color32,
     /// Down (A-share: green).
@@ -176,6 +180,8 @@ impl ColorTokens {
             accent: Color32::from_rgb(0x29, 0x62, 0xFF),
             accent_hover: Color32::from_rgb(0x4D, 0x7F, 0xFF),
             accent_pressed: Color32::from_rgb(0x1E, 0x4F, 0xD6),
+            on_accent: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+            on_error: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             up: Color32::from_rgb(0xEF, 0x53, 0x50),
             down: Color32::from_rgb(0x26, 0xA6, 0x9A),
             flat: Color32::from_rgb(0xD1, 0xD4, 0xDC),
@@ -206,6 +212,8 @@ impl ColorTokens {
             accent: Color32::from_rgb(0x29, 0x62, 0xFF),
             accent_hover: Color32::from_rgb(0x4D, 0x7F, 0xFF),
             accent_pressed: Color32::from_rgb(0x1E, 0x4F, 0xD6),
+            on_accent: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+            on_error: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             up: Color32::from_rgb(0xD9, 0x30, 0x25),
             down: Color32::from_rgb(0x0E, 0x8F, 0x6E),
             flat: Color32::from_rgb(0x5A, 0x64, 0x72),
@@ -405,6 +413,25 @@ mod tests {
         for palette in [ColorTokens::dark(), ColorTokens::light()] {
             assert_eq!(palette.indicator.bb_upper, palette.indicator.bb_middle);
             assert_eq!(palette.indicator.bb_middle, palette.indicator.bb_lower);
+        }
+    }
+
+    /// Issue #230: `on_accent` / `on_error` are the contrast foreground
+    /// colors for solid accent/error fills (Material `on-*` semantics).
+    /// Both palettes must define them as pure white — 4.90:1 on accent
+    /// (#2962FF) and 4.77:1 on light error (#D93025), both >= WCAG AA 4.5:1.
+    #[test]
+    fn on_accent_on_error_tokens_defined_in_both_palettes() {
+        let white = Color32::from_rgb(0xFF, 0xFF, 0xFF);
+        for palette in [ColorTokens::dark(), ColorTokens::light()] {
+            assert_eq!(
+                palette.on_accent, white,
+                "on_accent must be pure white in every palette"
+            );
+            assert_eq!(
+                palette.on_error, white,
+                "on_error must be pure white in every palette"
+            );
         }
     }
 }

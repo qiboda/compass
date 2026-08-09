@@ -42,6 +42,7 @@ pub struct Button<'a> {
     icon: Option<&'a str>,
     loading: bool,
     disabled: bool,
+    min_width: f32,
 }
 
 impl<'a> Button<'a> {
@@ -55,6 +56,7 @@ impl<'a> Button<'a> {
             icon: None,
             loading: false,
             disabled: false,
+            min_width: 0.0,
         }
     }
 
@@ -67,6 +69,15 @@ impl<'a> Button<'a> {
     /// Set the size (defaults to [`ButtonSize::Md`]).
     pub fn size(mut self, size: ButtonSize) -> Self {
         self.size = size;
+        self
+    }
+
+    /// Set a minimum width in points. The button renders at least this wide,
+    /// keeping the label steady when text changes between states (e.g. the
+    /// SEPA refresh button "刷新" → "计算中…", issue #230). Text wider than
+    /// the minimum still grows the button (min is a floor, not a clamp).
+    pub fn min_width(mut self, min_width: f32) -> Self {
+        self.min_width = min_width;
         self
     }
 
@@ -99,19 +110,21 @@ impl<'a> Button<'a> {
 
     /// (variant, base fill, hover fill, pressed fill, text color).
     ///
-    /// All variants share the theme's `text_primary` label color so button
-    /// text follows the theme switch (dark 浅灰 / light 深色) instead of a
-    /// hardcoded white (user acceptance: "fetch按钮的文字颜色没有跟随主题").
+    /// Default/Ghost use the theme's `text_primary` (light/transparent fills);
+    /// Primary/Danger use the dedicated `on_accent`/`on_error` contrast tokens
+    /// so labels stay legible on solid accent/error fills in both themes
+    /// (light text_primary is dark — 3.19:1 on accent, below WCAG AA; white
+    /// on_accent is 4.90:1, issue #230).
     fn variant_colors(&self) -> (Color32, Color32, Color32, Color32) {
         let c = &self.tokens.color;
         match self.variant {
             ButtonVariant::Default => (c.bg_panel_alt, c.bg_hover, c.bg_active, c.text_primary),
-            ButtonVariant::Primary => (c.accent, c.accent_hover, c.accent_pressed, c.text_primary),
+            ButtonVariant::Primary => (c.accent, c.accent_hover, c.accent_pressed, c.on_accent),
             ButtonVariant::Danger => (
                 c.error,
                 c.error.gamma_multiply(1.15),
                 c.error.gamma_multiply(0.85),
-                c.text_primary,
+                c.on_error,
             ),
             ButtonVariant::Ghost => (
                 Color32::TRANSPARENT,
@@ -173,7 +186,7 @@ impl<'a> Button<'a> {
                 .size(tokens.typography.body),
         )
         .corner_radius(tokens.radius.sm)
-        .min_size(Vec2::new(0.0, self.height()));
+        .min_size(Vec2::new(self.min_width, self.height()));
         if disabled {
             button = button.sense(Sense::hover());
         }
@@ -209,8 +222,9 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    /// Variants follow the design; all label colors use the theme's
-    /// text_primary (theme-switch aware, not hardcoded white).
+    /// Variants follow the design: fills per variant; labels use
+    /// on_accent/on_error on solid accent/error fills and text_primary on
+    /// light/transparent fills (theme-switch aware, issue #230).
     #[test]
     fn variant_colors_follow_design() {
         let tokens = ThemeTokens::dark();
@@ -221,11 +235,11 @@ mod tests {
         assert_eq!(primary.variant_colors().0, tokens.color.accent);
         assert_eq!(primary.variant_colors().1, tokens.color.accent_hover);
         assert_eq!(primary.variant_colors().2, tokens.color.accent_pressed);
-        assert_eq!(primary.variant_colors().3, tokens.color.text_primary);
+        assert_eq!(primary.variant_colors().3, tokens.color.on_accent);
 
         let danger = Button::new(&tokens, "x").variant(ButtonVariant::Danger);
         assert_eq!(danger.variant_colors().0, tokens.color.error);
-        assert_eq!(danger.variant_colors().3, tokens.color.text_primary);
+        assert_eq!(danger.variant_colors().3, tokens.color.on_error);
 
         let ghost = Button::new(&tokens, "x").variant(ButtonVariant::Ghost);
         assert_eq!(ghost.variant_colors().0, Color32::TRANSPARENT);
@@ -311,9 +325,9 @@ mod tests {
         assert!(!clicked.get(), "disabled button must not fire clicks");
     }
 
-    /// Loading keeps the variant's text color (text_primary) — the spinner
-    /// and dimmed fill already signal the busy state; the label must not
-    /// fade to text_disabled (user acceptance: "加载中的字体颜色不对").
+    /// Loading keeps the variant's text color (on_accent for Primary) — the
+    /// spinner and dimmed fill already signal the busy state; the label must
+    /// not fade to text_disabled (user acceptance: "加载中的字体颜色不对").
     #[test]
     fn loading_button_keeps_variant_text_color() {
         let tokens = ThemeTokens::dark();
@@ -332,8 +346,8 @@ mod tests {
             .filter_map(|clipped| text_shape_color(&clipped.shape))
             .collect();
         assert!(
-            text_colors.contains(&tokens.color.text_primary),
-            "loading Primary button must render the theme text_primary label, got {text_colors:?}"
+            text_colors.contains(&tokens.color.on_accent),
+            "loading Primary button must render the on_accent label, got {text_colors:?}"
         );
         assert!(
             !text_colors.contains(&tokens.color.text_disabled),
@@ -380,5 +394,190 @@ mod tests {
         });
         harness.run();
         let _ = harness.get_by_label_contains("Fetch");
+    }
+
+    /// Issue #230: Primary text follows the theme `on_accent` token (Material
+    /// on-* semantics) in both palettes — light text_primary (#1B2430) on
+    /// accent (#2962FF) is only 3.19:1, below WCAG AA 4.5:1; white is 4.90:1.
+    #[test]
+    fn primary_variant_text_follows_on_accent_token() {
+        for tokens in [ThemeTokens::dark(), ThemeTokens::light()] {
+            let primary = Button::new(&tokens, "x").variant(ButtonVariant::Primary);
+            assert_eq!(
+                primary.variant_colors().3,
+                tokens.color.on_accent,
+                "Primary label must be the theme on_accent token (got text_primary)"
+            );
+        }
+    }
+
+    /// Issue #230: Danger text follows the theme `on_error` token in both
+    /// palettes — light text_primary on error (#D93025) is 3.28:1, below AA.
+    #[test]
+    fn danger_variant_text_follows_on_error_token() {
+        for tokens in [ThemeTokens::dark(), ThemeTokens::light()] {
+            let danger = Button::new(&tokens, "x").variant(ButtonVariant::Danger);
+            assert_eq!(
+                danger.variant_colors().3,
+                tokens.color.on_error,
+                "Danger label must be the theme on_error token (got text_primary)"
+            );
+        }
+    }
+
+    /// Issue #230: Default/Ghost keep `text_primary` (light/transparent fills,
+    /// where dark-on-light text is already readable) — no regression.
+    #[test]
+    fn default_ghost_variants_keep_text_primary() {
+        for tokens in [ThemeTokens::dark(), ThemeTokens::light()] {
+            let default = Button::new(&tokens, "x");
+            assert_eq!(default.variant_colors().3, tokens.color.text_primary);
+            let ghost = Button::new(&tokens, "x").variant(ButtonVariant::Ghost);
+            assert_eq!(ghost.variant_colors().3, tokens.color.text_primary);
+        }
+    }
+
+    /// Issue #230: a loading Primary button still renders the variant text
+    /// color (now on_accent) — only a true disabled button dims to
+    /// text_disabled. The label must never fade while loading.
+    #[test]
+    fn loading_button_keeps_on_accent_variant_text() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            Button::new(&tokens, "Fetch")
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .show(ui);
+        });
+        harness.step();
+
+        let text_colors: Vec<Color32> = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|clipped| text_shape_color(&clipped.shape))
+            .collect();
+        assert!(
+            text_colors.contains(&tokens.color.on_accent),
+            "loading Primary button must render the on_accent label, got {text_colors:?}"
+        );
+        assert!(
+            !text_colors.contains(&tokens.color.text_disabled),
+            "loading must not dim the label to text_disabled, got {text_colors:?}"
+        );
+    }
+
+    /// Issue #230: `.min_width(96)` renders the button at least 96px wide —
+    /// the SEPA refresh button must not shrink below the two-state width.
+    #[test]
+    fn min_width_sets_floor_on_rendered_width() {
+        let tokens = ThemeTokens::dark();
+        let rect = Rc::new(Cell::new(egui::Rect::ZERO));
+        let r = rect.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            r.set(Button::new(&tokens, "刷新").min_width(96.0).show(ui).rect);
+        });
+        harness.run();
+        assert!(
+            rect.get().width() >= 96.0,
+            "button with min_width(96) must render >= 96px wide, got {}",
+            rect.get().width()
+        );
+    }
+
+    /// Issue #230: SEPA refresh button — idle「刷新」and loading「计算中…」
+    /// render the same width under min_width(96) (±1px tolerance). Loading
+    /// uses `harness.step()` so the spinner's repaint requests do not make
+    /// `run()` spin forever.
+    #[test]
+    fn sepa_refresh_idle_loading_width_stable_with_min_width() {
+        let tokens = ThemeTokens::dark();
+        let idle = Rc::new(Cell::new(0.0f32));
+        let loading = Rc::new(Cell::new(0.0f32));
+
+        let idle_w = idle.clone();
+        let mut idle_harness = egui_kittest::Harness::new_ui(move |ui| {
+            idle_w.set(
+                Button::new(&tokens, "刷新")
+                    .variant(ButtonVariant::Primary)
+                    .min_width(96.0)
+                    .show(ui)
+                    .rect
+                    .width(),
+            );
+        });
+        idle_harness.run();
+
+        let loading_w = loading.clone();
+        let mut loading_harness = egui_kittest::Harness::new_ui(move |ui| {
+            loading_w.set(
+                Button::new(&tokens, "计算中…")
+                    .variant(ButtonVariant::Primary)
+                    .min_width(96.0)
+                    .loading(true)
+                    .show(ui)
+                    .rect
+                    .width(),
+            );
+        });
+        loading_harness.step();
+
+        assert!(
+            (idle.get() - loading.get()).abs() <= 1.0,
+            "idle/loading widths must match under min_width(96): idle={}, loading={}",
+            idle.get(),
+            loading.get()
+        );
+    }
+
+    /// Issue #230: the default min_width=0 keeps the text-driven width —
+    /// a short label renders narrower than a long one (no regression).
+    #[test]
+    fn default_min_width_zero_keeps_text_driven_width() {
+        let tokens = ThemeTokens::dark();
+        let short = Rc::new(Cell::new(0.0f32));
+        let long = Rc::new(Cell::new(0.0f32));
+
+        let s = short.clone();
+        let mut short_harness = egui_kittest::Harness::new_ui(move |ui| {
+            s.set(Button::new(&tokens, "A").show(ui).rect.width());
+        });
+        short_harness.run();
+
+        let l = long.clone();
+        let mut long_harness = egui_kittest::Harness::new_ui(move |ui| {
+            l.set(Button::new(&tokens, "计算中…").show(ui).rect.width());
+        });
+        long_harness.run();
+
+        assert!(
+            short.get() < long.get(),
+            "without min_width the width must follow the text: short={}, long={}",
+            short.get(),
+            long.get()
+        );
+    }
+
+    /// Issue #230: min_width is a floor, not a clamp — a label wider than
+    /// min_width must still expand the button beyond it.
+    #[test]
+    fn text_wider_than_min_width_grows_naturally() {
+        let tokens = ThemeTokens::dark();
+        let rect = Rc::new(Cell::new(egui::Rect::ZERO));
+        let r = rect.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            r.set(
+                Button::new(&tokens, "这是一个非常长的按钮文本用于验证自然增长")
+                    .min_width(96.0)
+                    .show(ui)
+                    .rect,
+            );
+        });
+        harness.run();
+        assert!(
+            rect.get().width() > 96.0,
+            "long text must grow beyond min_width(96), got {}",
+            rect.get().width()
+        );
     }
 }

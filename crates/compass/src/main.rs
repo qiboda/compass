@@ -1031,6 +1031,7 @@ impl CompassApp {
                     .variant(ButtonVariant::Primary)
                     .size(ButtonSize::Lg)
                     .icon(egui_phosphor::regular::DOWNLOAD_SIMPLE)
+                    .min_width(104.0)
                     .loading(loading)
                     .show(ui)
                     .clicked();
