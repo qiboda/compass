@@ -24,6 +24,9 @@ pub struct PriceText<'a> {
     price: f32,
     change: Option<f32>,
     tone: Tone,
+    /// When set, the price value itself is a percentage (e.g. a change
+    /// column): render only the signed percent form.
+    percent_only: bool,
 }
 
 impl<'a> PriceText<'a> {
@@ -34,12 +37,20 @@ impl<'a> PriceText<'a> {
             price,
             change: None,
             tone: Tone::Auto,
+            percent_only: false,
         }
     }
 
     /// Set the change percentage (rendered as `+1.23%`).
     pub fn change(mut self, change: f32) -> Self {
         self.change = Some(change);
+        self
+    }
+
+    /// Render only the signed percent form (the price value IS the change
+    /// percentage, e.g. a 涨跌幅 column) instead of "price + change".
+    pub fn percent_only(mut self) -> Self {
+        self.percent_only = true;
         self
     }
 
@@ -61,8 +72,11 @@ impl<'a> PriceText<'a> {
     }
 
     /// The full rendered text: `12.34` plus ` +1.23%` when a change is set.
+    /// In [`Self::percent_only`] mode the price itself is the percentage, so
+    /// only the signed percent form renders (`+1.23%`).
     pub fn text(&self) -> String {
         match self.change {
+            Some(change) if self.percent_only => format_change(change),
             Some(change) => format!("{:.2} {}", self.price, format_change(change)),
             None => format!("{:.2}", self.price),
         }
@@ -152,5 +166,33 @@ mod tests {
         });
         harness.run();
         let _ = harness.get_by_label("12.34 +1.23%");
+    }
+
+    /// Percent-only mode renders a single signed percent form, not the
+    /// duplicated "price + change" (ref #221 fix: 涨跌幅 column showed
+    /// "2.50 +2.50%" for one value).
+    #[test]
+    fn percent_only_renders_single_signed_percent() {
+        let tokens = ThemeTokens::dark();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            PriceText::new(&tokens, 2.50)
+                .change(2.50)
+                .percent_only()
+                .show(ui);
+        });
+        harness.run();
+        let _ = harness.get_by_label("+2.50%");
+    }
+
+    /// Percent-only keeps the up/down coloring from the change sign.
+    #[test]
+    fn percent_only_colors_by_change_sign() {
+        let tokens = ThemeTokens::dark();
+        let up = PriceText::new(&tokens, 2.50).change(2.50).percent_only();
+        assert_eq!(up.color(), tokens.color.up);
+        let down = PriceText::new(&tokens, -1.23).change(-1.23).percent_only();
+        assert_eq!(down.color(), tokens.color.down);
+        let flat = PriceText::new(&tokens, 0.0).change(0.0).percent_only();
+        assert_eq!(flat.color(), tokens.color.flat);
     }
 }

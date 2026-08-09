@@ -306,6 +306,9 @@ impl ScreenerPanel {
             },
             DataCell::Price {
                 value: row.change_20d as f32,
+                // value == change marks a percent column: the value drives
+                // sorting while render_cell renders a single signed percent
+                // form (e.g. "+2.50%"), not the duplicated "2.50 +2.50%".
                 change: Some(row.change_20d as f32),
             },
             DataCell::Count(row.market_cap.round() as usize),

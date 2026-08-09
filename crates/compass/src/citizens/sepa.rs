@@ -427,6 +427,9 @@ impl SepaPanel {
             },
             DataCell::Price {
                 value: row.change_pct as f32,
+                // value == change marks a percent column: the value drives
+                // sorting while render_cell renders a single signed percent
+                // form (e.g. "+2.50%"), not the duplicated "2.50 +2.50%".
                 change: Some(row.change_pct as f32),
             },
         ]
