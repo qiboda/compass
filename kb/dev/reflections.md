@@ -594,3 +594,31 @@
 ### Trends (last 10)
 - **"文档已固化但未遵守"模式第三次出现并根治**（ref #104 纪律写了没执行、ref #208 测试隔离、本次 ref #154 叙述性提及）：前两次靠强化文档，本次改为 hook 判定逻辑根治——趋势确认"文档 + 人工记忆"不可靠，可检测摩擦必须落执行侧钩子；本次的 mirror-drift guard 是 hook 类修复自带回归测试的先例，值得推广到其他 hook 修改
 - **实现类提交落 master 的流程违规**（本次、ref #202 曾有同类记录）：用户指示"在master提交"时 agent 应明示与 worktree 规则的冲突并获知情确认——当前 worktree 规则对"用户明确指示直推"的边界处理未写明，建议在 AGENTS.md worktree 章节补充"用户明确指示直推时的知情同意流程"
+## 2026-08-09 — ref #210 迁移 compass 工作流技能到全局 skwy-workflow 技能组
+
+**What was done**: 将 compass 的 8 个本地 opencode 技能抽取为全局 skwy- 技能组（7 技能 + 2 agents，放 ~/.config/opencode/），门禁新增第 3.5 步 Adversarial Tests（新 skwy-adversarial-test 找茬工程师），compass 本地删除已迁走技能并同步 AGENTS.md/kb 引用。计划经 ulw-plan + Momus/Oracle 3 轮 high-accuracy review 批准（SHA 53c71d51）；执行走 15 todos + F1-F4 验证 + review-work 5-agent 审查；9 个 commit 全在 worktree 分支。
+
+**User corrections**:
+1. "是不是有一个卡死了？" — 用户提醒 explore 子代理（bg_5a8d529c）超时，主 agent 应主动识别子任务失活而非被动等系统通知
+2. "模拟一个故意找茬的工程师...workflow中plan完成后，再加一个编写测试的流程，这个测试工程师，负责想方设法让测试通不过。。一个新的test agent" — 用户在 plan 阶段主动扩展需求：新增 skwy-adversarial-test 找茬工程师（门禁 3.5 步），触发 grill 重新访谈 7 轮锁定新决策
+3. "之前的test，也改名字，之前的test主要是面向需求的。" — 用户纠正：现有 test agent 改名 skwy-requirement-test（原计划 skwy-test），体现"面向需求"定位
+
+**What went wrong**:
+1. **子代理超时未主动判定（ref #154 纪律写了没执行——第二次出现）**：explore agent（bg_5a8d529c 引用点扫描）30 分钟无活动被系统判超时，context mining（bg_541e6d22）同样超时失败——均等系统通知被动处理，未按 ref #154 教训"30 分钟无输出即判定失活并替换"。用户主动提醒"是不是有一个卡死了？"才处理。
+2. **被动等待而非主动判定**：两次超时都是等 <system-reminder>，未在等待窗口内主动检查子任务活跃度；替换策略（自己直接 grep 执行）有效但属于事后补救。
+3. **commit-msg hook 拒绝已关闭 issue 引用（ref #119 教训复发）**：review-work 修复 commit 的 message 含 `ref #205`（叙述性历史引用），被 hook 提取为 issue 引用并拒绝——AGENTS.md 规则"叙述性提及已关闭 issue 用 #N 不带 ref"写了，但 commit message 起草时没遵守，两次尝试才成功。
+
+**Lessons learned**:
+1. 后台子任务 30 分钟无活动即主动判定失活并替换（自己执行或 respawn 小任务），不等系统通知、不无限等待——ref #154 已写此教训但未固化，本次必须落实为机制
+2. commit message 中叙述性提及已关闭 issue 用 `#N` 不带 `ref` 前缀（ref #119/#172/#205 三次摩擦）——起草 commit message 时先确认引用的 issue 状态
+3. 用户扩展需求（新增对抗性测试工程师）时 grill 重新访谈锁定新决策是对的；但应主动识别"需求变化需重新确认范围"，在 plan 批准前完成
+
+**Process improvements**: 
+- 已落实：本条目写入 reflections.md（ref #210 反思）
+- 子任务超时判定为可检测失误，拟固化为机制——建议 AGENTS.md 或 skwy-workflow skill 增加"后台子任务 30 分钟无活动即判定失活"规则（proposed，见趋势）
+- commit-msg 已关闭 issue 引用为可检测失误——commit-msg hook 已有正则校验，规则已存在于 AGENTS.md；本次为未遵守，无需新 hook（教训记录即可）
+
+### Trends (last 10)
+- **"文档已固化但未遵守"模式第三次出现**（ref #96/#104 → ref #154 已记录 → 本次子代理超时+commit-msg 引用）：纪律写进文档 ≠ 行为固化——子任务超时判定与已关闭 issue 引用规则都已写入，但执行时未查阅。上次（ref #154）已提出"~30min 判定失活"，本次仍未主动执行。
+- **review/lane 超时模式**（ref #154 goal lane 1h10m → 本次 explore/context 各 30min）：后台子任务失活判定阈值应固化为 skill 步骤——建议 skwy-workflow「委派纪律」增加"后台任务 30 分钟无 WORKING 更新即判定失活并替换"，将 ref #154 教训从条目级提升为流程级（proposed）。
+- **commit-msg 已关闭 issue 引用复发**（ref #119 → #172 → 本次 #205）：三次摩擦同一规则（叙述性引用用 #N 不带 ref）——规则已在 AGENTS.md，但 commit message 起草无检查步骤；可考虑在 skwy-git-workflow skill 的提交纪律中加"引用 issue 前查状态"步骤。
