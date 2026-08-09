@@ -6,10 +6,11 @@
 //! 2. Digit shortcuts (Num1/2/3) sync the same fields.
 //! 3. Startup `timeframe_index` derives from the configured `default_timeframe`.
 //!
-//! These tests mount under `crate::citizens` (declared `#[cfg(test)]` in
-//! `mod.rs`) because the test-agent sandbox locks `src/main.rs` itself; the
-//! helpers mirror the `main.rs` test module 1:1 so the main agent can move
-//! the whole file into `mod tests` verbatim when committing.
+//! The app-construction helpers here (`build_compass_app_with_timeframe`,
+//! `build_compass_app_with_stocks`, `sized_harness`) are the canonical test
+//! builders for the whole crate: `main.rs`'s own `mod tests` imports them
+//! from here rather than duplicating them, so the `timeframe_index`
+//! derivation cannot drift from production.
 
 use std::sync::Arc;
 

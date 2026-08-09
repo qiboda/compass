@@ -3,11 +3,9 @@
 //!
 //! These assertions exercise the *public* formatting API of the
 //! `egui-charts` fork (git dependency at the commit pinned in Cargo.lock,
-//! currently 2b18acd). The fork's `DefaultTimeFormatter` still emits English
-//! (`%b` / `%b %d`), so every assertion here is RED today and turns GREEN
-//! only after the fork's format strings switch to the plan-locked Chinese
-//! de-padded forms (`%-m月` / `%-m月%-d日`) AND `cargo update -p egui-charts`
-//! pulls the new commit into this workspace.
+//! currently a1531ac). They double as a contract guard: if the pinned fork
+//! commit regresses to English (`%b` / `%b %d`) or zero-padded forms, or the
+//! dependency pin is rolled back, these tests turn RED again.
 //!
 //! Rationale for living here instead of the fork: the fork's verification
 //! command is `cargo test --lib` (in-source `#[cfg(test)]` only), and this
@@ -28,7 +26,7 @@ use egui_charts::scales::{
 };
 
 /// Month labels must be Chinese and de-padded for single-digit months.
-/// RED now: current fork emits "Jan"/"Jun"/"Oct"/"Dec".
+/// Guard: a regression to English ("Jan"/"Jun"/"Oct"/"Dec") fails here.
 #[test]
 fn adversarial_219_month_labels_chinese_depadded() {
     let f = DefaultTimeFormatter::default();
@@ -66,7 +64,7 @@ fn adversarial_219_month_labels_chinese_depadded() {
 }
 
 /// Day-of-month labels must be Chinese and de-padded for single-digit days.
-/// RED now: current fork emits "Jun 15" / "Jun 01" / "Dec 31".
+/// Guard: a regression to English ("Jun 15" / "Jun 01" / "Dec 31") fails here.
 #[test]
 fn adversarial_219_day_of_month_labels_chinese_depadded() {
     let f = DefaultTimeFormatter::default();
@@ -127,7 +125,7 @@ fn adversarial_219_zero_padded_forms_are_forbidden() {
 
 /// Timezone conversion must keep the Chinese date after crossing a day
 /// boundary. 2024-06-15 20:00 UTC == 2024-06-16 05:00 JST.
-/// RED now: current fork emits "Jun 16" after conversion.
+/// Guard: a regression to English ("Jun 16") after timezone conversion fails here.
 #[test]
 fn adversarial_219_timezone_cross_day_keeps_chinese() {
     let f = TimeFormatterBuilder::new()

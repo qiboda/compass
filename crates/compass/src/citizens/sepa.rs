@@ -28,6 +28,11 @@ use crate::state::SharedState;
 /// [-3.75, 0]). Used for the inverted color-scale normalization.
 const RISK_MAX: f32 = 3.75;
 
+/// Right-side detail panel fixed width (design §3). Also reserved by the
+/// ranking table in `results_area` so the table and detail panel share the
+/// horizontal row exactly.
+const DETAIL_PANEL_WIDTH: f32 = 280.0;
+
 /// Ranking table columns (design §2: 12 columns, default sort = rank asc,
 /// descending business default for the score columns).
 const COLUMNS: [ColumnSpec; 12] = [
@@ -331,7 +336,7 @@ impl SepaPanel {
                 // them as side-by-side widgets (body rows land to the RIGHT
                 // of the header — the #221 real-GUI regression). Reserve the
                 // detail-panel width and give the table its own vertical ui.
-                let detail_w = 280.0 + self.tokens.spacing.md;
+                let detail_w = DETAIL_PANEL_WIDTH + self.tokens.spacing.md;
                 let table_w = (ui.available_width() - detail_w).max(200.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(table_w, ui.available_height()),
@@ -427,7 +432,7 @@ impl SepaPanel {
         ]
     }
 
-    /// Right-side detail panel (~300 px): header + total score + five module
+    /// Right-side detail panel: header + total score + five module
     /// rows with per-factor sub-items + theme tags (design §3).
     fn detail_panel(&mut self, ui: &mut egui::Ui, row: Option<&SepaRow>) {
         let tokens = self.tokens;
@@ -437,7 +442,7 @@ impl SepaPanel {
             .corner_radius(tokens.radius.md)
             .inner_margin(egui::Margin::symmetric(12, 12))
             .show(ui, |ui| {
-                ui.set_width(280.0);
+                ui.set_width(DETAIL_PANEL_WIDTH);
                 let Some(row) = row else {
                     ui.label(
                         RichText::new("点击排名行查看评分详情")

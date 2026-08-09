@@ -115,20 +115,31 @@ fn sepa_table_header_is_above_body_rows() {
     let mut harness = sized_harness(app);
     harness.run_steps(3);
 
+    // "排名" also appears inside the detail-panel hint ("点击排名行查看
+    // 评分详情"), so disambiguate by x: the table header sits left of the
+    // detail panel, while the hint is in the right-side detail panel.
     let header = harness
         .query_all_by_label_contains("排名")
-        .next()
+        .min_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
         .expect("header '排名' cell must exist");
     let first_row = harness.get_by_label("SH600001");
+    let header = header.rect();
+    let first_row = first_row.rect();
+    assert!(
+        header.min.x < first_row.min.x,
+        "table header must sit left of the first body row (body BELOW header), got header x={:.1} row x={:.1}",
+        header.min.x,
+        first_row.min.x,
+    );
 
     // Header must be above the first body row (body BELOW header).
     assert!(
-        header.rect().max.y <= first_row.rect().min.y,
+        header.max.y <= first_row.min.y,
         "table header must stack ABOVE the body rows, but got header bottom={:.1} row top={:.1} (x header={:.1} row={:.1})",
-        header.rect().max.y,
-        first_row.rect().min.y,
-        header.rect().min.x,
-        first_row.rect().min.x,
+        header.max.y,
+        first_row.min.y,
+        header.min.x,
+        first_row.min.x,
     );
 }
 
