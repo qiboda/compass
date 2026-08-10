@@ -311,7 +311,7 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 **/skwy-reflect 必须读取本 session 对话记录（`session_read`）逐条提取用户纠正，
 逐字引用原话——不凭记忆，对话记录是客观存在的**（执行者会忘，对话不会忘）；
 同时用 git 命令客观验证流程（commit 分支归属、worktree 是否创建未用）。
-`friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `kb/dev/reflections-archive.md` 归档文件。已融入流程的反思条目归档至 `kb/dev/reflections-archive.md`（主文件 `kb/dev/reflections.md` 仅保留活性条目）。
+`friction.md` 机制已移除（2026-08-01）——历史摩擦条目见 `kb/dev/reflections-archive.md` 归档文件。已融入流程的反思条目归档至 `kb/dev/reflections-archive.md`（主文件 `kb/dev/reflections.md` 仅保留活性条目）。**反思文件超过 500 行自动归档一次（skwy-reflect 第 5 步）**：值得处理的条目建 issue 后归档、已处理的直接归档、剩余的保留待下次归档时重新检阅；归档后仍超 500 行则交用户判断（ref #238）。
 
 ## 决策记录
 
