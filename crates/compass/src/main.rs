@@ -3225,7 +3225,7 @@ default_timeframe = "1w"
         ("chart.empty_title", "暂无图表数据", "No chart data"),
         (
             "chart.empty_desc",
-            "输入代码并点击 Fetch",
+            "输入代码并点击获取数据",
             "Enter a code and click Fetch",
         ),
         ("logger.title", "日志", "Log"),
@@ -3394,15 +3394,18 @@ default_timeframe = "1w"
     #[test]
     fn default_locale_is_zh_without_set_locale() {
         // kittest constructs CompassApp directly without main() (Metis M5),
-        // so no set_locale call ever runs on that path. The rust-i18n
-        // macro must therefore default to zh (`default = "zh"` — a bare
-        // `fallback = "zh"` is NOT enough: rust-i18n's default locale is
-        // "en" and en.yml contains every key, so the fallback never fires).
+        // so no set_locale call ever runs on that path. rust-i18n's
+        // process-global locale defaults to "en" (the `default-locale` cargo
+        // metadata is a no-op in 4.2.1 — see kb/dev/toolchain.md), so the zh
+        // contract is pinned explicitly here rather than assumed from the
+        // library default.
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         assert_eq!(tr("tab.chart"), "图表");
         assert_eq!(tr("app.title"), "Compass — Stock Chart");
+        compass_i18n::set_locale("zh");
     }
 
     #[test]

@@ -529,7 +529,7 @@ Tooltip::new(&tokens).text(resp, "帮助提示");
 
 **适用场景**：多列结构化数据（Screener 结果、SEPA 12 列表格）。列类型化——价格列用 `Price`（红涨绿跌）、排名列用 `Rank`（1-3 warning 强调）、色阶列用 `Score`（`score_color` 四档）、计数列用 `Count`；**涨跌幅列（值即百分比）用 `Price` 且 `value == change`——`render_cell` 自动识别为 percent_only 模式，渲染单一 `+2.50%` 而非「2.50 +2.50%」**（ref #217 验收）。
 
-**变体**：无 enum 变体；配置——`ColumnSpec{header, numeric}`（numeric 右对齐+等宽）、`set_sort(col, desc)` 初始排序、`set_descending_default(col, bool)` 业务默认降序（如市值列）、`set_selected(Option<usize>)` 详情联动高亮。
+**变体**：无 enum 变体；配置——`ColumnSpec{header, numeric}`（**`header` 持 i18n 键**而非显示文本：`show()` 每帧以 `t!(col.header)` 解析渲染，语言切换即时生效（ref #222）；`numeric` 右对齐+等宽）、`set_sort(col, desc)` 初始排序、`set_descending_default(col, bool)` 业务默认降序（如市值列）、`set_selected(Option<usize>)` 详情联动高亮。
 
 **API 要点**：`new(tokens, columns: Vec<ColumnSpec>)`；`.set_rows(Vec<Vec<DataCell>>)`（每帧重设）；`.set_selected(Option<usize>)`；`.set_tokens(ThemeTokens)`（主题切换，保留排序与行）；`.set_sort(usize, bool)`；`.set_descending_default(usize, bool)`；`sort_descending() -> bool`；`show(ui) -> Option<usize>`（点击行的**原始索引**）。导出 `sort_rows()`、`score_color()`、`price_cell_color()`。**内置行为**：表体与表头同布局——`numeric` 列右对齐 + mono（`render_cell` 按列 `numeric` 标志右对齐，ref #217 验收）；横向溢出由组件内置 `ScrollArea::horizontal`（`auto_shrink` false）吸收，调用方无需自包滚动区。
 

@@ -208,6 +208,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         assert_eq!(tr(TabKind::Chart.title()), "图表");
     }
 
@@ -216,6 +217,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         assert_eq!(tr(TabKind::Logger.title()), "日志");
     }
 
@@ -224,6 +226,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         assert_eq!(tr(TabKind::Screener.title()), "选股器");
     }
 
@@ -232,6 +235,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         assert_eq!(tr(TabKind::Sepa.title()), "东方SEPA");
     }
 
@@ -300,6 +304,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Chart);
         assert_eq!(tr(tab.title()), "图表");
         assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
@@ -310,6 +315,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Logger);
         assert_eq!(tr(tab.title()), "日志");
         assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
@@ -320,6 +326,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Screener);
         assert_eq!(tr(tab.title()), "选股器");
         assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
@@ -330,6 +337,7 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Sepa);
         assert_eq!(tr(tab.title()), "东方SEPA");
         assert_eq!(tab.citizen_id(), CitizenId::new(SEPA_ID));

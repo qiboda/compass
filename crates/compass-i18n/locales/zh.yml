@@ -43,7 +43,7 @@ common:
 
 chart:
   empty_title: 暂无图表数据
-  empty_desc: 输入代码并点击 Fetch
+  empty_desc: 输入代码并点击获取数据
 
 logger:
   title: 日志

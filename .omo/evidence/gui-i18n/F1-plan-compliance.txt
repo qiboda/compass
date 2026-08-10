@@ -1,28 +1,28 @@
 # F1 — Plan compliance audit (gui-i18n, ref #222)
 
 Date: 2026-08-10
-Branch: feat/gui-i18n
+Branch: feat/gui-i18n (rebased onto origin/master@495c012; SHAs below are post-rebase)
 
 ## Todo coverage (16/16)
 
 | Todo | Status | Evidence |
 |---|---|---|
-| T1 compass-i18n crate + 键完整性 | ✅ | commit 4a237dd; `cargo test -p compass-i18n` 4 passed; zh/en 149 keys symmetric |
-| T2 config language 键 | ✅ | commit ae45b29; AppConfig.language + default_language() |
-| T3 set_locale 启动接线 | ✅ | commit bec162b; main() normalize_language + set_locale |
-| T4 测试断言迁移 tr() | ✅ | commit bec162b; tr() helper + KEY_TREE tests |
-| T5 main/tabs/logger/chart/backend 键化 | ✅ | commit bec162b |
-| T6 compass-ui 键化 | ✅ | commit a253cb7 |
-| T7 Sepa types 语义键 | ✅ | commit 96eb4b6; label_key/value/unit_key/position_key |
-| T8 strategy 语义键 | ✅ | commit 96eb4b6 |
-| T9 compass-data CSV 契约 | ✅ | commit 96eb4b6; CSV golden tests pass |
-| T10 sepa.rs t!() 渲染 | ✅ | commit 96eb4b6 |
-| T11 screener 键化 | ✅ | commit c19ecf2 (补漏表单标签) |
+| T1 compass-i18n crate + 键完整性 | ✅ | commit d37da79; `cargo test -p compass-i18n` 4 passed; zh/en 151 keys symmetric |
+| T2 config language 键 | ✅ | commit 1188aac; AppConfig.language + default_language() |
+| T3 set_locale 启动接线 | ✅ | commit 6c0ca8e; main() normalize_language + set_locale |
+| T4 测试断言迁移 tr() | ✅ | commit 6c0ca8e; tr() helper + KEY_TREE tests |
+| T5 main/tabs/logger/chart/backend 键化 | ✅ | commit 6c0ca8e |
+| T6 compass-ui 键化 | ✅ | commit 972c56b |
+| T7 Sepa types 语义键 | ✅ | commit 6a35aa4; label_key/value/unit_key/position_key |
+| T8 strategy 语义键 | ✅ | commit 6a35aa4 |
+| T9 compass-data CSV 契约 | ✅ | commit 6a35aa4; CSV golden tests pass |
+| T10 sepa.rs t!() 渲染 | ✅ | commit 6a35aa4 |
+| T11 screener 键化 | ✅ | commit 1fabf7d (补漏表单标签) |
 | T12 fork i18n 接入 | ✅ | fork repo commit cc59f1f; cargo check --tests zero warnings |
-| T13 fork bump 精确 commit | ✅ | commit 901a031; Cargo.lock rev cc59f1f + 4044ee2 测试适配 |
-| T14 语言切换 UI | ✅ | commit 3c83edf; language_dropdown test green + Dropdown.id_salt |
-| T15 en 布局 sweep | ✅ | commits c19ecf2/5ef3b21/a96ae51; 5x consecutive full-green |
-| T16 文档同步 | ⏳ | in progress |
+| T13 fork bump 精确 commit | ✅ | commit eaeb6c7; Cargo.lock rev cc59f1f + d0da7f8 测试适配 |
+| T14 语言切换 UI | ✅ | commit eff4bbd; language_dropdown test green + Dropdown.id_salt |
+| T15 en 布局 sweep | ✅ | commits 1fabf7d/4f69366/8d3cea1; 5x consecutive full-green |
+| T16 文档同步 | ✅ | commit c9659e6; kb design/config/user/gui/ui-widgets + AGENTS.md + check-coverage.sh |
 
 ## Key tree vs design §1 (incl. Metis C5/C7 supplements)
 
@@ -30,6 +30,18 @@ Branch: feat/gui-i18n
 - chart.* fork keys live in the fork's own locales/ (16 keys), not in compass-i18n.
 - Metis C5 (sepa.note.big_capital / sepa.note.thermometer) and C7 (logger.log_* 6 keys) present (verified in zh.yml + `c5_c7_supplement_keys_resolve_to_real_text` test).
 - `chart.legend.*` keys NOT created (Metis C3 — fork src/ui/ unreachable).
+
+## F2 code-quality review fixes (post-rebase, ref #222)
+
+- **Factor-note precision regression**: `factor_note_text` pre-formats numeric args
+  (`{:.1}` drawdown / `{:.0}` momentum+thermometer / `{:.0}`+`{:+.0}` big-capital)
+  instead of passing raw f64 into unspecifier'd templates — new RED→GREEN test
+  `factor_note_text_preserves_numeric_precision` (commit pending).
+- **Locale-default order-dependence**: rust-i18n 4.2.1's `default-locale` metadata is a
+  no-op (process locale starts "en"); 9 tests (`default_locale_is_zh_without_set_locale`
+  + 8 tabs.rs title tests) now explicitly `set_locale("zh")` after LANG_LOCK,
+  per kb/dev/toolchain.md contract (commit pending).
+- zh `chart.empty_desc` now references the localized button「获取数据」(was「Fetch」).
 
 ## Scope OUT — none violated
 
@@ -42,7 +54,8 @@ Branch: feat/gui-i18n
 
 ## Test status
 
-- `cargo test` full workspace: all green (compass 162 + adversarial 4 + others)
+- `cargo test` full workspace: all green (compass 163 + adversarial 4 + others)
 - compass-i18n: 4 passed (key completeness)
 - fork repo: 526 + 27 passed
 - 5x consecutive `cargo test -p compass` runs: all pass (LANG_LOCK serialization verified)
+
