@@ -62,7 +62,7 @@ pub enum DataCell {
 /// Column specification: i18n key for the header text + numeric alignment.
 ///
 /// `header` holds an **i18n key** (e.g. `"sepa.table.rank"`), NOT the display
-/// text — [`Self::show`] resolves it via `t!()` every frame, so a locale
+/// text — [`DataTable::show`] resolves it via `t!()` every frame, so a locale
 /// switch is visible on the next frame with no stale stored translations
 /// (design `.omo/designs/gui-i18n.md` §1 key-holding contract).
 #[derive(Clone, Debug, PartialEq, Eq)]

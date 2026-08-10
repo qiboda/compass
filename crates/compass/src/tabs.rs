@@ -59,8 +59,9 @@ pub enum TabKind {
 
 impl TabKind {
     /// i18n key of the tab's display title. The rendering consumer
-    /// ([`TabViewer::title`]) resolves it via `t!()` so a live locale switch
-    /// updates the dock tabs (issue #222, plan T5 Metis M2).
+    /// ([`Tab::title`] via the egui_dock `TabViewer`) resolves it via `t!()`
+    /// so a live locale switch updates the dock tabs (issue #222, plan T5
+    /// Metis M2).
     pub fn title(&self) -> &'static str {
         match self {
             Self::Chart => "tab.chart",
