@@ -8,6 +8,7 @@
 use egui::{Align, Area, Layout, Margin, Order, RichText, ScrollArea, Stroke, Ui};
 
 use crate::tokens::ThemeTokens;
+use compass_i18n::t;
 
 use super::button::{Button, ButtonSize, ButtonVariant};
 use super::checkbox::Checkbox;
@@ -70,13 +71,14 @@ impl MultiSelect {
         self
     }
 
-    /// The summary text of the trigger: `全部` when nothing is selected,
-    /// `已选 N 个` otherwise.
+    /// The summary text of the trigger: `全部`/`All` (via `common.all`) when
+    /// nothing is selected, `已选 N 个`/`Selected N` otherwise (via
+    /// `widgets.multi_select.selected`, interpolating the count).
     pub fn summary(&self) -> String {
         if self.selected.is_empty() {
-            "全部".to_string()
+            t!("common.all").into_owned()
         } else {
-            format!("已选 {} 个", self.selected.len())
+            t!("widgets.multi_select.selected", count = self.selected.len()).into_owned()
         }
     }
 
@@ -151,8 +153,9 @@ impl MultiSelect {
         let tokens = &self.tokens;
         let mut changed = false;
 
+        let search_hint = t!("common.search");
         Input::new(tokens, &mut self.filter)
-            .placeholder("搜索…")
+            .placeholder(&search_hint)
             .width(POPUP_MIN_WIDTH - 16.0)
             .show(ui);
         ui.add_space(tokens.spacing.xs);
@@ -176,7 +179,7 @@ impl MultiSelect {
 
         ui.add_space(tokens.spacing.sm);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if Button::new(tokens, "完成")
+            if Button::new(tokens, t!("widgets.multi_select.confirm"))
                 .variant(ButtonVariant::Primary)
                 .size(ButtonSize::Sm)
                 .show(ui)
@@ -207,12 +210,14 @@ mod tests {
 
     #[test]
     fn summary_shows_all_when_empty() {
+        rust_i18n::set_locale("zh");
         let ms = MultiSelect::new(&tokens(), ["a", "b", "c"]);
         assert_eq!(ms.summary(), "全部");
     }
 
     #[test]
     fn summary_counts_selected() {
+        rust_i18n::set_locale("zh");
         let ms = MultiSelect::new(&tokens(), ["a", "b", "c"]).selected(["a", "b"]);
         assert_eq!(ms.summary(), "已选 2 个");
     }
@@ -234,6 +239,7 @@ mod tests {
 
     #[test]
     fn clicking_rows_accumulates_selection_and_confirm_closes() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -271,6 +277,7 @@ mod tests {
 
     #[test]
     fn trigger_opens_and_escape_closes_the_popup() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -295,6 +302,7 @@ mod tests {
 
     #[test]
     fn search_filter_hides_non_matching_options() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -329,6 +337,7 @@ mod tests {
 
     #[test]
     fn distinct_id_salts_allow_two_popups_open_simultaneously() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();

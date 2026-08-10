@@ -21,6 +21,9 @@ mkdir -p ~/.config/compass
 # 默认值："compass_dark"
 theme = "compass_dark"
 
+# 界面语言（顶层键）。有效值："zh" | "en"。默认值："zh"
+language = "zh"
+
 [watchlist]
 # 自选股（Sidebar 左侧栏）。带交易所前缀的代码列表（如 "SH600519"）。
 # 由 GUI 在添加/移除自选时自动写回，重启后恢复。
@@ -72,6 +75,7 @@ default_timeframe = "1d"
 | 节 | 键 | 默认值 |
 |---|---|---|
 | （顶层） | `theme` | `compass_dark` |
+| （顶层） | `language` | `zh` |
 | `watchlist` | `symbols` | `[]`（空自选） |
 | `parquet` | `dir` | `/data/compass-data/parquet_data` |
 | `dolt` | `investment_data_dir` | `/data/compass-data/investment_data` |
@@ -103,6 +107,20 @@ theme = "compass_light"
 ```
 
 从两种内置视觉主题中选择：`compass_dark`（默认）或 `compass_light`。
+
+### 界面语言（language）
+
+```toml
+language = "en"
+```
+
+界面语言为顶层键，不属于任何节。有效值：`"zh"`（中文，默认）或 `"en"`（英文）。
+缺失或解析失败时回退 `zh`；其他任何值（如 `"fr"`）在启动时也会回退到 `zh`
+并记录警告。
+
+除了手动编辑，语言也可以在应用内通过工具栏「显示」组的语言下拉
+（中文/English）切换——切换即时生效（所有面板 + 图表 tooltip/日期），并**自动
+写回**本键，重启后保留选择。
 
 ### 自选股（watchlist）
 

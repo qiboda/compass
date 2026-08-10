@@ -224,7 +224,12 @@ Divider::new(&tokens).vertical(true).strong(true).show(ui);
 
 **变体**：无 enum 变体；`searchable(bool)` 开关（popup 顶部加搜索输入框——**复用 `Input` 组件**，统一外观与 focus 描边约定——过滤 + 空过滤显示「无匹配结果」）。
 
-**API 要点**：`new(tokens, options: impl IntoIterator<Item: Into<String>>)`；`.selected(usize)`（初始索引）；`.width(f32)`（默认 160）；`.searchable(bool)`；`show(ui) -> Option<usize>`（**选中变化时**返回新索引；popup 开合状态存 egui memory，组件无状态）。
+**API 要点**：`new(tokens, options: impl IntoIterator<Item: Into<String>>)`；`.selected(usize)`（初始索引）；`.width(f32)`（默认 160）；`.searchable(bool)`；`.id_salt(&str)`（弹层 id 盐，见下方反模式）；`show(ui) -> Option<usize>`（**选中变化时**返回新索引；popup 开合状态存 egui memory，组件无状态）。
+
+> ⚠️ **`Dropdown::id_salt()` 是必需项**：同一 `Ui` 渲染多个 Dropdown 时必须显式
+> 指定（如工具栏 主题/语言 两个下拉，main.rs 分别 `id_salt("theme")` /
+> `id_salt("language")`）——弹层 id 由 `ui.id()` + `compass_dropdown_popup:{salt}`
+> 派生，缺省 salt 时同 Ui 多弹层 `Area` id 冲突、互相覆盖（ref #222 T14）。
 
 **示例**（源自 main.rs 主题切换）：
 ```rust
@@ -244,13 +249,13 @@ if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
 
 **相关组件**：SearchableDropdown（可输入+键盘导航的下拉）、MultiSelect（多选下拉）、Segmented（互斥短选项）。
 
-**测试锚点**：`widgets/dropdown.rs` `mod tests`（L194）——`initial_selection_is_first_option` / `clicking_option_changes_selection` / `searchable_filters_and_shows_empty_hint` / `searchable_popup_has_text_input` / `search_box_has_no_hardcoded_hint` / `searchable_typing_filters_options` / `empty_state_renders_when_no_match`。
+**测试锚点**：`widgets/dropdown.rs` `mod tests`（L194）——`initial_selection_is_first_option` / `clicking_option_changes_selection` / `searchable_filters_and_shows_empty_hint` / `searchable_popup_has_text_input` / `search_box_hint_is_localized_not_hardcoded` / `searchable_typing_filters_options` / `empty_state_renders_when_no_match`。
 
 #### 7. EmptyState（`widgets/empty_state.rs`）
 
 **用途**：面板空态占位——居中 48px 图标（text_weak）+ heading 标题 + caption 描述 + 可选 action 按钮。
 
-**适用场景**：面板无数据/未初始化时的引导（Chart 未 Fetch 时「输入代码并点击 Fetch」、Sidebar 空自选、SEPA 无评分数据、DataTable 空行）。**空态是组件内部默认行为的一部分**（DataTable 空行自动显示「无符合条件」）。
+**适用场景**：面板无数据/未初始化时的引导（Chart 未 Fetch 时「输入代码并点击获取数据」、Sidebar 空自选、SEPA 无评分数据、DataTable 空行）。**空态是组件内部默认行为的一部分**（DataTable 空行自动显示「无符合条件」）。
 
 **变体**：无 enum 变体；`description(&str)` 与 `action(Button)` 均为可选开关（不设则不渲染）。
 
@@ -259,7 +264,7 @@ if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
 **示例**（源自 chart.rs 空态）：
 ```rust
 EmptyState::new(&tokens, egui_phosphor::regular::CHART_LINE, "暂无图表数据")
-    .description("输入代码并点击 Fetch")
+    .description("输入代码并点击获取数据")
     .show(ui);
 ```
 
@@ -524,7 +529,7 @@ Tooltip::new(&tokens).text(resp, "帮助提示");
 
 **适用场景**：多列结构化数据（Screener 结果、SEPA 12 列表格）。列类型化——价格列用 `Price`（红涨绿跌）、排名列用 `Rank`（1-3 warning 强调）、色阶列用 `Score`（`score_color` 四档）、计数列用 `Count`；**涨跌幅列（值即百分比）用 `Price` 且 `value == change`——`render_cell` 自动识别为 percent_only 模式，渲染单一 `+2.50%` 而非「2.50 +2.50%」**（ref #217 验收）。
 
-**变体**：无 enum 变体；配置——`ColumnSpec{header, numeric}`（numeric 右对齐+等宽）、`set_sort(col, desc)` 初始排序、`set_descending_default(col, bool)` 业务默认降序（如市值列）、`set_selected(Option<usize>)` 详情联动高亮。
+**变体**：无 enum 变体；配置——`ColumnSpec{header, numeric}`（**`header` 持 i18n 键**而非显示文本：`show()` 每帧以 `t!(col.header)` 解析渲染，语言切换即时生效（ref #222）；`numeric` 右对齐+等宽）、`set_sort(col, desc)` 初始排序、`set_descending_default(col, bool)` 业务默认降序（如市值列）、`set_selected(Option<usize>)` 详情联动高亮。
 
 **API 要点**：`new(tokens, columns: Vec<ColumnSpec>)`；`.set_rows(Vec<Vec<DataCell>>)`（每帧重设）；`.set_selected(Option<usize>)`；`.set_tokens(ThemeTokens)`（主题切换，保留排序与行）；`.set_sort(usize, bool)`；`.set_descending_default(usize, bool)`；`sort_descending() -> bool`；`show(ui) -> Option<usize>`（点击行的**原始索引**）。导出 `sort_rows()`、`score_color()`、`price_cell_color()`。**内置行为**：表体与表头同布局——`numeric` 列右对齐 + mono（`render_cell` 按列 `numeric` 标志右对齐，ref #217 验收）；横向溢出由组件内置 `ScrollArea::horizontal`（`auto_shrink` false）吸收，调用方无需自包滚动区。
 
@@ -551,7 +556,7 @@ if let Some(orig_idx) = table.show(ui) { /* 行点击联动详情 */ }
 
 **适用场景**：需要用户阻断确认/引导的场景（kb/design/ui.md 已锁定三个真实绑定：启动数据缺失引导、日志导出、移除自选确认）。**一次只允许一个 Modal 实例**（main.rs 单实例复用）。
 
-**变体**：无 enum 变体；开关——`set_danger(bool)`（Confirm 变 Danger）、`set_confirm_text`/`set_cancel_text` 文案覆盖。
+**变体**：无 enum 变体；开关——`set_danger(bool)`（Confirm 变 Danger）、`set_confirm_text`/`set_cancel_text` 文案覆盖。**默认 Confirm/Cancel 文案经 `t!()` 键化**（`common.confirm`/`common.cancel`，zh 确认/取消、en Confirm/Cancel，ref #222）——调用方未覆盖时随当前语言环境。
 
 **API 要点**：`new(tokens)`；`is_open()`；`set_tokens(ThemeTokens)`；`open(now: f64)` / `close(now)` / `toggle(now)`（**now 为 egui 虚拟时间** `ctx.input(|i| i.time)`，动画确定性契约 ref #171）；`set_title` / `set_body` / `set_danger` / `set_confirm_text` / `set_cancel_text`；`set_on_confirm(FnOnce)`（**消费一次**）；进度访问器 `entry_progress/panel_progress/close_progress`；`show(&mut self, ctx)`（每帧调用，关闭状态机在 show 内完成）。
 
@@ -761,7 +766,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 #### ChartCitizen（`citizens/chart.rs`）
 
-- 组合：`EmptyState`（未加载引导「输入代码并点击 Fetch」）、egui-charts 图表（token 经 `apply_to_chart` 映射）、MA/BOLL 图例行（自绘 overlay，非组件）、工具栏「前复权」`Tag`（Custom + info 色，非交互）。
+- 组合：`EmptyState`（未加载引导「输入代码并点击获取数据」）、egui-charts 图表（token 经 `apply_to_chart` 映射）、MA/BOLL 图例行（自绘 overlay，非组件）、工具栏「前复权」`Tag`（Custom + info 色，非交互）。
 - 使用模式：空态是默认态；数据就绪后渲染图表；指标实时计算不存储（缓存指纹防碰撞）。
 
 #### LoggerPanel（`citizens/logger.rs`）
@@ -846,7 +851,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
    （排除退市/均线/突破新高/动量/量能，screener.rs:389-444）。→ 纯文档笔误，已改。
 3. **偏差 #3（BUG）** — EmptyState 示例编造：原示例 title/描述互换并虚构
    「数据来自本地数据源」（代码库无此文案）。实际/设计意图：title「暂无图表数据」
-   + 描述「输入代码并点击 Fetch」（chart.rs:88-94）。→ 文档已重写。
+   + 描述「输入代码并点击获取数据」（chart.rs:88-94）。→ 文档已重写。
 4. **偏差 #4（权宜实现，已修复 #226）** — IconButton 默认尺寸硬编码 `32.0`
    （icon_button.rs:22），未走 `control_md` token（`small()` 才走 `control_sm`）；
    文档声称「与 control_sm/control_md token 对齐」仅部分成立。→ 已实现

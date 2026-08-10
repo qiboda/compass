@@ -9,6 +9,7 @@
 
 use crate::tokens::ThemeTokens;
 use crate::widgets::input::Input;
+use compass_i18n::t;
 
 /// Field projection for an arbitrary stock-list row type.
 ///
@@ -343,9 +344,11 @@ impl<T> SearchableDropdown<T> {
                                 if filtered_count == 0 {
                                     ui.add_space(tokens.spacing.sm);
                                     ui.label(
-                                        egui::RichText::new("无匹配结果")
-                                            .color(c.text_weak)
-                                            .size(tokens.typography.caption),
+                                        egui::RichText::new(t!(
+                                            "widgets.searchable_dropdown.no_matches"
+                                        ))
+                                        .color(c.text_weak)
+                                        .size(tokens.typography.caption),
                                     );
                                 }
                             });
@@ -683,6 +686,7 @@ mod tests {
 
     #[test]
     fn test_row_click_selects_stock() {
+        rust_i18n::set_locale("zh");
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
@@ -711,6 +715,7 @@ mod tests {
 
     #[test]
     fn test_three_spellings_select_same_stock_with_prefixed_submit() {
+        rust_i18n::set_locale("zh");
         // D11 acceptance: "600519" / "SH600519" / "sh.600519" all filter to
         // the same row, and the selected (submitted) symbol is prefixed.
         let stocks = make_stocks();
@@ -903,6 +908,7 @@ mod tests {
 
     #[test]
     fn empty_filter_shows_no_match_hint() {
+        rust_i18n::set_locale("zh");
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),

@@ -29,6 +29,7 @@ use egui_charts::scales::{
 /// Guard: a regression to English ("Jan"/"Jun"/"Oct"/"Dec") fails here.
 #[test]
 fn adversarial_219_month_labels_chinese_depadded() {
+    egui_charts::set_locale("zh");
     let f = DefaultTimeFormatter::default();
     assert_eq!(
         f.format(
@@ -67,6 +68,7 @@ fn adversarial_219_month_labels_chinese_depadded() {
 /// Guard: a regression to English ("Jun 15" / "Jun 01" / "Dec 31") fails here.
 #[test]
 fn adversarial_219_day_of_month_labels_chinese_depadded() {
+    egui_charts::set_locale("zh");
     let f = DefaultTimeFormatter::default();
     assert_eq!(
         f.format(
@@ -106,6 +108,7 @@ fn adversarial_219_day_of_month_labels_chinese_depadded() {
 /// switched to Chinese but kept zero-padding.)
 #[test]
 fn adversarial_219_zero_padded_forms_are_forbidden() {
+    egui_charts::set_locale("zh");
     let f = DefaultTimeFormatter::default();
     let jun = Utc.with_ymd_and_hms(2024, 6, 15, 10, 0, 0).unwrap();
     assert_ne!(
@@ -128,6 +131,7 @@ fn adversarial_219_zero_padded_forms_are_forbidden() {
 /// Guard: a regression to English ("Jun 16") after timezone conversion fails here.
 #[test]
 fn adversarial_219_timezone_cross_day_keeps_chinese() {
+    egui_charts::set_locale("zh");
     let f = TimeFormatterBuilder::new()
         .with_24_hour(true)
         .with_seconds(false)

@@ -118,3 +118,36 @@ pub trait NegativeCache: Send + Sync {
         ttl_secs: i64,
     ) -> Result<bool, DataError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #222 i18n contract (j): the underlying DataError Display is NOT
+    // translated — it stays ASCII technical English while the GUI error.*
+    // templates translate the surrounding text (passing through %{e}).
+    // Already-true invariant; guards against a future locale-aware Display.
+    #[test]
+    fn data_error_display_stays_ascii_english() {
+        for e in [
+            DataError::NoData {
+                symbol: "SH600519".into(),
+            },
+            DataError::Parse("bad csv".into()),
+            DataError::RateLimited(42),
+        ] {
+            let s = e.to_string();
+            assert!(
+                s.chars().all(|c| c.is_ascii()),
+                "DataError Display must stay ASCII English, got: {s}"
+            );
+        }
+        assert_eq!(
+            DataError::NoData {
+                symbol: "SH600519".into()
+            }
+            .to_string(),
+            "no data for SH600519"
+        );
+    }
+}

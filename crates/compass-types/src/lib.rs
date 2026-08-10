@@ -228,16 +228,25 @@ pub struct SepaQuery {
 
 /// One scoring sub-item of a SEPA module. The GUI renders it as-is without
 /// any parsing (label + score/max as a bar, note as the raw value display).
+///
+/// The label and note carry **semantic i18n keys** instead of display text
+/// (issue #222): the GUI resolves them via `t!()`, so the same scoring data
+/// renders in every locale. `note_args` holds the positional numeric values
+/// interpolated into the note template in declaration order (`%{0}` …);
+/// unit/format precision is owned by the consuming renderer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SepaFactor {
-    /// Human-readable sub-item label (e.g. "均线结构").
-    pub label: String,
+    /// i18n key of the sub-item label (e.g. `"sepa.factor.ma_structure"`).
+    pub label_key: &'static str,
     /// Achieved sub-score.
     pub score: f64,
     /// Maximum possible sub-score.
     pub max: f64,
-    /// Optional raw-value note for display (e.g. "MA250=12.3").
-    pub note: Option<String>,
+    /// i18n key of the optional raw-value note; `None` renders no note.
+    pub note_key: Option<&'static str>,
+    /// Numeric note arguments, positionally mapped onto the note template.
+    /// `None` (or an empty vec) for notes without arguments.
+    pub note_args: Option<Vec<f64>>,
 }
 
 /// Sub-item detail breakdown of the five SEPA scoring modules.
@@ -290,12 +299,20 @@ pub struct SepaRow {
 }
 
 /// One thermometer indicator chip, rendered generically by the GUI.
+///
+/// The label and the value unit carry **semantic i18n keys** (issue #222):
+/// the GUI resolves them via `t!()` and formats the raw `value` per the
+/// unit-key precision contract (percent → 1 decimal, count → integer,
+/// trillion → 2 decimals).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SepaIndicator {
-    /// Indicator label (e.g. "沪深300趋势").
-    pub label: String,
-    /// Pre-formatted value text (e.g. "72.4%").
-    pub value_text: String,
+    /// i18n key of the indicator label (e.g. `"sepa.indicator.hs300_trend"`).
+    pub label_key: &'static str,
+    /// Raw numeric value in the unit named by `unit_key`.
+    pub value: f64,
+    /// i18n key of the value unit (`"sepa.unit.percent"`, `"sepa.unit.count"`
+    /// or `"sepa.unit.trillion"`), driving the renderer's format precision.
+    pub unit_key: &'static str,
     /// Change vs yesterday; `None` when not applicable. A-share coloring:
     /// red = up, green = down.
     pub delta_pct: Option<f64>,
@@ -308,8 +325,8 @@ pub struct SepaIndicator {
 pub struct MarketThermometer {
     /// Overall market score in 0..100.
     pub score: f64,
-    /// Position band label (e.g. "80%-100%").
-    pub position: String,
+    /// i18n key of the position band (e.g. `"sepa.position.full"`).
+    pub position_key: &'static str,
     /// Position band midpoint percent in 0..100.
     pub position_pct: f64,
     /// The 5 indicator chips.

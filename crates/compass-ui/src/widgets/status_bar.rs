@@ -164,6 +164,7 @@ mod tests {
 
     #[test]
     fn renders_three_segments() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let bar = StatusBar::new(&tokens);
         let data = data();
@@ -180,6 +181,7 @@ mod tests {
 
     #[test]
     fn renders_without_summary() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let bar = StatusBar::new(&tokens);
         let mut data = data();

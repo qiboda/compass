@@ -2,9 +2,9 @@
 # Enforce line-coverage thresholds from a `cargo llvm-cov --json` report.
 #
 # Checks the workspace total and each workspace crate (compass-core /
-# compass-data / compass / compass-strategy / compass-types / compass-ui)
-# against per-target minimum line-coverage percentages. Exits 1 if any
-# target is below its threshold or has no measured files.
+# compass-data / compass-i18n / compass / compass-strategy / compass-types /
+# compass-ui) against per-target minimum line-coverage percentages. Exits 1 if
+# any target is below its threshold or has no measured files.
 #
 # Thresholds (2026-08-04, ref #163): compass-data and compass-core are
 # enforced at 95%; all other crates and the workspace total remain at 80%.
@@ -22,6 +22,7 @@ declare -A THRESHOLDS=(
     [workspace]=80
     [compass-core]=95
     [compass-data]=95
+    [compass-i18n]=80
     [compass]=80
     [compass-strategy]=80
     [compass-types]=80
@@ -75,6 +76,7 @@ check "workspace" "."
 # Per-crate: files under crates/<name>/ (report uses absolute paths).
 check "compass-core" "select(.filename | contains(\"/crates/compass-core/\"))"
 check "compass-data" "select(.filename | contains(\"/crates/compass-data/\"))"
+check "compass-i18n" "select(.filename | contains(\"/crates/compass-i18n/\"))"
 check "compass" "select(.filename | contains(\"/crates/compass/\"))"
 check "compass-strategy" "select(.filename | contains(\"/crates/compass-strategy/\"))"
 check "compass-types" "select(.filename | contains(\"/crates/compass-types/\"))"

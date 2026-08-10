@@ -32,10 +32,22 @@ use crate::stock_projection;
 use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
 use crate::theme::CompassTheme;
 
+/// Serializes `set_locale` calls across ALL test modules — `rust_i18n::set_locale`
+/// is a process-global; parallel tests in different modules (main.rs, sepa.rs)
+/// would otherwise corrupt each other's locale (plan T15 `LANG_LOCK`). This is
+/// the single shared lock; modules must not define their own.
+pub(crate) static LANG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub(crate) fn build_compass_app_with_timeframe(
     egui_ctx: egui::Context,
     default_timeframe: &str,
 ) -> CompassApp {
+    // rust-i18n's default locale is "en" and its `default-locale` metadata is a
+    // no-op in 4.2.1 (the generated init keeps the current locale). GUI tests
+    // built through this constructor expect the zh dictionary by default, so
+    // pin zh here; en-locale tests override AFTER building, before running the
+    // harness (ui_fixes_218 is the single construction point for kittest).
+    rust_i18n::set_locale("zh");
     let config = AppConfig::default();
     let shared_state = Arc::new(SharedState::new("SZ000001", default_timeframe));
 
@@ -117,6 +129,7 @@ pub(crate) fn build_compass_app_with_timeframe(
         pending_delete: None,
         delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
         startup_modal_shown: false,
+        language: "zh".to_string(),
     }
 }
 
@@ -144,6 +157,9 @@ pub(crate) fn sized_harness(app: CompassApp) -> egui_kittest::Harness<'static, C
 /// flight — loading data belongs to the old timeframe.
 #[test]
 fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app(egui::Context::default());
     {
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -170,6 +186,9 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
 /// complete the fetch within the same virtual frame.
 #[test]
 fn digit_key_switch_syncs_shared_state() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let app = build_compass_app(egui::Context::default());
     let mut harness = sized_harness(app);
     harness.run_steps(3);
@@ -205,6 +224,9 @@ fn digit_key_switch_syncs_shared_state() {
 /// never disagree on startup.
 #[test]
 fn startup_timeframe_index_matches_default_timeframe() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let app = build_compass_app_with_timeframe(egui::Context::default(), "1w");
     assert_eq!(
         app.timeframe_index, 1,

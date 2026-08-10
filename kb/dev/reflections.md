@@ -236,3 +236,30 @@
 - **"数字/状态声明不实"模式延续**（ref #181 evidence "9 commits" 过期声称 → 本次"29 条"实为 30 条）：声明数量前必须 grep/命令验证——可检测失误，建议 reflect 模板加"数字声明经命令验证"提示
 - **数据操作脚本的工具链摩擦**（ref #186 脚本切分成功先例 → 本次脚本两次返工）：脚本化+校验（行级丢失）是正确方法，但脚本自身需 dry-run；可复用的数据操作（归档）应入库而非 /tmp 一次性
 - **一次性临时工具导致返工**（ref #205 自包含测试不覆盖顶层 → 本次 /tmp 归档脚本）：工具质量与流程同等重要——数据操作的"工具验证"应与"数据校验"并列
+
+## 2026-08-10 — ref #222 gui-i18n 中断恢复 + F2 review 修复 + push 前收尾
+
+**What was done**: 恢复中断的 gui-i18n rebase（abort 过期 rebase 基点 ef0fbc8 → 重做 16 picks 到最新 origin/master），解决 3 处冲突；修复 2 个 rebase 引入的测试回归（语言下拉 harness 尺寸、dropdown hint 测试适配）；执行 plan F2 门禁（/review-work 5 lanes → 2 FAIL），修复 2 个 blocking（factor-note 精度回归、locale 顺序依赖测试）+ 增量重审双 PASS；同步 origin/master 二次推进（#238），push 前就绪核查通过。分支 feat/gui-i18n 21 commits。
+
+**User corrections**: 无纠正型消息 — 本 session 仅"继续，之前系统重启了，被打断了"（中断恢复指令）与"push并合并pr。关闭worktree。"（明确 push 指示）。全程无方向纠偏。
+
+**What went wrong**:
+1. **git rebase --continue 挂起 120s 超时**（GIT_EDITOR=nvim 环境，git 打开编辑器等待输入）——toolchain.md L150 已有排查卡（原 session 沉淀），但首次遇到时先按"hook 慢/gh 慢"猜了 2 轮（查 hooks、查 pre-commit）才想起查工具链卡。教训：git 命令挂起/超时第一动作是查 toolchain.md 已知坑表，不是猜根因。
+2. **F2 review 暴露 2 个实现期缺陷**：① factor-note 精度回归——`factor_note_text` 裸 f64 插值丢 `{:.1}`/`{:.0}`/`{:+.0}`，实现期测试全用干净值（12.3/75）掩盖；② 9 个 zh 断言测试依赖全局 locale 污染（隔离必失败），违反 toolchain.md L222 已记录的 default-locale no-op 契约。两者都是"实现时该发现的坑，靠 F2 独立 review 才暴露"。
+3. **origin/master 在 push 准备期二次推进**（#238 反思归档，2 commits）——rebase 后至 push 前又落后，需二次 rebase。教训：rebase 完成 ≠ 永远同步，push 前必须重新 fetch 校验（AGENTS.md 已有规则，执行了但未预期这么快再推进）。
+4. **LSP 陈旧缓存误报**：sepa.rs 编辑后 LSP 报"no such field: label/note"（旧字段名），实际是 rebase 冲突解决后的 stale 索引——重复 3 轮才确认是缓存问题，浪费诊断轮次。教训：冲突解决后的 LSP 报错先 cargo check 验证再信。
+
+**Lessons learned**:
+1. git 命令挂起/超时/非预期行为 → 第一步查 kb/dev/toolchain.md 已知坑表（GIT_EDITOR/TTY/权限卡），确认无匹配再诊断根因
+2. 数值/格式化类 i18n 变更的测试必须用非干净值（小数、正负号、边界）锁定精度契约——干净值测试让精度回归静默通过（factor-note 教训）
+3. 冲突解决/LSP 索引过期的报错以 cargo check 为准，不逐轮猜 LSP 输出
+4. push 前就绪核查必须包含"fetch + ahead/behind 复验"，不信任早前 rebase 结果
+
+**Process improvements**:
+- 已复用（非新增）：toolchain.md L150 GIT_EDITOR 卡、L222 default-locale no-op 卡——两条卡在 F2 review 中被独立验证准确
+- 教训 2（非干净值测试）为一次性实现教训，写入本条目；可考虑后续在 skwy-requirement-test skill 补充"数值断言用非干净值"提示（proposed，未建 issue——低优先）
+- 其余教训为一次性，写入本条目
+
+### Trends (last 10)
+- **"已知坑未先查"模式**（本次 GIT_EDITOR 挂起猜 2 轮才查 toolchain.md）：工具链卡存在但不作为第一查询对象——建议遇到非预期命令行为时强制先 grep toolchain.md 再诊断
+- **"实现期测试干净值掩盖回归"**（本次 factor-note 精度）：review 是最终防线但成本高——数值/格式化断言应主动用非平凡值，写进测试方法论

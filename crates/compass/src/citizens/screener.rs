@@ -50,37 +50,39 @@ enum MaKind {
 impl MaKind {
     fn label(self) -> &'static str {
         match self {
-            Self::AboveMa20 => "站上 MA20",
-            Self::AboveMa60 => "站上 MA60",
-            Self::BullishAlign => "多头排列 MA5>MA20>MA60",
+            Self::AboveMa20 => "screener.ma_above20",
+            Self::AboveMa60 => "screener.ma_above60",
+            Self::BullishAlign => "screener.ma_bullish",
         }
     }
 }
 
-/// Results table column specs (design §6.6).
+/// Results table column specs (design §6.6). Headers hold **i18n keys**
+/// (design `.omo/designs/gui-i18n.md` §1); `DataTable::show` resolves them
+/// via `compass_i18n::t!()` every frame.
 const COLUMNS: [ColumnSpec; 6] = [
     ColumnSpec {
-        header: "代码",
+        header: "screener.table.code",
         numeric: false,
     },
     ColumnSpec {
-        header: "名称",
+        header: "screener.table.name",
         numeric: false,
     },
     ColumnSpec {
-        header: "最新价",
+        header: "screener.table.latest",
         numeric: true,
     },
     ColumnSpec {
-        header: "20日涨跌幅",
+        header: "screener.table.change_20d",
         numeric: true,
     },
     ColumnSpec {
-        header: "市值(亿)",
+        header: "screener.table.market_cap",
         numeric: true,
     },
     ColumnSpec {
-        header: "行业",
+        header: "screener.table.industry",
         numeric: false,
     },
 ];
@@ -246,7 +248,7 @@ impl ScreenerPanel {
             self.condition_form(ui, industries, boards);
 
             ui.add_space(self.form_tokens().spacing.sm);
-            if Button::new(&self.form_tokens(), "筛选")
+            if Button::new(&self.form_tokens(), compass_i18n::t!("screener.filter"))
                 .variant(ButtonVariant::Primary)
                 .size(ButtonSize::Md)
                 .show(ui)
@@ -258,9 +260,9 @@ impl ScreenerPanel {
                 shared_state.screener_error.set(None);
                 if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
                     shared_state.screener_loading.set(false);
-                    shared_state
-                        .screener_error
-                        .set(Some(format!("failed to run screener: {e}")));
+                    shared_state.screener_error.set(Some(
+                        compass_i18n::t!("error.screener_run", e = e.to_string()).into_owned(),
+                    ));
                 }
             }
 
@@ -281,7 +283,7 @@ impl ScreenerPanel {
 
         if shared_state.screener_loading.get() {
             ui.spinner();
-            ui.label("筛选进行中…");
+            ui.label(compass_i18n::t!("screener.filtering"));
         } else if let Some(err) = shared_state.screener_error.get() {
             ui.colored_label(ui.visuals().error_fg_color, err);
         } else {
@@ -325,14 +327,14 @@ impl ScreenerPanel {
 
         ui.vertical(|ui| {
             Card::new(&tokens)
-                .title("基础条件")
+                .title(&compass_i18n::t!("screener.card_basic"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
                     self.basic_conditions(ui);
                 });
             ui.add_space(tokens.spacing.sm);
             Card::new(&tokens)
-                .title("技术面条件")
+                .title(&compass_i18n::t!("screener.card_technical"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
                     self.technical_conditions(ui);
@@ -355,58 +357,86 @@ impl ScreenerPanel {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
 
-            basic_group(ui, &tokens, "行业", |ui| {
+            basic_group(ui, &tokens, &compass_i18n::t!("screener.industry"), |ui| {
                 self.ms_industry.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "交易所", |ui| {
+            basic_group(ui, &tokens, &compass_i18n::t!("screener.exchange"), |ui| {
                 self.ms_exchange.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "板块", |ui| {
+            basic_group(ui, &tokens, &compass_i18n::t!("screener.board"), |ui| {
                 self.ms_board.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "上市时长", |ui| {
-                let options = ["不限", "≥1年", "≥3年", "≥5年"];
-                let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
-                let current = options
-                    .iter()
-                    .zip(values.iter())
-                    .position(|(_, v)| *v == self.form.list_years)
-                    .unwrap_or(0);
-                if let Some(idx) = Dropdown::new(&tokens, options)
-                    .selected(current)
-                    .width(100.0)
-                    .show(ui)
-                {
-                    self.form.list_years = values[idx];
-                }
-            });
+            basic_group(
+                ui,
+                &tokens,
+                &compass_i18n::t!("screener.list_years"),
+                |ui| {
+                    let options = [
+                        compass_i18n::t!("screener.any"),
+                        compass_i18n::t!("screener.years_1"),
+                        compass_i18n::t!("screener.years_3"),
+                        compass_i18n::t!("screener.years_5"),
+                    ];
+                    let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
+                    let current = options
+                        .iter()
+                        .zip(values.iter())
+                        .position(|(_, v)| *v == self.form.list_years)
+                        .unwrap_or(0);
+                    if let Some(idx) = Dropdown::new(&tokens, options)
+                        .selected(current)
+                        .width(100.0)
+                        .show(ui)
+                    {
+                        self.form.list_years = values[idx];
+                    }
+                },
+            );
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, "市值(亿)", |ui| {
-                let mut min = self.form.market_cap_min.unwrap_or(0.0);
-                if ui
-                    .add(egui::DragValue::new(&mut min).speed(1.0).prefix("min "))
-                    .changed()
-                {
-                    self.form.market_cap_min = (min > 0.0).then_some(min);
-                }
-                let mut max = self.form.market_cap_max.unwrap_or(0.0);
-                if ui
-                    .add(egui::DragValue::new(&mut max).speed(1.0).prefix("max "))
-                    .changed()
-                {
-                    self.form.market_cap_max = (max > 0.0).then_some(max);
-                }
-            });
+            basic_group(
+                ui,
+                &tokens,
+                &compass_i18n::t!("screener.market_cap"),
+                |ui| {
+                    let mut min = self.form.market_cap_min.unwrap_or(0.0);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut min)
+                                .speed(1.0)
+                                .prefix(compass_i18n::t!("screener.min_pct")),
+                        )
+                        .changed()
+                    {
+                        self.form.market_cap_min = (min > 0.0).then_some(min);
+                    }
+                    let mut max = self.form.market_cap_max.unwrap_or(0.0);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut max)
+                                .speed(1.0)
+                                .prefix(compass_i18n::t!("screener.max_pct")),
+                        )
+                        .changed()
+                    {
+                        self.form.market_cap_max = (max > 0.0).then_some(max);
+                    }
+                },
+            );
             ui.add_space(tokens.spacing.md);
 
-            Checkbox::new(&tokens, &mut self.form.exclude_delisted, "排除退市").show(ui);
+            Checkbox::new(
+                &tokens,
+                &mut self.form.exclude_delisted,
+                compass_i18n::t!("screener.exclude_delisted"),
+            )
+            .show(ui);
         });
     }
 
@@ -424,7 +454,12 @@ impl ScreenerPanel {
             ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
 
             technical_group(ui, &tokens, 286.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.ma_enabled, "均线").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.ma_enabled,
+                    compass_i18n::t!("screener.ma"),
+                )
+                .show(ui);
                 if self.form.ma_enabled {
                     let current = match self.form.ma_kind {
                         MaKind::AboveMa20 => 0,
@@ -434,9 +469,9 @@ impl ScreenerPanel {
                     if let Some(idx) = Dropdown::new(
                         &tokens,
                         [
-                            MaKind::AboveMa20.label(),
-                            MaKind::AboveMa60.label(),
-                            MaKind::BullishAlign.label(),
+                            compass_i18n::t!(MaKind::AboveMa20.label()),
+                            compass_i18n::t!(MaKind::AboveMa60.label()),
+                            compass_i18n::t!(MaKind::BullishAlign.label()),
                         ],
                     )
                     .selected(current)
@@ -454,33 +489,48 @@ impl ScreenerPanel {
             ui.add_space(tokens.spacing.md);
 
             technical_group(ui, &tokens, 158.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.breakout_enabled, "突破新高").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.breakout_enabled,
+                    compass_i18n::t!("screener.breakout"),
+                )
+                .show(ui);
                 if self.form.breakout_enabled {
-                    ui.label("N:");
+                    ui.label(compass_i18n::t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
                 }
             });
             ui.add_space(tokens.spacing.md);
 
             technical_group(ui, &tokens, 390.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.momentum_enabled, "动量").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.momentum_enabled,
+                    compass_i18n::t!("screener.momentum"),
+                )
+                .show(ui);
                 if self.form.momentum_enabled {
-                    ui.label("N:");
+                    ui.label(compass_i18n::t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
-                    ui.label("min%:");
+                    ui.label(compass_i18n::t!("screener.min_pct"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
-                    ui.label("max%:");
+                    ui.label(compass_i18n::t!("screener.max_pct"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
                 }
             });
             ui.add_space(tokens.spacing.md);
 
             technical_group(ui, &tokens, 274.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.volume_enabled, "量能").show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.volume_enabled,
+                    compass_i18n::t!("screener.volume"),
+                )
+                .show(ui);
                 if self.form.volume_enabled {
-                    ui.label("N:");
+                    ui.label(compass_i18n::t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
-                    ui.label("倍数:");
+                    ui.label(compass_i18n::t!("screener.times"));
                     ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
                 }
             });
@@ -582,11 +632,13 @@ fn dispatch_row_fetch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
     use compass_ui::tokens::ThemeTokens;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
 
     fn panel_with_form() -> (ScreenerPanel, SharedState) {
+        rust_i18n::set_locale("zh");
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
@@ -596,12 +648,18 @@ mod tests {
 
     #[test]
     fn new_creates_panel_with_correct_id() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (panel, _) = panel_with_form();
         assert_eq!(panel.id(), &CitizenId::new("screener"));
     }
 
     #[test]
     fn new_form_defaults_match_query_contract() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (panel, _) = panel_with_form();
         let q = panel.build_query();
         assert!(q.exclude_delisted, "exclude_delisted defaults true");
@@ -614,6 +672,9 @@ mod tests {
 
     #[test]
     fn build_query_reflects_conditions() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _) = panel_with_form();
         panel.form.ma_enabled = true;
         panel.form.ma_kind = MaKind::BullishAlign;
@@ -652,6 +713,9 @@ mod tests {
 
     #[test]
     fn multi_selects_are_independent() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _) = panel_with_form();
         panel.ms_industry.toggle("银行");
         panel.ms_exchange.toggle("SH");
@@ -668,6 +732,9 @@ mod tests {
 
     #[test]
     fn show_renders_condition_form_no_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
@@ -686,6 +753,9 @@ mod tests {
 
     #[test]
     fn filter_button_click_sets_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
@@ -734,6 +804,9 @@ mod tests {
 
     #[test]
     fn results_table_renders_rows_and_count() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         shared.screener_total.set(3);
         shared.screener_result.set(vec![
@@ -755,6 +828,9 @@ mod tests {
 
     #[test]
     fn results_table_shows_empty_state_without_rows() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         let (run_signal, work_signal) = signals();
         let industries: Vec<String> = Vec::new();
@@ -769,6 +845,9 @@ mod tests {
 
     #[test]
     fn results_table_zero_market_cap_renders_without_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         shared.screener_total.set(1);
         shared
@@ -863,6 +942,9 @@ mod tests {
 
     #[test]
     fn basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
             let mut harness = egui_kittest::Harness::builder()
@@ -891,6 +973,9 @@ mod tests {
 
     #[test]
     fn technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
             panel.form.ma_enabled = true;
@@ -923,6 +1008,9 @@ mod tests {
 
     #[test]
     fn condition_groups_still_wrap_between_on_narrow_width() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _shared) = panel_with_form();
         let mut harness = egui_kittest::Harness::builder()
             .with_size([500.0, 600.0])
@@ -941,5 +1029,82 @@ mod tests {
             dy_between > 1.0,
             "industry and 上市时长 groups must wrap to different rows at 500px (groups, not labels, wrap), dy={dy_between}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // #222 i18n (T15): the same alignment sweeps must hold in English —
+    // wider en labels (Industry/Exchange/…) must not push the control off
+    // the row. Each test holds LANG_LOCK so it is serialized against the
+    // zh sweeps and the en-locale tests in other modules.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn en_basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for width in GROUP_ALIGNMENT_WIDTHS {
+            let (mut panel, _shared) = panel_with_form();
+            compass_i18n::set_locale("en");
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([width, 600.0])
+                .build_ui(|ui| panel.basic_conditions(ui));
+            harness.run();
+
+            let selects = harness
+                .query_all_by_label_contains("All")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selects.len(),
+                3,
+                "three multi-select triggers rendered at width {width}px"
+            );
+            assert_same_row(&harness, "Industry", &selects[0], width);
+            assert_same_row(&harness, "Exchange", &selects[1], width);
+            assert_same_row(&harness, "Board", &selects[2], width);
+
+            let years = harness
+                .query_by_label_contains("Any")
+                .expect("上市时长 dropdown rendered in en");
+            assert_same_row(&harness, "Listed ≥", &years, width);
+        }
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn en_technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for width in GROUP_ALIGNMENT_WIDTHS {
+            let (mut panel, _shared) = panel_with_form();
+            compass_i18n::set_locale("en");
+            panel.form.ma_enabled = true;
+            panel.form.breakout_enabled = true;
+            panel.form.momentum_enabled = true;
+            panel.form.volume_enabled = true;
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([width, 600.0])
+                .build_ui(|ui| panel.technical_conditions(ui));
+            harness.run();
+
+            let ma_dropdown = harness
+                .query_by_label_contains("Above MA20")
+                .expect("MA dropdown rendered when ma_enabled");
+            assert_same_row(&harness, "MA", &ma_dropdown, width);
+
+            let n_labels = harness
+                .query_all_by_label_contains("N:")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                n_labels.len(),
+                3,
+                "three N: parameter labels rendered at width {width}px"
+            );
+            assert_same_row(&harness, "New High", &n_labels[0], width);
+            assert_same_row(&harness, "Momentum", &n_labels[1], width);
+            assert_same_row(&harness, "Volume", &n_labels[2], width);
+        }
+        compass_i18n::set_locale("zh");
     }
 }

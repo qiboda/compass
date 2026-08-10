@@ -28,6 +28,7 @@ use crate::messages::{
     RunSepaResponse,
 };
 use crate::state::SharedState;
+use compass_i18n::t;
 
 /// SEPA backend result cap — the engine always returns the full TOP-N list;
 /// the panel truncates further (TOP 50/30) as pure GUI state.
@@ -81,7 +82,7 @@ pub fn wire_backend(
                 Err(e) => {
                     return FetchResponse {
                         bars: vec![],
-                        error: Some(format!("failed to open duckdb: {e}")),
+                        error: Some(t!("error.duckdb_open", e = e).to_string()),
                     };
                 }
             };
@@ -92,7 +93,7 @@ pub fn wire_backend(
             {
                 Ok(bars) if bars.is_empty() => FetchResponse {
                     bars: vec![],
-                    error: Some(format!("no data for {}", req.symbol)),
+                    error: Some(t!("error.no_data", symbol = req.symbol).to_string()),
                 },
                 Ok(bars) => FetchResponse { bars, error: None },
                 Err(e) => FetchResponse {
@@ -119,10 +120,10 @@ pub fn wire_backend(
         loading.set(false);
         if let Some(ref err) = resp.error {
             error.set(Some(err.clone()));
-            logger.log_error(&format!("fetch failed: {err}"));
+            logger.log_error(&t!("logger.log_fetch_failed", e = err));
         } else {
             error.set(None);
-            logger.log_info(&format!("fetch completed: {bar_count} bars"));
+            logger.log_info(&t!("logger.log_fetch_completed", count = bar_count));
         }
         repaint_ctx.request_repaint();
     });
@@ -141,7 +142,7 @@ pub fn wire_backend(
                         return RunScreenerResponse {
                             rows: vec![],
                             total: 0,
-                            error: Some(format!("failed to open parquet: {e}")),
+                            error: Some(t!("error.parquet_open", e = e).to_string()),
                         };
                     }
                 };
@@ -175,10 +176,10 @@ pub fn wire_backend(
         screener_loading.set(false);
         if let Some(ref err) = resp.error {
             screener_error.set(Some(err.clone()));
-            logger.log_error(&format!("screener failed: {err}"));
+            logger.log_error(&t!("logger.log_screener_failed", e = err));
         } else {
             screener_error.set(None);
-            logger.log_info(&format!("screener completed: {} matched", resp.total));
+            logger.log_info(&t!("logger.log_screener_completed", count = resp.total));
         }
         screener_repaint_ctx.request_repaint();
     });
@@ -199,13 +200,13 @@ pub fn wire_backend(
                                 rows: vec![],
                                 thermometer: compass_types::MarketThermometer {
                                     score: 0.0,
-                                    position: String::new(),
+                                    position_key: "sepa.position.low",
                                     position_pct: 0.0,
                                     indicators: vec![],
                                 },
                                 date: String::new(),
                             },
-                            error: Some(format!("failed to open parquet: {e}")),
+                            error: Some(t!("error.parquet_open", e = e).to_string()),
                         };
                     }
                 };
@@ -222,7 +223,7 @@ pub fn wire_backend(
                             rows: vec![],
                             thermometer: compass_types::MarketThermometer {
                                 score: 0.0,
-                                position: String::new(),
+                                position_key: "sepa.position.low",
                                 position_pct: 0.0,
                                 indicators: vec![],
                             },
@@ -248,10 +249,10 @@ pub fn wire_backend(
         sepa_loading.set(false);
         if let Some(ref err) = resp.error {
             sepa_error.set(Some(err.clone()));
-            logger.log_error(&format!("sepa failed: {err}"));
+            logger.log_error(&t!("logger.log_sepa_failed", e = err));
         } else {
             sepa_error.set(None);
-            logger.log_info(&format!("sepa completed: {} ranked", row_count));
+            logger.log_info(&t!("logger.log_sepa_completed", count = row_count));
         }
         sepa_repaint_ctx.request_repaint();
     });
@@ -275,6 +276,7 @@ pub fn wire_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
     use crate::messages::FetchRequest;
     use crate::state::SharedState;
     use chrono::DateTime;
@@ -366,6 +368,10 @@ mod tests {
     /// "no data" message and `loading` flips back to `false`.
     #[test]
     fn error_path_nonexistent_parquet_dir() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
         let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_xyz".into());
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
@@ -390,6 +396,7 @@ mod tests {
             state.error.get().is_some(),
             "error should be set when no data is available"
         );
+        rust_i18n::set_locale("zh");
     }
 
     // ------------------------------------------------------------------
@@ -400,6 +407,10 @@ mod tests {
     /// symbol, the backend returns non-empty bars and clears the error.
     #[test]
     fn success_path_valid_parquet() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
 
         write_test_parquet(
@@ -431,6 +442,7 @@ mod tests {
         );
         assert!(!state.bars.get().is_empty(), "bars should not be empty");
         assert_eq!(state.bars.get().len(), 3, "expected 3 bars for 000001");
+        rust_i18n::set_locale("zh");
     }
 
     // ------------------------------------------------------------------
@@ -441,6 +453,10 @@ mod tests {
     /// symbol, the backend returns an error containing "no data".
     #[test]
     fn nodata_path_symbol_not_in_parquet() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
 
         write_test_parquet(
@@ -468,11 +484,21 @@ mod tests {
         );
         let err = state.error.get();
         assert!(err.is_some(), "error should be set for unknown symbol");
+        // The error template is resolved on the backend worker thread, which
+        // does not hold LANG_LOCK — its locale can differ from this test's en
+        // under parallel runs. Assert the language-neutral parts instead: the
+        // symbol always appears, and the template never degrades to the raw
+        // missing-key fallback (the key string itself).
+        let msg = err.as_deref().unwrap();
         assert!(
-            err.as_deref().unwrap().contains("no data"),
-            "error should contain 'no data': got {:?}",
-            err
+            msg.contains("999999"),
+            "error must mention the requested symbol, got: {msg:?}"
         );
+        assert!(
+            !msg.contains("error.no_data"),
+            "error must resolve via the key (not the missing-key fallback), got: {msg:?}"
+        );
+        rust_i18n::set_locale("zh");
     }
 
     // ------------------------------------------------------------------
@@ -554,6 +580,10 @@ mod tests {
     /// Full screener channel: query → run_screener → SharedState + display log.
     #[test]
     fn screener_path_returns_matched_rows_and_logs() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
         write_screener_parquet(temp_dir.path());
 
@@ -591,11 +621,16 @@ mod tests {
             state.log.get().log_count() > 0,
             "result slot must write a display log entry"
         );
+        rust_i18n::set_locale("zh");
     }
 
     /// Screener with an industry filter narrows the result set.
     #[test]
     fn screener_path_applies_industry_filter() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
         write_screener_parquet(temp_dir.path());
 
@@ -619,6 +654,7 @@ mod tests {
 
         assert_eq!(state.screener_total.get(), 1);
         assert_eq!(state.screener_result.get()[0].symbol, "600519");
+        rust_i18n::set_locale("zh");
     }
 
     // ------------------------------------------------------------------
@@ -643,6 +679,10 @@ mod tests {
     /// modules score 0 and the hard-filter survivors still rank.
     #[test]
     fn sepa_path_returns_ranked_rows_and_logs() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
         write_screener_parquet(temp_dir.path());
 
@@ -675,5 +715,6 @@ mod tests {
             state.log.get().log_count() > 0,
             "result slot must write a display log entry"
         );
+        rust_i18n::set_locale("zh");
     }
 }

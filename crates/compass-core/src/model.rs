@@ -272,6 +272,14 @@ pub struct AppConfig {
     #[serde(default = "default_theme")]
     /// GUI color theme name (e.g. "compass_dark").
     pub theme: String,
+    #[serde(default = "default_language")]
+    /// GUI language code ("zh" or "en"; top-level `language` key in config.toml).
+    pub language: String,
+}
+
+/// Default GUI language — Chinese (issue #222).
+pub fn default_language() -> String {
+    "zh".into()
 }
 
 /// Parquet data directory configuration.
@@ -474,6 +482,55 @@ dir = "/custom/parquet"
     fn appconfig_theme_parses_from_toml() {
         let config: AppConfig = toml::from_str("theme = \"custom_sky\"").unwrap();
         assert_eq!(config.theme, "custom_sky");
+    }
+
+    // ------------------------------------------------------------------
+    // #222 i18n: top-level `language` key (T2) — RED: field not yet added.
+    // Contract (config-key): `language = "en"` parses to "en",
+    // `language = "zh"` to "zh", a MISSING key defaults to "zh" (serde
+    // `#[serde(default = "default_language")]`, mirroring `theme`), and the
+    // derive `Default` yields "" — the documented Metis C1 trap that the
+    // consumer-side `normalize_language` guard (T3) must fall back to "zh".
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn appconfig_language_en_parses_from_toml() {
+        let config: AppConfig = toml::from_str("language = \"en\"").unwrap();
+        assert_eq!(
+            config.language, "en",
+            "top-level language = \"en\" must parse into the config struct"
+        );
+    }
+
+    #[test]
+    fn appconfig_language_zh_parses_from_toml() {
+        let config: AppConfig = toml::from_str("language = \"zh\"").unwrap();
+        assert_eq!(config.language, "zh");
+    }
+
+    #[test]
+    fn appconfig_language_missing_defaults_to_zh() {
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            config.language, "zh",
+            "missing language key must default to zh (serde default)"
+        );
+        let config: AppConfig = toml::from_str(
+            r#"[app]
+default_symbol = "600519"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.language, "zh", "partial config without language key");
+    }
+
+    #[test]
+    fn appconfig_derive_default_language_is_empty_string() {
+        let config = AppConfig::default();
+        assert_eq!(
+            config.language, "",
+            "derive Default gives empty string; normalize_language must guard"
+        );
     }
 
     #[test]

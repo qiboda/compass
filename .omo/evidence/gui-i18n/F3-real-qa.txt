@@ -1,0 +1,46 @@
+# F3 — Real QA verification (gui-i18n, ref #222)
+
+Date: 2026-08-10
+
+## Coverage (llvm-cov + scripts/check-coverage.sh, 2026-08-10)
+
+```
+OK: workspace line coverage 96.00%       (threshold 80%)
+OK: compass-core 97.99%                  (threshold 95%)
+OK: compass-data 96.84%                  (threshold 95%)
+OK: compass-i18n 93.94%                  (threshold 80%, NEW crate)
+OK: compass 92.47%                       (threshold 80%)
+OK: compass-strategy 96.97%              (threshold 80%)
+OK: compass-types 89.58%                 (threshold 80%)
+OK: compass-ui 97.28%                    (threshold 80%)
+```
+All thresholds met, including the new compass-i18n 80% (Metis M7).
+
+## Test suite
+
+- `cargo test` full workspace: ALL GREEN (compass 162, adversarial 4, compass-data 61+68,
+  compass-ui 215, strategy, core, types)
+- `cargo test -p compass` 5x consecutive runs: all pass (LANG_LOCK serialization stable)
+- fork repo (`/data/codes/egui-charts`): 526 + 27 tests pass at cc59f1f
+
+## zh/en dual-language verification
+
+zh default (via tests asserting zh literals — all green):
+- fetch button 「获取数据」, tabs 图表/日志/选股器/东方SEPA, sidebar 自选/搜索自选,
+  screener 筛选/行业/均线, SEPA 排名/市场温度, fork tooltip 时间:/开盘:, dates 2024年5月15日
+
+en switching (via tests asserting en literals under set_locale("en") — all green):
+- fetch button "Fetch", tabs Chart/Log/Screener/East SEPA, sidebar Watchlist,
+  screener Industry/MA/Listed ≥, SEPA Rank/Market Temp, fork tooltip Time:/Open:,
+  dates 2024-05-15 (adversarial_219 tests pin zh; en via thermometer/language tests)
+
+Language dropdown live switch: language_dropdown_switches_ui_immediately_and_persists
+(select English → locale=en + fetch "Fetch" + config.toml language="en"; back to 中文 →
+locale=zh; window title stays "Compass — Stock Chart").
+
+## Fork chart locale switching
+
+fork tooltip/dates resolve via fork's own chart.* keys (cc59f1f); set_locale is
+process-global so the fork follows the same switch (verified by fork in-crate tests
+tooltip_prefixes_resolve_via_chart_keys / tooltip_date_formats_resolve_via_chart_keys,
+and compass adversarial_219 tests pinning zh).

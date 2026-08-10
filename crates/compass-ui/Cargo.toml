@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2024"
 description = "General-purpose GUI component library and design token system for Compass"
 
+# rust-i18n default locale: the GUI's product default is zh (issue #222).
+# Without this, rust-i18n's built-in default ("en") makes every t!() call in
+# this crate resolve to English and the zh-literal widget tests fail. Runtime
+# language switching is unaffected — main() calls set_locale explicitly.
+[package.metadata.i18n]
+default-locale = "zh"
+
 [dependencies]
 egui = { workspace = true }
 egui_extras = { workspace = true }
@@ -11,6 +18,8 @@ egui-phosphor = { workspace = true }
 egui-charts = { workspace = true }
 egui_dock = { workspace = true }
 emath = { workspace = true }
+compass-i18n = { path = "../compass-i18n" }
+rust-i18n = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { workspace = true }

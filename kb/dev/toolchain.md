@@ -215,9 +215,41 @@
   时间（`open(now: f64)`/`close(now: f64)` 显式收参），测试 harness 改
   `with_step_dt(0.01)` + `run_steps(11)`（modal.rs）或直接删 workaround
 
-  依赖默认 `step_dt=0.25` 一 step 跨过动画（main.rs）。根治后动画路径已无墙钟
-  残留（compass-data/strategy 的 `Instant` 仅剩性能计时，与动画无关）。教训同
-  toast：#171 验证后"重置时间戳"模式在库内已无实例
+   依赖默认 `step_dt=0.25` 一 step 跨过动画（main.rs）。根治后动画路径已无墙钟
+   残留（compass-data/strategy 的 `Instant` 仅剩性能计时，与动画无关）。教训同
+   toast：#171 验证后"重置时间戳"模式在库内已无实例
+
+### [测试] rust-i18n v4.2.1 `[package.metadata.i18n] default-locale` 是 no-op（#222 i18n epic）
+
+- **症状**: compass-ui / compass 单测里 `t!()` 解析到英文而非设计默认中文——
+  例如 `t!("sepa.table.rank")` 得 `"Rank"` 而非 `"排名"`，zh-literal 断言
+  （`get_by_label("排名")`/`"自选股为空"`/`"共 3 行"`）全部失败
+- **根因**: rust-i18n 的 `CURRENT_LOCALE` 初始硬编码 `"en"`
+  （`rust-i18n-4.2.1/src/lib.rs:15`）。`i18n!` 宏按 `default-locale` 生成的
+  初始化分支是
+  ```rust
+  if "zh" != rust_i18n::locale().deref() {
+      rust_i18n::set_locale(rust_i18n::locale().deref()); // 保持当前
+  } else {
+      rust_i18n::set_locale("zh");
+  }
+  ```
+  当 current="en"、default="zh" 时走 if 分支 `set_locale("en")` → 默认值
+  **永不生效**（两分支都保持现状）。`[package.metadata.i18n]` 官方文档标注
+  仅服务于 `cargo i18n` CLI，宏虽读它生成此分支但行为如上——不是我们配置错
+- **排查路径**: 用最小 /tmp 工程复现（Cargo.toml 含
+  `[package.metadata.i18n] default-locale = "zh"` + zh/en 各一 key）：
+  `cargo run` 打印 `initial locale: en` / `resolved: Chart`；`RUST_I18N_DEBUG=1
+  cargo check` 确认宏生成的 `set_locale` 分支文本
+- **修复（当前）**: 各 crate 仍加 `[package.metadata.i18n] default-locale = "zh"`
+  （compass-i18n 已有；T6 补 compass-ui + compass）——无运行时副作用、表达
+  契约意图、上游修复后即刻生效。**单测要 zh 默认必须显式 `set_locale("zh")`**
+  （产品路径 `main()` 已显式调用，无碍；测试需 LANG_LOCK 串行保护，见 #222
+  plan T14/T15）。勿依赖 metadata 让测试静默变 zh
+- **验证**: /tmp 复现工程输出 locale=en 即证；workspace 内 `cargo check` 通过
+  不证明运行期 locale（宏展开产物在 RUST_I18N_DEBUG=1 下可查）
+- **教训**: 第三方 i18n 库的 "default-locale" 配置不一定改运行期初始 locale——
+  任何"默认 zh"的测试契约都要在测试侧显式 set_locale，不能赌配置生效
 
 ---
 
@@ -323,3 +355,16 @@
 - **修复**: 待处理——CI runner 需创建 `/data/compass-data/csv` 并授权，或测试改为 mock
   csv_dir 的默认路径（不依赖真实 /data）。**影响所有后续 PR 的 Python Test job**。
 - **验证**: 本地测试通过；CI 需环境修复后重跑
+
+### [Git/环境] pre-push hook pytest 报 `pydantic_core._pydantic_core` ModuleNotFoundError
+
+- **症状**: `git push` 时 pre-push hook 的 `cd collectors && uv run pytest` 失败，traceback 显示导入
+  `/home/skwy/.hermes/hermes-agent/venv/lib/python3.11/site-packages/langsmith/schemas.py` 后
+  `No module named 'pydantic_core._pydantic_core'`。
+- **根因**: hermes agent 环境设置了 `PYTHONPATH=/home/skwy/.hermes/hermes-agent/venv/lib/python3.11/site-packages`，
+  git hook 子进程继承该变量 → collectors 的 py3.12 venv 启动时 PYTHONPATH 注入 py3.11 的 site-packages，
+  pytest 插件发现 langsmith（py3.11 包），其 `pydantic_core` 是 cp311 二进制，py3.12 解释器无法加载。
+- **排查路径**: 1) 单跑 `uv run pytest` 复现（错误同上）；2) 检查 `echo $PYTHONPATH` 发现 hermes 泄漏；
+  3) `env -u PYTHONPATH uv run pytest tests/` 通过（328 passed）——隔离变量即修复。
+- **修复**: push 时用 `env -u PYTHONPATH git push origin <branch>`（仅清除泄漏变量，hook 本身无问题）。
+- **验证**: `env -u PYTHONPATH uv run pytest tests/ -q` → 328 passed。

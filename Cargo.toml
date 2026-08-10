@@ -4,6 +4,7 @@ members = [
     "crates/compass-core",
     "crates/compass",
     "crates/compass-data",
+    "crates/compass-i18n",
     "crates/compass-types",
     "crates/compass-strategy",
     "crates/compass-ui",
@@ -13,6 +14,7 @@ members = [
 async-trait = "0.1"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+rust-i18n = "4.2.1"
 duckdb = { version = "1", features = ["bundled", "parquet"] }
 egui = "0.35"
 egui_extras = "0.35"

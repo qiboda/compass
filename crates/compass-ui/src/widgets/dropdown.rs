@@ -3,6 +3,7 @@
 
 use crate::tokens::ThemeTokens;
 use crate::widgets::input::Input;
+use compass_i18n::t;
 use egui::{Area, Color32, CornerRadius, Frame, Margin, Order, RichText, Sense, Stroke, Ui};
 
 /// Dropdown with a unified trigger and popup look. Selection state is
@@ -13,6 +14,9 @@ pub struct Dropdown<'a> {
     selected: usize,
     width: f32,
     searchable: bool,
+    /// Popup-state salt; distinguishes multiple Dropdown instances rendered
+    /// in the same `Ui` (their `ui.id()` would otherwise collide).
+    id_salt: &'a str,
 }
 
 impl<'a> Dropdown<'a> {
@@ -27,6 +31,7 @@ impl<'a> Dropdown<'a> {
             selected: 0,
             width: 160.0,
             searchable: false,
+            id_salt: "",
         }
     }
 
@@ -42,6 +47,12 @@ impl<'a> Dropdown<'a> {
         self
     }
 
+    /// Set a unique popup-state salt (default empty).
+    pub fn id_salt(mut self, id_salt: &'a str) -> Self {
+        self.id_salt = id_salt;
+        self
+    }
+
     /// Enable a search box inside the popup that filters options.
     pub fn searchable(mut self, searchable: bool) -> Self {
         self.searchable = searchable;
@@ -54,7 +65,9 @@ impl<'a> Dropdown<'a> {
         let c = &tokens.color;
         let height = tokens.spacing.control_md;
 
-        let popup_id = ui.id().with("compass_dropdown_popup");
+        let popup_id = ui
+            .id()
+            .with(format!("compass_dropdown_popup:{}", self.id_salt));
         let mut open = ui
             .ctx()
             .data(|d| d.get_temp::<bool>(popup_id).unwrap_or(false));
@@ -104,7 +117,9 @@ impl<'a> Dropdown<'a> {
                                 d.get_temp::<String>(ui.id().with("query"))
                                     .unwrap_or_default()
                             });
+                            let search_hint = t!("common.search");
                             Input::new(tokens, &mut query)
+                                .placeholder(&search_hint)
                                 .width(self.width - 8.0)
                                 .show(ui);
                             ui.add_space(tokens.spacing.xs);
@@ -179,7 +194,7 @@ impl<'a> Dropdown<'a> {
         }
         if !any {
             ui.label(
-                RichText::new("无匹配结果")
+                RichText::new(t!("common.no_matches"))
                     .color(c.text_weak)
                     .size(tokens.typography.caption),
             );
@@ -260,10 +275,10 @@ mod tests {
         let _ = harness.get_by_role(egui::accesskit::Role::TextInput);
     }
 
-    /// The popup search box must not carry the hardcoded「搜索…」hint
-    /// (issue #228).
+    /// The popup search box hint must come from the locale dictionary
+    /// (issue #222) — never a hardcoded literal in the widget (issue #228).
     #[test]
-    fn search_box_has_no_hardcoded_hint() {
+    fn search_box_hint_is_localized_not_hardcoded() {
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             Dropdown::new(&tokens, ["1d", "1w", "1M"])
@@ -273,12 +288,14 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("1d").click();
         harness.run();
+        let hint = t!("common.search");
+        assert_ne!(hint, "common.search", "key must resolve, not echo back");
         assert!(
             harness
-                .query_all_by(|n| n.placeholder() == Some("搜索…"))
+                .query_all_by(|n| n.placeholder() == Some(hint.as_ref()))
                 .next()
-                .is_none(),
-            "the popup search box must not hardcode the '搜索…' hint (issue #228)"
+                .is_some(),
+            "the popup search box must show the localized hint (issue #222)"
         );
     }
 
@@ -318,6 +335,7 @@ mod tests {
     /// behavior must survive the Input swap (issue #228).
     #[test]
     fn empty_state_renders_when_no_match() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             Dropdown::new(&tokens, ["1d", "1w", "1M"])

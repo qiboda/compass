@@ -30,6 +30,7 @@ use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
 use crate::messages::{FetchRequest, RunScreenerRequest, RunSepaRequest};
 use crate::state::SharedState;
+use compass_i18n::t;
 
 // ---------------------------------------------------------------------------
 // Citizen ID constants
@@ -57,12 +58,16 @@ pub enum TabKind {
 }
 
 impl TabKind {
+    /// i18n key of the tab's display title. The rendering consumer
+    /// ([`Tab::title`] via the egui_dock `TabViewer`) resolves it via `t!()`
+    /// so a live locale switch updates the dock tabs (issue #222, plan T5
+    /// Metis M2).
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Chart => "图表",
-            Self::Logger => "日志",
-            Self::Screener => "选股器",
-            Self::Sepa => "东方SEPA",
+            Self::Chart => "tab.chart",
+            Self::Logger => "tab.logger",
+            Self::Screener => "tab.screener",
+            Self::Sepa => "tab.sepa",
         }
     }
 
@@ -147,7 +152,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     type Tab = Tab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        format!("{} {}", tab.kind.icon(), tab.title()).into()
+        format!("{} {}", tab.kind.icon(), t!(tab.title())).into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -186,6 +191,14 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
+    use compass_i18n::t;
+
+    /// Key-resolution test helper (plan T4): resolves a key through the
+    /// shared compass-i18n dictionary.
+    fn tr(key: &str) -> String {
+        t!(key).to_string()
+    }
 
     // ------------------------------------------------------------------
     // TabKind::title
@@ -193,22 +206,59 @@ mod tests {
 
     #[test]
     fn tab_kind_chart_title() {
-        assert_eq!(TabKind::Chart.title(), "图表");
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        assert_eq!(tr(TabKind::Chart.title()), "图表");
     }
 
     #[test]
     fn tab_kind_logger_title() {
-        assert_eq!(TabKind::Logger.title(), "日志");
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        assert_eq!(tr(TabKind::Logger.title()), "日志");
     }
 
     #[test]
     fn tab_kind_screener_title() {
-        assert_eq!(TabKind::Screener.title(), "选股器");
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        assert_eq!(tr(TabKind::Screener.title()), "选股器");
     }
 
     #[test]
     fn tab_kind_sepa_title() {
-        assert_eq!(TabKind::Sepa.title(), "东方SEPA");
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        assert_eq!(tr(TabKind::Sepa.title()), "东方SEPA");
+    }
+
+    // ------------------------------------------------------------------
+    // #222 i18n (T5): `TabKind::title()` returns KEY CONSTANTS ("tab.chart"
+    // etc.), not display text — the rendering consumer (TabViewer::title)
+    // resolves them via t!() so a live locale switch updates the dock tabs.
+    // RED now: title() still returns the zh literal.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn tab_kind_titles_are_key_constants() {
+        assert_eq!(TabKind::Chart.title(), "tab.chart");
+        assert_eq!(TabKind::Logger.title(), "tab.logger");
+        assert_eq!(TabKind::Screener.title(), "tab.screener");
+        assert_eq!(TabKind::Sepa.title(), "tab.sepa");
+    }
+
+    #[test]
+    fn tab_title_delegates_to_key_constant() {
+        let tab = Tab::new(TabKind::Chart);
+        assert_eq!(tab.title(), "tab.chart");
     }
 
     #[test]
@@ -252,29 +302,45 @@ mod tests {
 
     #[test]
     fn tab_new_chart_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Chart);
-        assert_eq!(tab.title(), "图表");
+        assert_eq!(tr(tab.title()), "图表");
         assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
     }
 
     #[test]
     fn tab_new_logger_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Logger);
-        assert_eq!(tab.title(), "日志");
+        assert_eq!(tr(tab.title()), "日志");
         assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
     }
 
     #[test]
     fn tab_new_screener_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Screener);
-        assert_eq!(tab.title(), "选股器");
+        assert_eq!(tr(tab.title()), "选股器");
         assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
     }
 
     #[test]
     fn tab_new_sepa_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Sepa);
-        assert_eq!(tab.title(), "东方SEPA");
+        assert_eq!(tr(tab.title()), "东方SEPA");
         assert_eq!(tab.citizen_id(), CitizenId::new(SEPA_ID));
     }
 
@@ -299,6 +365,9 @@ mod tests {
 
     #[test]
     fn tab_viewer_title_combines_icon_and_chinese_title() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         use crate::citizens::chart::ChartCitizen;
         use crate::citizens::logger::LoggerPanel;
         use crate::citizens::screener::ScreenerPanel;
@@ -349,15 +418,15 @@ mod tests {
         };
 
         for (kind, title) in [
-            (TabKind::Chart, "图表"),
-            (TabKind::Logger, "日志"),
-            (TabKind::Screener, "选股器"),
-            (TabKind::Sepa, "东方SEPA"),
+            (TabKind::Chart, tr("tab.chart")),
+            (TabKind::Logger, tr("tab.logger")),
+            (TabKind::Screener, tr("tab.screener")),
+            (TabKind::Sepa, tr("tab.sepa")),
         ] {
             let mut tab = Tab::new(kind);
             let text = viewer.title(&mut tab).text().to_string();
             assert!(
-                text.contains(title),
+                text.contains(title.as_str()),
                 "tab title must contain {title}, got {text}"
             );
             assert!(
