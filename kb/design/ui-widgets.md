@@ -255,7 +255,7 @@ if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
 
 **用途**：面板空态占位——居中 48px 图标（text_weak）+ heading 标题 + caption 描述 + 可选 action 按钮。
 
-**适用场景**：面板无数据/未初始化时的引导（Chart 未 Fetch 时「输入代码并点击 Fetch」、Sidebar 空自选、SEPA 无评分数据、DataTable 空行）。**空态是组件内部默认行为的一部分**（DataTable 空行自动显示「无符合条件」）。
+**适用场景**：面板无数据/未初始化时的引导（Chart 未 Fetch 时「输入代码并点击获取数据」、Sidebar 空自选、SEPA 无评分数据、DataTable 空行）。**空态是组件内部默认行为的一部分**（DataTable 空行自动显示「无符合条件」）。
 
 **变体**：无 enum 变体；`description(&str)` 与 `action(Button)` 均为可选开关（不设则不渲染）。
 
@@ -264,7 +264,7 @@ if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
 **示例**（源自 chart.rs 空态）：
 ```rust
 EmptyState::new(&tokens, egui_phosphor::regular::CHART_LINE, "暂无图表数据")
-    .description("输入代码并点击 Fetch")
+    .description("输入代码并点击获取数据")
     .show(ui);
 ```
 
@@ -766,7 +766,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 #### ChartCitizen（`citizens/chart.rs`）
 
-- 组合：`EmptyState`（未加载引导「输入代码并点击 Fetch」）、egui-charts 图表（token 经 `apply_to_chart` 映射）、MA/BOLL 图例行（自绘 overlay，非组件）、工具栏「前复权」`Tag`（Custom + info 色，非交互）。
+- 组合：`EmptyState`（未加载引导「输入代码并点击获取数据」）、egui-charts 图表（token 经 `apply_to_chart` 映射）、MA/BOLL 图例行（自绘 overlay，非组件）、工具栏「前复权」`Tag`（Custom + info 色，非交互）。
 - 使用模式：空态是默认态；数据就绪后渲染图表；指标实时计算不存储（缓存指纹防碰撞）。
 
 #### LoggerPanel（`citizens/logger.rs`）
@@ -851,7 +851,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
    （排除退市/均线/突破新高/动量/量能，screener.rs:389-444）。→ 纯文档笔误，已改。
 3. **偏差 #3（BUG）** — EmptyState 示例编造：原示例 title/描述互换并虚构
    「数据来自本地数据源」（代码库无此文案）。实际/设计意图：title「暂无图表数据」
-   + 描述「输入代码并点击 Fetch」（chart.rs:88-94）。→ 文档已重写。
+   + 描述「输入代码并点击获取数据」（chart.rs:88-94）。→ 文档已重写。
 4. **偏差 #4（权宜实现，已修复 #226）** — IconButton 默认尺寸硬编码 `32.0`
    （icon_button.rs:22），未走 `control_md` token（`small()` 才走 `control_sm`）；
    文档声称「与 control_sm/control_md token 对齐」仅部分成立。→ 已实现

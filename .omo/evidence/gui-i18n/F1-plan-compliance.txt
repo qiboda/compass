@@ -36,11 +36,11 @@ Branch: feat/gui-i18n (rebased onto origin/master@495c012; SHAs below are post-r
 - **Factor-note precision regression**: `factor_note_text` pre-formats numeric args
   (`{:.1}` drawdown / `{:.0}` momentum+thermometer / `{:.0}`+`{:+.0}` big-capital)
   instead of passing raw f64 into unspecifier'd templates — new RED→GREEN test
-  `factor_note_text_preserves_numeric_precision` (commit pending).
+  `factor_note_text_preserves_numeric_precision` (commit f289642).
 - **Locale-default order-dependence**: rust-i18n 4.2.1's `default-locale` metadata is a
   no-op (process locale starts "en"); 9 tests (`default_locale_is_zh_without_set_locale`
   + 8 tabs.rs title tests) now explicitly `set_locale("zh")` after LANG_LOCK,
-  per kb/dev/toolchain.md contract (commit pending).
+  per kb/dev/toolchain.md contract (commit 521ebe0).
 - zh `chart.empty_desc` now references the localized button「获取数据」(was「Fetch」).
 
 ## Scope OUT — none violated

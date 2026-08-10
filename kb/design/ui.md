@@ -97,7 +97,7 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 
 | 面板 | CitizenId | 职责 |
 |---|---|---|
-| Chart | `chart` | K 线图表（平移/缩放/十字准线），默认 100 根可见柱；空态引导（「输入代码并点击 Fetch」） |
+| Chart | `chart` | K 线图表（平移/缩放/十字准线），默认 100 根可见柱；空态引导（「输入代码并点击获取数据」） |
 | Logger | `logger` | 可滚动日志面板（tracing 事件）+ 导出按钮（保存文件对话框） |
 | Screener | `screener` | 条件选股（基础/技术面两张卡片 + 结果 `DataTable`） |
 | Sepa | `sepa` | 东方SEPA 评分（温度计 + TOP50 排名表 + 详情 + 图表联动），叠入 Chart leaf 双 tab |
