@@ -711,7 +711,6 @@ impl SepaPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compass_i18n::t;
     use compass_types::{SepaData, SepaDetails, SepaFactor, SepaIndicator};
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;

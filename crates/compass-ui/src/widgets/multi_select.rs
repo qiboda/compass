@@ -71,14 +71,9 @@ impl MultiSelect {
         self
     }
 
-    /// The summary text of the trigger: `全部` (via `common.all`) when nothing
-    /// is selected, `已选 N 个` otherwise.
-    ///
-    /// The `已选 N 个` interpolated form is intentionally **not** keyed: the
-    /// approved key tree (`.omo/designs/gui-i18n.md` §1) defines no
-    /// `widgets.multi_select.*` / selected-count key, and locale files are
-    /// frozen by the KEY_TREE completeness contract (owned by T4/T5).
-    /// Scoped out until the design adds a key (plan T6 resolution).
+    /// The summary text of the trigger: `全部`/`All` (via `common.all`) when
+    /// nothing is selected, `已选 N 个`/`Selected N` otherwise (via
+    /// `widgets.multi_select.selected`, interpolating the count).
     pub fn summary(&self) -> String {
         if self.selected.is_empty() {
             t!("common.all").into_owned()

@@ -26,7 +26,7 @@ Branch: feat/gui-i18n
 
 ## Key tree vs design §1 (incl. Metis C5/C7 supplements)
 
-- compass-i18n zh.yml/en.yml: **149 keys each, fully symmetric** (script-verified).
+- compass-i18n zh.yml/en.yml: **151 keys each, fully symmetric (incl. widgets.multi_select.selected/confirm, added in the review-fix commit)** (script-verified).
 - chart.* fork keys live in the fork's own locales/ (16 keys), not in compass-i18n.
 - Metis C5 (sepa.note.big_capital / sepa.note.thermometer) and C7 (logger.log_* 6 keys) present (verified in zh.yml + `c5_c7_supplement_keys_resolve_to_real_text` test).
 - `chart.legend.*` keys NOT created (Metis C3 — fork src/ui/ unreachable).
