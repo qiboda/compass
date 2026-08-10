@@ -103,19 +103,29 @@ fn format_indicator_value(value: f64, unit_key: &str) -> String {
 /// big_capital → main/dragon/survey/block, thermometer → score).
 fn factor_note_text(note_key: &'static str, args: &[f64]) -> String {
     let arg = |i: usize| args.get(i).copied().unwrap_or(0.0);
+    // Pre-format numeric args exactly like the pre-i18n `format!` strings in
+    // compass-strategy scoring.rs (drawdown 1dp, momentum/thermometer int,
+    // big-capital ints with signed block amount) — the strategy only ships
+    // semantic keys + raw values, so formatting happens here (issue #222).
+    // rust-i18n `t!` specifiers are avoided: its tokenizer mangles `+`/`.`.
     match note_key {
-        "sepa.note.drawdown" | "sepa.note.momentum_percentile" => {
-            compass_i18n::t!(note_key, pct = arg(0)).into_owned()
+        "sepa.note.drawdown" => {
+            compass_i18n::t!(note_key, pct = format!("{:.1}", arg(0))).into_owned()
+        }
+        "sepa.note.momentum_percentile" => {
+            compass_i18n::t!(note_key, pct = format!("{:.0}", arg(0))).into_owned()
         }
         "sepa.note.big_capital" => compass_i18n::t!(
             note_key,
-            main = arg(0),
-            dragon = arg(1),
-            survey = arg(2),
-            block = arg(3)
+            main = format!("{:.0}", arg(0)),
+            dragon = format!("{:.0}", arg(1)),
+            survey = format!("{:.0}", arg(2)),
+            block = format!("{:+.0}", arg(3)),
         )
         .into_owned(),
-        "sepa.note.thermometer" => compass_i18n::t!(note_key, score = arg(0)).into_owned(),
+        "sepa.note.thermometer" => {
+            compass_i18n::t!(note_key, score = format!("{:.0}", arg(0))).into_owned()
+        }
         _ => compass_i18n::t!(note_key).into_owned(),
     }
 }
@@ -719,6 +729,40 @@ mod tests {
     /// shared compass-i18n dictionary.
     fn tr(key: &str) -> String {
         compass_i18n::t!(key).to_string()
+    }
+
+    /// Factor-note rendering must preserve the pre-i18n numeric precision
+    /// contract (issue #222 F2 review): drawdown 1 decimal, momentum/score
+    /// integers, big-capital integers with a signed block amount. Passing
+    /// raw f64 into an unspecifier'd template would leak full precision
+    /// (12.34567 instead of 12.3).
+    #[test]
+    fn factor_note_text_preserves_numeric_precision() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        assert_eq!(
+            factor_note_text("sepa.note.drawdown", &[12.34567]),
+            "距一年高点回撤 12.3%"
+        );
+        assert_eq!(
+            factor_note_text("sepa.note.momentum_percentile", &[87.345]),
+            "动量分位 87%"
+        );
+        assert_eq!(
+            factor_note_text("sepa.note.thermometer", &[63.7]),
+            "温度计 64"
+        );
+        assert_eq!(
+            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, 5.0, 5.0]),
+            "主力75+龙虎10+调研5+大宗+5"
+        );
+        assert_eq!(
+            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, 5.0, -5.0]),
+            "主力75+龙虎10+调研5+大宗-5"
+        );
+        compass_i18n::set_locale("zh");
     }
 
     fn panel() -> (SepaPanel, SharedState) {
