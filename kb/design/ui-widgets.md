@@ -249,7 +249,7 @@ if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
 
 **相关组件**：SearchableDropdown（可输入+键盘导航的下拉）、MultiSelect（多选下拉）、Segmented（互斥短选项）。
 
-**测试锚点**：`widgets/dropdown.rs` `mod tests`（L194）——`initial_selection_is_first_option` / `clicking_option_changes_selection` / `searchable_filters_and_shows_empty_hint` / `searchable_popup_has_text_input` / `search_box_has_no_hardcoded_hint` / `searchable_typing_filters_options` / `empty_state_renders_when_no_match`。
+**测试锚点**：`widgets/dropdown.rs` `mod tests`（L194）——`initial_selection_is_first_option` / `clicking_option_changes_selection` / `searchable_filters_and_shows_empty_hint` / `searchable_popup_has_text_input` / `search_box_hint_is_localized_not_hardcoded` / `searchable_typing_filters_options` / `empty_state_renders_when_no_match`。
 
 #### 7. EmptyState（`widgets/empty_state.rs`）
 

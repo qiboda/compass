@@ -275,10 +275,10 @@ mod tests {
         let _ = harness.get_by_role(egui::accesskit::Role::TextInput);
     }
 
-    /// The popup search box must not carry the hardcoded「搜索…」hint
-    /// (issue #228).
+    /// The popup search box hint must come from the locale dictionary
+    /// (issue #222) — never a hardcoded literal in the widget (issue #228).
     #[test]
-    fn search_box_has_no_hardcoded_hint() {
+    fn search_box_hint_is_localized_not_hardcoded() {
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             Dropdown::new(&tokens, ["1d", "1w", "1M"])
@@ -288,12 +288,14 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("1d").click();
         harness.run();
+        let hint = t!("common.search");
+        assert_ne!(hint, "common.search", "key must resolve, not echo back");
         assert!(
             harness
-                .query_all_by(|n| n.placeholder() == Some("搜索…"))
+                .query_all_by(|n| n.placeholder() == Some(hint.as_ref()))
                 .next()
-                .is_none(),
-            "the popup search box must not hardcode the '搜索…' hint (issue #228)"
+                .is_some(),
+            "the popup search box must show the localized hint (issue #222)"
         );
     }
 
