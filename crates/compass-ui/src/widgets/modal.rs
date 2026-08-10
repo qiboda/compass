@@ -727,6 +727,7 @@ mod tests {
 
     #[test]
     fn danger_modal_confirms_on_click() {
+        rust_i18n::set_locale("zh");
         let called = Rc::new(Cell::new(false));
         let modal = Rc::new(RefCell::new(Modal::new(ThemeTokens::dark())));
         modal.borrow_mut().open(0.0);

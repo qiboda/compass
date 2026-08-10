@@ -686,6 +686,7 @@ mod tests {
 
     #[test]
     fn test_row_click_selects_stock() {
+        rust_i18n::set_locale("zh");
         let stocks = make_stocks();
         let picker = Rc::new(RefCell::new(SearchableDropdown::new(
             ThemeTokens::dark(),
@@ -714,6 +715,7 @@ mod tests {
 
     #[test]
     fn test_three_spellings_select_same_stock_with_prefixed_submit() {
+        rust_i18n::set_locale("zh");
         // D11 acceptance: "600519" / "SH600519" / "sh.600519" all filter to
         // the same row, and the selected (submitted) symbol is prefixed.
         let stocks = make_stocks();

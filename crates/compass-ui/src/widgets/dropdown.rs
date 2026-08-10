@@ -335,6 +335,7 @@ mod tests {
     /// behavior must survive the Input swap (issue #228).
     #[test]
     fn empty_state_renders_when_no_match() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             Dropdown::new(&tokens, ["1d", "1w", "1M"])

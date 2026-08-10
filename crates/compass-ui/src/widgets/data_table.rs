@@ -762,6 +762,7 @@ mod tests {
 
     #[test]
     fn header_renders_sort_arrow_for_sort_state() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -1129,6 +1130,7 @@ mod tests {
 
     #[test]
     fn text_cell_renders_left_aligned() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
             ui.set_width(200.0);

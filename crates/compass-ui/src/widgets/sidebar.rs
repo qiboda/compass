@@ -278,6 +278,7 @@ mod tests {
 
     #[test]
     fn renders_groups_names_codes_and_tags() {
+        rust_i18n::set_locale("zh");
         let tokens = ThemeTokens::dark();
         let sidebar = Sidebar::new(&tokens);
         let mut search = String::new();
@@ -310,6 +311,7 @@ mod tests {
 
     #[test]
     fn clicking_row_emits_select_event() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -335,6 +337,7 @@ mod tests {
 
     #[test]
     fn hovering_row_reveals_delete_button_and_click_emits_delete_request() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();

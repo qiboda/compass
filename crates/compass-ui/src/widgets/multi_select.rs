@@ -217,6 +217,7 @@ mod tests {
 
     #[test]
     fn summary_counts_selected() {
+        rust_i18n::set_locale("zh");
         let ms = MultiSelect::new(&tokens(), ["a", "b", "c"]).selected(["a", "b"]);
         assert_eq!(ms.summary(), "已选 2 个");
     }
@@ -238,6 +239,7 @@ mod tests {
 
     #[test]
     fn clicking_rows_accumulates_selection_and_confirm_closes() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -300,6 +302,7 @@ mod tests {
 
     #[test]
     fn search_filter_hides_non_matching_options() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
@@ -334,6 +337,7 @@ mod tests {
 
     #[test]
     fn distinct_id_salts_allow_two_popups_open_simultaneously() {
+        rust_i18n::set_locale("zh");
         use std::cell::RefCell;
         use std::rc::Rc;
         let tokens = ThemeTokens::dark();
