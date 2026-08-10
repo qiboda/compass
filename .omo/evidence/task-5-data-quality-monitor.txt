@@ -1,0 +1,17 @@
+# Task 5 — import_compass::run row-count validation (issue #136)
+
+## 状态：完成（Sisyphus-Junior worker 实现 + 主 session 验证）
+
+## 实现
+
+- 全量路径：stock_basic（COUNT 镜像 symbol-prefix WHERE）/ fin_indicators /
+  append 表 / concept_member → dolt_count(含过滤) vs parquet_row_count 精确对比
+- merge 路径：merge 前记录 old_count → merge 后 < old → Err（不丢数据）；
+  corrupt old parquet 用 .ok() 跳过（fallback 恢复机制）；DuckDB merge 失败
+  fallback → 按 since 过滤源校验（非 no-loss）
+- tiny-skip（<500B）不触校验（校验前 return）
+
+## 验证
+
+cargo test -p compass-data 全量 → 无回归（merge/fallback/tiny-skip 既有测试通过）
+RED 测试 fin_indicators_merge_detects_row_loss → GREEN

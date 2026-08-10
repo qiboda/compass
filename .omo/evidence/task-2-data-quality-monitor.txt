@@ -1,0 +1,46 @@
+# Task 2 — Adversarial Tests: DEFERRED (issue #136)
+
+## 判定：DEFERRED（plan 无已存在/可编译的接口契约）
+
+- Issue: #136 数据质量监控
+- Plan: .omo/plans/data-quality-monitor.md（用户已批准）
+- 分支: feat/data-quality-monitor（worktree: .worktrees/data-quality-monitor）
+- 日期: 2026-08-09
+
+## 验证证据（只读检查，未写任何测试/生产代码，未改 plan）
+
+1. **validate.rs 不存在**（本任务执行时）：glob `crates/compass-data/src/validate.rs` → No files found（todo 3 并行执行中，当时尚未落地）
+2. compass-data/src 仅有既有 8 文件：sepa.rs / main.rs / lib.rs / import_dolt.rs / import_compass.rs / export.rs / baostock.rs / backtest.rs
+3. import_compass.rs:1016 `read_parquet_row_count` 是 `#[cfg(test)]` 测试 helper（返回 usize 无错误传播），与 plan 声明的生产接口 `parquet_row_count(path) -> Result<usize, Box<dyn Error>>` 签名不同
+4. sepa.rs:507 `dolt_count` 是 SEPA 模块测试辅助函数（返回 i64、参数为 date），与 plan 声明的 `dolt_count(dolt_dir, table, where_clause) -> Result<usize, Box<dyn Error>>` 不同
+5. 未发现 verify_row_count / verify_date_range / freshness_days / data_updates_last_report_date / today_cn / parquet_date_range / dolt_date_range 任何生产实现
+6. plan 自身预期 DEFERRED：todo 2 What to do 明确"agent 应返回 DEFERRED"；依赖矩阵 todo 4/5/6 → blocks 7（重委派）；todo 7 定义"携带首个可编译接口 commit SHA 重新委派"
+
+## 判定理由（RED/GREEN 契约第 3 条 — 两段式委派）
+
+plan 在 todo 3 描述了目标接口签名，但那是设计蓝图（产出物），不是当前代码库中已存在、可编译、可调用的接口。现在写对抗性测试引用 `validate::*` 会编译失败（模块不存在、lib.rs 未注册）——违反 RED 契约"RED = 断言失败（测试能编译能运行），而非编译错误"。现有名称相似符号为测试私有 helper/既有模块辅助函数，签名不一致，以此为目标会写成依赖未声明行为的无效测试。
+
+## 重新委派条件（plan todo 7 触发）
+
+1. todo 3（validate.rs + lib.rs 注册）commit 落地
+2. todo 4/5/6（import_dolt + import_compass 校验实现）commit 落地
+3. 主 agent 取首个可编译接口 commit SHA（git log --oneline 首个含 validate.rs 或 import 校验的 commit），携带 SHA + 本记录重委派
+4. 重委派后基于实际签名写对抗性测试
+
+## 对抗性测试攻击面清单（todo 7 重委派时使用）
+
+- parquet_row_count: 路径不存在/损坏 parquet/COUNT 非数字/0 行空文件
+- parquet_date_range: 空结果 MIN/MAX NULL；TIMESTAMP 时区边界；非法 col
+- dolt_count: CSV 第二行非数字（禁 unwrap_or(0) 静默降级）；空 CSV；table/where 注入；dolt_dir 不存在
+- dolt_date_range: 0 行 → (None,None)；NULL 值；解析失败传播
+- data_updates_last_report_date: 表不存在（无 UPDATES_SCHEMA）；无行；NULL；多行
+- today_cn: UTC+8 时区正确性（无 DST）
+- verify_row_count: 边界相等/0 vs N/N vs 0；错误消息含 table 名与双方数值
+- verify_date_range: (None,None) vs (None,None) 一致；单边 None；边界日期相等
+- freshness_days: 阈值恰等 120/7（边界不 warn）；未来日期（2099-12-31 → 0）；NULL/无记录 → None
+- 行为承诺: limit>0 行数预期 = min(源 COUNT, limit) 且跳过日期校验；--symbols 过滤后 0 行；源 0 行 && parquet 0 行 → Ok；merge 后行数 ≥ 旧（恰相等边界）；fallback 跳过不丢数据校验、按全量口径校验；tiny-skip(<500B) 不触校验；新鲜度过期仅 warn；无 data_updates 记录/NULL 跳过；并行测试 unique_work_path 竞争；大表 COUNT 性能
+
+## 产出说明
+
+- 本任务无测试代码、无生产代码产出（符合 plan todo 2 Commit: N）
+- evidence 由主 agent 代落盘（adversarial agent 权限仅允许写 tests/ 路径，.omo/evidence/ 不在授权范围）

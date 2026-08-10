@@ -1,0 +1,20 @@
+# Task 6 — import_compass::run freshness warn (issue #136)
+
+## 状态：完成（Sisyphus-Junior worker 实现 + 主 session 验证）
+
+## 实现
+
+- warn_if_stale helper（import_compass.rs:153-165）：data_updates_last_report_date
+  → freshness_days → days > threshold → warn!（含 "freshness"），永不 Err
+- 阈值常量：FIN_FRESHNESS_DAYS=120（fin_indicators/fin_balance_sheet/fin_income/
+  fin_cash_flow）；MARKET_FRESHNESS_DAYS=7（capital_main_flow/dragon_list/
+  block_trade/institution_survey/concept_member）
+- stock_basic 跳过（last_report_date NULL，collectors 仅写 4 列）
+- 路由：fin 表在 import_financial_table/import_fin_indicators 内；行情表在
+  run() dispatch arms；concept_member 在 import_concept_member 内
+- data_updates 无记录/NULL/表不存在 → Ok(None) 跳过（validate.rs:151-158）
+
+## 验证
+
+RED 测试 fin_indicators_warns_when_data_updates_stale → GREEN（200 天 stale → warn）
+cargo test -p compass-data 全量 → 无回归

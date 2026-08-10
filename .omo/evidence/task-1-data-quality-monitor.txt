@@ -1,0 +1,26 @@
+# Task 1 — RED Requirement Tests (issue #136)
+
+## 状态：完成（第三次委派成功）
+
+前两次委派 skwy-requirement-test agent 均失败：agent 陷入"如何从公开接口制造 faithful write 行数不一致"的分析循环，未产出任何测试。第三次改用 unspecified-high worker + 完整测试模板直接落地。
+
+## 产出：crates/compass-data/src/import_compass.rs 测试模块新增 4 个测试
+
+| 测试 | 类型 | 断言契约 | 状态 |
+|---|---|---|---|
+| fin_indicators_warns_when_data_updates_stale | RED | data_updates.last_report_date = 200 天前（>120 阈值）→ import-compass 输出含 "freshness" 的 warn，且 import 仍 Ok | FAILED（正确 RED：断言 "stale data_updates must produce a freshness warn, got: "） |
+| fin_indicators_merge_detects_row_loss | RED | keyless 表 3 物理行（含重复 key）→ 全量导入 → 增量 merge 去重 → merge 后 < 旧物理行数 → run 返回 Err | FAILED（正确 RED：断言 "merge losing rows must error, got Ok"） |
+| parquet_row_count_matches_dolt_count | 基线 | FIN_SCHEMA 2 行全量导入 → dolt_count == parquet_row_count == 2，verify_row_count Ok | PASSED |
+| stock_basic_full_import_consistent | 基线 | 完整 stock_basic schema 2 行 → import_stock_basic → parquet 行数 2 | PASSED |
+
+## RED 验证
+
+`cargo test -p compass-data`：
+- 2 个 RED 测试失败，断言明确指向缺失的校验行为（非 fixture 错误）
+- 2 个基线测试通过
+- 既有测试不回归（83 passed + 2 基线）
+
+## 修复记录
+
+- merge_detects_row_loss 初版 fixture schema 过简（4 列），dolt 报 "column update_date could not be found" → 改为 FIN_SCHEMA 全列集无 PK 变体
+- stock_basic_full_import_consistent 初版 schema 缺 list_date 等列 → 补齐（对齐 :467-469 现有测试）

@@ -1,0 +1,33 @@
+# Task 7 — Adversarial Edge-Case Tests (issue #136)
+
+## 状态：完成
+
+对抗性测试 agent 因权限仅放行 tests/ 路径，将测试写入 crates/compass-data/tests/data_quality_adversarial.rs（集成测试目录，经 pub 接口访问 compass_data::validate / import_dolt::run / import_compass::run）。
+
+## 产出：20 个对抗性测试，全部 GREEN
+
+validate.rs 纯函数边界（10）：
+- parquet_date_range: missing file → Err; unknown column → Err; same-day 00:00/23:59 timestamps normalize
+- dolt_count: bad where_clause → Err (非静默 0)
+- dolt_date_range: empty table → (None, None)
+- data_updates_last_report_date: table exists but missing column → Ok(None)
+- verify_row_count: 0 vs 0 → Ok; 0 vs N / N vs 0 → Err 含双方数值
+- verify_date_range: one-side None → Err
+- freshness_days: exact threshold boundaries (7/120/1)
+
+import_dolt::run 集成边界（5）：limit == COUNT → Ok; limit > COUNT → Ok (min 语义); symbols filter no-match → Ok 0行; start_date/since 过滤到空集 → Ok
+
+import-compass 集成边界（5）：
+- concept_member empty table → Ok (无 tiny-skip 路径的 0 vs 0)
+- fin merge merged == old → Ok（修复：断言 old-wins 语义，prefer_new=false）
+- fin_income empty + since → tiny-skip 先于校验 → Ok
+- stock_basic stale data_updates → 无 freshness warn（内置 fin_indicators 正向对照）
+- 双线程并发 merge 不互相污染（unique_work_path ref #184 回归守卫）
+
+## 修复记录
+
+fin_merge_row_count_equal_to_old_is_ok 初版断言 "corrected Dolt value must win" 失败——fin_indicators merge 是 old-wins（prefer_new=false，import_compass.rs:268 注释：财务行发布后不变），断言方向错误。修正为验证 old-wins（1.5e11 保留）。
+
+## 验证
+
+cargo test -p compass-data --test data_quality_adversarial → 20 passed; 0 failed

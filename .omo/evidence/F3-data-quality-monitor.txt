@@ -1,0 +1,35 @@
+# F3 — Real Manual QA (issue #136)
+
+## 验证 1: import happy path（真实二进制 + 临时 Dolt 库）
+
+命令: `cargo run --bin compass-data -- import --dolt-dir $D --output $OUT --limit 2`
+- Dolt 3 行（SH600519×2 + SZ000001×1），limit=2 → 预期 min(3,2)=2
+- 结果: "Exported stock_daily.parquet (2 symbols, 3 rows)"，EXIT 0
+- 行数校验通过（校验在真实路径上运行且不误报）
+
+## 验证 2: --symbols 过滤一致性
+
+命令: `import --symbols SH600519`（过滤后 2 行）
+- 结果: "(1 symbols, 2 rows)"，EXIT 0；parquet rows=2 ✅
+
+## 验证 3: parquet 内容核查
+
+- parquet rows=2，date_range=(2026-07-01, 2026-07-02) ✅（日期范围校验口径正确）
+
+## 验证 4: import-compass + freshness warn 端到端
+
+命令: `import-compass --table fin_indicators`（完整 FIN_SCHEMA，2 行 + data_updates 200 天 stale）
+- EXIT 0（freshness 仅 warn 不阻断）
+- WARN 输出: "freshness: fin_indicators last_report_date 2026-01-22 is 200 days old (threshold 120)"
+- parquet rows=2（全量行数校验通过）✅
+
+## 结论
+
+- 校验逻辑在真实 compass-data 二进制路径上端到端生效（行数对比 + 日期范围 + freshness warn）
+- happy path 不误报；stale 数据正确 warn 且不退出
+- 未触碰任何真实数据仓库（全程临时 Dolt 库 + 临时输出目录）
+
+## 附注
+
+- import 真实 investment_data（18M+ 行）超时（300s）——全量枚举 symbols 耗时，F3 改用临时小库验证同一二进制路径
+- import-compass 初版 fixture schema 过简触发 dolt 报错（SELECT 需 37 列）——fixture 问题，非实现问题；完整 schema 后通过

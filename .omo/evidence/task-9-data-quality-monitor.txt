@@ -1,0 +1,21 @@
+# Task 9 — Docs sync + decision record (issue #136)
+
+## 状态：完成（writing worker 实现 + 主 session 验证）
+
+## 变更
+
+- kb/user/cli.md: import 章节 + import-compass 章节新增「数据质量校验（ref #136）」
+  说明（行数/日期范围/freshness 阈值 120/7 天，fail-loudly 与 warn-only 语义）
+- kb/dev/database.md: data_updates 消费方新增 import-compass 新鲜度校验；
+  last_report_date 语义按表类说明（fin_*=MAX(report_date)、行情表=MAX(trade_date)/
+  MAX(survey_date)、concept_member=CURDATE()、stock_basic=NULL）
+- kb/design/data-providers.md: tradedate TIMESTAMP 校验时 CAST AS DATE 说明
+  （:252-253）
+
+## 决策记录（门禁 5c）
+
+kb/design/data-providers.md 已有 `## 决策记录` 章节（:354）——满足，未改动
+
+## 验证
+
+3 文件 31 行新增，commit d7db523

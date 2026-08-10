@@ -1,0 +1,18 @@
+# Task 4 — import_dolt::run validation (issue #136)
+
+## 状态：完成（Sisyphus-Junior worker 实现 + 主 session 验证）
+
+import_dolt.rs:320-348 新增第 6 节数据质量校验（info 日志之后、Ok(()) 之前）。
+
+## 实现
+
+- 行数校验：dolt_count(同 where_clause) vs parquet_row_count；limit>0 时
+  expected = min(源 COUNT, limit)；verify_row_count 不一致 → Err
+- 日期范围校验：limit==0 时执行，dolt_date_range vs parquet_date_range
+  （parquet 侧 CAST AS DATE 规范化）；limit>0 跳过（LIMIT 破坏 MIN/MAX）
+- 空源 0 行 && 空 parquet 0 行 → Ok；--symbols 过滤天然一致（where_clause 共享）
+
+## 验证
+
+cargo test -p compass-data 全量 → 无回归（既有 import 测试通过）
+cargo clippy → 0 错误
