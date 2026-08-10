@@ -355,3 +355,16 @@
 - **修复**: 待处理——CI runner 需创建 `/data/compass-data/csv` 并授权，或测试改为 mock
   csv_dir 的默认路径（不依赖真实 /data）。**影响所有后续 PR 的 Python Test job**。
 - **验证**: 本地测试通过；CI 需环境修复后重跑
+
+### [Git/环境] pre-push hook pytest 报 `pydantic_core._pydantic_core` ModuleNotFoundError
+
+- **症状**: `git push` 时 pre-push hook 的 `cd collectors && uv run pytest` 失败，traceback 显示导入
+  `/home/skwy/.hermes/hermes-agent/venv/lib/python3.11/site-packages/langsmith/schemas.py` 后
+  `No module named 'pydantic_core._pydantic_core'`。
+- **根因**: hermes agent 环境设置了 `PYTHONPATH=/home/skwy/.hermes/hermes-agent/venv/lib/python3.11/site-packages`，
+  git hook 子进程继承该变量 → collectors 的 py3.12 venv 启动时 PYTHONPATH 注入 py3.11 的 site-packages，
+  pytest 插件发现 langsmith（py3.11 包），其 `pydantic_core` 是 cp311 二进制，py3.12 解释器无法加载。
+- **排查路径**: 1) 单跑 `uv run pytest` 复现（错误同上）；2) 检查 `echo $PYTHONPATH` 发现 hermes 泄漏；
+  3) `env -u PYTHONPATH uv run pytest tests/` 通过（328 passed）——隔离变量即修复。
+- **修复**: push 时用 `env -u PYTHONPATH git push origin <branch>`（仅清除泄漏变量，hook 本身无问题）。
+- **验证**: `env -u PYTHONPATH uv run pytest tests/ -q` → 328 passed。
