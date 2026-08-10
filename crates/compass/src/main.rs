@@ -3967,9 +3967,15 @@ symbols = ["SZ000001"]
         // Interact via a new_ui harness rendering the toolbar — the same
         // pattern as the theme-dropdown test, where kittest pointer clicks
         // reliably open the Area popup and select an option.
-        let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            app.render_toolbar(ui);
-        });
+        // The toolbar spans Groups A–D; the language dropdown (Group D,
+        // rightmost) must fit on-screen for the trigger click to register —
+        // the default 800×600 `new_ui` harness clips it since #232 widened
+        // the Fetch button (min_width 104).
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size([1440.0, 900.0])
+            .build_ui(|ui| {
+                app.render_toolbar(ui);
+            });
         harness.run();
         // The trigger label is "{selected} ▾"; the popup items are exact
         // option strings (dropdown.rs renders egui::Button::new(option)).
