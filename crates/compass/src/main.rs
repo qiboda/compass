@@ -3378,6 +3378,12 @@ default_timeframe = "1w"
             "No matches",
         ),
         ("widgets.data_table.empty", "无符合条件", "No matching rows"),
+        (
+            "widgets.multi_select.selected",
+            "已选 %{count} 个",
+            "Selected %{count}",
+        ),
+        ("widgets.multi_select.confirm", "完成", "Done"),
     ];
 
     // ------------------------------------------------------------------

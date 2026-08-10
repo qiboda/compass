@@ -169,6 +169,8 @@ pub const KEY_WIDGETS_SEARCHABLE_DROPDOWN_NO_MATCHES: &str =
     "widgets.searchable_dropdown.no_matches";
 pub const KEY_WIDGETS_DATA_TABLE_COUNT: &str = "widgets.data_table.count";
 pub const KEY_WIDGETS_DATA_TABLE_EMPTY: &str = "widgets.data_table.empty";
+pub const KEY_WIDGETS_MULTI_SELECT_SELECTED: &str = "widgets.multi_select.selected";
+pub const KEY_WIDGETS_MULTI_SELECT_CONFIRM: &str = "widgets.multi_select.confirm";
 
 /// All key constants, for completeness testing and future tooling.
 pub const ALL_KEYS: &[&str] = &[
@@ -315,6 +317,8 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_WIDGETS_SEARCHABLE_DROPDOWN_NO_MATCHES,
     KEY_WIDGETS_DATA_TABLE_COUNT,
     KEY_WIDGETS_DATA_TABLE_EMPTY,
+    KEY_WIDGETS_MULTI_SELECT_SELECTED,
+    KEY_WIDGETS_MULTI_SELECT_CONFIRM,
 ];
 
 #[cfg(test)]

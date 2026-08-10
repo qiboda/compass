@@ -157,6 +157,9 @@ pub(crate) fn sized_harness(app: CompassApp) -> egui_kittest::Harness<'static, C
 /// flight — loading data belongs to the old timeframe.
 #[test]
 fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app(egui::Context::default());
     {
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -183,6 +186,9 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
 /// complete the fetch within the same virtual frame.
 #[test]
 fn digit_key_switch_syncs_shared_state() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let app = build_compass_app(egui::Context::default());
     let mut harness = sized_harness(app);
     harness.run_steps(3);
@@ -218,6 +224,9 @@ fn digit_key_switch_syncs_shared_state() {
 /// never disagree on startup.
 #[test]
 fn startup_timeframe_index_matches_default_timeframe() {
+    let _guard = LANG_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let app = build_compass_app_with_timeframe(egui::Context::default(), "1w");
     assert_eq!(
         app.timeframe_index, 1,

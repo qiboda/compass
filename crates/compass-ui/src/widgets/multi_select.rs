@@ -83,7 +83,7 @@ impl MultiSelect {
         if self.selected.is_empty() {
             t!("common.all").into_owned()
         } else {
-            format!("已选 {} 个", self.selected.len())
+            t!("widgets.multi_select.selected", count = self.selected.len()).into_owned()
         }
     }
 
@@ -184,11 +184,7 @@ impl MultiSelect {
 
         ui.add_space(tokens.spacing.sm);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            // "完成" is intentionally not keyed: the approved key tree
-            // (`.omo/designs/gui-i18n.md` §1) defines no widgets.multi_select.*
-            // key for it; locale files are frozen by the KEY_TREE contract
-            // (owned by T4/T5). Scoped out (plan T6 resolution).
-            if Button::new(tokens, "完成")
+            if Button::new(tokens, t!("widgets.multi_select.confirm"))
                 .variant(ButtonVariant::Primary)
                 .size(ButtonSize::Sm)
                 .show(ui)

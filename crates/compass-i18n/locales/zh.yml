@@ -187,6 +187,9 @@ sepa:
     thermometer: "温度计 %{score}"
 
 widgets:
+  multi_select:
+    selected: "已选 %{count} 个"
+    confirm: 完成
   searchable_dropdown:
     no_matches: 无匹配结果
   data_table:

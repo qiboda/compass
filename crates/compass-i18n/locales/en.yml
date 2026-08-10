@@ -189,6 +189,9 @@ sepa:
     thermometer: "Thermometer %{score}"
 
 widgets:
+  multi_select:
+    selected: "Selected %{count}"
+    confirm: Done
   searchable_dropdown:
     no_matches: No matches
   data_table:

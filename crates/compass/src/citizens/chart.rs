@@ -315,6 +315,7 @@ impl ChartCitizen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
     use chrono::Utc;
     use compass_i18n::t;
     use egui_charts::model::Bar;
@@ -351,6 +352,9 @@ mod tests {
 
     #[test]
     fn show_empty_bars_renders_empty_state() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("chart");
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
@@ -368,6 +372,9 @@ mod tests {
 
     #[test]
     fn show_empty_bars_no_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("chart");
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
@@ -383,6 +390,9 @@ mod tests {
 
     #[test]
     fn show_with_bars_renders_chart_not_empty_state() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("chart");
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
@@ -435,6 +445,9 @@ mod tests {
     /// so the vendored renderer warms each line up independently).
     #[test]
     fn show_with_bars_computes_ma_and_boll_values() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("chart");
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
@@ -483,6 +496,9 @@ mod tests {
     /// the symbol is part of the cache key, guarding against stale values.
     #[test]
     fn show_recomputes_indicator_values_on_symbol_change_same_fingerprint() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("chart");
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);

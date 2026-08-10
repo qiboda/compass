@@ -190,6 +190,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
     use compass_i18n::t;
 
     /// Key-resolution test helper (plan T4): resolves a key through the
@@ -204,21 +205,33 @@ mod tests {
 
     #[test]
     fn tab_kind_chart_title() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(tr(TabKind::Chart.title()), "图表");
     }
 
     #[test]
     fn tab_kind_logger_title() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(tr(TabKind::Logger.title()), "日志");
     }
 
     #[test]
     fn tab_kind_screener_title() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(tr(TabKind::Screener.title()), "选股器");
     }
 
     #[test]
     fn tab_kind_sepa_title() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(tr(TabKind::Sepa.title()), "东方SEPA");
     }
 
@@ -284,6 +297,9 @@ mod tests {
 
     #[test]
     fn tab_new_chart_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tab = Tab::new(TabKind::Chart);
         assert_eq!(tr(tab.title()), "图表");
         assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
@@ -291,6 +307,9 @@ mod tests {
 
     #[test]
     fn tab_new_logger_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tab = Tab::new(TabKind::Logger);
         assert_eq!(tr(tab.title()), "日志");
         assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
@@ -298,6 +317,9 @@ mod tests {
 
     #[test]
     fn tab_new_screener_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tab = Tab::new(TabKind::Screener);
         assert_eq!(tr(tab.title()), "选股器");
         assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
@@ -305,6 +327,9 @@ mod tests {
 
     #[test]
     fn tab_new_sepa_delegates_to_tab_kind() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tab = Tab::new(TabKind::Sepa);
         assert_eq!(tr(tab.title()), "东方SEPA");
         assert_eq!(tab.citizen_id(), CitizenId::new(SEPA_ID));
@@ -331,6 +356,9 @@ mod tests {
 
     #[test]
     fn tab_viewer_title_combines_icon_and_chinese_title() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         use crate::citizens::chart::ChartCitizen;
         use crate::citizens::logger::LoggerPanel;
         use crate::citizens::screener::ScreenerPanel;

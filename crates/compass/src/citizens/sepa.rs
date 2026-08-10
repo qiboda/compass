@@ -35,7 +35,7 @@ const DETAIL_PANEL_WIDTH: f32 = 280.0;
 
 /// Ranking table columns (design §2: 12 columns, default sort = rank asc,
 /// descending business default for the score columns). Each header holds a
-/// `sepa.table.*` i18n key resolved by the renderer via `t!()` (issue #222).
+/// `sepa.table.*` i18n key resolved by the renderer via `compass_i18n::t!()` (issue #222).
 const COLUMNS: [ColumnSpec; 12] = [
     ColumnSpec {
         header: "sepa.table.rank",
@@ -203,7 +203,7 @@ impl SepaPanel {
                         .color(c.accent),
                 );
                 ui.label(
-                    RichText::new("市场温度")
+                    RichText::new(compass_i18n::t!("sepa.thermometer"))
                         .size(tokens.typography.caption)
                         .color(c.text_secondary),
                 );
@@ -247,7 +247,7 @@ impl SepaPanel {
     /// One thermometer indicator chip: label + mono value + A-share-colored
     /// delta arrow; the pill tint follows the heat color scale while the
     /// arrow follows the red-up/green-down convention (two semantics, one
-    /// chip — design §4). Label/unit render through `t!()` from the semantic
+    /// chip — design §4). Label/unit render through `compass_i18n::t!()` from the semantic
     /// keys; the value is formatted per the unit precision contract.
     fn indicator_chip(ui: &mut egui::Ui, tokens: &ThemeTokens, ind: &SepaIndicator) {
         let c = &tokens.color;
@@ -300,9 +300,9 @@ impl SepaPanel {
         let count_text = match shared_state.sepa_data.get() {
             Some(data) => {
                 let shown = data.rows.len().min(self.top_n);
-                format!("共 {shown} 行 · {} 评分", data.date)
+                compass_i18n::t!("sepa.count", shown = shown, date = data.date).into_owned()
             }
-            None => "暂无评分数据".to_string(),
+            None => compass_i18n::t!("sepa.no_data").into_owned(),
         };
         ui.horizontal(|ui| {
             ui.label(
@@ -311,14 +311,21 @@ impl SepaPanel {
                     .color(c.text_secondary),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if Button::new(&tokens, if loading { "计算中…" } else { "刷新" })
-                    .variant(ButtonVariant::Primary)
-                    .size(ButtonSize::Md)
-                    .icon(egui_phosphor::regular::ARROW_CLOCKWISE)
-                    .min_width(96.0)
-                    .loading(loading)
-                    .show(ui)
-                    .clicked()
+                if Button::new(
+                    &tokens,
+                    if loading {
+                        compass_i18n::t!("sepa.computing")
+                    } else {
+                        compass_i18n::t!("sepa.refresh")
+                    },
+                )
+                .variant(ButtonVariant::Primary)
+                .size(ButtonSize::Md)
+                .icon(egui_phosphor::regular::ARROW_CLOCKWISE)
+                .min_width(96.0)
+                .loading(loading)
+                .show(ui)
+                .clicked()
                 {
                     self.trigger_refresh(shared_state, sepa_signal);
                 }
@@ -340,9 +347,9 @@ impl SepaPanel {
         shared_state.sepa_error.set(None);
         if let Err(e) = sepa_signal.send(RunSepaRequest {}) {
             shared_state.sepa_loading.set(false);
-            shared_state
-                .sepa_error
-                .set(Some(format!("failed to run sepa: {e}")));
+            shared_state.sepa_error.set(Some(
+                compass_i18n::t!("error.sepa_run", e = e.to_string()).into_owned(),
+            ));
         }
     }
 
@@ -358,7 +365,7 @@ impl SepaPanel {
     ) {
         if shared_state.sepa_loading.get() {
             ui.spinner();
-            ui.label("SEPA 评分计算中…（全市场）");
+            ui.label(compass_i18n::t!("sepa.computing_full"));
         } else if let Some(err) = shared_state.sepa_error.get() {
             ui.colored_label(ui.visuals().error_fg_color, err);
         } else if let Some(data) = data {
@@ -419,11 +426,11 @@ impl SepaPanel {
             let clicked = EmptyState::new(
                 &tokens,
                 egui_phosphor::regular::CHART_SCATTER,
-                "暂无 SEPA 评分数据",
+                &compass_i18n::t!("sepa.empty_title"),
             )
-            .description("点击刷新计算全市场 TOP50 评分")
+            .description(&compass_i18n::t!("sepa.empty_desc"))
             .action(
-                Button::new(&tokens, "刷新")
+                Button::new(&tokens, compass_i18n::t!("sepa.refresh"))
                     .variant(ButtonVariant::Primary)
                     .size(ButtonSize::Md)
                     .icon(egui_phosphor::regular::ARROW_CLOCKWISE),
@@ -504,7 +511,7 @@ impl SepaPanel {
                 ui.set_width(DETAIL_PANEL_WIDTH);
                 let Some(row) = row else {
                     ui.label(
-                        RichText::new("点击排名行查看评分详情")
+                        RichText::new(compass_i18n::t!("sepa.detail_hint"))
                             .size(tokens.typography.caption)
                             .color(c.text_secondary),
                     );
@@ -538,10 +545,13 @@ impl SepaPanel {
 
                 ui.add_space(tokens.spacing.sm);
                 ui.label(
-                    RichText::new(format!("总分 {:.1}", row.total_score))
-                        .monospace()
-                        .size(tokens.typography.display)
-                        .color(score_color(&tokens, row.total_score as f32 / 100.0)),
+                    RichText::new(compass_i18n::t!(
+                        "sepa.total_score",
+                        score = format!("{:.1}", row.total_score)
+                    ))
+                    .monospace()
+                    .size(tokens.typography.display)
+                    .color(score_color(&tokens, row.total_score as f32 / 100.0)),
                 );
 
                 ui.add_space(tokens.spacing.sm);
@@ -709,7 +719,7 @@ mod tests {
     /// Key-resolution test helper (plan T4): resolves a key through the
     /// shared compass-i18n dictionary.
     fn tr(key: &str) -> String {
-        t!(key).to_string()
+        compass_i18n::t!(key).to_string()
     }
 
     fn panel() -> (SepaPanel, SharedState) {
@@ -874,7 +884,11 @@ mod tests {
         harness.fit_contents();
         harness.step();
 
-        let _ = harness.get_by_label_contains(&t!("sepa.count", shown = 3, date = "2026-08-02"));
+        let _ = harness.get_by_label_contains(&compass_i18n::t!(
+            "sepa.count",
+            shown = 3,
+            date = "2026-08-02"
+        ));
         let _ = harness.get_by_label(&tr("sepa.thermometer"));
         let _ = harness.get_by_label("72.0");
         let _ = harness.get_by_label_contains(&tr("sepa.indicator.hs300_trend"));
@@ -901,7 +915,11 @@ mod tests {
 
         // The date suffix makes the toolbar label unique — the table renders
         // its own "共 2 行" counter too.
-        let _ = harness.get_by_label_contains(&t!("sepa.count", shown = 2, date = "2026-08-02"));
+        let _ = harness.get_by_label_contains(&compass_i18n::t!(
+            "sepa.count",
+            shown = 2,
+            date = "2026-08-02"
+        ));
         assert_eq!(
             shared.sepa_data.get().unwrap().rows.len(),
             3,
@@ -929,8 +947,10 @@ mod tests {
 
         // Name/symbol also render as table cells — assert the detail-only
         // content instead.
-        let _ =
-            harness.get_by_label_contains(&t!("sepa.total_score", score = format!("{:.1}", 79.0)));
+        let _ = harness.get_by_label_contains(&compass_i18n::t!(
+            "sepa.total_score",
+            score = format!("{:.1}", 79.0)
+        ));
         let _ = harness.get_by_label("#1");
         let _ = harness.get_by_label_contains(&tr("sepa.factor.vcp_quality"));
         let _ = harness.get_by_label("茅指数");
@@ -1125,7 +1145,7 @@ mod tests {
     //   etc.) — assertion-RED now (they are zh literals).
     // - T7/T8/T10: SepaIndicator/MarketThermometer carry semantic key
     //   fields (label_key/unit_key/value, position_key) and the renderers
-    //   resolve them via t!() — compile-RED (fields not yet added).
+    //   resolve them via compass_i18n::t!() — compile-RED (fields not yet added).
     // set_locale is process-global; T15 must unify LANG_LOCK with the one
     // in main.rs tests.
     // ------------------------------------------------------------------

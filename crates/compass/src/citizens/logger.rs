@@ -63,6 +63,7 @@ impl LoggerPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::citizens::ui_fixes_218::LANG_LOCK;
     use compass_i18n::t;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
@@ -94,6 +95,9 @@ mod tests {
 
     #[test]
     fn show_no_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("logger");
         let state = CitizenState::new();
         let mut panel = LoggerPanel::new(id, state);
@@ -109,6 +113,9 @@ mod tests {
 
     #[test]
     fn show_renders_title_row_with_count_and_export_button() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let id = CitizenId::new("logger");
         let state = CitizenState::new();
         let mut panel = LoggerPanel::new(id, state);

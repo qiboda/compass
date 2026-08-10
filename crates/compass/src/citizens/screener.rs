@@ -3,7 +3,6 @@
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 use egui_mobius::signals::Signal;
 
-use compass_i18n::t;
 use compass_types::{
     BreakoutCondition, MaCondition, MomentumCondition, ScreenerQuery, VolumeCondition,
 };
@@ -60,7 +59,7 @@ impl MaKind {
 
 /// Results table column specs (design §6.6). Headers hold **i18n keys**
 /// (design `.omo/designs/gui-i18n.md` §1); `DataTable::show` resolves them
-/// via `t!()` every frame.
+/// via `compass_i18n::t!()` every frame.
 const COLUMNS: [ColumnSpec; 6] = [
     ColumnSpec {
         header: "screener.table.code",
@@ -249,7 +248,7 @@ impl ScreenerPanel {
             self.condition_form(ui, industries, boards);
 
             ui.add_space(self.form_tokens().spacing.sm);
-            if Button::new(&self.form_tokens(), "筛选")
+            if Button::new(&self.form_tokens(), compass_i18n::t!("screener.filter"))
                 .variant(ButtonVariant::Primary)
                 .size(ButtonSize::Md)
                 .show(ui)
@@ -261,9 +260,9 @@ impl ScreenerPanel {
                 shared_state.screener_error.set(None);
                 if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
                     shared_state.screener_loading.set(false);
-                    shared_state
-                        .screener_error
-                        .set(Some(format!("failed to run screener: {e}")));
+                    shared_state.screener_error.set(Some(
+                        compass_i18n::t!("error.screener_run", e = e.to_string()).into_owned(),
+                    ));
                 }
             }
 
@@ -284,7 +283,7 @@ impl ScreenerPanel {
 
         if shared_state.screener_loading.get() {
             ui.spinner();
-            ui.label("筛选进行中…");
+            ui.label(compass_i18n::t!("screener.filtering"));
         } else if let Some(err) = shared_state.screener_error.get() {
             ui.colored_label(ui.visuals().error_fg_color, err);
         } else {
@@ -328,14 +327,14 @@ impl ScreenerPanel {
 
         ui.vertical(|ui| {
             Card::new(&tokens)
-                .title(&t!("screener.card_basic"))
+                .title(&compass_i18n::t!("screener.card_basic"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
                     self.basic_conditions(ui);
                 });
             ui.add_space(tokens.spacing.sm);
             Card::new(&tokens)
-                .title(&t!("screener.card_technical"))
+                .title(&compass_i18n::t!("screener.card_technical"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
                     self.technical_conditions(ui);
@@ -358,74 +357,84 @@ impl ScreenerPanel {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
 
-            basic_group(ui, &tokens, &t!("screener.industry"), |ui| {
+            basic_group(ui, &tokens, &compass_i18n::t!("screener.industry"), |ui| {
                 self.ms_industry.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, &t!("screener.exchange"), |ui| {
+            basic_group(ui, &tokens, &compass_i18n::t!("screener.exchange"), |ui| {
                 self.ms_exchange.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, &t!("screener.board"), |ui| {
+            basic_group(ui, &tokens, &compass_i18n::t!("screener.board"), |ui| {
                 self.ms_board.show(ui);
             });
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, &t!("screener.list_years"), |ui| {
-                let options = [
-                    t!("screener.any"),
-                    t!("screener.years_1"),
-                    t!("screener.years_3"),
-                    t!("screener.years_5"),
-                ];
-                let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
-                let current = options
-                    .iter()
-                    .zip(values.iter())
-                    .position(|(_, v)| *v == self.form.list_years)
-                    .unwrap_or(0);
-                if let Some(idx) = Dropdown::new(&tokens, options)
-                    .selected(current)
-                    .width(100.0)
-                    .show(ui)
-                {
-                    self.form.list_years = values[idx];
-                }
-            });
+            basic_group(
+                ui,
+                &tokens,
+                &compass_i18n::t!("screener.list_years"),
+                |ui| {
+                    let options = [
+                        compass_i18n::t!("screener.any"),
+                        compass_i18n::t!("screener.years_1"),
+                        compass_i18n::t!("screener.years_3"),
+                        compass_i18n::t!("screener.years_5"),
+                    ];
+                    let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
+                    let current = options
+                        .iter()
+                        .zip(values.iter())
+                        .position(|(_, v)| *v == self.form.list_years)
+                        .unwrap_or(0);
+                    if let Some(idx) = Dropdown::new(&tokens, options)
+                        .selected(current)
+                        .width(100.0)
+                        .show(ui)
+                    {
+                        self.form.list_years = values[idx];
+                    }
+                },
+            );
             ui.add_space(tokens.spacing.md);
 
-            basic_group(ui, &tokens, &t!("screener.market_cap"), |ui| {
-                let mut min = self.form.market_cap_min.unwrap_or(0.0);
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut min)
-                            .speed(1.0)
-                            .prefix(t!("screener.min_pct")),
-                    )
-                    .changed()
-                {
-                    self.form.market_cap_min = (min > 0.0).then_some(min);
-                }
-                let mut max = self.form.market_cap_max.unwrap_or(0.0);
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut max)
-                            .speed(1.0)
-                            .prefix(t!("screener.max_pct")),
-                    )
-                    .changed()
-                {
-                    self.form.market_cap_max = (max > 0.0).then_some(max);
-                }
-            });
+            basic_group(
+                ui,
+                &tokens,
+                &compass_i18n::t!("screener.market_cap"),
+                |ui| {
+                    let mut min = self.form.market_cap_min.unwrap_or(0.0);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut min)
+                                .speed(1.0)
+                                .prefix(compass_i18n::t!("screener.min_pct")),
+                        )
+                        .changed()
+                    {
+                        self.form.market_cap_min = (min > 0.0).then_some(min);
+                    }
+                    let mut max = self.form.market_cap_max.unwrap_or(0.0);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut max)
+                                .speed(1.0)
+                                .prefix(compass_i18n::t!("screener.max_pct")),
+                        )
+                        .changed()
+                    {
+                        self.form.market_cap_max = (max > 0.0).then_some(max);
+                    }
+                },
+            );
             ui.add_space(tokens.spacing.md);
 
             Checkbox::new(
                 &tokens,
                 &mut self.form.exclude_delisted,
-                t!("screener.exclude_delisted"),
+                compass_i18n::t!("screener.exclude_delisted"),
             )
             .show(ui);
         });
@@ -445,7 +454,12 @@ impl ScreenerPanel {
             ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
 
             technical_group(ui, &tokens, 286.0, |ui| {
-                Checkbox::new(&tokens, &mut self.form.ma_enabled, t!("screener.ma")).show(ui);
+                Checkbox::new(
+                    &tokens,
+                    &mut self.form.ma_enabled,
+                    compass_i18n::t!("screener.ma"),
+                )
+                .show(ui);
                 if self.form.ma_enabled {
                     let current = match self.form.ma_kind {
                         MaKind::AboveMa20 => 0,
@@ -455,9 +469,9 @@ impl ScreenerPanel {
                     if let Some(idx) = Dropdown::new(
                         &tokens,
                         [
-                            t!(MaKind::AboveMa20.label()),
-                            t!(MaKind::AboveMa60.label()),
-                            t!(MaKind::BullishAlign.label()),
+                            compass_i18n::t!(MaKind::AboveMa20.label()),
+                            compass_i18n::t!(MaKind::AboveMa60.label()),
+                            compass_i18n::t!(MaKind::BullishAlign.label()),
                         ],
                     )
                     .selected(current)
@@ -478,11 +492,11 @@ impl ScreenerPanel {
                 Checkbox::new(
                     &tokens,
                     &mut self.form.breakout_enabled,
-                    t!("screener.breakout"),
+                    compass_i18n::t!("screener.breakout"),
                 )
                 .show(ui);
                 if self.form.breakout_enabled {
-                    ui.label(t!("screener.n_label"));
+                    ui.label(compass_i18n::t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
                 }
             });
@@ -492,15 +506,15 @@ impl ScreenerPanel {
                 Checkbox::new(
                     &tokens,
                     &mut self.form.momentum_enabled,
-                    t!("screener.momentum"),
+                    compass_i18n::t!("screener.momentum"),
                 )
                 .show(ui);
                 if self.form.momentum_enabled {
-                    ui.label(t!("screener.n_label"));
+                    ui.label(compass_i18n::t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
-                    ui.label(t!("screener.min_pct"));
+                    ui.label(compass_i18n::t!("screener.min_pct"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
-                    ui.label(t!("screener.max_pct"));
+                    ui.label(compass_i18n::t!("screener.max_pct"));
                     ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
                 }
             });
@@ -510,13 +524,13 @@ impl ScreenerPanel {
                 Checkbox::new(
                     &tokens,
                     &mut self.form.volume_enabled,
-                    t!("screener.volume"),
+                    compass_i18n::t!("screener.volume"),
                 )
                 .show(ui);
                 if self.form.volume_enabled {
-                    ui.label(t!("screener.n_label"));
+                    ui.label(compass_i18n::t!("screener.n_label"));
                     ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
-                    ui.label(t!("screener.times"));
+                    ui.label(compass_i18n::t!("screener.times"));
                     ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
                 }
             });
@@ -634,12 +648,18 @@ mod tests {
 
     #[test]
     fn new_creates_panel_with_correct_id() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (panel, _) = panel_with_form();
         assert_eq!(panel.id(), &CitizenId::new("screener"));
     }
 
     #[test]
     fn new_form_defaults_match_query_contract() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (panel, _) = panel_with_form();
         let q = panel.build_query();
         assert!(q.exclude_delisted, "exclude_delisted defaults true");
@@ -652,6 +672,9 @@ mod tests {
 
     #[test]
     fn build_query_reflects_conditions() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _) = panel_with_form();
         panel.form.ma_enabled = true;
         panel.form.ma_kind = MaKind::BullishAlign;
@@ -690,6 +713,9 @@ mod tests {
 
     #[test]
     fn multi_selects_are_independent() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _) = panel_with_form();
         panel.ms_industry.toggle("银行");
         panel.ms_exchange.toggle("SH");
@@ -706,6 +732,9 @@ mod tests {
 
     #[test]
     fn show_renders_condition_form_no_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
@@ -724,6 +753,9 @@ mod tests {
 
     #[test]
     fn filter_button_click_sets_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
@@ -772,6 +804,9 @@ mod tests {
 
     #[test]
     fn results_table_renders_rows_and_count() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         shared.screener_total.set(3);
         shared.screener_result.set(vec![
@@ -793,6 +828,9 @@ mod tests {
 
     #[test]
     fn results_table_shows_empty_state_without_rows() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         let (run_signal, work_signal) = signals();
         let industries: Vec<String> = Vec::new();
@@ -807,6 +845,9 @@ mod tests {
 
     #[test]
     fn results_table_zero_market_cap_renders_without_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
         shared.screener_total.set(1);
         shared
