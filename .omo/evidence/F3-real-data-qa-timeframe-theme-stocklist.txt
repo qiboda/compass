@@ -1,0 +1,32 @@
+# F3 — Real Manual QA (timeframe-theme-stocklist)
+
+Date: 2026-08-11
+Auditor: QA lane (hands-on execution, /review-work)
+Verdict: PASS — 856 passed / 0 failed / 2 ignored
+
+## Commands executed
+
+```
+cargo test --workspace                  → 856 passed, 0 failed, 2 ignored
+cargo test -p compass save_theme_config → 6/6 passed
+cargo test -p compass load_stock_list   → 5/5 passed (incl. pre-existing empty_dir)
+cargo test -p compass theme             → 12/12 passed (incl. 3 new persistence tests)
+cargo test -p compass-core --test integration_test → 2 passed (duckdb_timeframe_aggregation_roundtrip ok), 1 ignored (needs local parquet data)
+cargo clippy --workspace --all-targets  → 0 errors; 1 pre-existing warning (provider.rs:141, untouched by this worktree)
+cargo fmt --check                       → clean
+```
+
+## Named test verification (all 14 mandated tests present + passing)
+
+- #46: duckdb_timeframe_aggregation_roundtrip (1d=10 raw bars, 1w=2 weekly OHLCV hand-checked, 1M=1 monthly bar)
+- #132: save_theme_config_creates_file_when_missing / roundtrips_theme_key / preserves_other_sections / fails_when_config_dir_is_a_file / fails_on_invalid_toml_without_clobbering / escapes_hostile_value_no_section_injection / render_toolbar_theme_switch_persists_to_config_file / theme_dropdown_switch_persists_to_config_and_restores_after_restart / theme_dropdown_switch_with_unwritable_config_switches_in_memory_without_panic
+- #71: load_stock_list_filters_out_delisted_and_bshares / only_delisted_returns_empty / all_listed_returns_unchanged / empty_parquet_returns_empty_no_panic
+
+## Scenario coverage
+
+21 scenarios: P0 13/13, P1 6/6, P2 2/2 (future-delist/NULL-metadata covered inside mixed-fixture test)
+
+## Data terminal-state evidence
+
+- stock_basic.parquet: 5,888 rows = 5,534 listed A + 354 delisted + 21 B-shares (all delisted); filter delist_date.is_none() → 5,534 (target ~5,568 within data staleness)
+- GUI-side fetch-trigger chain verified by existing segmented_switch_syncs_shared_state_and_triggers_fetch (loading set on 1w/1M click)

@@ -1,0 +1,20 @@
+# F2 — Code Quality Review (timeframe-theme-stocklist)
+
+Date: 2026-08-11
+Auditor: Oracle (code-quality lane, /review-work)
+Verdict: PASS — 0 CRITICAL / 0 MAJOR
+
+## Findings (all non-blocking)
+
+| Severity | Finding | File |
+|---|---|---|
+| MINOR | load_stock_list doc comment says "for the GUI picker" but output also feeds screener_industries/boards derivation; delist filter silently narrows screener condition options (benign, aligned with exclude_delisted) | main.rs:534-541 |
+| NITPICK | `PathBuf::from("~/.config/...")` tilde fallback when HOME unset — pre-existing family pattern (save_language_config etc.), faithful mirror, not introduced here | main.rs:501-503 |
+| NITPICK | `CompassTheme::all_names().to_vec()` per-frame allocation in toolbar — pre-existing, out of diff scope | main.rs:1158 |
+
+## Positive confirmations
+
+- `load_stock_list` called ONCE at app construction (main.rs:82), NOT per-frame — no perf issue
+- `expect("value is a table")` provably safe (TOML document root is always a table; both branches produce Table), mirrors existing save_language_config
+- Tests are meaningful, not padding: real parquet fixtures (DuckDB COPY), hand-checkable OHLCV values, adversarial cases (future delist date, hostile TOML, config-dir-is-a-file, no-clobber on invalid TOML)
+- Pattern consistency: save_theme_config line-for-line mirror of save_language_config; call-site warn matches save_screener_config pattern

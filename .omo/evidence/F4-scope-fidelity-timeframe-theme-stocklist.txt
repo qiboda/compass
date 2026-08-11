@@ -1,0 +1,24 @@
+# F4 — Scope Fidelity (timeframe-theme-stocklist)
+
+Date: 2026-08-11
+Auditor: main agent (orchestrator)
+Verdict: PASS
+
+## Scope IN — all delivered
+
+- #46: end-to-end integration test only (aggregation already on master 2982b72b; user ruling: verify then close) — b724b0b
+- #132: save_theme_config + render_toolbar call + warn-on-failure + unit/kittest tests + doc-sync — 21cfe27, b7a0a09
+- #71: load_stock_list GUI-layer delist_date.is_none() filter + parquet-fixture tests + doc-sync — 6da6459, b7a0a09
+
+## Scope OUT — respected (nothing leaked in)
+
+- ❌ No Timeframe enum introduced (all &str, symbols.md mapping unchanged)
+- ❌ ParquetReader::fetch_bars timeframe aggregation NOT touched (parquet.rs:713 _timeframe ignore is by design; GUI chart path uses DuckDbProvider)
+- ❌ SEPA/screener consumers of load_all_stock_basics UNCHANGED (data layer 0-line diff — verified by git diff --stat: parquet.rs not in changeset)
+- ❌ No financial-data coverage join (no existing pattern; not an acceptance criterion)
+- ❌ #132 startup read logic unchanged (main.rs:94 identical to master)
+- ❌ No unwrap in production code (expect mirrors existing pattern; constraint honored)
+
+## Handoff assumption correction
+
+handoff.md:40 claimed "stock_basic 表仅含当前上市 A 股" — WRONG per live data (5,888 = 5,534 + 354 delisted + 21 B). Corrected in handoff.md + committed docs + F3 evidence. The filter relies on delist_date.is_none() single condition (all 21 B-shares are delisted; documented data-dependent assumption in code comment + ui.md).
