@@ -531,12 +531,23 @@ fn stock_projection() -> StockProjection<compass_core::model::StockBasic> {
     )
 }
 
+/// Load the stock list for the GUI picker, filtered to currently-listed
+/// A-shares (issue #71). `stock_basic.parquet` intentionally contains
+/// delisted stocks and (delisted) B-shares — `delist_date` is `Some` for
+/// every row that must not appear in the picker, so a single
+/// `delist_date.is_none()` filter removes both while leaving the shared
+/// data-layer method (`ParquetReader::load_all_stock_basics`) untouched
+/// for SEPA/screener.
 fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
     match ParquetReader::new(&config.parquet.dir) {
         Ok(reader) => match reader.load_all_stock_basics() {
             Ok(stocks) => {
-                info!(count = stocks.len(), "stock list loaded from parquet");
-                stocks
+                let listed: Vec<_> = stocks
+                    .into_iter()
+                    .filter(|s| s.delist_date.is_none())
+                    .collect();
+                info!(count = listed.len(), "stock list loaded from parquet");
+                listed
             }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to load stock list from parquet");
@@ -1465,6 +1476,143 @@ default_timeframe = "1w"
 
         let stocks = crate::load_stock_list(&config);
         assert!(stocks.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // #71: stock list filtering — `load_stock_list` must return only
+    // currently-listed A-shares. The fix filters in the GUI layer
+    // (`delist_date.is_none()`); the data layer (parquet.rs) is untouched.
+    // These tests drive the declared behavior end-to-end through real
+    // parquet fixtures (the plan inlines the filter, so no helper seam
+    // exists to unit-test).
+    // ------------------------------------------------------------------
+
+    /// Test-only fixture: write `stock_basic.parquet` with the given rows
+    /// `(symbol, name, delist_date)` into `tmp` and return an `AppConfig`
+    /// pointing at it. A `None` name also NULLs `list_date` (mirrors the
+    /// production fixture's all-NULL row) to exercise the non-panic path.
+    fn create_stock_basic_parquet(
+        tmp: &std::path::Path,
+        rows: &[(&str, Option<&str>, Option<&str>)],
+    ) -> AppConfig {
+        let conn = duckdb::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR)",
+        )
+        .unwrap();
+        for (symbol, name, delist) in rows {
+            let name_sql = match name {
+                Some(n) => format!("'{n}'"),
+                None => "NULL".to_string(),
+            };
+            let list_sql = if name.is_some() {
+                "'2020-01-02'"
+            } else {
+                "NULL"
+            };
+            let delist_sql = match delist {
+                Some(d) => format!("'{d}'"),
+                None => "NULL".to_string(),
+            };
+            conn.execute_batch(&format!(
+                "INSERT INTO basic (symbol, name, list_date, delist_date) \
+                 VALUES ('{symbol}', {name_sql}, {list_sql}, {delist_sql})"
+            ))
+            .unwrap();
+        }
+        let basic_path = tmp.join("stock_basic.parquet");
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            basic_path.display()
+        ))
+        .unwrap();
+        let mut config = AppConfig::default();
+        config.parquet.dir = tmp.to_string_lossy().to_string();
+        config
+    }
+
+    #[test]
+    fn load_stock_list_filters_out_delisted_and_bshares() {
+        // Mixed market: 2 listed A-shares, 1 delisted A-share, 1 B-share
+        // (all B-shares are delisted), 1 row with a FUTURE delist date
+        // (a present delist_date excludes regardless of its value), and
+        // 1 listed row with all-NULL metadata (must not panic).
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(
+            tmp.path(),
+            &[
+                ("SH600519", Some("贵州茅台"), None),
+                ("SZ000001", Some("平安银行"), None),
+                ("SZ000003", Some("深中华A"), Some("2023-06-30")),
+                ("SZ200001", Some("深康佳B"), Some("2021-01-01")),
+                ("SZ300001", Some("未来退市"), Some("2099-01-01")),
+                ("SZ999999", None, None),
+            ],
+        );
+
+        let stocks = crate::load_stock_list(&config);
+        let symbols: Vec<&str> = stocks.iter().map(|s| s.symbol.as_str()).collect();
+
+        assert_eq!(
+            symbols,
+            vec!["SH600519", "SZ000001", "SZ999999"],
+            "delisted A-shares, B-shares and future-delisted rows must be filtered out, got: {symbols:?}"
+        );
+        assert!(
+            stocks.iter().all(|s| s.delist_date.is_none()),
+            "no returned stock may carry a delist_date"
+        );
+    }
+
+    #[test]
+    fn load_stock_list_only_delisted_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(
+            tmp.path(),
+            &[
+                ("SZ000003", Some("深中华A"), Some("2023-06-30")),
+                ("SZ200001", Some("深康佳B"), Some("2021-01-01")),
+            ],
+        );
+
+        let stocks = crate::load_stock_list(&config);
+        assert!(
+            stocks.is_empty(),
+            "a list with only delisted stocks must be empty, got {} rows",
+            stocks.len()
+        );
+    }
+
+    #[test]
+    fn load_stock_list_all_listed_returns_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(
+            tmp.path(),
+            &[
+                ("SH600519", Some("贵州茅台"), None),
+                ("SZ000001", Some("平安银行"), None),
+            ],
+        );
+
+        let stocks = crate::load_stock_list(&config);
+        let symbols: Vec<&str> = stocks.iter().map(|s| s.symbol.as_str()).collect();
+        assert_eq!(
+            symbols,
+            vec!["SH600519", "SZ000001"],
+            "an all-listed list must pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn load_stock_list_empty_parquet_returns_empty_no_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(tmp.path(), &[]);
+
+        let stocks = crate::load_stock_list(&config);
+        assert!(
+            stocks.is_empty(),
+            "a zero-row parquet must yield an empty list without panicking"
+        );
     }
 
     #[test]
