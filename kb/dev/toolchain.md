@@ -173,6 +173,37 @@
 
 ---
 
+## 进程（检测 / 结束）
+
+### [进程] `pgrep -f` 自匹配导致 PID 持续变化假象（两次复发）
+
+- **症状**: `pgrep -f "target/debug/compass"` 返回的 PID **每次执行都不同**
+  （或反复出现）；多轮 kill 后仍"检测到进程"，误判"有进程在重启"；
+  极端情况下 `pkill -f` 杀掉**执行 shell 自身**，命令/会话挂死
+- **根因**: `pgrep -f <pattern>` / `pkill -f <pattern>` 按**完整命令行**
+  匹配所有进程——执行该命令的 bash（含 bash 工具持久会话的 `bash -c`
+  包装）命令行本身就含 pattern 字样，**每次 pgrep 都匹配到自己新起的
+  bash** → PID 持续变化假象。`pkill -f` 则可能把执行 shell 卷进 kill 范围
+- **排查路径**:
+  1. 先怀疑自匹配：`pgrep -f "target/debug/compass"` 连跑两次，
+     PID 变化即自匹配特征
+  2. 用 `-x` 精确进程名复核：`pgrep -x compass` —— 只匹配进程名恰为
+     compass 的进程，**不匹配命令行**，无自匹配问题
+  3. 或 `ps aux | grep "[t]arget/debug/compass"`（`[t]` 破坏自匹配）
+- **修复**: 检测一律 `pgrep -x <binary>`（精确进程名）或 `[x]` 技巧；
+  `pkill` 前先 `pgrep -x` 列出核对，`pgrep -x compass | xargs -r kill`
+  （`-r` 无匹配时不报错）；禁用 `pkill -f "<路径>"` 形式
+- **验证**: `pgrep -x compass` 无输出 = 进程确已干净退出（不再是
+  PID 变化假象）；窗口可见性另以 `wmctrl -l` / `xdotool search` 为准
+  （进程存在 ≠ 窗口可见，ref #105）
+- **教训**: `pgrep -f` 自匹配已两次复发（ref #105、ref #226）——若在
+  process.md 纪律章节已写"检测/结束 GUI 进程的正确姿势"却仍走 `-f`，
+  先回查该章节（`kb/dev/process.md` 调试技巧）再动手；长链命令
+  （pkill;sleep;build;tmux;sleep;pgrep）分步执行，避免 bash 工具超时
+  留下半启动状态
+
+---
+
 ## 测试（Rust / egui_kittest）
 
 ### [测试] egui_kittest 动画测试受 wall-clock 影响偶发失败（慢 CI）
