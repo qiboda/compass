@@ -490,6 +490,36 @@ fn save_language_config(language: &str) -> Result<(), String> {
     std::fs::write(&config_path, serialized)
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
+
+/// Persist the selected GUI theme to the top-level `theme` key of
+/// `~/.config/compass/config.toml` (issue #132). Mirrors
+/// [`save_language_config`]: read-modify-write keeps every other config
+/// section intact and creates the file when it does not exist. Failures
+/// are returned as `Err` and logged as a warning by the caller — the theme
+/// switch itself stays in-memory.
+fn save_theme_config(theme: &str) -> Result<(), String> {
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    let mut doc = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents
+            .parse::<toml::Value>()
+            .map_err(|e| format!("failed to parse config.toml: {e}"))?,
+        Err(_) => toml::Value::Table(Default::default()),
+    };
+    doc.as_table_mut()
+        .expect("value is a table")
+        .insert("theme".to_string(), toml::Value::String(theme.to_string()));
+
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&config_path, serialized)
+        .map_err(|e| format!("failed to write config.toml: {e}"))
+}
 ///
 /// The UI crate stays free of business-crate dependencies; the binary adapts
 /// its own row type through projection functions.
@@ -501,12 +531,23 @@ fn stock_projection() -> StockProjection<compass_core::model::StockBasic> {
     )
 }
 
+/// Load the stock list for the GUI picker, filtered to currently-listed
+/// A-shares (issue #71). `stock_basic.parquet` intentionally contains
+/// delisted stocks and (delisted) B-shares — `delist_date` is `Some` for
+/// every row that must not appear in the picker, so a single
+/// `delist_date.is_none()` filter removes both while leaving the shared
+/// data-layer method (`ParquetReader::load_all_stock_basics`) untouched
+/// for SEPA/screener.
 fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
     match ParquetReader::new(&config.parquet.dir) {
         Ok(reader) => match reader.load_all_stock_basics() {
             Ok(stocks) => {
-                info!(count = stocks.len(), "stock list loaded from parquet");
-                stocks
+                let listed: Vec<_> = stocks
+                    .into_iter()
+                    .filter(|s| s.delist_date.is_none())
+                    .collect();
+                info!(count = listed.len(), "stock list loaded from parquet");
+                listed
             }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to load stock list from parquet");
@@ -1123,6 +1164,9 @@ impl CompassApp {
                     let name = CompassTheme::all_names()[idx];
                     if name != self.theme.name() {
                         self.theme = CompassTheme::from_config(name);
+                        if let Err(e) = save_theme_config(name) {
+                            tracing::warn!(error = %e, "failed to save theme config");
+                        }
                         let tokens = *self.theme.tokens();
                         self.dock_style = compass_ui::dock_style::dock_style(&tokens);
                         // Stored stateful widgets copy tokens at construction;
@@ -1432,6 +1476,143 @@ default_timeframe = "1w"
 
         let stocks = crate::load_stock_list(&config);
         assert!(stocks.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // #71: stock list filtering — `load_stock_list` must return only
+    // currently-listed A-shares. The fix filters in the GUI layer
+    // (`delist_date.is_none()`); the data layer (parquet.rs) is untouched.
+    // These tests drive the declared behavior end-to-end through real
+    // parquet fixtures (the plan inlines the filter, so no helper seam
+    // exists to unit-test).
+    // ------------------------------------------------------------------
+
+    /// Test-only fixture: write `stock_basic.parquet` with the given rows
+    /// `(symbol, name, delist_date)` into `tmp` and return an `AppConfig`
+    /// pointing at it. A `None` name also NULLs `list_date` (mirrors the
+    /// production fixture's all-NULL row) to exercise the non-panic path.
+    fn create_stock_basic_parquet(
+        tmp: &std::path::Path,
+        rows: &[(&str, Option<&str>, Option<&str>)],
+    ) -> AppConfig {
+        let conn = duckdb::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR)",
+        )
+        .unwrap();
+        for (symbol, name, delist) in rows {
+            let name_sql = match name {
+                Some(n) => format!("'{n}'"),
+                None => "NULL".to_string(),
+            };
+            let list_sql = if name.is_some() {
+                "'2020-01-02'"
+            } else {
+                "NULL"
+            };
+            let delist_sql = match delist {
+                Some(d) => format!("'{d}'"),
+                None => "NULL".to_string(),
+            };
+            conn.execute_batch(&format!(
+                "INSERT INTO basic (symbol, name, list_date, delist_date) \
+                 VALUES ('{symbol}', {name_sql}, {list_sql}, {delist_sql})"
+            ))
+            .unwrap();
+        }
+        let basic_path = tmp.join("stock_basic.parquet");
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            basic_path.display()
+        ))
+        .unwrap();
+        let mut config = AppConfig::default();
+        config.parquet.dir = tmp.to_string_lossy().to_string();
+        config
+    }
+
+    #[test]
+    fn load_stock_list_filters_out_delisted_and_bshares() {
+        // Mixed market: 2 listed A-shares, 1 delisted A-share, 1 B-share
+        // (all B-shares are delisted), 1 row with a FUTURE delist date
+        // (a present delist_date excludes regardless of its value), and
+        // 1 listed row with all-NULL metadata (must not panic).
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(
+            tmp.path(),
+            &[
+                ("SH600519", Some("贵州茅台"), None),
+                ("SZ000001", Some("平安银行"), None),
+                ("SZ000003", Some("深中华A"), Some("2023-06-30")),
+                ("SZ200001", Some("深康佳B"), Some("2021-01-01")),
+                ("SZ300001", Some("未来退市"), Some("2099-01-01")),
+                ("SZ999999", None, None),
+            ],
+        );
+
+        let stocks = crate::load_stock_list(&config);
+        let symbols: Vec<&str> = stocks.iter().map(|s| s.symbol.as_str()).collect();
+
+        assert_eq!(
+            symbols,
+            vec!["SH600519", "SZ000001", "SZ999999"],
+            "delisted A-shares, B-shares and future-delisted rows must be filtered out, got: {symbols:?}"
+        );
+        assert!(
+            stocks.iter().all(|s| s.delist_date.is_none()),
+            "no returned stock may carry a delist_date"
+        );
+    }
+
+    #[test]
+    fn load_stock_list_only_delisted_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(
+            tmp.path(),
+            &[
+                ("SZ000003", Some("深中华A"), Some("2023-06-30")),
+                ("SZ200001", Some("深康佳B"), Some("2021-01-01")),
+            ],
+        );
+
+        let stocks = crate::load_stock_list(&config);
+        assert!(
+            stocks.is_empty(),
+            "a list with only delisted stocks must be empty, got {} rows",
+            stocks.len()
+        );
+    }
+
+    #[test]
+    fn load_stock_list_all_listed_returns_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(
+            tmp.path(),
+            &[
+                ("SH600519", Some("贵州茅台"), None),
+                ("SZ000001", Some("平安银行"), None),
+            ],
+        );
+
+        let stocks = crate::load_stock_list(&config);
+        let symbols: Vec<&str> = stocks.iter().map(|s| s.symbol.as_str()).collect();
+        assert_eq!(
+            symbols,
+            vec!["SH600519", "SZ000001"],
+            "an all-listed list must pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn load_stock_list_empty_parquet_returns_empty_no_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = create_stock_basic_parquet(tmp.path(), &[]);
+
+        let stocks = crate::load_stock_list(&config);
+        assert!(
+            stocks.is_empty(),
+            "a zero-row parquet must yield an empty list without panicking"
+        );
     }
 
     #[test]
@@ -3894,6 +4075,276 @@ symbols = ["SZ000001"]
         );
     }
 
+    // ------------------------------------------------------------------
+    // #132: theme persistence — save_theme_config must write the top-level
+    // `theme` key to config.toml (read-modify-write mirroring
+    // save_language_config), create the file when missing, preserve every
+    // other section, propagate parse/write failures, and survive hostile
+    // values without corrupting the file.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn save_theme_config_creates_file_when_missing() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let result = crate::save_theme_config("compass_light");
+        let raw = std::fs::read_to_string(config_dir.join("config.toml"))
+            .expect("config.toml must be created by the save");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(result.is_ok(), "save must succeed, got: {result:?}");
+        assert!(
+            raw.contains("theme = \"compass_light\""),
+            "created file must contain the theme key, got: {raw}"
+        );
+    }
+
+    #[test]
+    fn save_theme_config_roundtrips_theme_key() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[app]\ndefault_symbol = \"SH600519\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        crate::save_theme_config("compass_light").unwrap();
+        let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(
+            raw.contains("theme = \"compass_light\""),
+            "theme key must be written, got: {raw}"
+        );
+        assert_eq!(
+            config.app.theme, "compass_light",
+            "load must round-trip the saved theme"
+        );
+        assert_eq!(
+            CompassTheme::from_config(&config.app.theme).name(),
+            "compass_light",
+            "startup resolution (CompassTheme::from_config) must pick up the persisted theme"
+        );
+    }
+
+    #[test]
+    fn save_theme_config_preserves_other_sections() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"[app]
+default_symbol = "SH600519"
+
+[watchlist]
+symbols = ["SZ000001"]
+
+[screener]
+industries = ["银行"]
+breakout = { days = 120 }
+"#,
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        crate::save_theme_config("compass_dark").unwrap();
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(config.app.theme, "compass_dark");
+        assert_eq!(
+            config.app.app.default_symbol, "SH600519",
+            "[app] must survive the theme write-back"
+        );
+        assert_eq!(
+            config.watchlist.symbols,
+            vec!["SZ000001".to_string()],
+            "[watchlist] must survive the theme write-back"
+        );
+        assert_eq!(
+            config.screener.industries,
+            vec!["银行".to_string()],
+            "[screener] must survive the theme write-back"
+        );
+        assert_eq!(
+            config.screener.breakout,
+            Some(compass_types::BreakoutCondition::new(120)),
+            "[screener] breakout must survive the theme write-back"
+        );
+    }
+
+    #[test]
+    fn save_theme_config_fails_when_config_dir_is_a_file() {
+        // `$HOME/.config` exists as a regular FILE, so the config dir can
+        // never be created: the save must surface an Err — no panic, no
+        // silent success, no partial file left behind.
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".config"), "i am a file, not a dir").unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let result = crate::save_theme_config("compass_light");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(
+            result.is_err(),
+            "save must fail when the config dir cannot be created, got: {result:?}"
+        );
+        assert!(
+            !tmp.path().join(".config/compass/config.toml").exists(),
+            "no partial file must be left behind"
+        );
+    }
+
+    #[test]
+    fn save_theme_config_fails_on_invalid_toml_without_clobbering() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), "{{{ not valid toml").unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let result = crate::save_theme_config("compass_light");
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert!(
+            result.is_err(),
+            "invalid TOML must propagate as an error, got: {result:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config_dir.join("config.toml")).unwrap(),
+            "{{{ not valid toml",
+            "a failed save must not clobber the existing file"
+        );
+    }
+
+    #[test]
+    fn save_theme_config_escapes_hostile_value_no_section_injection() {
+        // A theme value carrying a quote, newline and a forged `[watchlist]`
+        // section must be TOML-escaped: round-trip verbatim, never inject
+        // sections, and resolve through from_config without panicking.
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let hostile = "evil\"\n[watchlist]\nsymbols=[\"pwned\"]";
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        crate::save_theme_config(hostile).unwrap();
+        let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+        let doc: toml::Value = raw
+            .parse()
+            .unwrap_or_else(|e| panic!("file must stay valid TOML: {e}\n{raw}"));
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            doc.get("theme").and_then(toml::Value::as_str),
+            Some(hostile),
+            "hostile value must round-trip verbatim"
+        );
+        assert!(
+            doc.get("watchlist").is_none(),
+            "hostile value must not inject a [watchlist] section, got: {raw}"
+        );
+        assert_eq!(config.app.theme, hostile);
+        assert_eq!(
+            CompassTheme::from_config(&config.app.theme).name(),
+            "compass_dark",
+            "unknown theme must resolve to the dark fallback without panicking"
+        );
+    }
+
     #[test]
     fn app_starts_in_english_when_config_language_is_en() {
         // Simulates the startup path (T3): load_config → normalize_language
@@ -4025,6 +4476,209 @@ symbols = ["SZ000001"]
             }
         }
         compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // #132: end-to-end — switching the theme in the toolbar must persist
+    // `theme` to config.toml (read-modify-write preserves other sections).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn render_toolbar_theme_switch_persists_to_config_file() {
+        let _lang = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _home = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[watchlist]\nsymbols = [\"SZ000001\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let mut app = build_compass_app(egui::Context::default());
+        {
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([1440.0, 900.0])
+                .build_ui(|ui| {
+                    app.render_toolbar(ui);
+                });
+            harness.run();
+            // Trigger label is "{selected} ▾"; popup items are the exact
+            // option strings — same interaction as
+            // `render_toolbar_theme_switch_changes_theme_and_rebuilds_dock_style`.
+            harness.get_by_label_contains("compass_dark").click();
+            harness.run();
+            harness.get_by_label("compass_light").click();
+            harness.run();
+
+            let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+            assert!(
+                raw.contains("theme = \"compass_light\""),
+                "theme selection must persist to config.toml, got: {raw}"
+            );
+            assert!(
+                raw.contains("SZ000001"),
+                "other config sections must survive the theme write-back, got: {raw}"
+            );
+
+            // Switching BACK must re-persist the new value (write on every switch).
+            harness.get_by_label_contains("compass_light").click();
+            harness.run();
+            harness.get_by_label("compass_dark").click();
+            harness.run();
+            let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+            assert!(
+                raw.contains("theme = \"compass_dark\""),
+                "switching back must re-persist, got: {raw}"
+            );
+        }
+        assert_eq!(
+            app.theme.name(),
+            "compass_dark",
+            "in-memory theme must switch back to compass_dark"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Contract (#132): theme dropdown persists the selection to config.toml
+    // (mirrors the language-dropdown write-back); a fresh app constructed
+    // from the persisted config restores the chosen theme on restart; a
+    // failed write-back must degrade to a warn, never a panic.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn theme_dropdown_switch_persists_to_config_and_restores_after_restart() {
+        let _lang = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _home = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[watchlist]\nsymbols = [\"SZ000001\"]\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let mut app = build_compass_app(egui::Context::default());
+        {
+            // Same harness sizing as the language-dropdown test: #232
+            // widened the toolbar, so the 800×600 default clips Group D.
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([1440.0, 900.0])
+                .build_ui(|ui| {
+                    app.render_toolbar(ui);
+                });
+            harness.run();
+            // Trigger label is "{selected} ▾"; popup items are exact names.
+            harness.get_by_label_contains("compass_dark").click();
+            harness.run();
+            harness.get_by_label("compass_light").click();
+            harness.run();
+        }
+        assert_eq!(app.theme.name(), "compass_light");
+
+        let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
+        assert!(
+            raw.contains("theme = \"compass_light\""),
+            "theme selection must persist to config.toml, got: {raw}"
+        );
+        assert!(
+            raw.contains("SZ000001"),
+            "other config sections must survive the theme write-back, got: {raw}"
+        );
+
+        // Restart simulation: production startup resolves the theme via
+        // CompassTheme::from_config(&config.app.theme) (main.rs L94).
+        let config = crate::load_config();
+        assert_eq!(
+            CompassTheme::from_config(&config.app.theme).name(),
+            "compass_light",
+            "a fresh app from the persisted config must restore compass_light"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn theme_dropdown_switch_with_unwritable_config_switches_in_memory_without_panic() {
+        let _lang = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _home = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        // Unwritable config: a directory occupies the config.toml path, so
+        // the write-back must fail through the warn path, never panic.
+        std::fs::create_dir(config_dir.join("config.toml")).unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let mut app = build_compass_app(egui::Context::default());
+        {
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size([1440.0, 900.0])
+                .build_ui(|ui| {
+                    app.render_toolbar(ui);
+                });
+            harness.run();
+            harness.get_by_label_contains("compass_dark").click();
+            harness.run();
+            harness.get_by_label("compass_light").click();
+            harness.run();
+        }
+
+        assert_eq!(
+            app.theme.name(),
+            "compass_light",
+            "the in-memory switch must still apply when persistence fails"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     // ------------------------------------------------------------------

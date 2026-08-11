@@ -291,3 +291,33 @@
 ### Trends (last 10)
 - **commit 操作摩擦高频出现**（ref #184 commit-msg 误写 → ref #222 rebase 挂起 → 本次 amend 误操作 + staged 混入）：git 操作纪律（amend 前确认 HEAD、reset 后清 staged）建议沉淀到 kb/dev/process.md「版本控制」章节——commit 操作是比实现代码更高频的摩擦源
 - **「文档已固化但未遵守」模式**（ref #184 记录第五次 → 本次 commit message 中文）：AGENTS.md 规则存在但执行时未查——commit 前自查清单（message 英文 + ref 前缀 + 叙述性提及用 #N）值得做成 pre-commit 可检测项或提交模板
+
+## 2026-08-11 — ref #46/#132/#71 timeframe-theme-stocklist 批次：3 个 issue 批量修复
+
+**What was done**: worktree `fix/timeframe-theme-stocklist` 批量处理 3 个 issue——#46 timeframe 聚合补端到端集成测试（聚合已在 master 2982b72b 实现，验证后关闭）、#132 主题切换写回 config.toml（save_theme_config 镜像 save_language_config）、#71 股票列表 GUI 层 delist_date 过滤。6 个 commit（#46 测试 / #132 / #71 / docs / plan / F-wave evidence），856 测试全绿，review-work 5 agent 全 PASS。
+
+**User corrections**（逐字引用对话记录）:
+1. "bug应该是点击周和月没有立即fetch吧，再看看？" —— **方向纠正**：我探索后判定 #46"聚合已实现、issue 只剩收尾"，用户指出真正的 bug 可能是"点击周/月不立即 fetch"——促使我重新审视 GUI 链（最终确认 GUI 已有 segmented_switch 测试覆盖点击触发 fetch，provider 聚合测试全绿，结论仍是无代码缺口、补集成测试收尾；但用户的质疑点提示"已实现"≠"验证过完整链路"）。
+2. "没有问题就写一个集成测试，通过的话，就关闭这个issue" —— **范围裁决**：#46 处理方式定为"验证后收尾"，不扩展 ParquetReader 聚合等缺口。
+3. "全部完成后push" —— **push 时机指示**：等 #132/#71 全部完成再 push，不单独 push #46。
+4. "任务完成后自动push，merge pr 并关闭worktree" —— **闭环授权**：push + merge PR + 关闭 worktree 全部自动化。
+
+**What went wrong**:
+1. **#71 探索阶段误信 handoff 假设**："stock_basic 表仅含当前上市 A 股"——实测 5,888 行含 354 退市 + 21 B 股（全退市）。幸而在规划阶段用真实 parquet 数据验证（非实现后才发现），纠偏为 delist_date.is_none() 单条件。教训：**handoff/issue 里的数据面断言必须用真实数据核实，不能当作事实**——尤其涉及"表内容/数据量"的声明。
+2. **两个测试 agent 并行写同一文件产生重复**：adversarial + requirement 两个 agent 并行在 main.rs 各写了一套 #71 测试（fixture ×2、filter 测试 ×2、unchanged 测试 ×2），我需手动去重（合并独特断言 + 删重复块）。教训：**同一文件的并行测试委派应明确划分区域或串行**，或委派前指定"先看对方已写内容"。
+3. **git add -p 拆分 hunk 三次失败**（printf 管道提前 EOF、python 驱动卡死、e 编辑模式超时）才改用 tmux send-keys 成功。教训：**git add -p 非交互环境不可靠——分 commit 场景改用 tmux 驱动或预先规划好 hunk 应答序列**。
+4. **docs 的 #132 段误入 #71 commit**：add -p 时 ui.md 主题段与股票段在同一 hunk 无法拆分，导致 #132 主题 docs 混进 #71 commit，reset --soft 重做。教训：**多 issue 单文件 docs 变更，要么接受"docs 独立 commit 引用多 issue"，要么实现前就按段拆分**（后者成本高，接受前者更务实）。
+5. **save_theme_config 注释残留探索期行号**："// ← 行 1125，切换生效"（测试 agent 引入，行号已漂移失效）——hook 移除。教训：**行号注释是最容易过时的注释类型，任何代码变更后必失效**。
+
+**Lessons learned**:
+1. **数据面假设必须先实测**：涉及"表包含什么/数量多少/哪些被过滤"的断言（handoff、issue、plan 里），实现前用真实数据（DuckDB 查询、parquet 读取）验证，不把文档陈述当事实——#71 若按 handoff 假设实现会漏掉退市/B 股。
+2. **并行测试委派避免同文件竞争**：同一文件（main.rs tests）的两个测试 agent 并行会产生重复 fixture/测试——委派时划分区域（如"你写 save_theme_config 区 4087+，她写 load_stock_list 区 1478+"）或告知"检查文件已有内容避免重复"。
+3. **git add -p 在非交互 shell 不可靠**：用 tmux send-keys 或直接接受"同文件多 issue 用独立 docs commit 引用多 ref"的务实方案。
+4. 用户"已实现"≠"已验证"：issue 状态 OPEN + 代码存在 + 用户观察到行为异常三者并存时，用户的问题描述（"点击周/月不立即 fetch"）比 issue 文字更接近真实 bug——先复现用户场景再下结论。
+
+**Process improvements**:
+- **None（本次无机制变更）**：数据面实测教训（#71）与并行委派教训为操作性经验，写入条目。考虑将"plan 中数据面声明必须标注验证来源"建议给 ulw-plan 流程（proposed，待评估）。
+
+### Trends (last 10)
+- **"文档/假设未实测"模式**（ref #46 探索纠偏 → 本次 #71 handoff 假设实测推翻）：涉及数据面断言（表内容、行数、过滤语义）的规划假设多次与真实数据不符——建议 AGENTS.md 或 ulw-plan 增加"数据面声明必须附实测来源"的规划约束
+- **并行 agent 同文件写冲突重复出现**（本次 #71 测试重复 fixture）：多 agent 委派到同一文件时产出重复——委派 prompt 强制"检查对方已写内容"或划分区域

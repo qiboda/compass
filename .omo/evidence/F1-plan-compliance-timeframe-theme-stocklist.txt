@@ -1,0 +1,39 @@
+# F1 — Plan Compliance Audit (timeframe-theme-stocklist)
+
+Date: 2026-08-11
+Auditor: main agent (orchestrator)
+Base: master 8d8c68f | Branch: fix/timeframe-theme-stocklist
+Verdict: PASS
+
+## 1. Commit compliance — all 5 commits reference their issues on independent lines
+
+```
+f933b35 docs: add timeframe-theme-stocklist work plan          (ref #46, #132, #71)
+b7a0a09 docs: sync theme persistence and stock-list filtering docs (ref #132, #71)
+6da6459 fix(gui): filter stock list to currently-listed A-shares (ref #71)
+21cfe27 feat(gui): persist theme switch to config.toml         (ref #132)
+b724b0b test(core): add end-to-end timeframe aggregation integration test (ref #46)
+```
+
+Check: `git log 8d8c68f..HEAD --format=%B` — 5 commits, each with independent-line `ref #N` ✓
+(evidence written after ALL implementation commits; commit count 5/5 matches HEAD, no mid-flight claim)
+
+## 2. Plan todos → commit mapping
+
+| Plan todo | Commit(s) | Status |
+|---|---|---|
+| 1. RED tests (adversarial + requirement) | tests land inside 21cfe27/6da6459 (RED verified via 6x E0425 before impl) | DONE |
+| 2. #132 save_theme_config + call site | 21cfe27 | DONE |
+| 3. #71 load_stock_list filter | 6da6459 | DONE |
+| 4. doc-sync ui.md/gui.md + handoff correction | b7a0a09 (+ handoff.md updated in worktree) | DONE |
+
+## 3. Gate compliance
+
+- Step 0 grill-me: shared understanding (2026-08-11, user-confirmed, handoff.md)
+- Step 0.5 worktree: fix/timeframe-theme-stocklist created + handoff written
+- Step 2 issues: #46/#132/#71 all open, referenced in commits
+- Step 3 plan: .omo/plans/timeframe-theme-stocklist.md written (f933b35)
+- Step 3.5/4 RED tests: delegated to skwy-adversarial-test + skwy-requirement-test; RED confirmed via 6x E0425 (save_theme_config missing); deduplicated to 16 tests
+- Step 5b doc-sync: kb/design/ui.md + kb/user/gui.md + handoff.md
+- Step 5c decision records: ui.md already carries 决策记录 section (no design change requiring new row)
+- Review: /review-work 5 agents all PASS (goal/QA/quality/security/context), 0 blocking issues
