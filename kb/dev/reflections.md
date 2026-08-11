@@ -263,3 +263,31 @@
 ### Trends (last 10)
 - **"已知坑未先查"模式**（本次 GIT_EDITOR 挂起猜 2 轮才查 toolchain.md）：工具链卡存在但不作为第一查询对象——建议遇到非预期命令行为时强制先 grep toolchain.md 再诊断
 - **"实现期测试干净值掩盖回归"**（本次 factor-note 精度）：review 是最终防线但成本高——数值/格式化断言应主动用非平凡值，写进测试方法论
+
+## 2026-08-11 — ref #234/#236/#237/#239/#240 docs 批次：5 个文档 issue 批量处理
+
+**What was done**: 批量处理 5 个 docs issue——compass 仓库 4 commits（#234 toolchain.md 进程检测排查卡、#240 process.md 磁盘预检+小样本 QA、#237 AGENTS.md F1 evidence 一致性自检、#239 testing.md GUI 测试方法论四节）+ skwy 仓库 1 commit（#236 skwy-requirement-test SKILL.md 委派 prompt 两条款）。纯文档变更，门禁例外适用；commit 后证据式核对 5 个 issue 验收标准全过。
+
+**User corrections**（逐字引用对话记录）:
+1. "236 234 239 处理。  240 237 不是很清楚是做什么的，详细介绍下。" —— 用户先锁定 3 个 issue，要求我详细解释另外 2 个再决定（范围澄清）。
+2. "全部处理。然后问一下，evidence是什么" —— 用户扩展范围为全部 5 个，并追问 evidence 概念（我以 `.omo/evidence/` 实际文件佐证回答）。
+3. "236 外部  237 agents.md" —— **关键落点纠正**：我推荐 #236/#237 全部落本地 AGENTS.md，用户纠正 #236 落外部（skwy-requirement-test skill）、#237 落本地 AGENTS.md。
+4. "hao" / "push" —— 确认 Q5 批次分工、确认 push。
+
+**What went wrong**:
+1. **`git commit --amend` 误改 HEAD 的 message 而非目标 commit**：想改 05a5992（testing，中英混杂 message）时直接 amend，但 HEAD 实际是最后一个 commit（AGENTS.md e857b0a）——amend 把 testing 的 message 安到了 AGENTS.md commit 上，内容与 message 错配，且原中文 message 残留。需 soft reset 重来（浪费 3 轮）。教训：**amend 前先 `git log --oneline -1` 确认 HEAD 是目标 commit**。
+2. **`git reset --soft` 后两个文件都 staged，首 commit 混入**：soft reset 到 process commit 后 AGENTS.md 与 testing.md 均为 staged 状态，`git add AGENTS.md && commit` 把两个文件一起提交（68 insertions = 12+56），需 `git restore --staged` 拆分重做。教训：**批量分 commit 时，reset 后先 `git restore --staged` 排除非目标文件再提交**。
+3. **commit message 混入中文「撑宽」**：违反"提交信息按惯例使用英文"（AGENTS.md 明文规则），触发上述 amend 连锁。教训：commit message 写完后自查中英混排（尤其中文技术术语如"撑宽"随手带入）。
+4. **commit-msg hook 误报 #237 MISSING**（gh API 瞬时故障）——toolchain.md 已有记录，诊断（手动 gh view 返回 OPEN）后重试成功，非 agent 失误，正常闭环。
+
+**Lessons learned**:
+1. **amend 前必须确认 HEAD**：`git commit --amend` 只作用于 HEAD——目标 commit 非 HEAD 时先 `git log --oneline -3` 核对，或改用 `git rebase -i` 精确 reword；commit message 写完自查（中英混排、ref 前缀）。
+2. **soft reset 拆分提交前先清理 staged**：`git reset --soft <base>` 后所有变更都 staged，分批 commit 时必须先 `git restore --staged <非目标文件>`，避免首 commit 混入后续文件。
+3. 批量处理多 issue 时每 issue 独立 commit 且内容/message/ref 一一对应，提交后立即 `git log --stat` 验证——发现问题当场修复，不留到 push 前。
+
+**Process improvements**:
+- 无机制变更（纯 docs 批次，不新增规则）。amend/reset 操作纪律为一次性操作性教训，写入本条目——commit-msg hook 与 pre-commit 已覆盖可检测部分，操作顺序类摩擦难以 hook 化。
+
+### Trends (last 10)
+- **commit 操作摩擦高频出现**（ref #184 commit-msg 误写 → ref #222 rebase 挂起 → 本次 amend 误操作 + staged 混入）：git 操作纪律（amend 前确认 HEAD、reset 后清 staged）建议沉淀到 kb/dev/process.md「版本控制」章节——commit 操作是比实现代码更高频的摩擦源
+- **「文档已固化但未遵守」模式**（ref #184 记录第五次 → 本次 commit message 中文）：AGENTS.md 规则存在但执行时未查——commit 前自查清单（message 英文 + ref 前缀 + 叙述性提及用 #N）值得做成 pre-commit 可检测项或提交模板
