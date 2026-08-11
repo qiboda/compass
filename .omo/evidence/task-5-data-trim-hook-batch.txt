@@ -1,0 +1,384 @@
+# task-5 data-trim-hook-batch — RED evidence (issue #235)
+
+Date: 2026-08-11
+Run: cd collectors && uv run pytest tests/ -q (test_trim_imports.py, --tb=long)
+Result: 8 failed, 14 passed — exit code 1 (RED)
+
+All 8 failures are adversarial RED assertions against current production
+code (no TRIM in the INSERT SELECTs). GREEN target: wrap text columns in
+TRIM(col) AS col; institution_survey gk key HEX(TRIM(RECEIVE_OBJECT));
+block_trade TRIM(BUYER_NAME)/TRIM(SELLER_NAME) inside SELECT DISTINCT.
+
+14 passes = 6 U+3000 characterization tests (TRIM must NOT strip U+3000)
++ 8 boundary tests (empty/whitespace-only/NULL semantics, stable across
+the fix since TRIM(NULL) IS NULL / dolt CSV import converts empty→NULL).
+
+Full-suite sanity run: 8 failed, 342 passed (all pre-existing tests GREEN;
+only the new adversarial tests fail).
+
+================================================================================
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/data-trim-hook-batch/collectors
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 22 items
+
+tests/test_trim_imports.py F..F..F..F..F..F..FF..                        [100%]
+
+=================================== FAILURES ===================================
+_______________ TestStockBasicTrim.test_ascii_spaces_are_trimmed _______________
+
+self = <test_trim_imports.TestStockBasicTrim object at 0x7ff41b43eea0>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed0'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41add0e00>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed0')
+
+    def test_ascii_spaces_are_trimmed(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: padded text columns land verbatim today; must land trimmed."""
+        import main as main_mod
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        self._write_csv(
+            tmp_path / "stock_basic_official.csv",
+            [
+                _sb_row(
+                    "SH600000",
+                    name=" 贵州茅台 ",
+                    board=" 上证50 ",
+                    full_name="贵州茅台酒股份有限公司  ",
+                    industry=" 酿酒行业 ",
+                    region=" 贵州 ",
+                ),
+                _sb_row(
+                    "SH600001",
+                    name=" 平安银行 ",
+                    board=" 主板 ",
+                    full_name="平安银行股份有限公司",
+                    industry="银行 ",
+                    region=" 深圳",
+                ),
+            ],
+        )
+    
+        main_mod._import_stock_basic()
+    
+        dirty = _last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM stock_basic WHERE "
+            "name <> TRIM(name) OR board <> TRIM(board) OR "
+            "full_name <> TRIM(full_name) OR industry <> TRIM(industry) OR "
+            "region <> TRIM(region)"
+        ))
+>       assert dirty == "0", (
+            f"all 5 text columns must be trimmed of leading/trailing U+0020, "
+            f"got {dirty} dirty row(s)"
+        )
+E       AssertionError: all 5 text columns must be trimmed of leading/trailing U+0020, got 2 dirty row(s)
+E       assert '2' == '0'
+E         
+E         - 0
+E         + 2
+
+tests/test_trim_imports.py:205: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import stock_basic]
+  Done: 2 rows
+_____________ TestFinIndicatorsTrim.test_ascii_spaces_are_trimmed ______________
+
+self = <test_trim_imports.TestFinIndicatorsTrim object at 0x7ff41ad9ed50>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed1'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad64900>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed1')
+
+    def test_ascii_spaces_are_trimmed(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: padded name/industry/board_name land verbatim today."""
+        import main as main_mod
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        self._write_csv(
+            tmp_path / "RPT_LICO_FN_CPD.csv",
+            [
+                _fin_row(
+                    name=" 平安银行 ",
+                    industry=" 银行 ",
+                    board_name=" 主板 ",
+                ),
+                _fin_row(
+                    secucode="000002.SZ",
+                    report_date="2023-12-31",
+                    name=" 万科A ",
+                    industry=" 房地产 ",
+                    board_name="主板 ",
+                ),
+            ],
+        )
+    
+        main_mod._import_fin_indicators()
+    
+        dirty = _last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM fin_indicators WHERE "
+            "name <> TRIM(name) OR industry <> TRIM(industry) OR "
+            "board_name <> TRIM(board_name)"
+        ))
+>       assert dirty == "0", (
+            "name/industry/board_name must be trimmed, "
+            f"got {dirty} dirty row(s)"
+        )
+E       AssertionError: name/industry/board_name must be trimmed, got 2 dirty row(s)
+E       assert '2' == '0'
+E         
+E         - 0
+E         + 2
+
+tests/test_trim_imports.py:348: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import fin_indicators]
+______________ TestBalanceSheetTrim.test_ascii_spaces_are_trimmed ______________
+
+self = <test_trim_imports.TestBalanceSheetTrim object at 0x7ff41ad9f7d0>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed2'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad64860>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed2')
+
+    def test_ascii_spaces_are_trimmed(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: every declared text column must land trimmed, none verbatim."""
+        import importlib
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "f10.csv"
+        self._write_csv(csv_path, [_f10_row(self._header, **self.TRIM_EXPECTED)])
+    
+        importlib.import_module(self.MODULE).import_to_dolt(csv_path)
+    
+        dirty_where = " OR ".join(f"{c} <> TRIM({c})" for c in self.TEXT_COLS)
+        dirty = _last(dolt_sql_csv(
+            f"SELECT COUNT(*) FROM {self.TABLE} WHERE {dirty_where}"
+        ))
+>       assert dirty == "0", (
+            f"{self.TEXT_COLS} must all be trimmed of leading/trailing "
+            f"U+0020, got {dirty} dirty row(s)"
+        )
+E       AssertionError: ['SECURITY_NAME_ABBR', 'ORG_TYPE', 'REPORT_TYPE', 'REPORT_DATE_NAME', 'CURRENCY', 'OPINION_TYPE', 'LISTING_STATE'] must all be trimmed of leading/trailing U+0020, got 1 dirty row(s)
+E       assert '1' == '0'
+E         
+E         - 0
+E         + 1
+
+tests/test_trim_imports.py:479: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import balance_sheet]
+  Done: 1 rows
+________________ TestCashFlowTrim.test_ascii_spaces_are_trimmed ________________
+
+self = <test_trim_imports.TestCashFlowTrim object at 0x7ff41adc8260>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed3'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad65620>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed3')
+
+    def test_ascii_spaces_are_trimmed(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: every declared text column must land trimmed, none verbatim."""
+        import importlib
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "f10.csv"
+        self._write_csv(csv_path, [_f10_row(self._header, **self.TRIM_EXPECTED)])
+    
+        importlib.import_module(self.MODULE).import_to_dolt(csv_path)
+    
+        dirty_where = " OR ".join(f"{c} <> TRIM({c})" for c in self.TEXT_COLS)
+        dirty = _last(dolt_sql_csv(
+            f"SELECT COUNT(*) FROM {self.TABLE} WHERE {dirty_where}"
+        ))
+>       assert dirty == "0", (
+            f"{self.TEXT_COLS} must all be trimmed of leading/trailing "
+            f"U+0020, got {dirty} dirty row(s)"
+        )
+E       AssertionError: ['SECURITY_NAME_ABBR', 'ORG_TYPE', 'REPORT_TYPE', 'REPORT_DATE_NAME', 'CURRENCY', 'OPINION_TYPE'] must all be trimmed of leading/trailing U+0020, got 1 dirty row(s)
+E       assert '1' == '0'
+E         
+E         - 0
+E         + 1
+
+tests/test_trim_imports.py:479: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import cash_flow]
+  Done: 1 rows
+_________________ TestIncomeTrim.test_ascii_spaces_are_trimmed _________________
+
+self = <test_trim_imports.TestIncomeTrim object at 0x7ff41ad9fc80>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed4'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad65ee0>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_ascii_spaces_are_trimmed4')
+
+    def test_ascii_spaces_are_trimmed(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: every declared text column must land trimmed, none verbatim."""
+        import importlib
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "f10.csv"
+        self._write_csv(csv_path, [_f10_row(self._header, **self.TRIM_EXPECTED)])
+    
+        importlib.import_module(self.MODULE).import_to_dolt(csv_path)
+    
+        dirty_where = " OR ".join(f"{c} <> TRIM({c})" for c in self.TEXT_COLS)
+        dirty = _last(dolt_sql_csv(
+            f"SELECT COUNT(*) FROM {self.TABLE} WHERE {dirty_where}"
+        ))
+>       assert dirty == "0", (
+            f"{self.TEXT_COLS} must all be trimmed of leading/trailing "
+            f"U+0020, got {dirty} dirty row(s)"
+        )
+E       AssertionError: ['SECURITY_NAME_ABBR', 'ORG_TYPE', 'REPORT_TYPE', 'REPORT_DATE_NAME', 'CURRENCY', 'OPINION_TYPE'] must all be trimmed of leading/trailing U+0020, got 1 dirty row(s)
+E       assert '1' == '0'
+E         
+E         - 0
+E         + 1
+
+tests/test_trim_imports.py:479: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import income]
+  Done: 1 rows
+_______ TestInstitutionSurveyTrim.test_trailing_space_merges_same_group ________
+
+self = <test_trim_imports.TestInstitutionSurveyTrim object at 0x7ff41ad9e720>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_trailing_space_merges_sam0'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad64c20>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_trailing_space_merges_sam0')
+
+    def test_trailing_space_merges_same_group(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: '机构专用 ' and '机构专用' are the same investigating
+        institution — they must merge into ONE trimmed row (gk key
+        HEX(TRIM(RECEIVE_OBJECT)) groups them). Today they land as 2 rows."""
+        from fetch_institution_survey import import_to_dolt  # noqa: E402
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "svy.csv"
+        self._write_csv(
+            csv_path,
+            [
+                _svy_row(receive_object="机构专用 ", receive_way="电话会议 "),
+                _svy_row(receive_object="机构专用", receive_way="电话会议 "),
+            ],
+        )
+    
+        import_to_dolt(csv_path)
+    
+        count = _last(dolt_sql_csv(
+            "SELECT COUNT(*) FROM institution_survey WHERE symbol='SZ000001'"
+        ))
+>       assert count == "1", (
+            "'机构专用' and '机构专用 ' (U+0020) must collapse into one "
+            f"group, got {count} rows"
+        )
+E       AssertionError: '机构专用' and '机构专用 ' (U+0020) must collapse into one group, got 2 rows
+E       assert '2' == '1'
+E         
+E         - 1
+E         + 2
+
+tests/test_trim_imports.py:649: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import institution survey]
+___________ TestBlockTradeTrim.test_trailing_space_buyer_merges_rows ___________
+
+self = <test_trim_imports.TestBlockTradeTrim object at 0x7ff41adc8f50>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_trailing_space_buyer_merg0'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad65f80>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_trailing_space_buyer_merg0')
+
+    def test_trailing_space_buyer_merges_rows(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: two rows identical except buyer '华泰证券' vs '华泰证券 '
+        must collapse into one trimmed row (DISTINCT over TRIM(BUYER_NAME))."""
+        from fetch_block_trade import import_to_dolt  # noqa: E402
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "bt.csv"
+        self._write_csv(
+            csv_path,
+            [_bt_row(buyer="华泰证券"), _bt_row(buyer="华泰证券 ")],
+        )
+    
+        import_to_dolt(csv_path)
+    
+        count = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade"))
+>       assert count == "1", (
+            "rows differing only in buyer U+0020 padding must merge into "
+            f"one, got {count} rows"
+        )
+E       AssertionError: rows differing only in buyer U+0020 padding must merge into one, got 2 rows
+E       assert '2' == '1'
+E         
+E         - 1
+E         + 2
+
+tests/test_trim_imports.py:781: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import block_trade]
+__________ TestBlockTradeTrim.test_trailing_space_seller_merges_rows ___________
+
+self = <test_trim_imports.TestBlockTradeTrim object at 0x7ff41adc9310>
+dolt_env = (PosixPath('/tmp/pytest-of-skwy/pytest-8/test_trailing_space_seller_mer0'), <function dolt_env.<locals>.dolt_sql_csv at 0x7ff41ad66ca0>)
+tmp_path = PosixPath('/tmp/pytest-of-skwy/pytest-8/test_trailing_space_seller_mer0')
+
+    def test_trailing_space_seller_merges_rows(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """RED: same collapse for SELLER_NAME padding."""
+        from fetch_block_trade import import_to_dolt  # noqa: E402
+    
+        dolt_dir_, dolt_sql_csv = dolt_env
+        csv_path = tmp_path / "bt.csv"
+        self._write_csv(
+            csv_path,
+            [_bt_row(seller="国泰君安"), _bt_row(seller="国泰君安 ")],
+        )
+    
+        import_to_dolt(csv_path)
+    
+        count = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade"))
+>       assert count == "1", (
+            f"rows differing only in seller U+0020 padding must merge into "
+            f"one, got {count} rows"
+        )
+E       AssertionError: rows differing only in seller U+0020 padding must merge into one, got 2 rows
+E       assert '2' == '1'
+E         
+E         - 1
+E         + 2
+
+tests/test_trim_imports.py:806: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[import block_trade]
+=========================== short test summary info ============================
+FAILED tests/test_trim_imports.py::TestStockBasicTrim::test_ascii_spaces_are_trimmed
+FAILED tests/test_trim_imports.py::TestFinIndicatorsTrim::test_ascii_spaces_are_trimmed
+FAILED tests/test_trim_imports.py::TestBalanceSheetTrim::test_ascii_spaces_are_trimmed
+FAILED tests/test_trim_imports.py::TestCashFlowTrim::test_ascii_spaces_are_trimmed
+FAILED tests/test_trim_imports.py::TestIncomeTrim::test_ascii_spaces_are_trimmed
+FAILED tests/test_trim_imports.py::TestInstitutionSurveyTrim::test_trailing_space_merges_same_group
+FAILED tests/test_trim_imports.py::TestBlockTradeTrim::test_trailing_space_buyer_merges_rows
+FAILED tests/test_trim_imports.py::TestBlockTradeTrim::test_trailing_space_seller_merges_rows
+======================== 8 failed, 14 passed in 24.99s =========================
+
+================================================================================
+# GREEN verification (collectors TRIM implemented, ref #235)
+
+Run: cd collectors && uv run pytest tests/ -q
+Result: 351 passed (23 test_trim_imports incl. 9 former-RED + 328 existing) — exit 0
+Run: uv run ruff check *.py tests/
+Result: All checks passed
+
+Note: F10 HEX assertion target fixed (TRIM_EXPECTED are padded inputs; assert .strip()
+form). RED->GREEN confirmed: pre-fix 9 failures (dirty rows / unmerged groups), post-fix
+all 23 green — TRIM(col) AS col in stock_basic/fin_indicators/3 F10 tables,
+MAX(TRIM(...)) + HEX(TRIM(RECEIVE_OBJECT)) gk key in institution_survey,
+TRIM(BUYER_NAME)/TRIM(SELLER_NAME) in block_trade SELECT DISTINCT.

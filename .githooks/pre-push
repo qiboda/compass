@@ -70,6 +70,18 @@ fi
 
 # --- Issue reference validation ---
 
+# Batch-query the OPEN issue set once per push (single API call, ref #213)
+# and resolve every referenced issue locally. Fail-closed: if gh is
+# unavailable (GH_FAIL) or returns an empty set, reject the push.
+open_set=$(unset GITHUB_TOKEN 2>/dev/null; gh issue list --repo qiboda/compass --state open --json number --limit 5000 --jq '.[].number' 2>/dev/null || echo "GH_FAIL")
+
+if [ -z "$open_set" ] || [ "$open_set" = "GH_FAIL" ]; then
+    echo ""
+    echo "ERROR: push rejected — could not verify issue states (gh issue list failed or returned empty)."
+    echo ""
+    has_error=1
+fi
+
 while read -r local_ref local_oid remote_ref remote_oid; do
     # Skip branch deletion
     if [ "$local_oid" = "0000000000000000000000000000000000000000" ]; then
@@ -145,16 +157,14 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
 
     for n in $issues; do
-        state=$(unset GITHUB_TOKEN 2>/dev/null; gh issue view "$n" --repo qiboda/compass --json state --jq '.state' 2>/dev/null || echo "MISSING")
-
-        if [ "$state" != "OPEN" ]; then
+        if ! echo "$open_set" | grep -qx "$n"; then
             echo ""
-            echo "ERROR: push rejected — issue #$n is $state (must be OPEN)."
+            echo "ERROR: push rejected — issue #$n is not OPEN (must be OPEN)."
             echo ""
-            if [ "$state" = "MISSING" ]; then
-                echo "  Issue #$n does not exist. Create it with 'gh issue create'."
+            if [ "$open_set" = "GH_FAIL" ]; then
+                echo "  Cannot query GitHub (gh issue list failed)."
             else
-                echo "  Issue #$n is $state. Reopen it with 'gh issue reopen $n'."
+                echo "  Issue #$n is closed or does not exist. Reopen it or create it."
             fi
             echo ""
             has_error=1

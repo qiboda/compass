@@ -288,6 +288,28 @@ CREATE TABLE IF NOT EXISTS fin_cash_flow (
     PRIMARY KEY (symbol, report_date)
 )"""
 
+
+# Text columns to TRIM on import (issue #235): user-visible string fields that
+# can carry leading/trailing whitespace from EastMoney. Identifier/date columns
+# (SECUCODE, SECURITY_CODE, SECURITY_TYPE_CODE, ORG_CODE, NOTICE_DATE,
+# UPDATE_DATE) are intentionally left untrimmed.
+_TRIM_TEXT_COLS = frozenset({
+    "SECURITY_NAME_ABBR", "ORG_TYPE", "REPORT_TYPE", "REPORT_DATE_NAME",
+    "CURRENCY", "OPINION_TYPE",
+})
+
+
+def trim_select_cols() -> str:
+    """SELECT-side column list with text columns wrapped in TRIM(col) AS col.
+
+    Keeps the same order and names as COLS so the INSERT column list
+    ({COLS}) aligns positionally; numeric columns pass through untouched.
+    """
+    return ", ".join(
+        f"TRIM({col}) AS {col}" if col in _TRIM_TEXT_COLS else col
+        for col in COLS.split(", ")
+    )
+
 COLS = (
     "SECUCODE, SECURITY_CODE, SECURITY_NAME_ABBR, ORG_CODE, "
     "ORG_TYPE, REPORT_TYPE, REPORT_DATE_NAME, SECURITY_TYPE_CODE, "
@@ -702,7 +724,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
             INSERT IGNORE INTO {DOLT_TABLE} (symbol, report_date, {COLS})
             SELECT
                 CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-                CAST(REPORT_DATE AS DATE), {COLS}
+                CAST(REPORT_DATE AS DATE), {trim_select_cols()}
             FROM _tmp_cf
             WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                   IN (SELECT symbol FROM stock_basic)

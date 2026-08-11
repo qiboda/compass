@@ -146,7 +146,7 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
             INSERT IGNORE INTO {DOLT_TABLE} ({INSERT_COLS})
             SELECT DISTINCT
                 {symbol_expr}, DATE(TRADE_DATE), DEAL_PRICE, DEAL_VOLUME, DEAL_AMT,
-                BUYER_NAME, SELLER_NAME, PREMIUM_RATIO, CURDATE()
+                TRIM(BUYER_NAME), TRIM(SELLER_NAME), PREMIUM_RATIO, CURDATE()
             FROM _tmp_bt
             WHERE {symbol_expr} IN (SELECT symbol FROM stock_basic)
               AND DEAL_PRICE IS NOT NULL

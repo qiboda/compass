@@ -133,14 +133,14 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         ddl=DDL,
         insert_sql=f"""
             INSERT IGNORE INTO {DOLT_TABLE} (symbol, survey_date, {INSERT_COLS}, update_date)
-            SELECT MAX(s), MAX(d), MAX(o), MAX(st), MAX(u) FROM (
+            SELECT MAX(s), MAX(d), MAX(TRIM(o)), MAX(TRIM(st)), MAX(u) FROM (
                 SELECT
                     CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS s,
                     DATE(RECEIVE_START_DATE) AS d,
                     RECEIVE_OBJECT AS o,
                     RECEIVE_WAY_EXPLAIN AS st,
                     CURDATE() AS u,
-                    HEX(RECEIVE_OBJECT) AS gk
+                    HEX(TRIM(RECEIVE_OBJECT)) AS gk
                 FROM _tmp_svy
                 WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                       IN (SELECT symbol FROM stock_basic)

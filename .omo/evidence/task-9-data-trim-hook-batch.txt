@@ -1,0 +1,38 @@
+# task-9 data-trim-hook-batch — dirty-data count + GUI smoke (issue #235)
+
+Date: 2026-08-12
+Dolt repo: /data/compass-data/compass_data (branch main, working tree clean)
+
+## ASCII-space predicate (col <> TRIM(col) AND col IS NOT NULL)
+All 14 (table,column) probes = 0:
+  stock_basic: name/board/full_name/industry/region
+  fin_indicators: name/industry/board_name
+  fin_balance_sheet/fin_cash_flow/fin_income: SECURITY_NAME_ABBR
+  institution_survey: org_name
+  block_trade: buyer/seller
+
+## Wide-char predicate (col LIKE CONCAT('%', CHAR(0x3000), '%'))
+All 14 probes = 0 (no U+3000 full-width spaces anywhere)
+
+## Decision
+All counts 0 -> maintain "no re-import" (现库干净，与 handoff 决策一致).
+
+## GUI smoke
+Display server check: no X11/Wayland DISPLAY in this environment
+  -> SKIPPED (recorded per handoff.md:27-28: "本地无显示服务器时可跳过或以像素采样证据替代，如实记录").
+  GUI 题材 Tag 显示验证在用户本地环境执行；本次修复为 SQL 层 TRIM，落库无空格已由
+  pytest 351 用例 + dolt 双谓词计数验证，题材 Tag 拉伸空格根因（写入路径）已消除。
+
+## GUI smoke — follow-up (Parquet data source check)
+Display :1 socket exists but X server dead (xdpyinfo fails); Wayland session belongs to user
+  -> GUI 无法在本环境启动，冒烟跳过（已记录）。
+
+BUT: duckdb direct query of /data/compass-data/parquet_data/*.parquet (GUI's actual
+data source) reveals:
+  concept_member.concept_name: 11 dirty rows ('百日新高 ' x11) — STALE PARQUET
+  All other tables (stock_basic/fin_indicators/3 F10/institution_survey/block_trade): 0 dirty
+Dolt is clean (双谓词 0) — the parquet was exported BEFORE e706dfc's concept_member TRIM fix.
+=> GUI 题材 Tag 拉伸空格 symptoms in issue #235 originate from STALE PARQUET, not Dolt.
+=> Follow-up: re-run `compass-data export` (or import pipeline) to refresh parquet,
+   then GUI smoke can confirm no stretched tags. Data-pipeline refresh is out of this PR's
+   scope (code fix only) — recorded per handoff.md:27-28 honest-reporting rule.

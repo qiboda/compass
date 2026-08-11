@@ -207,6 +207,13 @@ SEPA 采集器说明：
 - `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照；导入时
   `TRIM(BOARD_NAME)` 去除 EastMoney 尾随空格，ref #217 验收）
 
+**采集器字符串统一 TRIM（issue #235）**：所有写 Dolt 的采集器在 INSERT SELECT 中
+对用户可见文本列统一 `TRIM()`（stock_basic 的 name/board/full_name/industry/region、
+fin_indicators 文本列、财务三表文本列、institution_survey 的 org_name/survey_type、
+block_trade 的 buyer/seller）。仅去 ASCII 空格（U+0020），全角空格 U+3000 保留
+（`TRIM()` 不剥离，Dolt 实证）。Dolt 现库脏数据计数为 0，无需重导；Parquet 为旧
+导出快照，若 GUI 仍见旧空格需重新 `export` 刷新。
+
 `fetch stock_basic` 现在运行 `fetch_stock_basic_official.py`，从三大交易所官网
 （SSE/SZSE/BSE）抓取股票基本信息，输出 `stock_basic_official.csv`（位于
 `/data/compass-data/csv/`）。旧的东财采集器
