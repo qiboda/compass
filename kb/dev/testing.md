@@ -301,6 +301,62 @@ compass-ui 的 dev-dependencies 必须同时包含 `eframe`（默认 features）
      toast/modal 的全部实例已随 #168/#171 移除，库内再无该模式。
 - **限制**：egui_dock 0.20 tab 按钮不暴露 AccessKit label（raw `ui.interact` + TextShape），无法 `get_by_label` 定位 —— tab 切换测试用程序化 `DockState::set_active_tab`，断言 tab 内容 widget。
 
+#### kittest Node API 限制（ref #217）
+
+kittest 查询/断言用的 `Node` 是基于 AccessKit 树的**查询视图**，不是组件
+对象——**没有** `label()` / `color()` / `side()` 等方法（曾误用导致编译
+失败，ref #217）。可用能力：
+
+- **文本**：`node.value()`（Label 等控件的文本值），不是 `label()`
+- **渲染属性**：`harness.output().shapes` 扫描 `Shape::Text`（galley job
+  sections 的 `text`/`galley.pos`/`color`）验证颜色/位置；或 `ctx` 查询
+  `response.rect` 做渲染级断言（见下）
+- **组件自定义属性**（如 Tag pill 的 side）：**不能**从 Node 直接读——
+  通过渲染断言（rect/像素）或组件暴露的测试钩子验证
+
+#### egui wrapped 布局陷阱：`Frame::show` 撑宽父级 max_rect（ref #217）
+
+`egui::Frame::show(ui, ...)` 会**撑宽父级 `max_rect`**（把自身 inner
+rect 宽度并进父容器可用宽度），破坏 wrapped 换行——Tag 类 pill 组件
+曾因此 35 个单行标签溢出 4 倍宽（ref #217）。**正确模式**
+（Tag 类 pill，ref #217 落地）：
+
+```rust
+// allocate_exact_size + painter 背景 + ui.put Label（保 accesskit）
+let (rect, _) = ui.allocate_exact_size(desired_size, Sense::hover());
+ui.painter().rect_filled(rect, rounding, color);   // 背景自己画
+ui.put(rect, egui::Label::new(text));              // 文本独立布局
+```
+
+`allocate_exact_size` 不给父级撑宽；`ui.put` 在固定 rect 内布局文本，
+不参与 wrapped 流式布局。
+
+#### 渲染断言 vs 字段断言（ref #226/#228）
+
+组件**宽度/尺寸/位置语义**用**渲染级断言**（`response.rect.width()`、
+`response.rect.min/max`），不用**字段级断言**（如 `side == 32.0`）——
+字段断言可能"全绿而渲染错位"（字段值对但布局没按预期生效）。
+GUI 冒烟同理：**组件尺寸语义必须以渲染输出为准**，不信任组件内部字段。
+
+#### GUI 冒烟：像素采样法（ref #226/#228）
+
+GUI 冒烟验证不依赖视觉模型"看起来对不对"，用客观像素证据：
+
+```sh
+# Wayland: grim；X11: import（注意参数顺序，ref #226）
+grim -o <output> screenshot.png        # Wayland
+import -window root screenshot.png     # X11
+
+# ImageMagick 直方图像素采样：验证颜色分布/区域颜色
+convert screenshot.png -crop WxH+X+Y -colors 5 txt:   # 采样区域主色
+convert screenshot.png -format %c -colors 5 histogram:info:
+```
+
+- 截图工具链：Wayland 用 `grim`（`xwininfo` 在 Wayland 无输出，ref #226）；
+  X11 用 `import`（注意 `-window root` 参数顺序）
+- 断言对象是**直方图/像素统计**（区域主色、颜色计数），不是人眼判图
+- 视觉模型无图像输入能力时（ref #226），像素采样是唯一客观证据路径
+
 ### Python 网络 mock（stub AsyncSession）
 
 EastMoney collector 测试用 `tests/conftest.py` 的 `make_stub_session` fixture（手写 stub，不用 respx —— curl-cffi 不被 respx/responses 支持）：

@@ -281,6 +281,18 @@ fidelity）并回写台账——evidence 落盘（`.omo/evidence/`）、台账�
 审查（子 issue 级 + PR 级完整 diff）是完成定义的一部分，不是可选项。"实现 commit
 全部提交" ≠ "plan 完成"；未核即声明即过度声称。
 
+**F1 evidence 与 HEAD 一致性自检（ref #181 教训）**：F-wave evidence 必须在
+**全部实现 commit 完成后一次性写**——中途写必然过期（ref #181 曾在 9 commits
+时写 F1 声称全部 ref，实际完成 14 commits，构成"过期声称"）。写 evidence 时
+自检三件事：
+
+1. **时机**：evidence 写于实现收尾后（全部实现 commit 已提交），不随实现
+   中途落盘
+2. **commit 计数可复核**：evidence 声称的 commit 数与实际一致
+   （`git log <base>..HEAD --format=%B` 逐条核对 ref 引用计数）
+3. **中途写必须补正**：如不得已中途写了 evidence（如分批次记录），收尾时
+   必须补正为最终状态（commit 数/日期与 HEAD 一致），并注明补正记录
+
 **Epic close**: PR 合并到 master 后，先关闭所有 sub-issues，再关闭 epic。
 在 epic 上记录总结 comment 列出所有完成的 sub-issues。
 
