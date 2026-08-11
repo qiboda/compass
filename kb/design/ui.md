@@ -35,7 +35,17 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 决定」的反向依赖；`apply_to_chart` 将 `ColorTokens.chart` 覆写为 egui-charts
 `ChartSemanticTokens`（薄封装，仅图表渲染侧）。
 
-主题持久化到 `~/.config/compass/config.toml` 的 `theme` 键（顶层）。
+主题持久化到 `~/.config/compass/config.toml` 的 `theme` 键（顶层）（ref #132）。
+切换后写回（`save_theme_config` 镜像 `save_language_config` 的读-改-写），写回失败仅
+`warn` 日志、切换仍即时生效；启动读取逻辑不变
+（`CompassTheme::from_config(&config.app.theme)`）。
+
+### 股票列表过滤（ref #71）
+
+标的可搜索选择器的数据来自 `stock_basic.parquet`，但**只显示当前上市 A 股**：
+`load_stock_list` 加载后按 `delist_date.is_none()` 过滤。该表按设计包含退市股与
+B 股（采集决策「including delisted」），过滤在 GUI 层完成，数据层
+`ParquetReader::load_all_stock_basics` 保持不变（SEPA/screener 共用）。
 
 ### 涨跌色（A 股惯例）
 

@@ -156,7 +156,8 @@ Phosphor 图标字形、简短消息，并在预设时长后自动消失。
 
 工具栏 **🎨** 下拉切换，即时应用于所有 UI 元素（含按钮文字颜色，ref #217 验收）；
 切换成功弹出 Info toast。
-当前主题持久化到 `~/.config/compass/config.toml` 的 `theme` 键（顶层），下次启动恢复。
+当前主题持久化到 `~/.config/compass/config.toml` 的 `theme` 键（顶层），下次启动恢复；
+写回失败（config.toml 不存在/只读/损坏）时仅记录 warn 日志，主题切换仍即时生效（ref #132）。
 
 ### 语言切换
 
@@ -251,3 +252,5 @@ cargo run --bin compass-data -- import
 要使股票下拉框有数据，`stock_basic.parquet` 必须存在于 parquet 数据目录中
 （默认：`parquet_data/`）。该文件由 `import-compass --table stock_basic` 创建；
 缺失时启动会弹出「数据未就绪」引导 Modal。
+下拉列表只显示**当前上市 A 股**（`delist_date` 为空）：已退市股票与 B 股被过滤（ref #71）——
+`stock_basic` 表本身按设计包含退市股与 B 股，GUI 在加载时过滤。
