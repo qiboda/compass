@@ -170,6 +170,20 @@ for hook in "$REPO_ROOT/.githooks/commit-msg" "$REPO_ROOT/.githooks/pre-push"; d
     fi
 done
 
+# Mirror-drift guard (ref #213): the batch gh issue list query must be present
+# with the exact flags in BOTH hooks — prevents fixing one and forgetting the
+# other (the per-issue gh issue view loop was inline-duplicated before #213).
+BATCH_QUERY_FRAGMENT='gh issue list --repo qiboda/compass --state open --json number --limit 5000 --jq'
+
+for hook in "$REPO_ROOT/.githooks/commit-msg" "$REPO_ROOT/.githooks/pre-push"; do
+    if grep -Fq "$BATCH_QUERY_FRAGMENT" "$hook"; then
+        echo "PASS: batch-query drift guard — gh issue list flags present in $(basename "$hook")"
+    else
+        echo "FAIL: batch-query drift guard — gh issue list flags MISSING from $(basename "$hook")"
+        FAIL=1
+    fi
+done
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
     echo "ALL TESTS PASSED"
