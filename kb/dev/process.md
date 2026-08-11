@@ -321,6 +321,33 @@ cargo fmt --check                       # verify formatting
 cargo clippy -- -D warnings             # strict lint
 ```
 
+### 数据管线验证前环境预检（磁盘 + 小样本，ref #202/#136）
+
+数据管线验证/QA 曾两次因环境问题中断，浪费验证波次——验证开始前先做两项预检：
+
+1. **磁盘预检**：大分区（/data）易被**并发编译进程**临时填满（进程结束后
+   自动释放），导致 `cargo test`/`llvm-cov` 中途失败。验证前：
+
+   ```sh
+   df -h /data        # 确认可用空间充足（如 <1G 先等编译进程结束/清理）
+   ```
+
+   ref #202 实例：/data 分区 100%（64K 可用）中断 cargo test——根因是并发
+   编译占用而非真实写满，进程退出后自动释放。
+
+2. **大库小样本 QA**：18M+ 行 `investment_data` 真实库的 CLI 手动 QA 不要
+   直接跑生产数据仓库——即使 `--limit 5`，某些路径（如 symbols 全量枚举）
+   仍可能超 300s。改用**临时小 Dolt 库**验证同一二进制路径：
+
+   ```sh
+   # 临时小库：dolt init + 完整 schema fixture（少量行），
+   # 跑同一 CLI 命令验证逻辑路径，避免真实大库超时
+   ```
+
+   ref #136 实例：真实 import 对 18M+ 行库跑 `--limit 5` 仍超 300s——改用
+   临时小 Dolt 库后同一验证秒级完成。fixture 测试覆盖不到的数据级问题
+   （重复行、格式、单位口径）用小样本真实数据冒烟，不依赖全量生产库。
+
 ### CI 缓存策略（rust-cache）
 
 CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save + 分组缓存**策略：
