@@ -63,11 +63,11 @@ def _import_stock_basic() -> None:
     sql = """
         INSERT INTO stock_basic (symbol, ts_code, code, name, list_date,
             delist_date, board, full_name, total_share, industry, region, update_date)
-        SELECT symbol, ts_code, code, name, list_date,
+        SELECT symbol, ts_code, code, TRIM(name), list_date,
             delist_date,
-            board, full_name,
+            TRIM(board), TRIM(full_name),
             total_share,
-            industry, region, update_date
+            TRIM(industry), TRIM(region), update_date
         FROM _tmp_sb
     """
     dolt_sql(sql)
@@ -158,14 +158,14 @@ def _import_fin_indicators() -> int:
         SELECT
             CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
             REPORTDATE, UPDATE_DATE, NOTICE_DATE,
-            DATATYPE, QDATE, EITIME, DATAYEAR, DATEMMDD,
-            SECUCODE, SECURITY_NAME_ABBR, TRADE_MARKET, TRADE_MARKET_CODE, TRADE_MARKET_ZJG,
-            SECURITY_TYPE, SECURITY_TYPE_CODE, PUBLISHNAME,
-            BOARD_CODE, BOARD_NAME, ORI_BOARD_CODE, ORG_CODE, ISNEW,
+            TRIM(DATATYPE), TRIM(QDATE), EITIME, DATAYEAR, TRIM(DATEMMDD),
+            SECUCODE, TRIM(SECURITY_NAME_ABBR), TRIM(TRADE_MARKET), TRADE_MARKET_CODE, TRIM(TRADE_MARKET_ZJG),
+            TRIM(SECURITY_TYPE), SECURITY_TYPE_CODE, TRIM(PUBLISHNAME),
+            BOARD_CODE, TRIM(BOARD_NAME), ORI_BOARD_CODE, ORG_CODE, ISNEW,
             BASIC_EPS, DEDUCT_BASIC_EPS, TOTAL_OPERATE_INCOME, PARENT_NETPROFIT, WEIGHTAVG_ROE, BPS,
             MGJYXJJE, XSMLL,
             YSTZ, SJLTZ, YSHZ, SJLHZ,
-            ZXGXL, ASSIGNDSCRPT, PAYYEAR
+            ZXGXL, TRIM(ASSIGNDSCRPT), TRIM(PAYYEAR)
         FROM _tmp_fin
         WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
               IN (SELECT symbol FROM stock_basic)""",

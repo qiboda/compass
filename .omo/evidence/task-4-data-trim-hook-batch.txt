@@ -1,0 +1,102 @@
+==================================================================
+TASK 4 EVIDENCE - REQUIREMENT-TEST (gate step 4): C1/C2 contract
+review + regression verification (adversarial tests + supplements)
+date: 2026-08-12
+==================================================================
+
+########## 1. C1 CONTRACT REVIEW (plan todo 5/6/7/8 vs test_trim_imports.py) ##########
+
+CONTRACT ITEM -> STATUS (evidence: file::test)
+a. stock_basic 5 cols (name/board/full_name/industry/region)
+   -> [已覆盖] test_trim_imports.py::TestStockBasicTrim::test_ascii_spaces_are_trimmed
+      (dirty-count over all 5 cols + byte-exact HEX of all 5 for SH600000)
+b. fin_indicators text cols - PLAN TODO 6 REQUIRES 11 COLS:
+   name(<-SECURITY_NAME_ABBR), industry(<-PUBLISHNAME), board_name(<-BOARD_NAME),
+   trade_market, trade_market_zjg, security_type, data_type, qdate, date_label,
+   dividend_plan, dividend_year
+   -> name/industry/board_name [已覆盖] TestFinIndicatorsTrim::test_ascii_spaces_are_trimmed
+   -> 8 SECONDARY COLS [缺口-已补] TestFinIndicatorsTrim::test_additional_text_columns_are_trimmed
+      (NEW: trade_market/trade_market_zjg/security_type/data_type/qdate/date_label/
+       dividend_plan/dividend_year, dirty-count + byte-exact HEX, RED confirmed)
+c. fin_balance_sheet 7 cols INCL LISTING_STATE
+   -> [已覆盖] TestBalanceSheetTrim (TEXT_COLS = 6 + LISTING_STATE; TRIM_EXPECTED
+      includes LISTING_STATE='上市'; RED confirmed)
+d. fin_cash_flow 6 cols NO LISTING_STATE
+   -> [已覆盖] TestCashFlowTrim (TEXT_COLS = 6, no LISTING_STATE; RED confirmed)
+e. fin_income 6 cols NO LISTING_STATE
+   -> [已覆盖] TestIncomeTrim (TEXT_COLS = 6, no LISTING_STATE; RED confirmed)
+f. institution_survey org_name(<-TRIM(RECEIVE_OBJECT)) + survey_type(<-TRIM(RECEIVE_WAY_EXPLAIN))
+   + gk key = HEX(TRIM(RECEIVE_OBJECT))
+   -> [已覆盖] TestInstitutionSurveyTrim::test_trailing_space_merges_same_group
+      ('机构专用 '/'机构专用' collapse to 1 row + HEX(org_name)=HEX('机构专用')
+      + HEX(survey_type)=HEX('电话会议'); RED confirmed)
+g. block_trade buyer(<-TRIM(BUYER_NAME)) + seller(<-TRIM(SELLER_NAME))
+   -> [已覆盖] TestBlockTradeTrim::test_trailing_space_buyer_merges_rows AND
+      ::test_trailing_space_seller_merges_rows (DISTINCT-merge + HEX; RED confirmed)
+h. U+3000 characterization (assert PRESERVED, not stripped) - per-table >=1 case
+   -> [已覆盖] stock_basic, fin_indicators, all 3 F10 tables, institution_survey,
+      block_trade each have test_fullwidth_space_is_preserved / *_stay_distinct;
+      ALL PASS pre-fix (empirically: dolt TRIM('abc\u3000') -> hex 6162633000, U+3000 kept)
+i. empty/whitespace-only -> NULL boundary
+   -> [已覆盖] every table has a *_becomes_null test; ALL PASS pre-fix
+      (empirically verified: -u CSV import converts '' and '   ' cells to NULL)
+j. skip symbol/code/date cols, skip dragon_list.seat_type
+   -> [已覆盖] no test asserts TRIM on symbol/ts_code/code/list_date/delist_date;
+      no seat_type test exists (correct - Python-derived enum, plan Must-NOT)
+
+ADVERSARIAL ASSERTION ERRORS FOUND: NONE.
+- U+3000 assertions correctly assert PRESERVED (not stripped) - matches plan lock.
+- MAX-over-NULL -> '' and DISTINCT-NULL collapse claims empirically confirmed
+  (test_empty_receive_object_lands_empty_string, test_empty_buyer_lands_single_empty_string PASS).
+- NOTE: test DDL _FIN_INDICATORS_DDL fixed to match PRODUCTION DDL (main.py):
+  qdate DATE->VARCHAR(8), dividend_year INT->VARCHAR(10), data_type/trade_market/etc widths
+  aligned - the original DDL mirrored test_main.py's looser copy, which would have made
+  qdate/dividend_year TRIM assertions impossible (type mismatch). Existing tests unaffected.
+
+########## 2. C2 CONTRACT REVIEW (see task-1 evidence append) ##########
+Summary: complete after j2 supplement. pre-push-no-ci-check-test.sh:53 updated (RED confirmed,
+rc=1). 29 existing hook cases PASS.
+
+########## 3. REGRESSION RUNS (2026-08-12) ##########
+
+[3.1] cd collectors && uv run pytest tests/ -q
+Result: 9 failed, 342 passed
+All 9 failures = test_trim_imports.py TRIM RED tests (8 adversarial + 1 supplemental):
+  FAILED test_trim_imports.py::TestStockBasicTrim::test_ascii_spaces_are_trimmed
+  FAILED test_trim_imports.py::TestFinIndicatorsTrim::test_ascii_spaces_are_trimmed
+  FAILED test_trim_imports.py::TestFinIndicatorsTrim::test_additional_text_columns_are_trimmed  (NEW)
+  FAILED test_trim_imports.py::TestBalanceSheetTrim::test_ascii_spaces_are_trimmed
+  FAILED test_trim_imports.py::TestCashFlowTrim::test_ascii_spaces_are_trimmed
+  FAILED test_trim_imports.py::TestIncomeTrim::test_ascii_spaces_are_trimmed
+  FAILED test_trim_imports.py::TestInstitutionSurveyTrim::test_trailing_space_merges_same_group
+  FAILED test_trim_imports.py::TestBlockTradeTrim::test_trailing_space_buyer_merges_rows
+  FAILED test_trim_imports.py::TestBlockTradeTrim::test_trailing_space_seller_merges_rows
+=> 342 pre-existing tests UNBROKEN (was 342 before, still 342 passing).
+
+[3.2] bash scripts/tests/hook-standalone-ref-test.sh -> rc=0, 17 PASS
+[3.3] bash scripts/tests/pre-push-ref-regex-test.sh    -> rc=0, 12 PASS
+      (17+12 = 29 existing hook cases, ALL PASS as required)
+[3.4] bash scripts/tests/pre-push-no-ci-check-test.sh  -> rc=1, 9 PASS 1 FAIL
+      (FAIL: 'ref #N validation' expects 'gh issue list', hook still has 'gh issue view' = RED)
+[3.5] bash scripts/tests/gh-issue-list-test.sh         -> rc=1, 8 PASS 14 FAIL
+      (RED: hook unchanged; 14 FAILs = accept-path scenarios + exact-args checks + view-guards.
+       j2 supplement PASSES (reject semantics identical pre-fix), locks GREEN behavior)
+
+########## 4. SUPPLEMENTED TESTS (this agent) ##########
+1. collectors/tests/test_trim_imports.py:
+   - _FIN_INDICATORS_DDL aligned to production main.py DDL (qdate VARCHAR(8),
+     dividend_year VARCHAR(10), widths: data_type VARCHAR(20), industry VARCHAR(50),
+     trade_market VARCHAR(20), trade_market_zjg VARCHAR(10), security_type VARCHAR(10),
+     board_code VARCHAR(10), ori_board_code VARCHAR(10), org_code VARCHAR(20),
+     date_label VARCHAR(10), dividend_plan TEXT)
+   - _fin_row extended with 8 secondary text-column params
+   - TestFinIndicatorsTrim::test_additional_text_columns_are_trimmed (RED, 1 case)
+2. scripts/tests/gh-issue-list-test.sh:
+   - scenario j2 'pre-push: partial match rejected (one of three not open)' (1 case)
+
+########## 5. VERIFICATION COMMANDS + EXPECTED/ACTUAL ##########
+cd collectors && uv run pytest tests/ -q        | expected 8..9 RED, 342 PASS | actual 9 RED, 342 PASS
+bash scripts/tests/hook-standalone-ref-test.sh   | rc=0                        | rc=0 (17 PASS)
+bash scripts/tests/pre-push-ref-regex-test.sh    | rc=0                        | rc=0 (12 PASS)
+bash scripts/tests/pre-push-no-ci-check-test.sh  | rc!=0 (RED)                 | rc=1 (RED)
+bash scripts/tests/gh-issue-list-test.sh         | rc!=0 (RED)                 | rc=1 (RED)
