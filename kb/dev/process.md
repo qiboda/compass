@@ -80,6 +80,20 @@ feat, fix, test, refactor, docs, chore — all included.
 
 钩子通过 `git config core.hooksPath .githooks` 激活（已配置）。
 
+**OPEN 校验方式（ref #213）**：commit-msg 与 pre-push 不再逐 issue 调
+`gh issue view`（无界 API 调用引发限流误报），改为**单次批量查询**：
+
+```bash
+open_set=$(unset GITHUB_TOKEN 2>/dev/null; gh issue list --repo qiboda/compass \
+    --state open --json number --limit 5000 --jq '.[].number' 2>/dev/null || echo "GH_FAIL")
+```
+
+一次拉取全部 OPEN issue 号后，用 `echo "$open_set" | grep -qx "$n"` 本地查集。
+**fail-closed 语义**：`gh issue list` 失败（GH_FAIL）或返回空集时拒绝 commit/push。
+`--limit 5000` 覆盖仓库全部 OPEN issues（当前 ~17 个，余量充足）；若未来超限需
+重新评估分页策略。行为测试见 `scripts/tests/gh-issue-list-test.sh`（fake gh 注入
+PATH，精确断言命令参数与 OPEN 判定）。
+
 ## OpenCode 工作流
 
 完整流程由 **`skwy-workflow` skill** 强制执行（plan → gate → test-first →

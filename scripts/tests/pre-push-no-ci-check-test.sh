@@ -50,7 +50,7 @@ check_present() {
 check_present "cargo fmt gate"      'cargo fmt --check'
 check_present "cargo clippy gate"   'cargo clippy -- -D warnings'
 check_present "cargo doc gate"      'cargo doc --no-deps'
-check_present "ref #N validation"   'gh issue view'
+check_present "ref #N validation"   'gh issue list'
 check_present "has_error exit path" 'has_error -ne 0'
 
 echo ""

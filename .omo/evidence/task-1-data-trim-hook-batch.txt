@@ -1,0 +1,336 @@
+==================================================================
+RED RUN (hooks UNCHANGED - target: ref #213 batch gh issue list)
+date: 2026-08-11T15:43:34Z
+==================================================================
+
+########## 1. bash scripts/tests/gh-issue-list-test.sh ##########
+=== commit-msg ===
+FAIL: commit-msg: open issue #213 accepted — expected accept (rc=0), got rc=1
+    
+    ERROR: commit rejected — issue #213 is MISSING (must be OPEN).
+    
+      Issue #213 does not exist. Create it with 'gh issue create'.
+FAIL: commit-msg: exact batch-list invocation (open case) — hook did not issue the exact batch list call (arg-for-arg)
+  --- expected ---
+  CALL_START
+  issue
+  list
+  --repo
+  qiboda/compass
+  --state
+  open
+  --json
+  number
+  --limit
+  5000
+  --jq
+  .[].number
+  --- recorded (/tmp/tmp.BCHVP6FYqL/log.1) ---
+  CALL_START
+  issue
+  view
+  213
+  --repo
+  qiboda/compass
+  --json
+  state
+  --jq
+  .state
+FAIL: commit-msg: exactly one gh issue list call (open case) — expected exactly 1 gh issue list call, got 0
+    CALL_START
+    issue
+    view
+    213
+    --repo
+    qiboda/compass
+    --json
+    state
+    --jq
+    .state
+FAIL: commit-msg: two open issues accepted — one batch call — expected accept (rc=0), got rc=1
+    
+    ERROR: commit rejected — issue #213 is MISSING (must be OPEN).
+    
+      Issue #213 does not exist. Create it with 'gh issue create'.
+FAIL: commit-msg: exact batch-list invocation (multi-issue) — hook did not issue the exact batch list call (arg-for-arg)
+  --- expected ---
+  CALL_START
+  issue
+  list
+  --repo
+  qiboda/compass
+  --state
+  open
+  --json
+  number
+  --limit
+  5000
+  --jq
+  .[].number
+  --- recorded (/tmp/tmp.BCHVP6FYqL/log.2) ---
+  CALL_START
+  issue
+  view
+  213
+  --repo
+  qiboda/compass
+  --json
+  state
+  --jq
+  .state
+FAIL: commit-msg: exactly one gh issue list call (multi-issue) — expected exactly 1 gh issue list call, got 0
+    CALL_START
+    issue
+    view
+    213
+    --repo
+    qiboda/compass
+    --json
+    state
+    --jq
+    .state
+PASS: commit-msg: issue not in open set rejected (closed/missing) (rejected rc=1)
+PASS: commit-msg: partial match rejected (one of two not open) (rejected rc=1)
+PASS: commit-msg: gh failure rejects (fail-closed) (rejected rc=1)
+PASS: commit-msg: empty open set rejects (fail-closed) (rejected rc=1)
+=== pre-push ===
+FAIL: pre-push: open issue #213 accepted — expected accept (rc=0), got rc=1
+    pre-push: cargo fmt --check...
+    pre-push: cargo clippy -- -D warnings...
+    pre-push: cargo doc --no-deps (must be warning-free)...
+    
+    ERROR: push rejected — issue #213 is MISSING (must be OPEN).
+    
+      Issue #213 does not exist. Create it with 'gh issue create'.
+FAIL: pre-push: exact batch-list invocation (open case) — hook did not issue the exact batch list call (arg-for-arg)
+  --- expected ---
+  CALL_START
+  issue
+  list
+  --repo
+  qiboda/compass
+  --state
+  open
+  --json
+  number
+  --limit
+  5000
+  --jq
+  .[].number
+  --- recorded (/tmp/tmp.BCHVP6FYqL/log.7) ---
+  CALL_START
+  issue
+  view
+  213
+  --repo
+  qiboda/compass
+  --json
+  state
+  --jq
+  .state
+FAIL: pre-push: exactly one gh issue list call (open case) — expected exactly 1 gh issue list call, got 0
+    CALL_START
+    issue
+    view
+    213
+    --repo
+    qiboda/compass
+    --json
+    state
+    --jq
+    .state
+FAIL: pre-push: 3 issues across commits — one batch call — expected accept (rc=0), got rc=1
+    pre-push: cargo fmt --check...
+    pre-push: cargo clippy -- -D warnings...
+    pre-push: cargo doc --no-deps (must be warning-free)...
+    
+    ERROR: push rejected — issue #211 is MISSING (must be OPEN).
+    
+      Issue #211 does not exist. Create it with 'gh issue create'.
+    
+    
+    ERROR: push rejected — issue #213 is MISSING (must be OPEN).
+    
+      Issue #213 does not exist. Create it with 'gh issue create'.
+    
+    
+    ERROR: push rejected — issue #96 is MISSING (must be OPEN).
+    
+      Issue #96 does not exist. Create it with 'gh issue create'.
+FAIL: pre-push: exact batch-list invocation (3 issues) — hook did not issue the exact batch list call (arg-for-arg)
+  --- expected ---
+  CALL_START
+  issue
+  list
+  --repo
+  qiboda/compass
+  --state
+  open
+  --json
+  number
+  --limit
+  5000
+  --jq
+  .[].number
+  --- recorded (/tmp/tmp.BCHVP6FYqL/log.8) ---
+  CALL_START
+  issue
+  view
+  211
+  --repo
+  qiboda/compass
+  --json
+  state
+  --jq
+  .state
+  CALL_START
+  issue
+  view
+  213
+  --repo
+  qiboda/compass
+  --json
+  state
+  --jq
+  .state
+  CALL_START
+  issue
+  view
+  96
+  --repo
+  qiboda/compass
+  --json
+  state
+  --jq
+  .state
+FAIL: pre-push: exactly one gh issue list call (3 issues) — expected exactly 1 gh issue list call, got 0
+    CALL_START
+    issue
+    view
+    211
+    --repo
+    qiboda/compass
+    --json
+    state
+    --jq
+    .state
+    CALL_START
+    issue
+    view
+    213
+    --repo
+    qiboda/compass
+    --json
+    state
+    --jq
+    .state
+    CALL_START
+    issue
+    view
+    96
+    --repo
+    qiboda/compass
+    --json
+    state
+    --jq
+    .state
+PASS: pre-push: issue not open rejected (rejected rc=1)
+PASS: pre-push: gh failure rejects (fail-closed) (rejected rc=1)
+PASS: pre-push: empty open set rejects (fail-closed) (rejected rc=1)
+=== regression guards: per-issue gh issue view loop must not return ===
+FAIL: guard — commit-msg still contains per-issue 'gh issue view' (batch list required, ref #213)
+FAIL: guard — pre-push still contains per-issue 'gh issue view' (batch list required, ref #213)
+
+SOME TESTS FAILED
+exit=1
+
+########## 2. bash scripts/tests/pre-push-no-ci-check-test.sh ##########
+PASS: no gh run list --branch master (removed)
+PASS: no bare gh run usage (CI check's only source) (removed)
+PASS: no CI_STATUS variable (removed)
+PASS: no 'Fix CI before pushing' hint (removed)
+PASS: no 'checking latest CI on master' echo (removed)
+PASS: cargo fmt gate (preserved)
+PASS: cargo clippy gate (preserved)
+PASS: cargo doc gate (preserved)
+FAIL: ref #N validation — expected marker missing: gh issue list
+PASS: has_error exit path (preserved)
+
+SOME TESTS FAILED
+exit=1
+
+==================================================================
+GREEN SIMULATION (target-implementation hook copies in /tmp)
+HOOK_COMMIT_MSG=/tmp/commit-msg-new HOOK_PRE_PUSH=/tmp/pre-push-new
+==================================================================
+=== commit-msg ===
+PASS: commit-msg: open issue #213 accepted (accepted)
+PASS: commit-msg: exact batch-list invocation (open case) (exact single batch-list invocation)
+PASS: commit-msg: exactly one gh issue list call (open case) (exactly one gh issue list call)
+PASS: commit-msg: two open issues accepted — one batch call (accepted)
+PASS: commit-msg: exact batch-list invocation (multi-issue) (exact single batch-list invocation)
+PASS: commit-msg: exactly one gh issue list call (multi-issue) (exactly one gh issue list call)
+PASS: commit-msg: issue not in open set rejected (closed/missing) (rejected rc=1)
+PASS: commit-msg: partial match rejected (one of two not open) (rejected rc=1)
+PASS: commit-msg: gh failure rejects (fail-closed) (rejected rc=1)
+PASS: commit-msg: empty open set rejects (fail-closed) (rejected rc=1)
+=== pre-push ===
+PASS: pre-push: open issue #213 accepted (accepted)
+PASS: pre-push: exact batch-list invocation (open case) (exact single batch-list invocation)
+PASS: pre-push: exactly one gh issue list call (open case) (exactly one gh issue list call)
+PASS: pre-push: 3 issues across commits — one batch call (accepted)
+PASS: pre-push: exact batch-list invocation (3 issues) (exact single batch-list invocation)
+PASS: pre-push: exactly one gh issue list call (3 issues) (exactly one gh issue list call)
+PASS: pre-push: issue not open rejected (rejected rc=1)
+PASS: pre-push: gh failure rejects (fail-closed) (rejected rc=1)
+PASS: pre-push: empty open set rejects (fail-closed) (rejected rc=1)
+=== regression guards: per-issue gh issue view loop must not return ===
+PASS: guard — commit-msg-new has no 'gh issue view'
+PASS: guard — pre-push-new has no 'gh issue view'
+
+ALL TESTS PASSED
+exit=0
+
+==================================================================
+C2 CONTRACT REVIEW (requirement-test agent, task 4 wave) - APPENDED
+date: 2026-08-12
+==================================================================
+
+Reviewer: skwy-requirement-test (independent QA of adversarial tests)
+Files: .omo/plans/data-trim-hook-batch.md (todo 1 contract), scripts/tests/gh-issue-list-test.sh,
+       scripts/tests/pre-push-no-ci-check-test.sh, .githooks/commit-msg, .githooks/pre-push
+
+CONTRACT ITEM -> STATUS (evidence)
+1. commit-msg + pre-push BOTH switch to batch query -> [已覆盖] gh-issue-list-test.sh:
+   check_commit_msg + check_pre_push scenarios cover both hooks; guard loop (m) asserts
+   neither hook contains 'gh issue view' (two files loop).
+2. pre-push-no-ci-check-test.sh:53 assertion updated ('gh issue view' -> 'gh issue list')
+   -> [已覆盖] git diff HEAD shows the change; script FAILS (rc=1) against unchanged hook = RED.
+3. exact batch invocation arg-for-arg (incl. --repo qiboda/compass, --limit 5000, --jq)
+   -> [已覆盖] check_exact_list_args compares full CALL_START+args log against EXPECTED_LIST_LOG
+   (whole-log equality, no substring relaxation).
+4. exactly ONE gh issue list call per commit-msg run / per push -> [已覆盖] check_one_batch_call.
+5. OPEN accepted / non-OPEN & MISSING rejected -> [已覆盖] commit-msg a,c,d; pre-push h,i,j.
+6. gh failure fail-closed -> [已覆盖] commit-msg f; pre-push k (FAKE_GH_LIST_EXIT=1).
+7. empty open set fail-closed -> [已覆盖] commit-msg g; pre-push l (empty output).
+8. partial-match reject (one of N refs not open) -> commit-msg e [已覆盖]; pre-push [缺口-已补]:
+   added scenario j2 'pre-push: partial match rejected (one of three not open)' with
+   open set {213,96} and refs 213/96/211 -> must reject (rc != 0). Passes against unchanged
+   hook (reject semantics identical), locks fail-closed behavior for GREEN.
+9. regression: 29 existing hook cases unbroken -> [已覆盖] hook-standalone-ref-test.sh 17 PASS
+   + pre-push-ref-regex-test.sh 12 PASS = 29 PASS (rc=0 each), see task-4 evidence.
+
+CONCLUSION: C2 contract coverage complete after j2 supplement. No adversarial assertion errors
+found in gh-issue-list-test.sh. NOTE: mirror-drift guard on the batch fragment in
+hook-standalone-ref-test.sh (plan todo 4) is an implementation-side task, not a test gap
+here - gh-issue-list-test.sh guard (m) already covers the per-issue-loop regression.
+
+================================================================================
+# GREEN verification (hooks implemented, ref #213)
+
+Run: bash scripts/tests/gh-issue-list-test.sh (after commit-msg + pre-push batch impl)
+Result: 24 PASS (incl. supplemental j2 partial-match) — ALL TESTS PASSED, exit 0
+Run: bash scripts/tests/hook-standalone-ref-test.sh && pre-push-ref-regex-test.sh
+Result: 29 existing cases PASS
+Run: bash scripts/tests/pre-push-no-ci-check-test.sh
+Result: PASS (ref #N validation marker = 'gh issue list')
