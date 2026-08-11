@@ -312,6 +312,19 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
 并无条件追加 `symbol NOT IN (6 个指数代码)` 过滤（即使 `--symbols` 显式指定指数也剔除）；
 symbol 枚举查询（symbols.txt）同步过滤。Dolt 源表 `final_a_stock_eod_price` 保持原样（手/千元）。
 
+**采集器字符串 TRIM（issue #235）**：collectors 写 Dolt 的 INSERT SELECT 中对用户可见
+文本列统一包 `TRIM(col) AS col`（覆盖 stock_basic / fin_indicators / 财务三表 /
+institution_survey / block_trade；与 concept_member 先例 `TRIM(BOARD_NAME)` 一致）。
+语义要点：
+- **仅文本列**，标识符列（SECUCODE/SECURITY_CODE/ORG_CODE 等）与日期列不 TRIM；
+- **仅去 ASCII 空格 U+0020**——`TRIM()` 不剥离全角空格 U+3000（Dolt 实证），脏数据
+  检测需叠加 `LIKE CONCAT('%', CHAR(0x3000), '%')` 宽字符谓词；
+- **财务三表列清单逐表独立**——LISTING_STATE 仅存在于 balance_sheet；
+- institution_survey 的分组键为 `HEX(TRIM(RECEIVE_OBJECT))`（gk 同步 TRIM 才能合并
+  'A'/'A ' 组）；
+- 回归测试：`collectors/tests/test_trim_imports.py`（RED→GREEN，含 U+3000
+  characterization 锁定盲区）。
+
 ## 错误处理
 
 ### DataError 枚举
@@ -395,3 +408,10 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 财务三表导入语义（ref #202，修正 ref #160） | merge 追加 / replace 原子替换 | **replace（全表原子重建）**：旧表 rename aside → DDL 建新表 → INSERT SELECT → 失败回滚 | F10 新 schema 与旧 DMSK 字段集不兼容，merge（CREATE IF NOT EXISTS + INSERT IGNORE）会保留旧结构表；本次为 schema 变更后的一次性全量重抓（2020 至今，无增量窗口），replace 匹配重建契约；未来增量恢复 merge | merge 无法重建新 schema 表；增量窗口 + replace 会丢历史（ref #160 教训），但本次是全量重建非增量窗口 |
 | 财务三表临时表导入（ref #202） | Dolt `-c` 推断 / 显式宽 schema + `create_sql` | **显式宽 schema**（`_TMP_INC_DDL`/`_TMP_BS_DDL`/`_TMP_CF_DDL`，203-319 列全字段 + REPORT_DATE VARCHAR） | Dolt `-c` CSV 导入推断行尺寸上限 65504 字节，203+ 列真实 CSV 溢出（实测 income 203 列 80032 字节报错）；显式 DDL + `dolt table import -u` 绕开限制，与 institution_survey 长文本表同模式 | `-c` 推断在宽表上静默失败，无法导入真实 F10 数据 |
 | 财务三表 REPORT_DATE 处理（ref #202） | 裸插 / CAST | `CAST(REPORT_DATE AS DATE)` | F10 API 返回 `"2024-12-31 00:00:00"` 带时间格式，显式 CAST 入 DATE 列避免依赖宽松模式隐式截断 | 裸插依赖 Dolt 宽松模式，行为隐式 |
+| 采集器字符串 TRIM（issue #235） | Python strip / SQL 层 TRIM / 不处理 | **SQL 层 TRIM**：写 Dolt 的 INSERT SELECT 中对文本列包 `TRIM(col) AS col` | 单点修复覆盖所有导入路径（与 concept_member `TRIM(BOARD_NAME)` 先例一致，ref #217）；与下游无关（Dolt 是唯一写库路径）；e706dfc 后 Dolt 现库无脏数据，无需重导 | Python strip 需逐采集器改抓取侧且 CSV 中转层不受控；不处理则题材 Tag 尾随空格根因残留 |
+| TRIM 范围（issue #235） | 全部 VARCHAR 列 / 仅文本列 | **仅文本列**：stock_basic(name/board/full_name/industry/region)、fin_indicators(name/industry/board_name/trade_market/trade_market_zjg/security_type/data_type/qdate/date_label/dividend_plan/dividend_year)、财务三表(SECURITY_NAME_ABBR/ORG_TYPE/REPORT_TYPE/REPORT_DATE_NAME/CURRENCY/OPINION_TYPE/LISTING_STATE 逐表独立)、institution_survey(org_name/survey_type)、block_trade(buyer/seller) | 标识符列（SECUCODE/SECURITY_CODE/ORG_CODE 等）与日期列（NOTICE_DATE/UPDATE_DATE/list_date/delist_date）规范化无空格风险；dragon_list.seat_type 为 Python 派生枚举；误 TRIM 标识符会破坏前缀逻辑 | 全列 TRIM 对数值列报错（SQL 类型错误），对标识符列无意义 |
+| TRIM 字符语义（issue #235，Oracle 实证） | 默认 `TRIM()` 仅去 U+0020 / REPLACE 变体去 U+3000 | **默认 `TRIM()`（仅 U+0020）** | Dolt `TRIM()` 与 `TRIM(BOTH ' ' FROM ...)` 均不剥离 U+3000（实测 HEX 保留 `E38080`）；`[[:space:]]` POSIX 类亦为 ASCII-only（Go RE2）；脏数据计数用 `LIKE CONCAT('%', CHAR(0x3000), '%')` 补充检测，Dolt 现库 U+3000 计数 0 | REPLACE 变体超出 #235 范围且会改变既有 U+3000 数据语义；如需扩展需用户批准 |
+| institution_survey gk 键 TRIM（issue #235） | gk 保持 HEX(RECEIVE_OBJECT) / **HEX(TRIM(RECEIVE_OBJECT))** | SELECT 值 `MAX(TRIM(RECEIVE_OBJECT))` + 分组键 `HEX(TRIM(RECEIVE_OBJECT))` | gk 不 TRIM 时 'A'/'A ' 分两组残留脏行（Dolt 实证）；TRIM 后合并为单组单行 | 只 TRIM SELECT 值不 TRIM gk 无法合并分组 |
+| 财务三表 TRIM 列清单（issue #235，Oracle 实证） | 三表共用同一清单 / **逐表独立** | balance_sheet 7 列**含** LISTING_STATE；cash_flow/income 6 列**无** LISTING_STATE | DDL 实证：LISTING_STATE 仅存在于 fin_balance_sheet（cash_flow/income COLS 无此列），共用清单会导致 cash_flow/income SQL 报错 | 共用清单基于错误假设（"同上 COLS 集"），会导致整表导入失败 |
+| hook issue 校验（ref #213） | 逐 issue `gh issue view` / **单次 `gh issue list` 批量** | `gh issue list --repo qiboda/compass --state open --json number --limit 5000 --jq '.[].number'` 一次拉取 + 本地 `grep -qx` 查集 | 无界 API 调用（每次 commit/push 对每个唯一 issue 一次）触发限流误报；批量后每 commit/push 恰好 1 次调用；fail-closed（GH_FAIL/空集拒绝）保持与现状一致的拒绝语义 | 逐条查询在 push 大范围时 API 调用数无界（#213 根因）；`gh issue list` 默认分页 30/页须 `--limit 5000` 拉全量 |
+| hook 批量查询共享（ref #213，用户 F2=B） | 提取共享脚本 / **内联重复** | commit-msg + pre-push 各自内联实现批量查询（不新建共享脚本） | 用户确认 F2=B：改动小、符合现状（两 hook 本就独立内联）；mirror-drift guard 扩展覆盖批量查询片段防一改一漏 | 共享脚本增加 hook 依赖面，违背用户明确决策 |
