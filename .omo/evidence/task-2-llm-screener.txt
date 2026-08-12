@@ -1,1 +1,4 @@
-Evidence for llm-screener task 2 (issue #244) — verified by orchestrator F-wave, 2026-08-12
+task-2: Filter and/or/negate + &|~ operators — VERIFIED
+- operator tests: bitand_builds_and, bitor_builds_or_chain (flattened), bitnot_builds_not, method equality, compound (a|b)&~c exact AST
+- chain flattening: a|b|c → Or([a,b,c]); verified by cargo test -p compass-types (52 pass)
+- clippy: should_implement_trait resolved via negate() rename; -D warnings clean on crate

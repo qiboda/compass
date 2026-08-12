@@ -1,1 +1,4 @@
-Evidence for llm-screener task 4 (issue #244) — verified by orchestrator F-wave, 2026-08-12
+task-4: series functions up_days/count_in_window/volume_surge — VERIFIED
+- 22 tests in screener_series.rs: n=0 vacuous, insufficient window, exactly-n+1, zero-base, NaN in/out window, nested baseline proof
+- indicators.rs contract honored: Option-return, never panic, NaN→None
+- Verified by cargo test -p compass-strategy (112 unit pass)
