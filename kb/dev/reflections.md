@@ -379,3 +379,31 @@
 - **F-wave evidence 完整性反复**（ref #181 F1 "9 commits" 过期声称 → 本次 task-1/2 证据后补）：evidence 必须实现收尾后一次性写全并自检（commit 计数、task 覆盖），中途写/部分写必然需要补正
 - **测试 agent 权限/产出摩擦**（ref #203 权限设计 → 本次 edit 权限限制改变落点）：委派前明确 agent 权限边界与产出落点，权限受限时由 prompt 声明 fallback 路径，避免交付形态偏差
 - **"先复现/重跑拿证据再深挖"模式**（ref #205 worktree 模拟 → 本次 llvm-cov 重跑即过）：工具链报错与可疑行为的第一动作是复现/重跑验证是否一次性，而非静态多轮排查
+
+## 2026-08-12 — ref #244 llm-screener Batch 1：AST 类型系统 + 序列函数 + run_screener 兼容层
+
+**What was done**: epic #243 Batch 1（#244）选股器表达式 AST 类型系统——compass-types 新增 Filter/MetaCond/SeriesFactor/SeriesCond/CmpOp/FactorRef 六组 enum（serde + and/or/negate + &|~ 运算符 + From<ScreenerQuery> 11 类编译映射）；compass-strategy 新增 up_days/count_in_window/volume_surge 序列函数 + run_screener(&Filter) 受限反向转换（8-shape accept-grammar + SeenFields 重复拒绝）+ ScreenerError::UnsupportedFilter。5 commits（44affdb 覆盖率配置 commit 因 master #251 supersede 在 rebase 中丢弃），966 测试全绿，compass-types 覆盖率 99.51%，5-way review 全 PASS。
+
+**User corrections**: 无明确纠正——三项设计分叉（覆盖率 95%、C1 FactorRef、C3 三函数）均经 question 工具采纳推荐选项，plan 批准（"好"）与 review 请求（"review"）均为流程决策非纠偏。
+
+**What went wrong**:
+1. **Todo 5 worker 超时（30 分钟无活动）零交付**：委派 `run_screener` 大任务（签名变更 + 反向转换 + 21 测试迁移 + backend 迁移合一）后轮询超时，工作树仅残留 Todo 4 的 module 声明，核心工作全未开始。教训：超时后应先查工作树残留再重派，且大任务应拆分为 5A/5B 两个小任务（拆分后各 7m/1m 完成）——超时即任务过大信号。
+2. **Todo 2/3 并行编辑同一文件冲突**：Todo 2（运算符）与 Todo 3（From impl）均改 screener.rs 并行执行，Todo 3 编辑覆盖了 Todo 2 的 flatten 实现，导致 `bitor_builds_or_chain` 运行时失败（Or([Or([a,b]),c]) 而非拍平）。教训：同文件改动不可并行委派——依赖矩阵需考虑文件级冲突而非仅类型级。
+3. **Goal Verification lane 输出截断无 verdict**：review-work 中 oracle lane 分析被截断（仅 1 条消息无 <verdict>），首次 background_output 未见完整结论，需重跑才得 PASS。教训：review lane 无 terminal verdict 时应立即按 inconclusive 重派（ref #205 同模式再犯——"review lane 长时间无输出及早标记"）。
+4. **F1 evidence 初始为 1 行 stub**：7 个 evidence 文件先写占位符，F1 审计标记"证据文件缺失实质内容"，后补实测数据。违反 ref #174/#181"evidence 一次性写全"（趋势第 3 次出现）。
+5. **rebase 冲突处理依赖手动判断**：master #251 前进导致 4 文件冲突，识别为"被 supersede"后 `rebase --skip` 丢弃 44affdb——正确处理但需人工核对 master 是否已含等价变更。
+
+**Lessons learned**:
+1. **委派粒度与超时预案**：跨模块大任务（签名变更 + 测试迁移）拆分为核心/迁移两个小任务；worker 超时先 `git status` 查残留再决策重派，不盲目续会话。
+2. **文件级依赖检查**：并行委派前用 `git diff` 确认任务不触碰同一文件；同文件任务强制串行（本次 Todo 2/3 同改 screener.rs 是冲突根因）。
+3. **review lane 无 terminal verdict 即重派**：输出截断/仅 1 条消息/无 <verdict> 标签的 lane 立即标记 inconclusive 并重跑（允许读文件版本），不因"看起来快完成"等待。
+4. **push 前 rebase 检查 base 前进**：fetch 后若 origin/master 前进且改动同域文件（覆盖率配置），先查 master 是否已 supersede 本分支变更再决定 skip/rebase。
+
+**Process improvements**:
+- 已落实（docs）：无 AGENTS.md 变更——委派粒度与 lane 重派规则已存在于 start-work/review-work skill 文档，本次为执行层未遵守。
+- 建议（可检测）：并行委派前的文件级冲突预检——在 start-work 流程或委派 prompt 模板中强制"任务涉及文件清单 + 冲突矩阵"步骤（proposed，走 gate 建 issue 评估）。
+
+### Trends (last 10)
+- **F-wave evidence 完整性反复 3 次**（ref #181 过期声称 → ref #250 task-1/2 后补 → 本次 stub 占位）：evidence 必须实现收尾后一次性写全并自检，占位符/部分写/中途写都需要补正，已成为最高频流程摩擦
+- **review lane 卡住/无输出处理不当 2 次**（ref #205 19 分钟未识别 → 本次 oracle 截断先等待后重派）：lane 无 terminal 状态（超时/截断/单消息）即标记 inconclusive 重派，不被动等待
+- **并行委派同文件冲突**（本次 Todo 2/3 同改 screener.rs）：委派前做文件级冲突矩阵，同文件任务串行化
