@@ -452,7 +452,7 @@ class TestMain:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            fetch_fin_indicators, "_last_report_date", lambda *a, **k: "2023-01-01"
+            fetch_fin_indicators, "_update_anchor", lambda *a, **k: "2023-01-01"
         )
         mock_sleep = AsyncMock()
         monkeypatch.setattr(asyncio, "sleep", mock_sleep)
@@ -479,12 +479,14 @@ class TestMain:
 
         assert (tmp_path / "RPT_LICO_FN_CPD.csv").exists()
 
-    async def test_incremental_no_new_periods_returns(
+    async def test_incremental_zero_rows_writes_nothing(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        """0-row incremental run (nothing newer than the anchor) writes no CSV
+        and leaves state.json untouched — the anchor never advances."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            fetch_fin_indicators, "_last_report_date", lambda *a, **k: "2025-01-01"
+            fetch_fin_indicators, "_update_anchor", lambda *a, **k: "2025-01-01"
         )
         mock_sleep = AsyncMock()
         monkeypatch.setattr(asyncio, "sleep", mock_sleep)
@@ -492,7 +494,7 @@ class TestMain:
         stub = make_stub_session(
             json_data={
                 "success": True,
-                "result": {"data": [{"code": "000001"}], "pages": 1},
+                "result": {"data": [], "pages": 1},
             }
         )
 
@@ -514,7 +516,7 @@ class TestMain:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            fetch_fin_indicators, "_last_report_date", lambda *a, **k: ""
+            fetch_fin_indicators, "_update_anchor", lambda *a, **k: ""
         )
         mock_sleep = AsyncMock()
         monkeypatch.setattr(asyncio, "sleep", mock_sleep)

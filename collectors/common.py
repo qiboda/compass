@@ -32,6 +32,7 @@ __all__ = [
     "Throttle",
     "build_dates",
     "csv_dir",
+    "dedupe_csv",
     "dolt_sql",
     "dolt_sql_csv",
     "dolt_table_import",
@@ -411,6 +412,51 @@ def write_csv(
         if write_header:
             writer.writeheader()
         writer.writerows(records)
+
+
+def dedupe_csv(path: Path) -> None:
+    """Dedupe a CSV file in place, keeping the LAST row per (SECURITY_CODE, REPORTDATE).
+
+    Reads the whole file (utf-8-sig, BOM-safe) and rewrites it with the same
+    header and column order. Keep-LAST means the final occurrence's values win
+    for each PK; rows with distinct PKs keep their relative order. Empty files
+    and files missing either PK column are left untouched (silent no-op).
+    Rewriting is skipped when the file already has unique PKs.
+
+    Called after every write so a revised row (same PK, newer UPDATE_DATE)
+    overwrites the old one instead of duplicating it in the CSV.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return
+        try:
+            code_idx = header.index("SECURITY_CODE")
+            date_idx = header.index("REPORTDATE")
+        except ValueError:
+            return  # missing PK columns — leave the file untouched
+
+        seen: dict[tuple[str, str], list[str]] = {}
+        dupes = 0
+        for row in reader:
+            if not row or len(row) <= code_idx or len(row) <= date_idx:
+                continue  # blank or malformed row — no key to dedupe on
+            key = (row[code_idx], row[date_idx])
+            if key in seen:
+                dupes += 1
+            seen[key] = row
+
+    if dupes == 0:
+        return
+
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(seen.values())
 
 
 # ── Date builder ────────────────────────────────────────────────
