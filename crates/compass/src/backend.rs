@@ -21,7 +21,7 @@ use compass_core::data::{duckdb::DuckDbProvider, provider::DataProvider};
 use compass_core::model::AppConfig;
 use compass_strategy::run_screener;
 use compass_strategy::sepa::run_sepa;
-use compass_types::SepaQuery;
+use compass_types::{Filter, SepaQuery};
 
 use crate::messages::{
     FetchRequest, FetchResponse, RunScreenerRequest, RunScreenerResponse, RunSepaRequest,
@@ -146,7 +146,11 @@ pub fn wire_backend(
                         };
                     }
                 };
-                match run_screener(&req.query, &reader, Utc::now().date_naive()) {
+                match run_screener(
+                    &Filter::from(req.query.clone()),
+                    &reader,
+                    Utc::now().date_naive(),
+                ) {
                     Ok(res) => RunScreenerResponse {
                         rows: res.rows,
                         total: res.total,
