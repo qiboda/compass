@@ -6,7 +6,7 @@
 //! capped result set.
 //!
 //! The [`Filter`] AST is reverse-compiled into the legacy [`ScreenerQuery`]
-//! by the restricted accept-grammar in [`filter_to_query`] — only shapes the
+//! by the restricted accept-grammar in `filter_to_query` — only shapes the
 //! compile layer (`From<ScreenerQuery> for Filter` in compass-types) can emit
 //! are accepted; anything else fails with
 //! [`ScreenerError::UnsupportedFilter`]. There is no general `Filter`
@@ -37,7 +37,7 @@ pub enum ScreenerError {
     #[error("data error: {0}")]
     Data(#[from] compass_core::data::provider::DataError),
     /// A `Filter` shape outside the restricted accept-grammar of
-    /// [`filter_to_query`] (i.e. one that `From<ScreenerQuery>` can never
+    /// `filter_to_query` (i.e. one that `From<ScreenerQuery>` can never
     /// produce).
     #[error("unsupported filter shape: {0}")]
     UnsupportedFilter(String),
@@ -62,7 +62,7 @@ const READ_WINDOW_DAYS: i64 = 400;
 /// Evaluate `filter` against the market data behind `reader`.
 ///
 /// The AST is reverse-compiled into a legacy [`ScreenerQuery`] by
-/// [`filter_to_query`] and screened with the existing engine; shapes outside
+/// `filter_to_query` and screened with the existing engine; shapes outside
 /// the restricted accept-grammar fail with
 /// [`ScreenerError::UnsupportedFilter`].
 pub fn run_screener(
