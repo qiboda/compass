@@ -194,6 +194,16 @@ impl Default for ScreenerQuery {
     }
 }
 
+// --- Screener expression AST (epic #243) ------------------------------------
+//
+// LLM-friendly screener expression AST: a serializable tag-union of filter
+// expressions consumed by the strategy engine and produced by the future LLM
+// client (Batch 4). Definitions live in `screener.rs`.
+
+mod screener;
+
+pub use screener::{CmpOp, FactorRef, Filter, MetaCond, SeriesCond, SeriesFactor};
+
 /// One result row of a screener run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScreenerRow {
