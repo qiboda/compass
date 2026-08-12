@@ -339,6 +339,25 @@ mod tests {
             .collect()
     }
 
+    /// 白名单 key 前缀：允许 zh 值无 CJK 字符的技术 token / 格式串前缀。
+    ///
+    /// 从 `zh_values_are_chinese` 的断言 OR 链中提取，主测试与表驱动用例
+    /// 共享同一份白名单。提取前 `screener.times` / `sepa.unit` /
+    /// `screener.ma` / `screener.years` 分支在真实 zh.yml 数据下被更早的
+    /// `cjk_count > 0` / `value.contains("%{")` 分支短路（count=0，
+    /// 覆盖率缺口）——提取后表驱动用例可对每个前缀逐一真实求值。
+    fn is_allowed_zh_token(key: &str) -> bool {
+        key.starts_with("app.")
+            || key.starts_with("screener.n_label")
+            || key.starts_with("screener.min_pct")
+            || key.starts_with("screener.max_pct")
+            || key.starts_with("screener.times")
+            || key.starts_with("sepa.position")
+            || key.starts_with("sepa.unit")
+            || key.starts_with("screener.ma")
+            || key.starts_with("screener.years")
+    }
+
     /// Every key constant must resolve to a real translation in BOTH locales —
     /// rust-i18n's missing-key fallback returns the key string itself, so
     /// `t!(key) != key` is the anti-false-positive check (plan Metis A7).
@@ -402,18 +421,81 @@ mod tests {
         for (key, value) in zh {
             let cjk_count = value.chars().filter(|c| ('一'..='鿿').contains(c)).count();
             assert!(
-                cjk_count > 0
-                    || value.contains("%{")
-                    || key.starts_with("app.")
-                    || key.starts_with("screener.n_label")
-                    || key.starts_with("screener.min_pct")
-                    || key.starts_with("screener.max_pct")
-                    || key.starts_with("screener.times")
-                    || key.starts_with("sepa.position")
-                    || key.starts_with("sepa.unit")
-                    || key.starts_with("screener.ma")
-                    || key.starts_with("screener.years"),
+                cjk_count > 0 || value.contains("%{") || is_allowed_zh_token(key),
                 "zh value for {key} has no CJK and is not an allowed technical token: {value}"
+            );
+        }
+    }
+
+    /// 表驱动：白名单每个前缀分支都被真实求值（覆盖 sepa.unit /
+    /// screener.ma / screener.years 等在真实 zh.yml 下被短路的分支）。
+    ///
+    /// 真实 zh.yml 中 `sepa.unit*` 前缀的值全部含 `%{` 占位符（被
+    /// `value.contains("%{")` 短路），`screener.ma*` / `screener.years*`
+    /// 前缀的值全部含 CJK（被 `cjk_count > 0` 短路）——主测试的 OR 链
+    /// 永远到不了这三个分支。此处构造 value 无 CJK、无 `%{` 的
+    /// (key, value) 对，唯一放行途径就是对应白名单前缀，逐一真实命中。
+    #[test]
+    fn zh_whitelist_prefixes_allow_cjk_free_values() {
+        // (key, value)：value 不含 CJK、不含 %{ 占位符（模拟真实格式串/技术 token）
+        let cases: &[(&str, &str)] = &[
+            // key.starts_with("app.")
+            ("app.title", "Compass — Stock Chart"),
+            // key.starts_with("screener.n_label")
+            ("screener.n_label", "N:"),
+            // key.starts_with("screener.min_pct")
+            ("screener.min_pct", "min%:"),
+            // key.starts_with("screener.max_pct")
+            ("screener.max_pct", "max%:"),
+            // key.starts_with("screener.times")
+            ("screener.times", "x3"),
+            // key.starts_with("sepa.position")
+            ("sepa.position.full", "80%-100%"),
+            // key.starts_with("sepa.unit") —— 真实数据下被 %{ 分支短路
+            ("sepa.unit.percent", "100%"),
+            ("sepa.unit.count", "10"),
+            ("sepa.unit.trillion", "1.2"),
+            // key.starts_with("screener.ma") —— 真实数据下被 CJK 分支短路
+            ("screener.ma", "MA"),
+            ("screener.ma_above20", "MA20"),
+            ("screener.ma_above60", "MA60"),
+            ("screener.ma_bullish", "MA5>MA20>MA60"),
+            // key.starts_with("screener.years") —— 真实数据下被 CJK 分支短路
+            ("screener.years_1", "1Y"),
+            ("screener.years_3", "3Y"),
+            ("screener.years_5", "5Y"),
+        ];
+        for &(key, value) in cases {
+            assert!(
+                !value.contains("%{") && !value.chars().any(|c| ('一'..='鿿').contains(&c)),
+                "测试夹具必须无 CJK 且无 %{{ 占位符: {key}={value}"
+            );
+            assert!(
+                is_allowed_zh_token(key),
+                "key {key} 应在白名单内，否则其无 CJK 值 {value} 会触发 zh 值断言"
+            );
+        }
+    }
+
+    /// 负面用例：非白名单 key 不得被放行——即使未来其 zh 值被改成无 CJK
+    /// 的文本，也绝不能靠白名单蒙混过关（与 zh_values_are_chinese 的
+    /// 防御意图一致）。
+    #[test]
+    fn zh_whitelist_rejects_non_whitelisted_keys() {
+        // 全部为 zh.yml 真实 key，且不以任何白名单前缀开头。
+        // 注意：screener.market_cap 以 "screener.ma" 开头（starts_with
+        // 前缀匹配），不能用作负面 key。
+        for key in [
+            "tab.chart",
+            "sepa.thermometer",
+            "screener.filter",
+            "sepa.factor.ma_structure",
+            "screener.list_years",
+            "common.loading",
+        ] {
+            assert!(
+                !is_allowed_zh_token(key),
+                "key {key} 不在白名单内，is_allowed_zh_token 必须返回 false"
             );
         }
     }
