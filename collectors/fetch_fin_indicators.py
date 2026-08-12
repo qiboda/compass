@@ -302,7 +302,6 @@ async def fetch_by_update_date(
     all_records = []
     page = 1
     total_pages = 1
-    data: dict | None = None
 
     while page <= total_pages:
         params = {
@@ -317,6 +316,7 @@ async def fetch_by_update_date(
             "client": "WEB",
         }
 
+        data: dict | None = None  # per-page: never reuse a stale response across pages
         for attempt in range(EM_MAX_RETRIES):
             try:
                 await throttle.acquire()
@@ -346,6 +346,7 @@ async def fetch_by_update_date(
         if data is None:
             print("    No data returned", file=sys.stderr)
             break
+        assert data is not None
         if not data.get("success"):
             print(f"    API error: {data.get('message', 'unknown')}", file=sys.stderr)
             break
