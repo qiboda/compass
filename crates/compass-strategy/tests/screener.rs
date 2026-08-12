@@ -7,7 +7,7 @@ use chrono::{Datelike, Duration, NaiveDate};
 use compass_core::data::parquet::ParquetReader;
 use compass_strategy::{MAX_RESULTS, run_screener};
 use compass_types::{
-    BreakoutCondition, MaCondition, MomentumCondition, ScreenerQuery, VolumeCondition,
+    BreakoutCondition, Filter, MaCondition, MomentumCondition, ScreenerQuery, VolumeCondition,
 };
 
 /// One daily bar's values; only adjclose/close/volume are used.
@@ -156,7 +156,12 @@ fn empty_query_returns_market_sorted_by_cap() {
     ];
     let (_tmp, reader) = build_fixture(&stocks);
 
-    let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(
+        &Filter::from(ScreenerQuery::default()),
+        &reader,
+        date(2026, 7, 28),
+    )
+    .expect("run");
     // 平安 194亿×10 = 1940亿；茅台 12.56亿×1500 = 18840亿 → 茅台第一
     assert_eq!(res.rows.len(), 2);
     assert_eq!(res.rows[0].symbol, "SH600519");
@@ -181,7 +186,12 @@ fn delisted_stock_excluded_by_default_and_included_when_disabled() {
     ];
     let (_tmp, reader) = build_fixture(&stocks);
 
-    let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(
+        &Filter::from(ScreenerQuery::default()),
+        &reader,
+        date(2026, 7, 28),
+    )
+    .expect("run");
     assert_eq!(res.rows.len(), 1, "delisted excluded by default");
     assert_eq!(res.rows[0].symbol, "SZ000001");
 
@@ -189,7 +199,7 @@ fn delisted_stock_excluded_by_default_and_included_when_disabled() {
         exclude_delisted: false,
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 2, "delisted included when disabled");
 }
 
@@ -210,7 +220,12 @@ fn basics_without_bars_is_excluded() {
     ];
     let (_tmp, reader) = build_fixture(&stocks);
 
-    let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(
+        &Filter::from(ScreenerQuery::default()),
+        &reader,
+        date(2026, 7, 28),
+    )
+    .expect("run");
     assert_eq!(res.rows.len(), 1, "basics-without-bars must be excluded");
     assert_eq!(res.rows[0].symbol, "SZ000001");
     assert_eq!(res.total, 1, "excluded symbols must not count toward total");
@@ -247,7 +262,7 @@ fn industry_filter_or_semantics() {
         industries: vec!["银行".to_string()],
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 2, "both banks match (OR within industries)");
     for row in &res.rows {
         assert_eq!(row.industry, "银行");
@@ -275,7 +290,7 @@ fn exchange_filter_92_prefix_is_bj() {
         exchanges: vec!["BJ".to_string()],
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1);
     assert_eq!(
         res.rows[0].symbol, "BJ920992",
@@ -306,7 +321,7 @@ fn exchange_filter_lowercase_prefix_is_case_insensitive() {
         exchanges: vec!["SH".to_string()],
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1);
     assert_eq!(
         res.rows[0].symbol, "sh600519",
@@ -338,7 +353,7 @@ fn exchange_filter_bare_code_falls_back_to_shape_heuristic() {
         exchanges: vec!["SH".to_string()],
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1);
     assert_eq!(
         res.rows[0].symbol, "600519",
@@ -376,7 +391,7 @@ fn list_years_filter_and_missing_list_date_excluded() {
         list_years: Some(10),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "≥10y passes; NULL list_date excluded");
     assert_eq!(res.rows[0].symbol, "SH600519");
 }
@@ -403,7 +418,7 @@ fn market_cap_filter_uses_yi_units_and_missing_total_share_excluded() {
         market_cap_max: Some(20_000.0),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "only 茅台 cap 18840亿 in range");
     assert_eq!(res.rows[0].symbol, "SH600519");
     assert!(
@@ -422,7 +437,7 @@ fn ma_above_ma20_matches_rising_trend() {
         ma: Some(MaCondition::AboveMa20),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "rising stock is above MA20");
 }
 
@@ -439,7 +454,7 @@ fn ma_above_ma20_rejects_falling_trend() {
         ma: Some(MaCondition::AboveMa20),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert!(res.rows.is_empty(), "falling stock is below MA20");
 }
 
@@ -455,7 +470,7 @@ fn breakout_requires_strict_new_high() {
         breakout: Some(BreakoutCondition::new(60)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert!(res.rows.is_empty(), "equality is not a breakout");
 }
 
@@ -470,7 +485,7 @@ fn breakout_matches_true_new_high() {
         breakout: Some(BreakoutCondition::new(60)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "true new high matches");
 }
 
@@ -486,7 +501,7 @@ fn momentum_filter_bounds() {
         momentum: Some(MomentumCondition::new(20, 30.0, 40.0)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "34.5% return within [30,40]");
 
     // Out of bounds: [0, 10]
@@ -494,7 +509,7 @@ fn momentum_filter_bounds() {
         momentum: Some(MomentumCondition::new(20, 0.0, 10.0)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert!(res.rows.is_empty(), "34.5% return not in [0,10]");
 }
 
@@ -527,7 +542,7 @@ fn volume_filter_matches_surge() {
         volume: Some(VolumeCondition::new(20, 2.0)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "volume surge matches");
 }
 
@@ -544,7 +559,7 @@ fn volume_filter_rejects_flat_volume() {
         volume: Some(VolumeCondition::new(20, 2.0)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert!(res.rows.is_empty(), "flat volume ratio ~1 < 2");
 }
 
@@ -561,7 +576,7 @@ fn window_insufficient_skips_condition_not_crash() {
         ma: Some(MaCondition::AboveMa60),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert!(res.rows.is_empty(), "insufficient window skips condition");
 }
 
@@ -589,7 +604,7 @@ fn volume_boundary_exactly_3n_bars_computes() {
         volume: Some(VolumeCondition::new(20, 1.0)),
         ..ScreenerQuery::default()
     };
-    let res = run_screener(&q, &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(&Filter::from(q.clone()), &reader, date(2026, 7, 28)).expect("run");
     assert_eq!(res.rows.len(), 1, "exactly 3N bars computes (ratio 1 ≥ 1)");
 }
 
@@ -611,7 +626,12 @@ fn total_capped_at_100_rows() {
     }
     let (_tmp, reader) = build_fixture(&stocks);
 
-    let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(
+        &Filter::from(ScreenerQuery::default()),
+        &reader,
+        date(2026, 7, 28),
+    )
+    .expect("run");
     assert_eq!(res.rows.len(), MAX_RESULTS, "rows capped at 100");
     assert_eq!(res.total, 120, "total counts all matches before cap");
 }
@@ -620,7 +640,12 @@ fn total_capped_at_100_rows() {
 fn empty_market_returns_empty_result() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let reader = ParquetReader::new(tmp.path()).expect("create reader");
-    let res = run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+    let res = run_screener(
+        &Filter::from(ScreenerQuery::default()),
+        &reader,
+        date(2026, 7, 28),
+    )
+    .expect("run");
     assert!(res.rows.is_empty());
     assert_eq!(res.total, 0);
 }
@@ -669,7 +694,12 @@ fn run_screener_emits_completion_log() {
             .with_max_level(tracing::Level::DEBUG)
             .finish(),
     );
-    run_screener(&ScreenerQuery::default(), &reader, date(2026, 7, 28)).expect("run");
+    run_screener(
+        &Filter::from(ScreenerQuery::default()),
+        &reader,
+        date(2026, 7, 28),
+    )
+    .expect("run");
 
     let log = buf.lock().expect("lock");
     assert!(
