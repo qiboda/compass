@@ -130,12 +130,70 @@ CREATE TABLE IF NOT EXISTS fin_indicators (
 """
 
 
-def _import_fin_indicators() -> int:
-    """Import RPT_LICO_FN_CPD.csv into Dolt (merge semantics, ref #160).
+# Staging schema for RPT_LICO_FN_CPD.csv (CSV header columns, uppercase API
+# names). Explicit DDL instead of Dolt `-c` inference: inference types
+# numeric columns as FLOAT (32-bit), corrupting double precision on the
+# INSERT SELECT round-trip; VARCHAR(100)/TEXT also avoids truncating raw
+# (untrimmed) values at staging so the strict target insert fails loudly
+# instead of silently truncating.
+_TMP_FIN_DDL = """\
+CREATE TABLE _tmp_fin (
+    SECUCODE VARCHAR(100),
+    SECURITY_CODE VARCHAR(100),
+    REPORTDATE VARCHAR(100),
+    UPDATE_DATE VARCHAR(100),
+    NOTICE_DATE VARCHAR(100),
+    DATATYPE VARCHAR(100),
+    QDATE VARCHAR(100),
+    EITIME VARCHAR(100),
+    DATAYEAR VARCHAR(100),
+    DATEMMDD VARCHAR(100),
+    SECURITY_NAME_ABBR VARCHAR(100),
+    TRADE_MARKET VARCHAR(100),
+    TRADE_MARKET_CODE VARCHAR(100),
+    TRADE_MARKET_ZJG VARCHAR(100),
+    SECURITY_TYPE VARCHAR(100),
+    SECURITY_TYPE_CODE VARCHAR(100),
+    PUBLISHNAME VARCHAR(100),
+    BOARD_CODE VARCHAR(100),
+    BOARD_NAME VARCHAR(100),
+    ORI_BOARD_CODE VARCHAR(100),
+    ORG_CODE VARCHAR(100),
+    ISNEW VARCHAR(100),
+    BASIC_EPS DOUBLE,
+    DEDUCT_BASIC_EPS DOUBLE,
+    TOTAL_OPERATE_INCOME DOUBLE,
+    PARENT_NETPROFIT DOUBLE,
+    WEIGHTAVG_ROE DOUBLE,
+    BPS DOUBLE,
+    MGJYXJJE DOUBLE,
+    XSMLL DOUBLE,
+    YSTZ DOUBLE,
+    SJLTZ DOUBLE,
+    YSHZ DOUBLE,
+    SJLHZ DOUBLE,
+    ZXGXL DOUBLE,
+    ASSIGNDSCRPT TEXT,
+    PAYYEAR VARCHAR(100)
+)
+"""
 
-    Rows are INSERT IGNORE'd into the existing fin_indicators table, deduped
-    by the PK (symbol, report_date), so incremental-window CSVs append to
-    history instead of clobbering it.
+
+def _import_fin_indicators() -> int:
+    """Import RPT_LICO_FN_CPD.csv into Dolt (UPSERT semantics, ref #135/#160).
+
+    Rows are UPSERTed into the existing fin_indicators table keyed by the PK
+    (symbol, report_date): new rows append to history while revised rows
+    (same PK, moved UPDATE_DATE) OVERWRITE the old row across all 35 non-PK
+    value columns. Writing constraint (Dolt 2.2.3): SELECT-side unique
+    aliases + ODKU unqualified alias refs — qualified source refs
+    (`_tmp_fin.COL`) fail on TRIM-wrapped text columns and VALUES() is
+    unsupported. TRIM is done in the SELECT so the alias refs carry the
+    trimmed value.
+
+    The staging table uses an explicit DDL (create_sql) because Dolt's
+    `table import -c` type inference types numeric columns as FLOAT (32-bit),
+    which corrupts double precision on the INSERT SELECT round-trip.
     """
     from common import csv_dir, import_replace_table
 
@@ -144,7 +202,8 @@ def _import_fin_indicators() -> int:
         csv_path=csv_dir() / "RPT_LICO_FN_CPD.csv",
         tmp_name="_tmp_fin",
         ddl=FIN_INDICATORS_DDL,
-        insert_sql="""INSERT IGNORE INTO fin_indicators (
+        create_sql=_TMP_FIN_DDL,
+        insert_sql="""INSERT INTO fin_indicators (
             symbol, report_date, update_date, notice_date,
             data_type, qdate, eitime, data_year, date_label,
             secucode, name, trade_market, trade_market_code, trade_market_zjg,
@@ -156,19 +215,42 @@ def _import_fin_indicators() -> int:
             shares_growth, dividend_plan, dividend_year
         )
         SELECT
-            CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-            REPORTDATE, UPDATE_DATE, NOTICE_DATE,
-            TRIM(DATATYPE), TRIM(QDATE), EITIME, DATAYEAR, TRIM(DATEMMDD),
-            SECUCODE, TRIM(SECURITY_NAME_ABBR), TRIM(TRADE_MARKET), TRADE_MARKET_CODE, TRIM(TRADE_MARKET_ZJG),
-            TRIM(SECURITY_TYPE), SECURITY_TYPE_CODE, TRIM(PUBLISHNAME),
-            BOARD_CODE, TRIM(BOARD_NAME), ORI_BOARD_CODE, ORG_CODE, ISNEW,
-            BASIC_EPS, DEDUCT_BASIC_EPS, TOTAL_OPERATE_INCOME, PARENT_NETPROFIT, WEIGHTAVG_ROE, BPS,
-            MGJYXJJE, XSMLL,
-            YSTZ, SJLTZ, YSHZ, SJLHZ,
-            ZXGXL, TRIM(ASSIGNDSCRPT), TRIM(PAYYEAR)
+            CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS _sym,
+            REPORTDATE AS _rpt,
+            UPDATE_DATE AS _upd, NOTICE_DATE AS _ntc,
+            TRIM(DATATYPE) AS _dt, TRIM(QDATE) AS _qd, EITIME AS _eit,
+            DATAYEAR AS _dyr, TRIM(DATEMMDD) AS _dlbl,
+            SECUCODE AS _sec, TRIM(SECURITY_NAME_ABBR) AS _nm,
+            TRIM(TRADE_MARKET) AS _tm, TRADE_MARKET_CODE AS _tmc,
+            TRIM(TRADE_MARKET_ZJG) AS _tmz,
+            TRIM(SECURITY_TYPE) AS _st, SECURITY_TYPE_CODE AS _stc,
+            TRIM(PUBLISHNAME) AS _ind,
+            BOARD_CODE AS _bc, TRIM(BOARD_NAME) AS _bnm, ORI_BOARD_CODE AS _obc,
+            ORG_CODE AS _org, ISNEW AS _new,
+            BASIC_EPS AS _eps, DEDUCT_BASIC_EPS AS _dept,
+            TOTAL_OPERATE_INCOME AS _rev, PARENT_NETPROFIT AS _npr,
+            WEIGHTAVG_ROE AS _roe, BPS AS _bps,
+            MGJYXJJE AS _cfps, XSMLL AS _gm,
+            YSTZ AS _ryoy, SJLTZ AS _npyoy, YSHZ AS _opyoy, SJLHZ AS _nqoq,
+            ZXGXL AS _sg, TRIM(ASSIGNDSCRPT) AS _dplan, TRIM(PAYYEAR) AS _pyr
         FROM _tmp_fin
         WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
-              IN (SELECT symbol FROM stock_basic)""",
+              IN (SELECT symbol FROM stock_basic)
+        ON DUPLICATE KEY UPDATE
+            update_date=_upd, notice_date=_ntc,
+            data_type=_dt, qdate=_qd, eitime=_eit, data_year=_dyr,
+            date_label=_dlbl,
+            secucode=_sec, name=_nm, trade_market=_tm,
+            trade_market_code=_tmc, trade_market_zjg=_tmz,
+            security_type=_st, security_type_code=_stc, industry=_ind,
+            board_code=_bc, board_name=_bnm, ori_board_code=_obc,
+            org_code=_org, is_new=_new,
+            basic_eps=_eps, deduct_basic_eps=_dept, revenue=_rev,
+            net_profit=_npr, roe=_roe, bps=_bps,
+            cash_flow_per_share=_cfps, gross_margin=_gm,
+            revenue_yoy=_ryoy, net_profit_yoy=_npyoy,
+            operating_profit_yoy=_opyoy, net_profit_qoq=_nqoq,
+            shares_growth=_sg, dividend_plan=_dplan, dividend_year=_pyr""",
         dolt_table="fin_indicators",
         source_label="EastMoney datacenter RPT_LICO_FN_CPD",
         last_report_expr="MAX(report_date)",

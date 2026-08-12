@@ -996,7 +996,7 @@ class TestUpsertRevisionOverwrite:
 
         old = {
             "update_date": "2025-04-26", "notice_date": "2025-04-26",
-            "data_type": "OLD_DATA_TYPE", "qdate": "OLD_QDATE",
+            "data_type": "OLD_DATA_TYPE", "qdate": "OLD_QDAT",
             "eitime": "2025-04-26 00:00:00", "data_year": "2024",
             "date_label": "OLD_LABEL", "secucode": "000001.SZ",
             "name": "OLD_NAME", "trade_market": "OLD_MARKET",
@@ -1015,7 +1015,7 @@ class TestUpsertRevisionOverwrite:
         }
         new = {
             "update_date": "2026-04-30", "notice_date": "2026-04-30",
-            "data_type": "NEW_DATA_TYPE", "qdate": "NEW_QDATE",
+            "data_type": "NEW_DATA_TYPE", "qdate": "NEW_QDAT",
             "eitime": "2026-04-30 00:00:00", "data_year": "2026",
             "date_label": "NEW_LABEL", "secucode": "000001.SZ",
             "name": "五粮液", "trade_market": "NEW_MARKET",
