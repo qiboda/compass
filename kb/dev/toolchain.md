@@ -399,3 +399,17 @@
   3) `env -u PYTHONPATH uv run pytest tests/` 通过（328 passed）——隔离变量即修复。
 - **修复**: push 时用 `env -u PYTHONPATH git push origin <branch>`（仅清除泄漏变量，hook 本身无问题）。
 - **验证**: `env -u PYTHONPATH uv run pytest tests/ -q` → 328 passed。
+
+### [覆盖率] cargo llvm-cov nextest 报 double-spawn "No such file or directory"（一次性构建竞态）
+
+- **症状**: `cargo llvm-cov nextest --json --summary-only` 首次运行失败：
+  `error: creating test list failed` → `[double-spawn] failed to exec ".../compass_core-<hash>" "--list" "--format" "terse"` →
+  `No such file or directory (os error 2)`，cov.json 为空（0 字节）。
+- **根因**: nextest 的 double-spawn 机制在 compass_core 测试二进制**尚未链接完成**时就尝试 `--list` 枚举
+  测试——大型二进制（987MB）链接慢，nextest 竞态触发。二进制在错误后仍会完整生成（时间戳在错误之后）。
+- **排查路径**（教训：先重跑再深挖）: 1) 检查 `target/llvm-cov-target/debug/deps/` 里 compass_core 二进制
+  是否存在——错误时可能不存在、稍后出现；2) 确认无残留 cargo/nextest/llvm-cov 进程竞争 target 目录；
+  3) 直接**重跑同一条命令**——竞态类错误重跑即过。
+- **修复**: 无需修复——干净重跑成功（EXIT=0）。非环境/配置问题。
+- **验证**: 重跑 `cargo llvm-cov nextest --json --summary-only --output-path ...` 后
+  `bash scripts/check-coverage.sh` 8 项全 OK（2026-08-12，ref #250 首次遇到）。
