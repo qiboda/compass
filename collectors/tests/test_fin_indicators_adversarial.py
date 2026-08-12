@@ -1148,3 +1148,294 @@ class TestUpsertRevisionOverwrite:
         )
         r = run(values_sql)
         assert r.returncode != 0, "VALUES() ODKU form must FAIL on Dolt (plan: `__new_ins`)"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T9 — coverage 补测: fetch_fin_indicators 防御性分支（429/异常重试、
+# 无数据/API 错误 break、main 级 fallback、损坏 state.json）
+# ═══════════════════════════════════════════════════════════════════════
+# 均为 GREEN 补覆盖（非 RED）：断言"不崩溃 + 正确 fallback 行为"。
+# 直接调用 fetch_by_update_date / _update_anchor / main()，不触碰真实网络。
+
+
+class TestT9FetchByUpdateDateRetry:
+    """fetch_by_update_date 的 429 / 异常重试分支（镜像 TestFetchPeriod 的
+    fetch_period 重试用例，覆盖 326-329 / 335-344 行）。"""
+
+    async def test_429_retry_then_success(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """① 首次 429 → 等待 15-20s（mock sleep）→ 重试成功。"""
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        call_count = [0]
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return StubResponse(status_code=429)
+            return StubResponse(
+                json_data={
+                    "success": True,
+                    "result": {"data": [{"code": "000001"}], "pages": 1},
+                }
+            )
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        t = fetch_fin_indicators.Throttle(min_interval=0)
+        records = await fetch_fin_indicators.fetch_by_update_date(
+            stub, t, "RPT_LICO_FN_CPD", "2026-08-03"
+        )
+        assert len(records) == 1
+        assert records[0]["code"] == "000001"
+        assert call_count[0] >= 2
+        assert mock_sleep.call_count >= 3  # throttle + 429 wait + more throttle
+
+    async def test_exception_retry_then_success(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """② 首次抛异常 → 指数退避重试 → 第二次成功。"""
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        call_count = [0]
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("transient failure")
+            return StubResponse(
+                json_data={
+                    "success": True,
+                    "result": {"data": [{"code": "000002"}], "pages": 1},
+                }
+            )
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        t = fetch_fin_indicators.Throttle(min_interval=0)
+        records = await fetch_fin_indicators.fetch_by_update_date(
+            stub, t, "RPT_LICO_FN_CPD", "2026-08-03"
+        )
+        assert len(records) == 1
+        assert call_count[0] == 2
+
+    async def test_retries_exhausted_raises(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """③ EM_MAX_RETRIES 次全部失败 → 最后一次 retry 后异常向外传播。"""
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        call_count = [0]
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            call_count[0] += 1
+            raise RuntimeError("persistent failure")
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        t = fetch_fin_indicators.Throttle(min_interval=0)
+        with pytest.raises(RuntimeError, match="persistent failure"):
+            await fetch_fin_indicators.fetch_by_update_date(
+                stub, t, "RPT_LICO_FN_CPD", "2026-08-03"
+            )
+        assert call_count[0] == fetch_fin_indicators.EM_MAX_RETRIES
+
+
+class TestT9FetchByUpdateDateBreak:
+    """fetch_by_update_date 的 break 防御分支（覆盖 347-348 / 350-351 行）。"""
+
+    async def test_all_429_no_data_break(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """④ 持续 429：重试耗尽后 data 仍为 None → "No data returned" break，不崩溃。"""
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        call_count = [0]
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            call_count[0] += 1
+            return StubResponse(status_code=429)
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        t = fetch_fin_indicators.Throttle(min_interval=0)
+        records = await fetch_fin_indicators.fetch_by_update_date(
+            stub, t, "RPT_LICO_FN_CPD", "2026-08-03"
+        )
+        assert records == []
+        assert call_count[0] == fetch_fin_indicators.EM_MAX_RETRIES
+
+    async def test_api_error_break(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """⑤ success=False → "API error" break，不崩溃。"""
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(json_data={"success": False, "message": "boom"})
+        t = fetch_fin_indicators.Throttle(min_interval=0)
+        records = await fetch_fin_indicators.fetch_by_update_date(
+            stub, t, "RPT_LICO_FN_CPD", "2026-08-03"
+        )
+        assert records == []
+
+
+class TestT9MainFallbacks:
+    """main() 级 fallback 分支（覆盖 470 / 472-473 / 508-510 / 574-575 行）。"""
+
+    async def test_incremental_fetch_exception_falls_back(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        capsys,
+    ) -> None:
+        """⑥ 增量 fetch 抛异常 → 外层 except 捕获 → records=[] → 不崩溃。"""
+        monkeypatch.setattr(
+            fetch_fin_indicators, "_update_anchor", lambda *a, **k: "2026-01-01"
+        )
+        stub = _RecordingStub(exc=RuntimeError("boom"))
+        await _run_main(
+            stub,
+            ["fetch_fin_indicators.py", "--incremental", "--years", "2026", "--periods", "FY"],
+            monkeypatch,
+            tmp_path,
+        )
+
+        assert "FAILED: boom" in capsys.readouterr().err
+        assert not (tmp_path / "RPT_LICO_FN_CPD.csv").exists()
+        assert not (tmp_path / "RPT_LICO_FN_CPD.state.json").exists()
+
+    async def test_non_cpd_incremental_no_new_periods_returns(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        capsys,
+    ) -> None:
+        """⑦ 非 CPD 增量：无 prior data 且周期窗口为空 → 打印后 return，零请求。
+
+        覆盖 "No prior data found"（L470）与 "No new report periods to
+        fetch."（L472-473）两个防御分支。
+        """
+        monkeypatch.setattr(
+            fetch_fin_indicators, "_last_report_date", lambda *a, **k: ""
+        )
+        stub = _RecordingStub(
+            json_data={"success": True, "result": {"data": [], "pages": 1}}
+        )
+        await _run_main(
+            stub,
+            [
+                "fetch_fin_indicators.py",
+                "--report-name", "RPT_T9_COV",
+                "--incremental", "--years", "2020", "--periods", "BOGUS",
+            ],
+            monkeypatch,
+            tmp_path,
+        )
+
+        err = capsys.readouterr().err
+        assert "No prior data found, fetching full history." in err
+        assert "No new report periods to fetch." in err
+        assert stub.calls == [], "empty window must return before any API request"
+        assert not (tmp_path / "RPT_T9_COV.csv").exists()
+
+    async def test_incremental_corrupt_state_json_preserves_anchor(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        dolt_env: tuple[Path, Callable[[str], str]],
+    ) -> None:
+        """⑧ 增量 CPD：全部行缺 UPDATE_DATE 且 state.json 损坏 → 读 prev 时
+        JSONDecodeError → prev="" → 不崩溃，state.json 以合法 JSON 重写。"""
+        dolt_dir_, dolt_sql_csv = dolt_env
+        _seed_data_updates(dolt_sql_csv, last_updated="2026-08-03")
+        state_path = tmp_path / "RPT_LICO_FN_CPD.state.json"
+        state_path.write_text("{corrupt json!!")  # 非法 JSON
+
+        # 行有 REPORTDATE 但无 UPDATE_DATE → max_update_date 为空 → 走 prev fallback
+        stub = _RecordingStub(
+            json_data={
+                "success": True,
+                "result": {
+                    "data": [
+                        {"SECUCODE": "000001.SZ", "SECURITY_CODE": "000001",
+                         "REPORTDATE": "2026-06-30", "TOTAL_OPERATE_INCOME": "1"},
+                    ],
+                    "pages": 1,
+                },
+            }
+        )
+        await _run_main(
+            stub,
+            ["fetch_fin_indicators.py", "--incremental", "--years", "2026", "--periods", "FY"],
+            monkeypatch,
+            tmp_path,
+        )
+
+        assert (tmp_path / "RPT_LICO_FN_CPD.csv").exists(), (
+            "rows without UPDATE_DATE must still be written to CSV"
+        )
+        state = json.loads(state_path.read_text())  # 重写后必须是合法 JSON
+        assert state["last_update_date"] == "", (
+            "corrupt state must fall back to empty previous anchor (no crash), "
+            f"got {state['last_update_date']!r}"
+        )
+        assert state["last_report_date"] == "2026-06-30"
+
+    async def test_future_update_date_clamped_to_today(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        dolt_env: tuple[Path, Callable[[str], str]],
+    ) -> None:
+        """⑨ 抓取行的 UPDATE_DATE 在未来 → state 写入前钳制到今天（不写未来值）。"""
+        from datetime import date
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        _seed_data_updates(dolt_sql_csv, last_updated="2026-08-03")
+        stub = _RecordingStub(
+            json_data={
+                "success": True,
+                "result": {
+                    "data": [
+                        {"SECUCODE": "000001.SZ", "SECURITY_CODE": "000001",
+                         "REPORTDATE": "2026-06-30", "UPDATE_DATE": "2099-01-01",
+                         "TOTAL_OPERATE_INCOME": "1"},
+                    ],
+                    "pages": 1,
+                },
+            }
+        )
+        await _run_main(
+            stub,
+            ["fetch_fin_indicators.py", "--incremental", "--years", "2026", "--periods", "FY"],
+            monkeypatch,
+            tmp_path,
+        )
+
+        state = json.loads((tmp_path / "RPT_LICO_FN_CPD.state.json").read_text())
+        assert state["last_update_date"] == date.today().isoformat(), (
+            "future UPDATE_DATE must be clamped to today in state, got "
+            f"{state['last_update_date']!r}"
+        )
+
+
+class TestT9UnitBranches:
+    """单函数防御分支（覆盖 128 / 165-166 行）。"""
+
+    def test_normalize_update_date_unparseable_returns_none(self) -> None:
+        """非空但无法解析的 UPDATE_DATE → None（不崩溃、不抛异常）。"""
+        assert fetch_fin_indicators._normalize_update_date("not-a-date") is None
+        assert fetch_fin_indicators._normalize_update_date("2026") is None
+        assert fetch_fin_indicators._normalize_update_date("") is None
+        assert fetch_fin_indicators._normalize_update_date(None) is None
+
+    def test_update_anchor_corrupt_state_json_falls_back(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """_update_anchor 读损坏 state.json → JSONDecodeError → 视为无 state 源。"""
+        _ = dolt_env  # data_updates 表存在但无 fin_indicators 行 → 单源缺失
+        state = tmp_path / "RPT_LICO_FN_CPD.state.json"
+        state.write_text("{corrupt json!!")
+        assert fetch_fin_indicators._update_anchor("RPT_LICO_FN_CPD", state) == ""
