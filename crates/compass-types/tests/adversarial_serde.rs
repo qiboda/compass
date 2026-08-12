@@ -128,8 +128,8 @@ fn partial_volume_each_field_fills_missing_with_default() {
 fn zero_and_u32_max_days_roundtrip() {
     let src = "momentum = { days = 0 }\nvolume = { days = 4294967295 }\n";
     let q: ScreenerQuery = toml::from_str(src).expect("boundary days parse");
-    assert_eq!(q.momentum.unwrap().days, 0);
-    assert_eq!(q.volume.unwrap().days, u32::MAX);
+    assert_eq!(q.momentum.expect("momentum present").days, 0);
+    assert_eq!(q.volume.expect("volume present").days, u32::MAX);
 
     let back: ScreenerQuery =
         toml::from_str(&toml::to_string(&q).expect("serialize")).expect("roundtrip");
@@ -156,13 +156,22 @@ fn days_outside_u32_range_rejected() {
 #[test]
 fn type_mismatch_inside_condition_table_rejected() {
     let bad_days = "momentum = { days = \"thirty\" }\n";
-    assert!(toml::from_str::<ScreenerQuery>(bad_days).is_err());
+    assert!(
+        toml::from_str::<ScreenerQuery>(bad_days).is_err(),
+        "string days must be rejected"
+    );
 
     let bad_pct = "momentum = { min_pct = \"5\" }\n";
-    assert!(toml::from_str::<ScreenerQuery>(bad_pct).is_err());
+    assert!(
+        toml::from_str::<ScreenerQuery>(bad_pct).is_err(),
+        "string min_pct must be rejected"
+    );
 
     let bad_times = "volume = { times = \"x\" }\n";
-    assert!(toml::from_str::<ScreenerQuery>(bad_times).is_err());
+    assert!(
+        toml::from_str::<ScreenerQuery>(bad_times).is_err(),
+        "string times must be rejected"
+    );
 }
 
 /// 注意：serde 不做业务校验——min_pct > max_pct 当前**不会**报错，而是
@@ -202,7 +211,7 @@ fn unknown_key_inside_condition_table_ignored() {
 fn camel_case_key_not_mapped_falls_back_to_default() {
     let src = "momentum = { minPct = 5.0 }\n";
     let q: ScreenerQuery = toml::from_str(src).expect("camelCase key ignored");
-    assert_eq!(q.momentum.unwrap().min_pct, 0.0);
+    assert_eq!(q.momentum.expect("momentum present").min_pct, 0.0);
 }
 
 /// ScreenerQuery 整体 round-trip：空条件表反序列化后序列化，默认值函数
