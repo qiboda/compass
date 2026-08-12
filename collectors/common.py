@@ -211,22 +211,27 @@ def import_replace_table(
     With ``merge=False`` (default) the table is atomically REPLACED: the CSV
     is staged in a temp table, the old table is renamed aside, a fresh table
     is created with ``ddl`` and filled via ``insert_sql``; any failure rolls
-    back. With ``merge=True`` the CSV rows are INSERT IGNORE'd into the
-    EXISTING table (created with ``ddl`` on first run), so incremental-window
-    CSVs append to history instead of clobbering it — the caller's
-    ``insert_sql`` must use ``INSERT IGNORE INTO {dolt_table}`` and the PK
-    dedupes overlapping windows.
+    back. With ``merge=True`` the CSV rows are upserted into the EXISTING
+    table (created with ``ddl`` on first run), so incremental-window CSVs
+    append to history instead of clobbering it. The caller's ``insert_sql``
+    normally uses ``INSERT IGNORE INTO {dolt_table}`` with the PK deduping
+    overlapping windows; a caller that must OVERWRITE revised rows (e.g.
+    fin_indicators revision detection, issue #135) may pass an
+    ``INSERT ... ON DUPLICATE KEY UPDATE`` statement instead — see
+    ``main.py::_import_fin_indicators`` for the Dolt-2.2.3-compatible form
+    (SELECT-side unique aliases + ODKU prefixless alias references; qualified
+    source-column refs and ``VALUES()`` are rejected by Dolt).
 
     Flow (replace): CSV → optional wide temp create → old table renamed aside
     → DDL creates fresh table → INSERT SELECT fills → failure rolls back →
     data_updates upsert. Flow (merge): optional wide temp create → DDL
-    CREATE IF NOT EXISTS → INSERT IGNORE SELECT → data_updates upsert.
+    CREATE IF NOT EXISTS → INSERT IGNORE/UPSERT SELECT → data_updates upsert.
 
     Returns the final full-table row count after import, or 0 when the CSV is
     missing or the import fails (previous table contents are preserved).
-    In merge mode the number of rows actually inserted this run (INSERT IGNORE
-    dedupes overlapping PKs) is logged via ``logger.info``; failures log the
-    SQL error via ``logger.error`` (never silently swallowed).
+    In merge mode the number of rows actually inserted this run (the PK
+    dedupes overlapping windows) is logged via ``logger.info``; failures log
+    the SQL error via ``logger.error`` (never silently swallowed).
     """
     before_total = 0
     if not csv_path.exists():
