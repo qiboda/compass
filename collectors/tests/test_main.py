@@ -998,3 +998,329 @@ class TestSyncInvestmentRestartServer:
 
         # Popen should have been called for server restart
         mock_popen.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# #135 T3: UPSERT 写法钉住（temp Dolt 实测，Dolt 2.2.3）
+# 钉住 GREEN 实现必须采用的 UPSERT 写法：
+#   INSERT INTO fin_indicators (...) SELECT <expr> AS _<alias>, ...
+#   FROM _tmp_fin ... ON DUPLICATE KEY UPDATE <col>=_<alias>, ...
+# - 别名引用（无前缀）：全列覆盖成功（含 TRIM 文本列）
+# - 限定源列引用 `_tmp_fin.COL`：TRIM 文本列报 table _tmp_fin does not have column
+# - VALUES()：报 __new_ins
+# 35 值列清单以 main.FIN_INDICATORS_DDL 为唯一来源（解析 DDL 并与 API→DDL
+# 映射核对，机械钉住"UPDATE 子句无一遗漏"）。
+# Wave 1 即绿：纯 Dolt 能力验证，不依赖生产代码（plan T3 明示）。
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestUpsert:
+    """UPSERT 写法钉住测试（temp Dolt + FIN_INDICATORS_DDL 37 列）。"""
+
+    # API CSV 列 → Dolt DDL 列（35 值列；PK 列 symbol/report_date 特殊处理）。
+    # 键顺序与 FIN_INDICATORS_DDL 值列顺序一致（与 _ddl_columns()[2:] 对齐）。
+    _CSV_TO_DDL = {
+        "UPDATE_DATE": "update_date", "NOTICE_DATE": "notice_date",
+        "DATATYPE": "data_type", "QDATE": "qdate", "EITIME": "eitime",
+        "DATAYEAR": "data_year", "DATEMMDD": "date_label", "SECUCODE": "secucode",
+        "SECURITY_NAME_ABBR": "name", "TRADE_MARKET": "trade_market",
+        "TRADE_MARKET_CODE": "trade_market_code", "TRADE_MARKET_ZJG": "trade_market_zjg",
+        "SECURITY_TYPE": "security_type", "SECURITY_TYPE_CODE": "security_type_code",
+        "PUBLISHNAME": "industry", "BOARD_CODE": "board_code", "BOARD_NAME": "board_name",
+        "ORI_BOARD_CODE": "ori_board_code", "ORG_CODE": "org_code", "ISNEW": "is_new",
+        "BASIC_EPS": "basic_eps", "DEDUCT_BASIC_EPS": "deduct_basic_eps",
+        "TOTAL_OPERATE_INCOME": "revenue", "PARENT_NETPROFIT": "net_profit",
+        "WEIGHTAVG_ROE": "roe", "BPS": "bps", "MGJYXJJE": "cash_flow_per_share",
+        "XSMLL": "gross_margin", "YSTZ": "revenue_yoy", "SJLTZ": "net_profit_yoy",
+        "YSHZ": "operating_profit_yoy", "SJLHZ": "net_profit_qoq",
+        "ZXGXL": "shares_growth", "ASSIGNDSCRPT": "dividend_plan",
+        "PAYYEAR": "dividend_year",
+    }
+
+    # 与 main.py 现状一致的 TRIM 文本列（SELECT 侧 TRIM，ODKU 引用别名即得已 TRIM 值）
+    _TRIM_COLS = {
+        "DATATYPE", "QDATE", "DATEMMDD", "SECURITY_NAME_ABBR", "TRADE_MARKET",
+        "TRADE_MARKET_ZJG", "SECURITY_TYPE", "PUBLISHNAME", "BOARD_NAME",
+        "ASSIGNDSCRPT", "PAYYEAR",
+    }
+
+    # DDL 中 double 类型的值列（round-trip 断言用 float 比较避免格式差异）
+    _DOUBLE_COLS = {
+        "basic_eps", "deduct_basic_eps", "revenue", "net_profit", "roe", "bps",
+        "cash_flow_per_share", "gross_margin", "revenue_yoy", "net_profit_yoy",
+        "operating_profit_yoy", "net_profit_qoq", "shares_growth",
+    }
+
+    _CSV_HEADER = TestImportFinIndicatorsMerge._HEADER  # 复用既有 37 列清单
+
+    @staticmethod
+    def _ddl_columns() -> list[str]:
+        """Parse column names from main.FIN_INDICATORS_DDL (唯一来源)。
+
+        只匹配带类型的列定义行（排除 PRIMARY KEY 等非列行）。
+        """
+        import re
+
+        import main as main_mod
+
+        return re.findall(
+            r"^\s{4}(\w+)\s+(?:varchar|text|char|date|datetime|int|tinyint|double)\b",
+            main_mod.FIN_INDICATORS_DDL,
+            re.M,
+        )
+
+    def test_ddl_value_column_count_is_35(self) -> None:
+        """35 值列清单 = DDL 37 列 − 2 PK，且与 _CSV_TO_DDL 映射一一对应。"""
+        cols = self._ddl_columns()
+        assert len(cols) == 37, f"FIN_INDICATORS_DDL must have 37 columns, got {len(cols)}"
+        assert cols[:2] == ["symbol", "report_date"]
+        value_cols = cols[2:]
+        assert len(value_cols) == 35
+        assert sorted(value_cols) == sorted(self._CSV_TO_DDL.values()), (
+            "API→DDL mapping must cover every one of the 35 value columns"
+        )
+
+    def _make_row(self, prefix: str) -> dict[str, str]:
+        """Build a full 37-col CSV row; every value column carries a prefix-distinct value.
+
+        prefix='OLD' → 旧特征值（预插入 Dolt）；'NEW' → 新特征值（UPSERT 后应覆盖）。
+        TRIM 文本列带空格（验证 SELECT 侧 TRIM）。
+        """
+        is_old = prefix == "OLD"
+        row: dict[str, str] = {
+            "SECUCODE": "000858.SZ",
+            "SECURITY_CODE": "000858",
+            "REPORTDATE": "2025-03-31",
+        }
+        for i, api_col in enumerate(self._CSV_TO_DDL):
+            if api_col == "SECUCODE":  # 已由初始 dict 固定（symbol 拼接源）
+                continue
+            if api_col in self._TRIM_COLS:
+                row[api_col] = f"  {prefix}_{i}  "
+            elif api_col in {"UPDATE_DATE", "NOTICE_DATE", "QDATE"}:
+                row[api_col] = "2020-01-01" if is_old else "2026-06-30"
+            elif api_col == "EITIME":
+                row[api_col] = "2020-01-01 00:00:00" if is_old else "2026-06-30 00:00:00"
+            elif api_col in {"DATAYEAR", "ISNEW"}:
+                row[api_col] = str(i) if is_old else str(i + 1)
+            else:
+                row[api_col] = str(i * 10 + 2) if is_old else str(i * 10 + 1)
+        return row
+
+    def _write_csv(self, path: Path, row: dict[str, str]) -> None:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(self._CSV_HEADER)
+            writer.writerow([row.get(c, "") for c in self._CSV_HEADER])
+
+    def _expected(self, row: dict[str, str]) -> dict[str, str]:
+        """CSV 行 → Dolt 期望值（TRIM 文本列去空格，其余原样）。"""
+        exp: dict[str, str] = {}
+        for api_col, ddl_col in self._CSV_TO_DDL.items():
+            v = row[api_col]
+            exp[ddl_col] = v.strip() if api_col in self._TRIM_COLS else v
+        return exp
+
+    def _upsert_sql(self, odku_override: dict[str, str] | None = None) -> str:
+        """SELECT 全列别名 + ODKU 无前缀别名引用的 UPSERT SQL（GREEN 目标写法）。"""
+        value_cols = self._ddl_columns()[2:]
+        select_parts = []
+        for i, ddl_col in enumerate(value_cols):
+            api_col = next(c for c, d in self._CSV_TO_DDL.items() if d == ddl_col)
+            expr = f"TRIM({api_col})" if api_col in self._TRIM_COLS else api_col
+            select_parts.append(f"{expr} AS _c{i}")
+        select = (
+            "CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS _sym,\n"
+            "    REPORTDATE AS _rpt,\n    "
+            + ",\n    ".join(select_parts)
+        )
+        col_list = ", ".join(["symbol", "report_date"] + value_cols)
+        odku = odku_override or {c: f"_c{i}" for i, c in enumerate(value_cols)}
+        odku_clause = ", ".join(f"{c}={ref}" for c, ref in odku.items())
+        return (
+            f"INSERT INTO fin_indicators ({col_list})\n"
+            f"SELECT\n    {select}\n"
+            f"FROM _tmp_fin\n"
+            f"WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) "
+            f"IN (SELECT symbol FROM stock_basic)\n"
+            f"ON DUPLICATE KEY UPDATE {odku_clause}"
+        )
+
+    @pytest.fixture
+    def dolt_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Path, Callable[[str], str], Callable[[str], subprocess.CompletedProcess[str]]]:
+        """temp Dolt：stock_basic + data_updates + fin_indicators（真实 DDL）。"""
+        import main as main_mod
+
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
+            capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["dolt", "config", "--global", "--add", "user.name", "CI"],
+            capture_output=True, text=True,
+        )
+        init = subprocess.run(
+            ["dolt", "--data-dir", str(tmp_path), "init"],
+            capture_output=True, text=True,
+        )
+        assert init.returncode == 0, init.stderr
+
+        def dolt_sql_csv(sql: str) -> str:
+            return subprocess.run(
+                ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
+                capture_output=True, text=True,
+            ).stdout
+
+        def dolt_sql(sql: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["dolt", "--data-dir", str(tmp_path), "sql", "-q", sql],
+                capture_output=True, text=True,
+            )
+
+        dolt_sql_csv(
+            "CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY); "
+            "INSERT INTO stock_basic VALUES ('SZ000858')"
+        )
+        dolt_sql_csv(
+            "CREATE TABLE data_updates (table_name VARCHAR(50) PRIMARY KEY, "
+            "last_updated DATE, source VARCHAR(200), row_count INT, last_report_date DATE)"
+        )
+        dolt_sql_csv(main_mod.FIN_INDICATORS_DDL)
+
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        return tmp_path, dolt_sql_csv, dolt_sql
+
+    @staticmethod
+    def _last(stdout: str) -> str:
+        lines = stdout.strip().split("\n")
+        return lines[-1] if lines else ""
+
+    def test_alias_odku_overwrites_existing_pk(
+        self, dolt_env, tmp_path: Path
+    ) -> None:
+        """① SELECT 别名 + ODKU 无前缀别名引用：同 PK 全列覆盖成功（数值 + TRIM 文本列）。
+
+        钉住 plan 验收：数值 369.40→170.86、name/data_type 等 TRIM 文本列被覆盖
+        （防实现漏列导致新旧值静默混合）。
+        """
+        import io
+
+        import common
+
+        tmp, dolt_sql_csv, dolt_sql = dolt_env
+        dolt_sql_csv(
+            "INSERT INTO fin_indicators (symbol, report_date, update_date, revenue, name, data_type) "
+            "VALUES ('SZ000858', '2025-03-31', '2025-04-26', 369.40, '五粮液旧名', '旧类型')"
+        )
+        row = self._make_row("NEW")
+        row["TOTAL_OPERATE_INCOME"] = "170.86"
+        row["SECURITY_NAME_ABBR"] = "五粮液"
+        row["DATATYPE"] = "2025年 一季报"
+        row["UPDATE_DATE"] = "2026-04-30"
+        csv_path = tmp / "RPT_LICO_FN_CPD.csv"
+        self._write_csv(csv_path, row)
+
+        assert common.dolt_table_import("_tmp_fin", csv_path) is True
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM _tmp_fin")) == "1", (
+            "staging table _tmp_fin must contain the CSV row"
+        )
+        result = dolt_sql(self._upsert_sql())
+        assert result.returncode == 0, result.stderr
+
+        out = dolt_sql_csv(
+            "SELECT revenue, name, data_type, update_date FROM fin_indicators "
+            "WHERE symbol='SZ000858' AND report_date='2025-03-31'"
+        )
+        rows = list(csv.DictReader(io.StringIO(out)))
+        assert len(rows) == 1
+        assert float(rows[0]["revenue"]) == pytest.approx(170.86), rows[0]
+        assert rows[0]["name"] == "五粮液"
+        assert rows[0]["data_type"] == "2025年 一季报"
+        assert rows[0]["update_date"] == "2026-04-30"
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "1"
+
+    def test_upsert_all_35_value_columns_roundtrip(
+        self, dolt_env, tmp_path: Path
+    ) -> None:
+        """④ 全行 35 列 round-trip：旧特征值 → UPSERT → 每列等于新特征值。"""
+        import io
+
+        import common
+
+        tmp, dolt_sql_csv, dolt_sql = dolt_env
+        old = self._make_row("OLD")
+        new = self._make_row("NEW")
+
+        # 预插入旧值行（35 值列全部填充旧特征值）
+        vals = []
+        for api_col in self._CSV_TO_DDL:
+            v = old[api_col]
+            vals.append(v if api_col in {"DATAYEAR", "ISNEW"} else f"'{v}'")
+        dolt_sql_csv(
+            f"INSERT INTO fin_indicators (symbol, report_date, "
+            f"{', '.join(self._CSV_TO_DDL.values())}) "
+            f"VALUES ('SZ000858', '2025-03-31', {', '.join(vals)})"
+        )
+
+        csv_path = tmp / "RPT_LICO_FN_CPD.csv"
+        self._write_csv(csv_path, new)
+        assert common.dolt_table_import("_tmp_fin", csv_path) is True
+        result = dolt_sql(self._upsert_sql())
+        assert result.returncode == 0, result.stderr
+
+        expected = self._expected(new)
+        col_list = ", ".join(["symbol", "report_date"] + list(self._CSV_TO_DDL.values()))
+        out = dolt_sql_csv(
+            f"SELECT {col_list} FROM fin_indicators "
+            "WHERE symbol='SZ000858' AND report_date='2025-03-31'"
+        )
+        rows = list(csv.DictReader(io.StringIO(out)))
+        assert len(rows) == 1
+        for ddl_col, want in expected.items():
+            got = rows[0][ddl_col]
+            if ddl_col in self._DOUBLE_COLS:
+                assert float(got) == pytest.approx(float(want)), (
+                    f"{ddl_col}: got {got!r}, want {want!r}"
+                )
+            else:
+                assert got == want, f"{ddl_col}: got {got!r}, want {want!r}"
+        # 同 PK 覆盖而非新增行
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "1"
+
+    def test_qualified_source_column_reference_rejected(
+        self, dolt_env, tmp_path: Path
+    ) -> None:
+        """② 限定源列引用 `_tmp_fin.COL` 对 TRIM 文本列在 Dolt 报错（禁用写法）。"""
+        import common
+
+        tmp, dolt_sql_csv, dolt_sql = dolt_env
+        csv_path = tmp / "RPT_LICO_FN_CPD.csv"
+        self._write_csv(csv_path, self._make_row("NEW"))
+        assert common.dolt_table_import("_tmp_fin", csv_path) is True
+
+        value_cols = self._ddl_columns()[2:]
+        over = {c: f"_c{i}" for i, c in enumerate(value_cols)}
+        over["name"] = "_tmp_fin.name"  # TRIM 文本列限定源列引用
+        result = dolt_sql(self._upsert_sql(odku_override=over))
+        assert result.returncode != 0, "qualified source-column reference must fail on Dolt"
+        assert "_tmp_fin" in result.stderr, result.stderr
+
+    def test_values_function_rejected(
+        self, dolt_env, tmp_path: Path
+    ) -> None:
+        """③ VALUES() 写法在 Dolt 报错（禁用写法）。"""
+        import common
+
+        tmp, dolt_sql_csv, dolt_sql = dolt_env
+        csv_path = tmp / "RPT_LICO_FN_CPD.csv"
+        self._write_csv(csv_path, self._make_row("NEW"))
+        assert common.dolt_table_import("_tmp_fin", csv_path) is True
+
+        value_cols = self._ddl_columns()[2:]
+        over = {c: f"_c{i}" for i, c in enumerate(value_cols)}
+        over["revenue"] = "VALUES(revenue)"
+        result = dolt_sql(self._upsert_sql(odku_override=over))
+        assert result.returncode != 0, "VALUES() must fail on Dolt"
+        assert "__new_ins" in result.stderr, result.stderr
