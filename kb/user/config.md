@@ -43,6 +43,9 @@ language = "zh"
 # breakout = { days = 60 }              # N 日新高
 # momentum = { days = 20, min_pct = 0.0, max_pct = 100.0 }  # 动量区间
 # volume = { days = 20, times = 2.0 }   # 量能：近 N 日均量 ≥ 倍数 × 近 3N 日均量
+# 注（ref #244）：条件在代码中以 Filter AST 表达，GUI 通过 From<ScreenerQuery>
+# 编译后交给 run_screener；本节的持久化格式不变（ScreenerQuery serde 契约未动，
+# AST 到 Batch 3 才作为持久化格式）。
 
 [parquet]
 # 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
