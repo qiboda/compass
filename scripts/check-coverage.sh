@@ -6,8 +6,10 @@
 # compass-ui) against per-target minimum line-coverage percentages. Exits 1 if
 # any target is below its threshold or has no measured files.
 #
-# Thresholds (2026-08-04, ref #163): compass-data and compass-core are
-# enforced at 95%; all other crates and the workspace total remain at 80%.
+# Thresholds (2026-08-12, ref #250, testability-based): compass-core,
+# compass-data, compass-i18n, compass-strategy, compass-types and compass-ui
+# are enforced at 95%; compass (GUI, event-loop/thread/interaction hard to
+# test) at 90%; the workspace total at 93%.
 #
 # Usage:
 #   scripts/check-coverage.sh [cov.json]
@@ -19,14 +21,14 @@ COV_JSON="${1:-cov.json}"
 
 # Per-target minimum line coverage. Keys must match the `check` calls below.
 declare -A THRESHOLDS=(
-    [workspace]=80
+    [workspace]=93
     [compass-core]=95
     [compass-data]=95
-    [compass-i18n]=80
-    [compass]=80
-    [compass-strategy]=80
-    [compass-types]=80
-    [compass-ui]=80
+    [compass-i18n]=95
+    [compass]=90
+    [compass-strategy]=95
+    [compass-types]=95
+    [compass-ui]=95
 )
 
 if ! command -v jq >/dev/null 2>&1; then

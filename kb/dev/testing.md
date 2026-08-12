@@ -249,8 +249,10 @@ Tracy 提供实时、纳秒级精度的 CPU 性能分析，带有 flamegraph 可
 ### 门槛（CI 强制）
 
 CI coverage job 强制以下行覆盖率门槛，低于阈值退出码 1（CI 失败）。
-Rust 侧为 **per-crate 阈值**：数据层（compass-core / compass-data）95%，其余 crate 与
-workspace 总 80%（2026-08-04，ref #163）：
+Rust 侧为 **per-crate 阈值**（按可测试性设定，2026-08-12，ref #250）：
+纯逻辑/serde 可测的 crate（compass-core / compass-data / compass-i18n /
+compass-strategy / compass-types / compass-ui）95%，GUI 主程序 compass
+（事件循环/线程/交互难测）90%，workspace 总 93%：
 
 ```sh
 # Rust：单次 llvm-cov nextest --json 采集（nextest 语义，与 cargo nextest run 同口径），
@@ -264,8 +266,9 @@ cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=95
 
 - Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
 - `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，内嵌 per-crate 阈值表
-  （compass-core / compass-data → 95，compass / compass-strategy / compass-types /
-  compass-ui → 80，workspace 总 → 80）；任一低于各自阈值或未测到文件即退出码 1。
+  （compass-core / compass-data / compass-i18n / compass-strategy /
+  compass-types / compass-ui → 95，compass → 90，workspace 总 → 93）；
+  任一低于各自阈值或未测到文件即退出码 1。
   单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
 - Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`
   （`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计；`--cov-fail-under=95`。

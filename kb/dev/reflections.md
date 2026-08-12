@@ -350,3 +350,32 @@
 - **"RED 因错误原因失败"模式（新，本次 #235）**：对抗测试断言目标语义错误未被门禁 4 复核抓出，直到 GREEN 阶段才暴露——建议 skwy-requirement-test 复核清单增加"断言目标与输入语义自洽"检查（本条目 Process improvements 已提出）
 - **plan What to do 未全落实（新，本次 #235）**：验收标准通过但 What to do 细节遗漏（mirror-drift guard），F1 兜底抓出——建议实现完成后、F 波次前逐 todo 对照 plan What to do 全项自查
 - **"文档/假设未实测"模式（ref #46 → #71 → 本次 GUI 冒烟）**：plan 假设"GUI 冒烟可验证"但实测发现 X server dead + Parquet 为旧快照（concept_member 11 行脏数据根因在 Parquet 而非 Dolt）——数据面/环境面声明必须实测
+
+## 2026-08-12 — ref #250 per-crate 覆盖率阈值按可测试性调整 + 补测
+
+**What was done**: 调整 per-crate 覆盖率门槛（types/i18n/strategy/ui 80→95%、compass 80→90%、workspace 80→93%，core/data 保持 95%）+ 补测 compass-types（14 个对抗性测试，89.58→100%）与 compass-i18n（提取白名单谓词 + 表驱动测试，93.94→99.14%）。6 commits，5-way review 全 PASS（含 goal/QA/code-quality/security/context），872 测试全绿，8 项门槛实测全超阈值。
+
+**User corrections**（逐字引用对话记录）:
+1. "workspace的也改一下，到93%" —— 用户决策 workspace 阈值 80%→93%（原 issue 正文写"workspace=80% 保持"），plan 批准时追加。实测 96.10% 有余量；issue 正文未同步（收尾 comment 已计划注明此偏差）。
+
+**What went wrong**:
+1. **llvm-cov double-spawn 竞态诊断过长**：首次 `cargo llvm-cov nextest` 失败（exit 104，nextest 在 compass_core 二进制链接完成前尝试 --list），多轮排查（toolchain 卡、二进制存在性、CI 配置、残留进程）后才确认是一次性构建竞态、重跑即过。应"先重跑验证是否竞态，再深挖根因"。
+2. **测试 agent 权限受限改变交付落点**：skwy-adversarial-test 仅可写 `**/tests/**`，compass-types 测试落到 `tests/adversarial_serde.rs` 而非 lib.rs mod tests；skwy-requirement-test 无法 edit `crates/compass-i18n/src/lib.rs`（`**/src/**/*.rs` glob 未匹配），代码由主 agent 代落盘。委派 prompt 未预判 agent edit 权限边界（ref #203 三层兜底的外沿情况）。
+3. **pre-commit fmt 拦截首次 commit**：i18n assert 合并 + types 断言展开未先 `cargo fmt`，hook 拦截后格式化重提（hook 正常工作，效率摩擦）。
+4. **llvm-cov JSON segments 过滤条件两次用错**：`[3]==0` → `[2]==0` 才正确（格式 `[line, col, count, hasCount, ...]`，count 在 index 2）。
+5. **F1 evidence 初始不完整**：先只落 task-5 + task-evidence，task-1/2 测试证据后补（task-1-2-tests.md）——违反"F-wave evidence 一次性写全"（ref #174/#181 教训相关）。
+6. **review NITPICK 修复产生 2 个额外 commit**（unwrap→expect、裸 assert 加消息）：计划 4 commit，实际 6（含 evidence 补齐）。
+
+**Lessons learned**:
+1. **工具链报错先重跑/复现拿证据，再诊断**：llvm-cov double-spawn 类竞态错误，第一步是重跑验证是否一次性，命中再深挖——避免多轮静态排查（本次 4+ 轮 bash 排查后才重跑即过）。
+2. **委派测试 agent 前预判其 edit 权限**：只允许 `tests/` 的 agent 会改变测试落点（集成测试 vs mod tests）；委派 prompt 显式声明"权限受限时落 tests/ 或交主 agent 落盘"，避免交付形态偏差与返工。
+3. **F-wave evidence 一次性写全所有 task 证据**：task-1/2 测试证据与 task-5 验证证据同批落盘，不先写部分再补（本次后补暴露的完整性缺口）。
+
+**Process improvements**:
+- 已落实（docs）：`kb/dev/toolchain.md` 新增 llvm-cov double-spawn 排查卡（先重跑验证竞态）。
+- 建议（可检测）：skwy-adversarial-test / skwy-requirement-test 的 agent edit 权限 glob 核查——`**/src/**/*.rs` 未匹配 `crates/*/src/lib.rs`，验证 agent 权限配置是否覆盖工作区全部目标文件（proposed，走 gate 建 issue 评估）。
+
+### Trends (last 10)
+- **F-wave evidence 完整性反复**（ref #181 F1 "9 commits" 过期声称 → 本次 task-1/2 证据后补）：evidence 必须实现收尾后一次性写全并自检（commit 计数、task 覆盖），中途写/部分写必然需要补正
+- **测试 agent 权限/产出摩擦**（ref #203 权限设计 → 本次 edit 权限限制改变落点）：委派前明确 agent 权限边界与产出落点，权限受限时由 prompt 声明 fallback 路径，避免交付形态偏差
+- **"先复现/重跑拿证据再深挖"模式**（ref #205 worktree 模拟 → 本次 llvm-cov 重跑即过）：工具链报错与可疑行为的第一动作是复现/重跑验证是否一次性，而非静态多轮排查
