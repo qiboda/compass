@@ -50,10 +50,13 @@ compass (GUI binary)
   │     └── data/synthetic.rs ─ Test data generator
   │
   ├── compass-types (library)
-  │     └── lib.rs      ─ ScreenerQuery/ScreenerRow/MaCondition/... (cross-crate boundary types)
+  │     ├── lib.rs      ─ ScreenerQuery/ScreenerRow/MaCondition/... (cross-crate boundary types)
+  │     └── screener.rs ─ Filter AST（Filter/MetaCond/SeriesFactor/SeriesCond/CmpOp/FactorRef
+  │                        + From<ScreenerQuery> for Filter 编译层）
   │
   ├── compass-strategy (library)
-  │     └── lib.rs      ─ run_screener 选股引擎（元数据 + 技术面条件）
+  │     ├── lib.rs              ─ run_screener 选股引擎（元数据 + 技术面条件，收 &Filter）
+  │     └── screener_series.rs  ─ 序列函数（up_days / count_in_window / volume_surge）
   │
   └── compass-data (CLI binary)
         └── import / import-compass / export / backup subcommands
@@ -70,6 +73,63 @@ GUI 二进制（`compass`）使用 **egui-mobius citizen 模式**——一种响
 UI 面板被建模为 `Citizen` 结构体，通过 outbox 进行事件派发；共享状态通过
 `Dynamic<T>` 响应式字段管理；异步工作通过 `Signal`/`Slot` 类型化通道路由到
 运行在专用 tokio runtime 上的 `AsyncDispatcher`。
+
+## 选股器表达式 AST（epic #243，Batch 1）
+
+选股器条件在 `compass-types` 中有一个可序列化的表达式 AST（`screener.rs`），
+作为 config 持久化与未来 LLM 输出（Batch 4）的统一格式。旧版 `ScreenerQuery`
+保留为兼容层，单向编译成 AST；引擎入口 `run_screener` 改收 `&Filter`，内部
+受限反向转换回 `ScreenerQuery` 走既有引擎路径。AST 不直接求值——通用求值器
+属 Batch 3。
+
+### 类型系统
+
+```
+Filter        Meta(MetaCond) | Series(SeriesCond) | And(Vec<Filter>) | Or(Vec<Filter>) | Not(Box<Filter>)
+MetaCond      Industry(Vec<String>) | Exchange(Vec<String>) | Board(Vec<String>) | ListYears(u32)
+              | Delisted(bool) | MarketCap{min, max}（亿元，None 侧不限）
+SeriesFactor  Close | Sma(u32) | ChangePct(u32) | DayPct | AvgVolume(u32) | NDayHigh(u32)
+CmpOp         Eq | Ne | Gt | Ge | Lt | Le（serde snake_case）
+FactorRef     Const(f64) | Factor(SeriesFactor)
+SeriesCond    Cmp{factor, op, value} | UpDays{n, min_pct} | Count{factor, op, value, window, at_least}
+              | VolumeSurge{days, times}
+```
+
+`Filter` 是递归 tag-union：`Meta` 元数据约束、`Series` 序列条件、`And`/`Or`/`Not`
+布尔组合。`MetaCond` 集合语义（`Industry(vec![...])`）让多选 OR 比嵌套 `Or`
+简洁；`UpDays` 内建谓词（通达信 UPNDAY 先例）语义清晰，`Count` 为通用兜底。
+全部枚举 derive serde（tagged JSON；未知 tag / 缺非 Option 字段反序列化报错，
+Option 字段缺省 `None`），并实现 `and`/`or`/`not` 方法与 `&`/`|`/`~` 运算符重载
+（Zipline 式构造体验）。`Filter`/`SeriesCond` 无 `Default`——空查询由编译层以
+`And(vec![])` 表达；仅 `MetaCond`（`Industry(vec![])`）与 `SeriesFactor`
+（`Close`）实现 `Default`。
+
+**C1：`Cmp.value` 类型为 `FactorRef`**（`Const(f64)` / `Factor(SeriesFactor)`）——
+因子间比较（`Close > Sma(20)`、`Sma(5) > Sma(20)`、`Close > NDayHigh(days)`）
+用普通 `f64` 无法表达；`FactorRef` 统一比较两侧，无需新增独立 `CmpFactor`
+变体。
+
+### Crate 归属
+
+- **AST 类型 → `compass-types`**：跨 crate 边界类型，与 `ScreenerQuery` 同域；
+  serde 使 config 持久化与 LLM 输出共用同一格式。`From<ScreenerQuery> for Filter`
+  单向编译层覆盖全部 11 类既有条件（BullishAlign → 嵌套 `And(Cmp{Sma(5),Gt,
+  Sma(20)}, Cmp{Sma(20),Gt,Sma(60)})`，momentum → 双边界嵌套 `And`；空查询 →
+  `And(vec![])`）。
+- **序列函数 + `run_screener` → `compass-strategy`**（`screener_series.rs` +
+  `lib.rs`）：`run_screener(&Filter, reader, now)` 内部走私有受限反向转换
+  `filter_to_query`——只接受 From 层能产出的形状（accept-grammar），其余
+  （`UpDays`/`Count` 谓词、`Not`/`Or` 节点、Const 值比较等 Batch 3 形状）
+  返回 `ScreenerError::UnsupportedFilter`。两套类型并存直到 Batch 3 迁移完成；
+  既有 GUI 调用点（`backend.rs`）先 `Filter::from(query)` 编译再传入，行为不变。
+
+### 序列函数（screener_series.rs）
+
+`up_days`/`count_in_window`/`volume_surge` 三个纯函数，遵循 sepa/indicators.rs
+契约：窗口不足返回 `None`、NaN/非有限输入返回 `None`、零除防护、不 panic。
+`volume_surge` 匹配引擎语义（近 `days` 日均量 ≥ `times` × 近 `3×days` 日均量，
+基线嵌套含近期窗口）。Sma/ChangePct/NDayHigh 不设独立函数——复用既有私有
+helper（C3 决策），Batch 3 需要时再抽。
 
 ## Citizen 模式架构
 
@@ -508,5 +568,11 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | 异步架构：UI 线程与 I/O 分离方案 | 手动 std::thread + mpsc / 框架托管的 citizen 模式 | egui-mobius citizen 模式：Citizen trait + Dynamic\<T\> + Signal/Slot + AsyncDispatcher | 消除手动线程布线、Arc\<Mutex\> 竞争和版本计数器；Citizen 通过 outbox 解耦，AsyncDispatcher 自管 tokio runtime | 手动线程方案代码量大、易出错；Dynamic\<T\> 提供字段级独立读写，无跨字段锁竞争 |
 | 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），增量导入由 `import-compass` 的 merge 语义承担（`import` 总是全量直写，`--since` 仅过滤子集 + 覆盖全文件，非增量）；每标的单独文件增加文件管理开销 |
 | 测试覆盖率门槛：CI 强制 80% vs 无门槛 | 无门槛（continue-on-error）/ 总覆盖率 80% / 总 + 每 crate 各 80% + Python 全量 80% | 总 ≥80% 且每 crate（core/data/compass）各 ≥80%，Python `--cov=.` 全量 ≥80% | 防止核心库高覆盖率拉平 GUI/CLI 短板；GUI 以 egui_kittest 无头集成测试达成；Python 未测文件按 0% 计，杜绝假达标 | 仅总覆盖率可被高覆盖模块掩盖；单门槛无法约束 Python 侧 |
+| C1（#244）：`Cmp.value` 的类型 | `f64` / `FactorRef` / 新增独立 `CmpFactor` 变体 | `FactorRef { Const(f64), Factor(SeriesFactor) }` | 因子间比较（`Close>Sma(20)`、`Sma(5)>Sma(20)`、`Close>NDayHigh(days)`）用普通 `f64` 不可表达；`FactorRef` 统一比较两侧，对 `Cmp` 变体侵入最小，serde JSON 形态单一 | 独立 `CmpFactor` 变体分裂比较形态，反向转换与求值都要处理两个变体；纯 `f64` 无法表达 MA/突破等既有条件 |
+| C2（#244）：BullishAlign 的 AST 映射 | handoff 表原文 `Close>Sma(20) && Sma(20)>Sma(60)` / 引擎语义 `Sma(5)>Sma(20) && Sma(20)>Sma(60)` | 引擎语义（ma5>ma20 && ma20>ma60，strategy lib.rs:233-238） | 与 `screen_symbol` 引擎实现一致，行为保持（编译不改变筛选结果） | handoff 表原文与引擎不符，按它编译会改变筛选语义 |
+| C3（#244）：序列函数范围 | 3 个（UpDays/Count/VolumeSurge）/ 6 个（+Sma/ChangePct/NDayHigh） | 3 个 | 其余 3 个已有私有 helper（strategy lib.rs:221-259）可复用，避免 Batch 3 前的死代码；偏差已在 PR/issue 说明 | 6 个独立函数在 Batch 1 无调用方，纯冗余 |
+| M4（#244）：`run_screener(&Filter)` 的 Batch 1 执行路径 | 通用 Filter 求值器（Batch 3）/ 受限私有反向转换 / 保持旧签名 | 受限私有反向转换（`filter_to_query` accept-grammar）+ `ScreenerError::UnsupportedFilter` | 不改引擎逻辑、GUI 语义不变、Batch 1 零风险；Batch 3 再实现真求值器 | 通用求值器属 Batch 3 范围，提前实现违背批次边界；保持旧签名则 AST 无消费者 |
+| 覆盖率门槛（#244）：compass-types | 维持 80% / 提升至 95% | 95% | issue #244 验收标准，用户已确认（2026-08-12）；改动 check-coverage.sh / ci.yml / AGENTS.md / kb/dev/testing.md | 维持 80% 达不到 #244 验收要求 |
+| exclude_delisted 缺失语义（#244） | 布尔直接编码（`Delisted(true/false)`）/ 存在性编码（仅 `Delisted(false)` 产出，缺失即不排除） | `exclude_delisted: true` → `Meta(Delisted(false))`；`false` → 不产出节点；反向按"存在 → true、缺失 → false"还原 | 存在性编码对 bool 无损，且与 `ScreenerQuery::default()`（exclude_delisted=true）匹配——默认查询产出裸 `Delisted(false)` 节点而非空 `And` | 布尔直接编码无法区分"false 与未设置"；`Delisted(true)`（仅退市）在 ScreenerQuery 中不可表达，反向只能拒绝 |
 
 符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。
