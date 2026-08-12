@@ -1,1 +1,5 @@
-Evidence for llm-screener task 3 (issue #244) — verified by orchestrator F-wave, 2026-08-12
+task-3: From<ScreenerQuery> for Filter (11 conditions) — VERIFIED
+- 16 mapping tests: all 11 conditions + combined nested-And query + defaults + exclude_delisted both values
+- BullishAlign = And(Sma5>Gt>Sma20, Sma20>Gt>Sma60) — C2 engine semantics (lib.rs:513-518 matches)
+- momentum double-bound always emitted; empty query → And(vec![]); default → bare Meta(Delisted(false))
+- Verified by cargo test -p compass-types (52 pass) + Goal Verification oracle byte-comparison

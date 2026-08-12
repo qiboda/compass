@@ -1,1 +1,4 @@
-Evidence for llm-screener task 6 (issue #244) — verified by orchestrator F-wave, 2026-08-12
+task-6: coverage threshold compass-types 95% — VERIFIED
+- Actual coverage 99.51% (compass-types) ≥ 95% gate; workspace 96.34% ≥ 93%; gate exit 0
+- Note: master #251 (coverage thresholds all 95%) superseded our config-only commit; dropped in rebase; threshold [compass-types]=95 in scripts/check-coverage.sh:30 already present from master
+- No test-writing needed (coverage naturally exceeded via Todo 1-5 tests)

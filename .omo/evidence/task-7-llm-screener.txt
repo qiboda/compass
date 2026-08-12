@@ -1,1 +1,4 @@
-Evidence for llm-screener task 7 (issue #244) — verified by orchestrator F-wave, 2026-08-12
+task-7: doc-sync + decision records — VERIFIED
+- kb/design/architecture.md: "选股器表达式 AST（epic #243, Batch 1）" section + 6-decision 决策记录 table (C1/C2/C3/M4/coverage/exclude_delisted)
+- kb/user/config.md: [screener] persistence note (AST not persisted until Batch 3)
+- grep verified: all 6 decisions present; Filter/SeriesCond types documented

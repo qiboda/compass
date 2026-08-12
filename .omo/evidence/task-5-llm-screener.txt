@@ -1,1 +1,6 @@
-Evidence for llm-screener task 5 (issue #244) — verified by orchestrator F-wave, 2026-08-12
+task-5: run_screener(&Filter) + restricted reverse conversion — VERIFIED
+- ScreenerError::UnsupportedFilter added; private filter_to_query accept-grammar (8 shapes + SeenFields duplicate rejection)
+- 21 existing semantic tests PASS UNCHANGED through Filter entry (cargo test -p compass-strategy: 21 integration pass)
+- 23 call sites migrated (tests/screener.rs) + backend.rs:149 compile-first; cargo check -p compass clean
+- UnsupportedFilter tests: UpDays/Count/Not/Or/Delisted(true)/Const-cmp/isolated Sma/mismatched days/duplicates (19+7 tests)
+- Nested-combo roundtrip: industries+BullishAlign+momentum → engine semantics identical
