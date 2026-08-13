@@ -911,19 +911,20 @@ impl eframe::App for CompassApp {
             // Index snapshot success toast on loading true→false with no
             // error (设计交互表: 刷新 → toast「指数数据已更新 · N 个」).
             let current_index_loading = self.shared_state.index_snapshot_loading.get();
-            if self.last_index_loading && !current_index_loading {
-                if self.shared_state.index_snapshot_error.get().is_none() {
-                    let count = self
-                        .shared_state
-                        .index_snapshot
-                        .get()
-                        .map(|s| s.rows.len())
-                        .unwrap_or(0);
-                    self.toast.push(
-                        ToastLevel::Success,
-                        t!("toast.index_updated", count = count),
-                    );
-                }
+            if self.last_index_loading
+                && !current_index_loading
+                && self.shared_state.index_snapshot_error.get().is_none()
+            {
+                let count = self
+                    .shared_state
+                    .index_snapshot
+                    .get()
+                    .map(|s| s.rows.len())
+                    .unwrap_or(0);
+                self.toast.push(
+                    ToastLevel::Success,
+                    t!("toast.index_updated", count = count),
+                );
             }
             self.last_index_loading = current_index_loading;
 
