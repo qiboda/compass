@@ -407,3 +407,38 @@
 - **F-wave evidence 完整性反复 3 次**（ref #181 过期声称 → ref #250 task-1/2 后补 → 本次 stub 占位）：evidence 必须实现收尾后一次性写全并自检，占位符/部分写/中途写都需要补正，已成为最高频流程摩擦
 - **review lane 卡住/无输出处理不当 2 次**（ref #205 19 分钟未识别 → 本次 oracle 截断先等待后重派）：lane 无 terminal 状态（超时/截断/单消息）即标记 inconclusive 重派，不被动等待
 - **并行委派同文件冲突**（本次 Todo 2/3 同改 screener.rs）：委派前做文件级冲突矩阵，同文件任务串行化
+
+## 2026-08-12 — ref #135 collectors 财报增量修订检测：UPDATE_DATE 锚点增量 + UPSERT 覆盖
+
+**What was done**: 实现 issue #135——fetch_fin_indicators.py 增量模式从 REPORTDATE 枚举改为 UPDATE_DATE 时间锚点（filter=(UPDATE_DATE>='{anchor}')，锚点=min(data_updates.last_updated, state.json last_update_date)），Dolt import 改 UPSERT（SELECT 别名 + ODKU 无前缀别名引用，Dolt 2.2.3 不支持限定引用/VALUES()），CSV 整文件 keep-LAST 去重，替代 #27 --refresh N。7 commits（test RED ×2 + feat ×2 + docs ×2 + fix ×1），406 tests 全绿、cov 96%、5-way review 全 PASS，双审 5 轮批准。
+
+**User corrections**（逐字引用对话记录）:
+1. "在更新表中记录的有更新日期，根据更新日期自动增量不行吗？" —— 用户点出按 UPDATE_DATE 自动增量优于我最初的 `--revision-window` 窗口重抓方案。实测确认东财 API 支持 `filter=(UPDATE_DATE>='...')`，方案大幅简化。
+2. "默认的更新日期使用compass_data数据库中记录的上次日期可以吗？你知道是哪个表哪一列吗" —— 用户指定锚点用 `data_updates.last_updated`（并考察我是否真知道表列）；我澄清了 `last_report_date` 是报告期语义不能作 UPDATE_DATE 锚点的陷阱。
+3. "按推荐" —— 确认锚点列 data_updates.last_updated。
+4. "review B" —— C4 决策选 B（不做过渡回补）+ 要求 high-accuracy review。
+
+**What went wrong**:
+1. **plan 首版方案方向偏差**：v1 方案是 `--revision-window N` 窗口重抓 + UPDATE_DATE 对比——用户一句话点破"按更新日期自动增量"后才实测 API filter 能力，方案从"窗口重抓"简化为"锚点过滤"。探索阶段应更早实测 API filter 能力，而非先设计重抓窗口。
+2. **双审 5 轮 CHANGES_REQUESTED**：plan 经历 momus+Oracle 5 轮审查才通过——先后发现 T5 过滤表达式漏类、T6 0 行推进歧义、F3 五粮液断言行空转、UPSERT 限定引用不可行、wave 摘要残留旧描述、T1/T2 标题行粘连等。plan 初版质量不足，多轮返工。
+3. **UPSERT 写法反复实测**：最初信 Metis 的"限定源列引用可用"，实测后才发现 Dolt 2.2.3 只支持 SELECT 别名写法（限定引用对 TRIM 文本列报错、VALUES() 报 __new_ins）。"subagent 输出需独立验证"原则执行正确但耗费多轮。
+4. **测试 agent 权限受限**：skwy-adversarial-test / skwy-requirement-test 无法写 `.omo/evidence/`（edit 白名单仅 tests/**），RED 证据需主 agent 代落盘（ref #250 同教训再犯）。
+5. **覆盖率差 0.69pp**：首轮全量 cov 94.31% < 95% 门槛，补 11 个覆盖测试（fetch_fin_indicators.py 91%→100%）才达标——T9 应在实现时就规划覆盖补测而非验证阶段才补。
+6. **security review 发现 429 陈旧 data 复用**：fetch_by_update_date 的 `data` 在页循环外初始化，某页 429 耗尽后残留上一页响应导致重复追加。修复为每页重置（一个 commit）。
+7. **review 后 rebase master**：master 在开发期间前进 8 commits，rebase 无冲突但需重跑核心测试确认。
+
+**Lessons learned**:
+1. **先实测数据源能力，再定方案形态**：涉及外部 API（东财 datacenter）时，第一步应实测其 filter/sort 能力（curl 验证 UPDATE_DATE 过滤），方案方向随实测结果调整——用户的一句话往往点出更简路径，探索要覆盖"数据源本身支持什么"而非假设局限。
+2. **plan 双审轮次可前置压缩**：plan 写入前的 Metis 差距分析 + 独立验证（UPSERT 写法、路径存在性）应更彻底，减少 momus/oracle 轮的 CHANGES_REQUESTED 往返（本次 5 轮）。
+3. **委派测试 agent 时声明 evidence 落盘 fallback**：只允许写 tests/** 的 agent，RED 证据由 prompt 明确"输出完整记录，主 agent 代落盘"，避免交付时才发现权限边界（ref #250 同教训，本次再犯——需固化为流程）。
+4. **覆盖率门槛在实现 wave 内规划**：新增代码的覆盖缺口（错误分支、fallback 路径）应在 GREEN 实现时就补测试，而非 T9 验证阶段发现 94.31% 再补。
+
+**Process improvements**:
+- 已落实（docs）：无 AGENTS.md 变更。
+- 建议（可检测）：委派测试 agent 的 prompt 模板增加"evidence 落盘权限说明"——测试 agent 只能写 tests/** 时，prompt 明确"RED 证据以完整记录输出，主 agent 代写入 .omo/evidence/"（proposed，ref #250 已提类似项，本次再犯需固化）。
+- 建议（可检测）：探索阶段先验证数据源能力——涉及外部 API 的 feature，plan 探索 checklist 增加"实测 API filter/sort 支持能力"项（proposed）。
+
+### Trends (last 10)
+- **测试 agent 权限/产出摩擦 3 次**（ref #203 权限设计 → ref #250 edit 权限限制 → 本次 evidence 无法落盘）：委派 prompt 必须预判 agent 权限边界并声明 fallback（evidence 主 agent 代落盘、代码主 agent 代写入），仅"注意"不固化则每次再犯
+- **外部依赖能力未先实测导致方案返工**（本次 UPDATE_DATE filter 未在 v1 探索、UPSERT 写法多轮实测）：涉及外部 API/数据库方言时，第一步实测能力边界（curl/filter 验证、方言兼容性探针），再定方案形态
+- **plan 双审轮次偏高**（本次 5 轮 momus/oracle）：Metis 差距分析 + 关键 claim 独立验证前置化可压缩轮次——验证过的写法/路径/过滤直接写入 plan，避免每轮评审重复发现同类问题
