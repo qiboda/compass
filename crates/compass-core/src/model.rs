@@ -69,6 +69,44 @@ pub struct StockBasic {
     pub delist_date: Option<chrono::NaiveDate>,
 }
 
+/// One index/board metadata row (epic #255).
+///
+/// Read from `index_basic.parquet` (symbol/name/index_type) by
+/// [`crate::data::parquet::ParquetReader::load_all_index_basics`]; feeds the
+/// GUI toolbar picker and the market tab's name lookup. `index_type` is one
+/// of `"official"` / `"concept"` / `"industry"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexBasic {
+    /// Exchange-prefixed symbol (e.g. "SH000001", "BK0475").
+    pub symbol: String,
+    /// Chinese display name (e.g. "上证指数").
+    pub name: String,
+    /// `"official"` | `"concept"` | `"industry"`.
+    pub index_type: String,
+}
+
+/// One raw row of `index_daily.parquet` (epic #255 C4).
+///
+/// Read by [`crate::data::parquet::ParquetReader::load_index_daily_rows`]:
+/// the window query keeps only the last two trading days per symbol
+/// (`ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY tradedate DESC) <= 2`),
+/// enough to compute the latest point value and the day-over-day change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexDailyRow {
+    /// Exchange-prefixed symbol (e.g. "SH000001", "BK0475").
+    pub symbol: String,
+    /// `"official"` | `"concept"` | `"industry"`.
+    pub index_type: String,
+    /// Trading date.
+    pub trade_date: chrono::NaiveDate,
+    /// Raw close (点位).
+    pub close: f64,
+    /// Trading volume.
+    pub volume: f64,
+    /// Trading amount (成交额, yuan).
+    pub amount: f64,
+}
+
 /// A single cross-section row: one trading day of one symbol.
 ///
 /// Returned by [`crate::data::parquet::ParquetReader::fetch_cross_section`]

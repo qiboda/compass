@@ -23,15 +23,19 @@ fn normalize_symbol_filter(filter: &str) -> Result<String, String> {
         }
         let canonical = format!("{exchange}{code}");
         // Mirror compass_core::data::parquet::validate_symbol: the canonical
-        // form must be exactly exchange + 6 ASCII digits. Anything else
-        // (non-digit, wrong length, quote chars) would produce broken SQL or
-        // silently empty results in the `symbol IN (...)` clause.
-        let valid = canonical.len() == 8
+        // form must be exactly exchange + 6 ASCII digits (SH/SZ/BJ) or
+        // BK + exactly 4 ASCII digits (board/index codes, epic #255 C3).
+        // Anything else (non-digit, wrong length, quote chars) would produce
+        // broken SQL or silently empty results in the `symbol IN (...)` clause.
+        let valid = (canonical.len() == 8
             && matches!(&canonical.as_bytes()[..2], b"SH" | b"SZ" | b"BJ")
-            && canonical.as_bytes()[2..].iter().all(u8::is_ascii_digit);
+            && canonical.as_bytes()[2..].iter().all(u8::is_ascii_digit))
+            || (canonical.len() == 6
+                && &canonical.as_bytes()[..2] == b"BK"
+                && canonical.as_bytes()[2..].iter().all(u8::is_ascii_digit));
         if !valid {
             return Err(format!(
-                "--symbols entry '{part}' is not a valid symbol; expected exchange prefix (SH/SZ/BJ) + exactly 6 digits, e.g. SH600519"
+                "--symbols entry '{part}' is not a valid symbol; expected exchange prefix (SH/SZ/BJ) + exactly 6 digits or BK + exactly 4 digits, e.g. SH600519 / BK0475"
             ));
         }
         normalized.push(canonical);

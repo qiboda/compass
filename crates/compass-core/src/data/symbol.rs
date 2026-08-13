@@ -10,6 +10,8 @@
 /// - `"sz.000001"` → `("SZ", "000001")`
 /// - `"SH.600519"` → `("SH", "600519")`
 /// - `"SZ000001"` → `("SZ", "000001")` (Dolt-native, no dot)
+/// - `"BK0475"` → `("BK", "0475")` (board/index code, 4-digit bare code)
+/// - `"bk.0475"` → `("BK", "0475")` (dot form, case-insensitive)
 ///
 /// Returns `("", code)` if no prefix is found.
 pub fn parse_explicit_prefix(code: &str) -> (&str, &str) {
@@ -25,6 +27,10 @@ pub fn parse_explicit_prefix(code: &str) -> (&str, &str) {
         ("SZ", &code[2..])
     } else if code.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("BJ")) {
         ("BJ", &code[2..])
+    } else if code.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bk.")) {
+        ("BK", &code[3..])
+    } else if code.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("BK")) {
+        ("BK", &code[2..])
     } else {
         ("", code)
     }
@@ -85,6 +91,32 @@ mod tests {
         assert_eq!(parse_explicit_prefix("sh600519"), ("SH", "600519"));
         assert_eq!(parse_explicit_prefix("Sh600519"), ("SH", "600519"));
         assert_eq!(parse_explicit_prefix("bj830799"), ("BJ", "830799"));
+    }
+
+    #[test]
+    fn parse_explicit_prefix_bk_prefix() {
+        // Board/index code namespace (epic #255 C3): BK + 4-digit bare code,
+        // case-insensitive, dot form supported like SH/SZ/BJ.
+        assert_eq!(parse_explicit_prefix("BK0475"), ("BK", "0475"));
+        assert_eq!(parse_explicit_prefix("BK0000"), ("BK", "0000"));
+        assert_eq!(parse_explicit_prefix("bk0475"), ("BK", "0475"));
+        assert_eq!(parse_explicit_prefix("bK0475"), ("BK", "0475"));
+        assert_eq!(parse_explicit_prefix("bk.0475"), ("BK", "0475"));
+        assert_eq!(parse_explicit_prefix("BK.0475"), ("BK", "0475"));
+    }
+
+    #[test]
+    fn exchange_of_symbol_bk_prefix_passthrough() {
+        // BK must not fall back to the bare-code heuristic ("SZ").
+        assert_eq!(exchange_of_symbol("BK0475"), "BK");
+        assert_eq!(exchange_of_symbol("bk0475"), "BK");
+        assert_eq!(exchange_of_symbol("BK0000"), "BK");
+    }
+
+    #[test]
+    fn infer_exchange_prefix_bk_is_none() {
+        // BK 4-digit codes are not bare 6-digit codes: no heuristic inference.
+        assert_eq!(infer_exchange_prefix("0475"), None);
     }
 
     #[test]
