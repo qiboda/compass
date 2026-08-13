@@ -111,6 +111,22 @@ screener:
   min_pct: "min%:"
   max_pct: "max%:"
   times: "×:"
+  builder:
+    card_title: Filter Conditions
+    add_condition: Add Condition
+    add_group: Sub-Group
+    group_and: And (AND)
+    group_or: Or (OR)
+    empty_title: No conditions yet
+    empty_desc: Click "Add Condition" to build a filter, or run to see the whole market
+    empty_group: Empty Group
+    clear_tooltip: Clear Conditions
+    delete_tooltip: Delete Condition
+    negate_tooltip: Negate (exclude)
+    unknown_shape: Advanced
+    unsupported_run: "This condition type is not supported by the engine yet, available in a later version: %{e}"
+    unsupported_save: This condition combination cannot be saved to the config file
+    cond_up_days: Consecutive Up Days
   table:
     code: Code
     name: Name
