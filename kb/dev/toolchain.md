@@ -282,6 +282,57 @@
 - **教训**: 第三方 i18n 库的 "default-locale" 配置不一定改运行期初始 locale——
   任何"默认 zh"的测试契约都要在测试侧显式 set_locale，不能赌配置生效
 
+### [测试] 子分组 scope `max_rect` 高度用 INFINITY → 组内控件及卡片下方全部 NaN/inf rect（#245 交互测试发现）
+
+- **症状**: screener builder 一旦存在子分组（`CondItem::Group`），其内部控件
+  （组头 Segmented、组删除 X、组内 add menu）与**组之后的全部内容**（根 add
+  menu、卡片下方的「筛选」按钮）在 egui_kittest 树中 rect 为
+  `[[NaN inf] - [NaN inf]]`（空分组占位 label 高度 `inf`）。kittest 点击
+  这些节点被静默丢弃（click 事件落在 NaN/inf 坐标 → 无 hit）——
+  `filter_click_compresses...` 式断言 saved=None 且无任何 error，易误判为
+  "点击没生效"
+- **根因**: `render_group_items`（citizens/screener.rs）对子分组用
+  ```rust
+  ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_max(
+      start, egui::pos2(start.x + row_w, start.y + f32::INFINITY))))
+  ```
+  scope 高度 = INFINITY；叶子卡片行用有限值
+  `start.y + tokens.spacing.control_md`。wrap 布局（`horizontal_wrapped` +
+  `Align::Center`）在 available height=INF 下垂直居中计算
+  `(INF - h)/2` → inf/NaN → 组内控件 rect 全毁；scope 结束后外层 wrap
+  cursor.y 累加 INF → 组之后所有内容（根 add menu、筛选按钮）位置也变
+  NaN/inf。**生产同样受影响**（egui 布局与 harness 无关——最小复现仅
+  condition_builder + 一个 Group 即出 NaN）
+- **排查路径**:
+  1. kittest 树查 rect：`query_all_by_label_contains("添加条件")` 两个节点
+     rect 均为 `[[NaN inf] - [NaN inf]]`（无组时根菜单 rect 有限）
+  2. 最小复现：仅 `panel.condition_builder(ui, &[], &[])` + 预置一个
+     `CondItem::Group(CondGroup::default())`，固定窗口 1000x1400，`run()`
+     后仍 NaN（排除结果表/窗口尺寸因素）
+  3. 对照：无组 6 卡布局所有 rect 有限；叶卡 scope 高度有限（control_md）
+  4. 验证点击被丢弃：对 NaN 节点 click + step 后状态无变化，且
+     `screener_error` 也 None（无任何副作用 = 事件未命中）
+- **修复**: ✅ 已修复（commit 24f70d3 后续补丁）。子分组 scope 的 max_rect
+  高度改用有限值——`ui.available_rect_before_wrap()` 的底部（与叶卡一致只
+  约束 x 全宽、y 用当前可见底部）而非 INFINITY。修后 rect 全部有限，
+  组内与组后控件可点击
+- **验证**: ✅ 已修。`cargo test -p compass citizens::screener::tests`
+  28/28 全绿；`add_sub_group_and_nested_cards_compile_nested_and` 保留
+  "建子组"真实交互 + 视图模型加卡断言嵌套 And AST（kittest 对嵌套 scope
+  二次 popup 点击仍有限制——见下）；`restore_query...` 3 卡 restore 渲染
+  断言 + 扁平形状保存 round-trip 全绿
+- **遗留限制（#245）**: kittest 无法稳定点击**嵌套 scope 内 popup 的第二次
+  选项点击**——第一次（根组 popup）成功，第二次（子组内 popup 打开后点
+  选项）被 Dropdown 的 click-outside 关闭逻辑吞掉（Area hover 状态时序）。
+  同类限制已见于 multi_select 的 Area/ScrollArea 注释。子组内加卡交互由
+  `add_condition_via_root_menu_appends_card`（根组加卡）覆盖交互层，
+  嵌套结构由视图模型层断言
+- **教训**: kittest 节点 rect 为 NaN/inf 时点击会**静默丢弃**——先查 rect
+  再查行为；UI 断言先验证"节点存在且 rect 有限"再断言交互结果。
+  `fit_contents()` 会随内容测量放大此症状（INF 内容 → 窗口尺寸失真），
+  交互测试用固定大窗口更稳；`Harness::run()` 对持续 repaint（popup 动画
+  request_repaint_after）会在 4 帧后 panic，popup 交互用单帧 `step()`
+
 ---
 
 ## GitHub CLI / Hook

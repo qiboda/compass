@@ -442,3 +442,33 @@
 - **测试 agent 权限/产出摩擦 3 次**（ref #203 权限设计 → ref #250 edit 权限限制 → 本次 evidence 无法落盘）：委派 prompt 必须预判 agent 权限边界并声明 fallback（evidence 主 agent 代落盘、代码主 agent 代写入），仅"注意"不固化则每次再犯
 - **外部依赖能力未先实测导致方案返工**（本次 UPDATE_DATE filter 未在 v1 探索、UPSERT 写法多轮实测）：涉及外部 API/数据库方言时，第一步实测能力边界（curl/filter 验证、方言兼容性探针），再定方案形态
 - **plan 双审轮次偏高**（本次 5 轮 momus/oracle）：Metis 差距分析 + 关键 claim 独立验证前置化可压缩轮次——验证过的写法/路径/过滤直接写入 plan，避免每轮评审重复发现同类问题
+
+## 2026-08-13 — ref #245 llm-screener Batch 2：可视化条件构建器 UI（条件卡片组操作 Filter AST）
+
+**What was done**: epic #243 Batch 2（#245）用 Metabase 范式条件卡片组（AND/OR 嵌套 ≥2 层）替换选股器固定表单——compass 新增 `screener_builder.rs` 视图模型（CondItem/CondGroup/CondLeaf + filter_to_items/leaf_to_filter/group_to_filter 双向映射，round-trip 结构等价）；UI 渲染（根组 Card + 递归子组 Frame + 添加/删除/AND-OR/清空/取反/空态）；`RunScreenerRequest` 携 Filter；legacy 保存复用引擎 `filter_to_query` 作压缩 oracle；i18n `screener.builder.*` 键。7 commits 全含独立成行 `ref #245`，1087 测试全绿、覆盖率全达标（compass 92.2% ≥ 90%），momus+oracle 双审修订计划后执行。
+
+**User corrections**: 无明确纠正——"好"（批准计划）、"review"（要求双审）、"开始"（批准执行）、"push"（确认推送）均为流程推进决策非纠偏。6 项设计分叉（预置 6 卡/允许构建运行报错/提供 Not/Count 延后/legacy 保存/就地编辑）经 question 工具全部采纳推荐。
+
+**What went wrong**:
+1. **子代理两次"只分析未落盘"（Todo 3 unspecified-high、Todo 5 quick）**：两个 agent 都输出了完整设计与代码思路但未写文件（git status 干净），各浪费一次完整委派周期（5m + 21m）。原因：委派 prompt 强调"分析/设计"多于"必须落盘"，且未强制交付前 git status 验证。教训：#244 同类（worker 超时零交付）已出现——子代理交付验证必须前置为 prompt 硬性要求。
+2. **kittest label 多匹配踩坑 3 次**（en_builder_technical "MA"、show_renders "排除退市"/"全部"）：`get_by_label_contains` 遇多匹配直接 panic，需 `query_all_by_label_contains` + 下标。每次都是运行失败后才发现，浪费 3 轮测试-修复循环。
+3. **自建 panel 测试未显式 set_locale 单跑失败**（Todo 4 两个 filter_click 测试）：绕过 `panel_with_form()` 自建 panel 时未设 `rust_i18n::set_locale("zh")`，单跑默认 en locale 下 `get_by_label("筛选")` 找不到按钮；完整跑时被其他测试的 zh 遗留掩盖。多轮调试才定位（"测试隔离问题"）。教训：#244 同批已强调"默认 zh 测试契约要显式 set_locale"（toolchain 卡），此处重复——自建 panel 的测试构造必须显式 set_locale。
+4. **unsupported_save 提示被 `screener_error.set(None)` 顺序覆盖**：Todo 4 初版先压缩失败设提示、后无条件清 error，导致提示消失。真实逻辑缺陷（非测试问题），调试 4-5 轮定位（含探索 toast 机制、backend result_slot 语义）。教训：交互路径中"设置状态 A → 清状态 B"的顺序依赖应在实现时一次想清，测试驱动发现成本高。
+5. **测试 5 子组内二次 popup 点击死磕后确认 kittest 限制**：为驱动"子组内加第二张卡"交互投入 ~15 轮调试（多 step、rect 有限断言、click 时序、clicked_outside 分析、kittest click_at 探索），最终确认 kittest 无法点击嵌套 scope 内 popup 的第二次选项（Area hover 时序），降级为视图模型加卡 + 保留建组真实交互。教训：遇到"交互测试驱动不了"应先查 toolchain 排查卡同类限制（multi_select Area/ScrollArea 限制已记录），避免长时间死磕。
+6. **测试驱动的生产 bug：子组 scope max_rect 高度 INFINITY → 组内/组后控件 rect NaN**：交互测试发现生产布局缺陷（INFINITY 使 wrap 垂直居中算 NaN），修复为有限底部并沉淀 toolchain 卡。此为正面收获（测试发现生产 bug），非摩擦——记录以示测试驱动的价值。
+
+**Lessons learned**:
+1. 委派 prompt 必须写"交付前 git status 确认改动落盘"+"未落盘视为失败"（子代理两次只分析未写入）。
+2. 所有 kittest label 查询默认 `query_all_by_label_contains` + 下标，`get_by_label_contains` 仅在已知唯一时用——多匹配 panic 是默认陷阱。
+3. 自建 panel/harness 的测试构造器必须自带 `set_locale("zh")`（不依赖 panel_with_form 的副作用）。
+4. 交互路径状态设置顺序（set A → clear B）实现时先画时序，测试驱动定位成本高。
+5. 交互测试驱动失败先查 toolchain 排查卡同类限制，再决定死磕或降级（kittest popup 时序限制已有先例）。
+
+**Process improvements**:
+- toolchain.md 新增 2 张排查卡：`子分组 scope INFINITY 布局`（已修复 + 遗留 kittest 二次 popup 限制）、kittest NaN/inf rect 点击静默丢弃 + popup 单帧 step 时序教训
+- kb/dev/testing.md 未更新——kittest 多匹配/locale 教训已在 toolchain 卡覆盖，待下次测试文档修订时并入（proposed）
+
+### Trends (last 10)
+- **子代理交付验证重复 2 次**（ref #244 worker 超时零交付 → ref #245 两次只分析未落盘）：委派 prompt 必须内置"交付前 git status 验证 + 未落盘视为失败"的硬性检查，纯"注意"不固化则每批再犯——本批已通过 prompt 显式要求缓解，但尚未固化为 skill/AGENTS.md 规则
+- **kittest 测试时序/查询摩擦跨批重复**（ref #244/#245 均出现 locale 与 label 查询踩坑）：同一类"测试契约未显式化"反复——set_locale 与 query_all 应固化为项目测试基建（如 panel_with_form 自带 locale、helper 封装多匹配查询），而非每个测试手写易错
+- **测试驱动发现生产 bug 是稳定收益**（ref #244 AST 形状 C2 修订 → ref #245 INFINITY 布局）：RED 测试在实现前暴露契约/布局缺陷——test-first 的价值已两次实证，继续保持

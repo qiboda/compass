@@ -2,6 +2,7 @@ pub mod chart;
 pub mod indicators;
 pub mod logger;
 pub mod screener;
+pub mod screener_builder;
 pub mod sepa;
 
 // Epic #217 requirement-acceptance tests. The app-construction helpers in
