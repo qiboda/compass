@@ -137,7 +137,10 @@ pub fn run_screener(
 /// outside the momentum pair, isolated Sma left operands, single-sided
 /// momentum Cmps, and duplicate nodes mapping to the same `ScreenerQuery`
 /// field (`From<ScreenerQuery>` never emits such shapes).
-fn filter_to_query(filter: &Filter) -> Result<ScreenerQuery, ScreenerError> {
+///
+/// `pub` since the GUI builder reuses it as the single legacy-save
+/// compressibility oracle (issue #245 — no third accept-grammar copy).
+pub fn filter_to_query(filter: &Filter) -> Result<ScreenerQuery, ScreenerError> {
     let mut query = ScreenerQuery {
         exclude_delisted: false,
         ..ScreenerQuery::default()

@@ -104,9 +104,6 @@ pub struct ScreenerPanel {
     /// Results table — owns its sort state across frames.
     table: DataTable,
     /// Persists the current query whenever a filter run is triggered.
-    #[allow(dead_code)]
-    // Invocation is restored in Todo 4 (legacy compress via the engine
-    // `filter_to_query`); a bespoke compressor here would duplicate it.
     on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
 }
 
@@ -197,10 +194,23 @@ impl ScreenerPanel {
                 .clicked()
             {
                 let filter = self.build_filter();
-                // TODO(todo4): legacy compress — `on_save(&ScreenerQuery)` is
-                // restored in Todo 4 via the engine `filter_to_query`.
                 shared_state.screener_loading.set(true);
+                // Clear the previous run error before compressing: the legacy
+                // save hint below must survive the whole run (the toast layer
+                // in main.rs pushes it on the None→Some transition).
                 shared_state.screener_error.set(None);
+                // Legacy save: reuse the engine's restricted reverse-compile
+                // as the compressibility oracle — the same accept-grammar the
+                // run path uses, so a query that compresses here is exactly a
+                // query the engine can run. Inexpressible combinations
+                // (Or/Not/UpDays/duplicate fields) surface the unsaved-state
+                // hint instead of writing a lossy config.
+                match compass_strategy::filter_to_query(&filter) {
+                    Ok(query) => (self.on_save)(&query),
+                    Err(_) => shared_state.screener_error.set(Some(
+                        compass_i18n::t!("screener.builder.unsupported_save").into_owned(),
+                    )),
+                }
                 if let Err(e) = run_screener_signal.send(RunScreenerRequest { filter }) {
                     shared_state.screener_loading.set(false);
                     shared_state.screener_error.set(Some(
@@ -228,7 +238,16 @@ impl ScreenerPanel {
             ui.spinner();
             ui.label(compass_i18n::t!("screener.filtering"));
         } else if let Some(err) = shared_state.screener_error.get() {
-            ui.colored_label(ui.visuals().error_fg_color, err);
+            // Engine's Display prefix for the restricted accept-grammar
+            // rejection (compass-strategy ScreenerError::UnsupportedFilter).
+            // Batch 2 builder shapes outside it (Or/Not/UpDays/sub-groups)
+            // are supported in a later engine batch — add the friendly note.
+            let label = if err.starts_with("unsupported filter shape") {
+                compass_i18n::t!("screener.builder.unsupported_run", e = err).into_owned()
+            } else {
+                err
+            };
+            ui.colored_label(ui.visuals().error_fg_color, label);
         } else {
             self.table
                 .set_rows(rows.iter().map(Self::row_cells).collect());
@@ -1155,6 +1174,118 @@ mod tests {
         assert!(
             shared.screener_loading.get(),
             "screener_loading should be set after filter click"
+        );
+    }
+
+    #[test]
+    fn filter_click_compresses_to_legacy_query_on_save() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let saved: std::sync::Arc<std::sync::Mutex<Option<ScreenerQuery>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let saved_clone = saved.clone();
+        let id = CitizenId::new("screener");
+        let state = CitizenState::new();
+        let tokens = ThemeTokens::dark();
+        let mut panel = ScreenerPanel::new(
+            id,
+            state,
+            None,
+            Box::new(move |q: &ScreenerQuery| {
+                *saved_clone
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(q.clone());
+            }),
+            &tokens,
+        );
+        // Industry selection in the first preset card compresses to the legacy
+        // query without loss (engine accept-grammar covers Meta nodes).
+        if let CondItem::Leaf(l) = &mut panel.builder_root[0] {
+            l.params = LeafParams::MultiSelect(vec!["白酒".to_string()]);
+        }
+        let shared = SharedState::new("SZ000001", "1d");
+        let (run_signal, _run_slot) =
+            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+        });
+        harness.fit_contents();
+        harness.get_by_label("筛选").click();
+        harness.step();
+
+        let q = saved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("compressible builder state must invoke on_save");
+        assert_eq!(q.industries, vec!["白酒".to_string()]);
+        assert!(
+            q.exclude_delisted,
+            "preset Delisted card compresses to exclude"
+        );
+    }
+
+    #[test]
+    fn filter_click_uncompressible_state_shows_hint_without_save() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let saved = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let saved_clone = saved.clone();
+        let id = CitizenId::new("screener");
+        let state = CitizenState::new();
+        let tokens = ThemeTokens::dark();
+        let mut panel = ScreenerPanel::new(
+            id,
+            state,
+            None,
+            Box::new(move |_: &ScreenerQuery| {
+                *saved_clone
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+            }),
+            &tokens,
+        );
+        // UpDays is outside the engine accept-grammar (Batch 3): the run
+        // compiles, but the legacy save must refuse instead of dropping it.
+        panel.builder_root.push(CondItem::Leaf(CondLeaf {
+            kind: LeafKind::UpDays,
+            params: LeafParams::UpDays { n: 3, min_pct: 0.0 },
+            negated: false,
+        }));
+        let shared = SharedState::new("SZ000001", "1d");
+        let (run_signal, _run_slot) =
+            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+        });
+        harness.fit_contents();
+        harness.get_by_label("筛选").click();
+        harness.step();
+
+        assert!(
+            !*saved
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            "uncompressible builder state must NOT invoke on_save"
+        );
+        assert!(
+            shared
+                .screener_error
+                .get()
+                .is_some_and(|e| e.contains("无法保存")),
+            "uncompressible save must surface the unsupported_save hint"
         );
     }
 
