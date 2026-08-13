@@ -74,13 +74,13 @@ UI 面板被建模为 `Citizen` 结构体，通过 outbox 进行事件派发；�
 `Dynamic<T>` 响应式字段管理；异步工作通过 `Signal`/`Slot` 类型化通道路由到
 运行在专用 tokio runtime 上的 `AsyncDispatcher`。
 
-## 选股器表达式 AST（epic #243，Batch 1）
+## 选股器表达式 AST（epic #243，Batch 1-3）
 
 选股器条件在 `compass-types` 中有一个可序列化的表达式 AST（`screener.rs`），
 作为 config 持久化与未来 LLM 输出（Batch 4）的统一格式。旧版 `ScreenerQuery`
-保留为兼容层，单向编译成 AST；引擎入口 `run_screener` 改收 `&Filter`，内部
-受限反向转换回 `ScreenerQuery` 走既有引擎路径。AST 不直接求值——通用求值器
-属 Batch 3。
+保留为兼容层/迁移面，单向编译成 AST；引擎入口 `run_screener(&Filter, ...)`
+直接以通用递归求值器（`screener_eval.rs`，Batch 3）逐 symbol 求值——不再有
+受限反向转换。
 
 ### 类型系统
 
@@ -116,20 +116,27 @@ Option 字段缺省 `None`），并实现 `and`/`or`/`not` 方法与 `&`/`|`/`~`
   单向编译层覆盖全部 11 类既有条件（BullishAlign → 嵌套 `And(Cmp{Sma(5),Gt,
   Sma(20)}, Cmp{Sma(20),Gt,Sma(60)})`，momentum → 双边界嵌套 `And`；空查询 →
   `And(vec![])`）。
-- **序列函数 + `run_screener` → `compass-strategy`**（`screener_series.rs` +
-  `lib.rs`）：`run_screener(&Filter, reader, now)` 内部走私有受限反向转换
-  `filter_to_query`——只接受 From 层能产出的形状（accept-grammar），其余
-  （`UpDays`/`Count` 谓词、`Not`/`Or` 节点、Const 值比较等 Batch 3 形状）
-  返回 `ScreenerError::UnsupportedFilter`。两套类型并存直到 Batch 3 迁移完成；
-  既有 GUI 调用点（`backend.rs`）先 `Filter::from(query)` 编译再传入，行为不变。
+- **求值器 → `compass-strategy`**（`screener_eval.rs`）：`evaluate(filter, basic,
+  series, now) -> bool` 递归求值整个 AST——Meta 走 `StockBasic`（含
+  `Delisted(true)` 仅退市语义），Series 走 bars 扫描（Cmp/UpDays/Count/
+  VolumeSurge），And/Or/Not 布尔组合；窗口不足/NaN → 不匹配（false），不
+  panic、不 NaN。`run_screener` 逐 symbol 调用求值器后组装行（市值
+  `total_share × latest.close / 1e8` 亿元、20 日涨幅显示列），市值降序截断
+  `MAX_RESULTS`。
+- **持久化 → `compass`**（main.rs `ScreenerSection`）：`[screener]` 节
+  `filter = "<Filter JSON>"` 新格式（AST 原样持久化）；旧 11 键扁平
+  `ScreenerQuery` 仍可读取（`#[serde(flatten)]` 兼容），`resolve` 优先新格式、
+  缺失回退 `Filter::from(legacy)`，坏 JSON 回退默认不崩溃。旧配置首次加载可读、
+  首次保存后迁移为新格式。
 
 ### 序列函数（screener_series.rs）
 
 `up_days`/`count_in_window`/`volume_surge` 三个纯函数，遵循 sepa/indicators.rs
 契约：窗口不足返回 `None`、NaN/非有限输入返回 `None`、零除防护、不 panic。
 `volume_surge` 匹配引擎语义（近 `days` 日均量 ≥ `times` × 近 `3×days` 日均量，
-基线嵌套含近期窗口）。Sma/ChangePct/NDayHigh 不设独立函数——复用既有私有
-helper（C3 决策），Batch 3 需要时再抽。
+基线嵌套含近期窗口）。求值器（Batch 3）直接接线这三个函数；Sma/ChangePct/
+NDayHigh/DayPct/AvgVolume 作为 factor 在 `screener_eval::factor_at` 内联求值
+（按索引滑窗，窗口不足 → 该日不计入），不单独 pub。
 
 ## Citizen 模式架构
 
@@ -574,5 +581,16 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | M4（#244）：`run_screener(&Filter)` 的 Batch 1 执行路径 | 通用 Filter 求值器（Batch 3）/ 受限私有反向转换 / 保持旧签名 | 受限私有反向转换（`filter_to_query` accept-grammar）+ `ScreenerError::UnsupportedFilter` | 不改引擎逻辑、GUI 语义不变、Batch 1 零风险；Batch 3 再实现真求值器 | 通用求值器属 Batch 3 范围，提前实现违背批次边界；保持旧签名则 AST 无消费者 |
 | 覆盖率门槛（#244）：compass-types | 维持 80% / 提升至 95% | 95% | issue #244 验收标准，用户已确认（2026-08-12）；改动 check-coverage.sh / ci.yml / AGENTS.md / kb/dev/testing.md | 维持 80% 达不到 #244 验收要求 |
 | exclude_delisted 缺失语义（#244） | 布尔直接编码（`Delisted(true/false)`）/ 存在性编码（仅 `Delisted(false)` 产出，缺失即不排除） | `exclude_delisted: true` → `Meta(Delisted(false))`；`false` → 不产出节点；反向按"存在 → true、缺失 → false"还原 | 存在性编码对 bool 无损，且与 `ScreenerQuery::default()`（exclude_delisted=true）匹配——默认查询产出裸 `Delisted(false)` 节点而非空 `And` | 布尔直接编码无法区分"false 与未设置"；`Delisted(true)`（仅退市）在 ScreenerQuery 中不可表达，反向只能拒绝 |
+| B1（#246）：Filter 求值入口 | 通用递归求值器 / 保留受限反向转换 / 扩展 accept-grammar | 通用递归求值器（`screener_eval.rs`，`evaluate() -> bool`），删除 `filter_to_query` 全套机制 | issue #246 验收要求 UpDays/Count/Or/Not 真实过滤——受限文法无法表达；通用求值器消灭"两套类型 + 受限文法"中间层，与 GUI/LLM 共享同一 AST | 保留/扩展受限文法违背 Batch 3 目标；ScreenerQuery 仅保留为 config 迁移面 |
+| B2（#246）：求值语义基准 | 逐条对照新实现 / 复刻既有 `screen_symbol` 语义 | 复刻 `screen_symbol`（ma 含最新 N 根、breakout 前 N 根不含最新、momentum 含 base、volume 3N 嵌套基线、missing total_share + cap 条件剔除、delisted 默认排除） | 21 个既有语义集成测试是回归基线，断言不允许改 | 新语义会破坏既有测试契约与用户预期 |
+| B3（#246）：`Delisted(true)` 求值 | 拒绝（延续 #244）/ 支持 | 求值器支持：`delist_date.is_some()` 匹配仅退市 | 通用求值器完整支持 AST——`From<ScreenerQuery>` 永不产出但求值器处理；语义自然 | 拒绝会留下 AST 无法求值的死形状 |
+| B4（#246）：持久化格式 | 继续存 `ScreenerQuery` 11 键 / `[screener]` 加 `filter` JSON key / 独立 JSON 文件 | `[screener]` 节 `filter = "<Filter JSON>"`，加载双解析（新格式优先、legacy 11 键回退、坏 JSON 回退默认） | AST 是 config 与 LLM 的统一格式（Batch 1 决策）；旧配置可读（验收要求）、首次保存后迁移；`serde_json` 为 workspace 既有依赖 | 独立文件破坏 config.toml 单文件约定；继续存 11 键无法表达 Or/Not/UpDays |
+| B5（#246）：性能验证 | 仅凭复杂度论证 / criterion bench 对比迁移前后 | criterion bench（6000 标的 × 400 bar 合成数据）对比 a1dbcad 基线 | 验收要求"全市场筛选性能不劣于现状"需客观证据；实测两档（空 Filter + legacy 可表达混合 Filter）中位数同量级（差异 <3%） | 复杂度论证无数据支撑；代表性 Filter 含 UpDays 会在旧路径直接 Err（bench 对比无效） |
+| B6（#246）：MarketCap 缺失 total_share | 无条件剔除 / 按 `min/max` 激活门控 | `min`/`max` 任一 Some 才剔除；均 None → 按 0.0 通过（排序垫底） | 复刻 `screen_symbol`（strategy lib.rs:435-444）；GUI 默认 6 卡片恒含 `MarketCap{None,None}`，无条件剔除会静默丢弃缺失 share 的股票 | 无条件剔除破坏 GUI 默认状态行为 |
+| B7（#246）：`NDayHigh` 语义 | 含最新 N 根 / 前 N 根（不含最新） | 前 N 根（不含最新）最大值，需 N+1 根 | 复刻 `matches_breakout`（strategy lib.rs:527-535）——`Close > NDayHigh(days)` 与 breakout 一致；Count 内逐日求值同一定义（`series[i-n..i]`） | 含最新会让 breakout 恒 false（Close 必 ≤ 含自身的 max）；双定义会漂移 |
+
+> 注：M4（#244）的"受限私有反向转换"执行路径已被 B1（#246）取代——通用求值器
+> 落地后 `filter_to_query`/`ScreenerError::UnsupportedFilter` 全部删除，M4 仅为
+> Batch 1 阶段决策的历史记录。
 
 符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。

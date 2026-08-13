@@ -1,0 +1,11 @@
+criterion bench: run_screener(&Filter) — synthetic 6000 symbols × 400 bars, seeded RNG (seed 42)
+Environment: same machine, release profile, --sample-size 10 --warm-up-time 1 --measurement-time 3
+
+| filter                    | pre-migration (a1dbcad, filter_to_query) | post-migration (evaluator) | delta  |
+|---------------------------|------------------------------------------|----------------------------|--------|
+| empty_filter              | 1.6740-1.7309 s (median 1.6996)          | 1.6704-1.7183 s (median 1.6954) | -0.25% |
+| representative_filter     | 1.7028-1.7711 s (median 1.7347)          | 1.6685-1.7031 s (median 1.6854) | -2.84% |
+
+Verdict: evaluator within same order of magnitude (slightly faster); issue #246 "全市场筛选性能不劣于现状" PASS.
+Representative filter is legacy-expressible (Industry+MarketCap+Close>Sma20+Close>NDayHigh60) so the baseline path could run it (B2 fix).
+Baseline measured via `git worktree add /tmp/compass-baseline a1dbcad` + copied bench file + criterion/rand dev-deps.

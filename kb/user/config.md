@@ -30,8 +30,13 @@ language = "zh"
 # symbols = ["SH600519", "SZ000002"]
 
 [screener]
-# 选股器条件（Screener tab）。全部可选——缺省键用默认值。
+# 选股器条件（Screener tab）。
+# 新格式（ref #246，引擎 Batch 3 起）：filter = "<Filter AST JSON>"——
+# 条件以表达式 AST 原样持久化（含连续上涨/或组/取反等任意组合），
 # 由 GUI 在每次点击"筛选"时自动写回，重启后恢复。
+# filter = '{"And":[{"Meta":{"Industry":["白酒"]}}]}'
+# 旧格式（Batch 3 前）：以下 11 键扁平结构仍可读取（迁移兼容），
+# 首次保存后自动转为 filter JSON 格式。
 # industries = ["白酒", "银行"]          # 行业多选（OR），空 = 不限
 # exchanges = ["SH", "SZ"]               # 交易所多选，空 = 不限
 # boards = ["主板"]                      # 板块多选，空 = 不限
@@ -43,9 +48,6 @@ language = "zh"
 # breakout = { days = 60 }              # N 日新高
 # momentum = { days = 20, min_pct = 0.0, max_pct = 100.0 }  # 动量区间
 # volume = { days = 20, times = 2.0 }   # 量能：近 N 日均量 ≥ 倍数 × 近 3N 日均量
-# 注（ref #244）：条件在代码中以 Filter AST 表达，GUI 通过 From<ScreenerQuery>
-# 编译后交给 run_screener；本节的持久化格式不变（ScreenerQuery serde 契约未动，
-# AST 到 Batch 3 才作为持久化格式）。
 
 [parquet]
 # 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
