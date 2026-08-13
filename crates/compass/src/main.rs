@@ -4,7 +4,7 @@ use std::time::Duration;
 use egui_citizen::{CitizenId, Dispatcher};
 use egui_dock::{DockArea, DockState};
 use egui_file_dialog::FileDialog;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
@@ -12,7 +12,7 @@ use compass_core::data::symbol::{
     exchange_of_symbol, infer_exchange_prefix, parse_explicit_prefix,
 };
 use compass_core::model::{AppConfig, WatchlistConfig};
-use compass_types::ScreenerQuery;
+use compass_types::{Filter, ScreenerQuery};
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
 use compass_ui::widgets::dropdown::Dropdown;
 use compass_ui::widgets::icon_button::IconButton;
@@ -96,12 +96,13 @@ fn main() -> eframe::Result {
             // Create citizen panels
             let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
             let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+            let screener_filter = resolve_screener_filter(&config.screener);
             let screener = ScreenerPanel::new(
                 CitizenId::new(SCREENER_ID),
                 registered.screener,
-                Some(&config.screener),
-                Box::new(|q| {
-                    if let Err(e) = save_screener_config(q) {
+                Some(&screener_filter),
+                Box::new(|f| {
+                    if let Err(e) = save_screener_config(f) {
                         tracing::warn!(error = %e, "failed to save screener config");
                     }
                 }),
@@ -235,15 +236,44 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
 /// Top-level config file contents: the legacy `AppConfig` sections plus the
 /// screener condition section and the watchlist section. Flattening keeps
 /// existing TOML keys mapping to `AppConfig` while `[screener]` parses into
-/// `ScreenerQuery` and `[watchlist]` into `WatchlistConfig`.
+/// `ScreenerSection` and `[watchlist]` into `WatchlistConfig`.
 #[derive(Deserialize)]
 struct FullConfig {
     #[serde(flatten)]
     app: AppConfig,
     #[serde(default)]
-    screener: ScreenerQuery,
+    screener: ScreenerSection,
     #[serde(default)]
     watchlist: WatchlistConfig,
+}
+
+/// The `[screener]` config section — dual-format (issue #246).
+///
+/// New format: `filter = "<Filter JSON>"` (the AST persisted verbatim).
+/// Legacy format: the flat 11-key `ScreenerQuery` TOML from pre-Batch-3
+/// builds, still readable for migration. `resolve` prefers the new format
+/// and falls back to compiling the legacy query into a `Filter`.
+#[derive(Serialize, Deserialize, Default)]
+struct ScreenerSection {
+    /// Filter AST as JSON (new format). `None` = legacy/missing.
+    #[serde(default)]
+    filter: Option<String>,
+    /// Legacy flat 11-key query (pre-Batch-3). Only used when `filter` is
+    /// absent.
+    #[serde(flatten)]
+    legacy: ScreenerQuery,
+}
+
+impl ScreenerSection {
+    /// Resolve the persisted filter, preferring the JSON AST.
+    fn resolve(&self) -> Result<Filter, String> {
+        match &self.filter {
+            Some(json) => {
+                serde_json::from_str(json).map_err(|e| format!("invalid screener filter JSON: {e}"))
+            }
+            None => Ok(Filter::from(self.legacy.clone())),
+        }
+    }
 }
 
 /// Normalize a raw config language value to the two supported codes ("zh" /
@@ -280,7 +310,7 @@ fn load_config() -> FullConfig {
                 tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
                 FullConfig {
                     app: AppConfig::default(),
-                    screener: ScreenerQuery::default(),
+                    screener: ScreenerSection::default(),
                     watchlist: WatchlistConfig::default(),
                 }
             }
@@ -289,9 +319,23 @@ fn load_config() -> FullConfig {
             tracing::warn!(path = %config_path.display(), error = %e, "config file not found, using defaults");
             FullConfig {
                 app: AppConfig::default(),
-                screener: ScreenerQuery::default(),
+                screener: ScreenerSection::default(),
                 watchlist: WatchlistConfig::default(),
             }
+        }
+    }
+}
+
+/// Resolve the persisted `[screener]` section into the `Filter` AST for the
+/// GUI restore path. A malformed `filter` JSON falls back to the default
+/// filter (delisted excluded, no other constraints) with a warning — the
+/// config must never prevent startup.
+fn resolve_screener_filter(section: &ScreenerSection) -> Filter {
+    match section.resolve() {
+        Ok(filter) => filter,
+        Err(e) => {
+            tracing::warn!(error = %e, "falling back to default screener filter");
+            Filter::from(ScreenerQuery::default())
         }
     }
 }
@@ -396,11 +440,12 @@ fn rewrite_config_file(
 /// Persist the screener conditions to the `[screener]` section of
 /// `~/.config/compass/config.toml`.
 ///
-/// Reads the existing file as a `toml::Value`, replaces the `screener`
-/// table, and writes it back. Creates the file (with only `[screener]`)
-/// when it does not exist. Comments and unknown sections are lost on
-/// rewrite — accepted trade-off.
-fn save_screener_config(query: &ScreenerQuery) -> Result<(), String> {
+/// The filter AST is serialized to JSON and stored under the `filter` key
+/// (new format, issue #246). Reads the existing file as a `toml::Value`,
+/// replaces the `screener` table, and writes it back. Creates the file (with
+/// only `[screener]`) when it does not exist. Comments and unknown sections
+/// are lost on rewrite — accepted trade-off.
+fn save_screener_config(filter: &Filter) -> Result<(), String> {
     let config_path = std::env::var("HOME")
         .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
@@ -412,11 +457,13 @@ fn save_screener_config(query: &ScreenerQuery) -> Result<(), String> {
         Err(_) => toml::Value::Table(Default::default()),
     };
 
-    let screener_value = toml::Value::try_from(query)
-        .map_err(|e| format!("failed to serialize screener config: {e}"))?;
+    let json = serde_json::to_string(filter)
+        .map_err(|e| format!("failed to serialize screener filter: {e}"))?;
+    let mut screener_table = toml::map::Map::new();
+    screener_table.insert("filter".to_string(), toml::Value::String(json));
     doc.as_table_mut()
         .expect("value is a table")
-        .insert("screener".to_string(), screener_value);
+        .insert("screener".to_string(), toml::Value::Table(screener_table));
 
     let serialized =
         toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
@@ -1279,8 +1326,9 @@ fn timeframe_value(idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use crate::FullConfig;
+    use crate::ScreenerSection;
     use compass_core::model::StockBasic;
-    use compass_types::ScreenerQuery;
+    use compass_types::{Filter, ScreenerQuery};
 
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
@@ -2873,7 +2921,7 @@ default_timeframe = "1w"
     }
 
     // ------------------------------------------------------------------
-    // Screener config persistence (Todo 7)
+    // Screener config persistence (issue #246)
     // ------------------------------------------------------------------
 
     #[test]
@@ -2893,12 +2941,12 @@ default_timeframe = "1w"
             std::env::set_var("HOME", tmp.path());
         }
 
-        let query = ScreenerQuery {
+        let filter = Filter::from(ScreenerQuery {
             industries: vec!["白酒".to_string()],
             ma: Some(compass_types::MaCondition::BullishAlign),
             ..ScreenerQuery::default()
-        };
-        let save_result = crate::save_screener_config(&query);
+        });
+        let save_result = crate::save_screener_config(&filter);
         let loaded: FullConfig =
             toml::from_str(&std::fs::read_to_string(config_dir.join("config.toml")).unwrap())
                 .unwrap();
@@ -2918,14 +2966,10 @@ default_timeframe = "1w"
             loaded.app.app.default_symbol, "600519",
             "existing sections preserved"
         );
-        assert_eq!(loaded.screener.industries, vec!["白酒".to_string()]);
         assert_eq!(
-            loaded.screener.ma,
-            Some(compass_types::MaCondition::BullishAlign)
-        );
-        assert!(
-            loaded.screener.exclude_delisted,
-            "default true survives roundtrip"
+            loaded.screener.resolve().expect("valid filter JSON"),
+            filter,
+            "filter JSON round-trips through the [screener] filter key"
         );
     }
 
@@ -2941,8 +2985,8 @@ default_timeframe = "1w"
             std::env::set_var("HOME", tmp.path());
         }
 
-        let query = ScreenerQuery::default();
-        let result = crate::save_screener_config(&query);
+        let filter = Filter::from(ScreenerQuery::default());
+        let result = crate::save_screener_config(&filter);
         let contents =
             std::fs::read_to_string(config_dir.join("config.toml")).expect("file created");
 
@@ -2961,10 +3005,14 @@ default_timeframe = "1w"
             contents.contains("[screener]"),
             "created file has [screener] section"
         );
+        assert!(
+            contents.contains("filter"),
+            "created file has the filter key"
+        );
     }
 
     #[test]
-    fn load_config_parses_screener_section() {
+    fn load_config_parses_legacy_screener_section() {
         let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let config_dir = tmp.path().join(".config/compass");
@@ -2992,14 +3040,99 @@ default_timeframe = "1w"
             }
         }
 
-        assert_eq!(config.screener.industries, vec!["银行".to_string()]);
+        // Legacy flat keys still parse; resolve compiles them into a Filter
+        // with the same constraints (industries + breakout + default delisted
+        // exclusion).
         assert_eq!(
-            config.screener.breakout,
-            Some(compass_types::BreakoutCondition::new(120))
+            config.screener.resolve().expect("legacy resolve"),
+            Filter::from(ScreenerQuery {
+                industries: vec!["银行".to_string()],
+                breakout: Some(compass_types::BreakoutCondition::new(120)),
+                ..ScreenerQuery::default()
+            })
         );
+    }
+
+    #[test]
+    fn load_config_parses_filter_json_section() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let filter = Filter::from(ScreenerQuery {
+            industries: vec!["白酒".to_string()],
+            ..ScreenerQuery::default()
+        });
+        let json = serde_json::to_string(&filter).expect("serialize filter");
+        // Escape the JSON string's inner quotes for a TOML basic string.
+        let escaped = json.replace('\\', "\\\\").replace('"', "\\\"");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            format!("[screener]\nfilter = \"{escaped}\"\n"),
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(
+            config.screener.resolve().expect("new-format resolve"),
+            filter,
+            "filter JSON is the preferred format"
+        );
+    }
+
+    #[test]
+    fn load_config_invalid_filter_json_falls_back_to_default() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".config/compass");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[screener]\nfilter = \"{not json\"\n",
+        )
+        .unwrap();
+
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let config = crate::load_config();
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
         assert!(
-            config.screener.exclude_delisted,
-            "missing key defaults true"
+            config.screener.resolve().is_err(),
+            "malformed filter JSON surfaces as an error"
+        );
+        assert_eq!(
+            crate::resolve_screener_filter(&config.screener),
+            Filter::from(ScreenerQuery::default()),
+            "startup path falls back to the default filter"
         );
     }
 
@@ -3032,7 +3165,10 @@ default_timeframe = "1w"
             }
         }
 
-        assert_eq!(config.screener, ScreenerQuery::default());
+        assert_eq!(
+            config.screener.resolve().expect("default resolve"),
+            Filter::from(ScreenerQuery::default())
+        );
         assert_eq!(
             config.app.app.default_symbol, "SZ000001",
             "bare legacy default_symbol must auto-migrate to the prefixed form"
@@ -3289,7 +3425,7 @@ default_timeframe = "1w"
                 },
                 ..AppConfig::default()
             },
-            screener: ScreenerQuery::default(),
+            screener: ScreenerSection::default(),
             watchlist: WatchlistConfig {
                 symbols: vec!["000001".to_string()],
             },
@@ -4212,14 +4348,13 @@ breakout = { days = 120 }
             "[watchlist] must survive the theme write-back"
         );
         assert_eq!(
-            config.screener.industries,
-            vec!["银行".to_string()],
-            "[screener] must survive the theme write-back"
-        );
-        assert_eq!(
-            config.screener.breakout,
-            Some(compass_types::BreakoutCondition::new(120)),
-            "[screener] breakout must survive the theme write-back"
+            config.screener.resolve().expect("screener survives"),
+            Filter::from(ScreenerQuery {
+                industries: vec!["银行".to_string()],
+                breakout: Some(compass_types::BreakoutCondition::new(120)),
+                ..ScreenerQuery::default()
+            }),
+            "[screener] legacy keys must survive the theme write-back"
         );
     }
 
