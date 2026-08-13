@@ -406,16 +406,20 @@ fn render_group_items(
                 }
                 CondItem::Group(group) => {
                     // Full-width nested container: start on a fresh row so the
-                    // frame does not begin mid-row after preceding cards.
+                    // frame does not begin mid-row after preceding cards. The
+                    // scope's bottom is the available viewport bottom — a
+                    // finite bound so wrap layout can center content (infinite
+                    // height made every internal rect NaN and killed clicks).
                     if ui.available_size_before_wrap().x < 320.0 {
                         ui.end_row();
                     }
                     let start = ui.cursor().min;
                     let row_w = ui.available_size_before_wrap().x;
+                    let bottom = ui.available_rect_before_wrap().bottom();
                     ui.scope_builder(
                         egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
                             start,
-                            egui::pos2(start.x + row_w, start.y + f32::INFINITY),
+                            egui::pos2(start.x + row_w, bottom),
                         )),
                         |ui| {
                             render_sub_group(
@@ -1673,5 +1677,547 @@ mod tests {
             assert_same_row_contains(&harness, "Volume", &n_labels[2], width);
         }
         compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // #245 Todo 5: interactive path tests — real clicks drive the builder
+    // and the UI state / compiled Filter AST is asserted afterwards.
+    // Dropdown popups follow the widget's own harness pattern
+    // (compass-ui dropdown.rs): click trigger → step (popup opens) →
+    // click option → step (selection applied, popup closes). Single
+    // `step()`s are used instead of `run()` because the panel schedules
+    // a delayed repaint while popups animate, which trips `run()`'s
+    // max_steps guard.
+    // ------------------------------------------------------------------
+
+    /// Full-panel harness with a fixed tall window. `fit_contents` would
+    /// under-size the window for nested-group layouts (the group frame's
+    /// unbounded-height `scope_builder` skews the content-rect estimate),
+    /// pushing bottom-anchored widgets (add-menu popups, the 筛选 button)
+    /// outside the window where their clicks are silently dropped. The
+    /// returned harness borrows `panel` mutably for its lifetime — drop it
+    /// before asserting on panel state.
+    fn panel_harness<'a>(
+        panel: &'a mut ScreenerPanel,
+        shared: &'a SharedState,
+        run_signal: &'a egui_mobius::signals::Signal<RunScreenerRequest>,
+        work_signal: &'a egui_mobius::signals::Signal<FetchRequest>,
+        industries: &'a [String],
+        boards: &'a [String],
+    ) -> egui_kittest::Harness<'a, ()> {
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size([1000.0, 1400.0])
+            .build_ui(|ui| {
+                panel.show(ui, shared, run_signal, work_signal, industries, boards);
+            });
+        harness.step();
+        harness
+    }
+
+    fn builder_signals() -> (
+        egui_mobius::signals::Signal<RunScreenerRequest>,
+        egui_mobius::signals::Signal<FetchRequest>,
+    ) {
+        let (run_signal, _run_slot) =
+            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        (run_signal, work_signal)
+    }
+
+    #[test]
+    fn add_condition_via_root_menu_appends_card() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        // Root add menu trigger (unique: default 6 cards contain no sub-group).
+        harness.get_by_label_contains("添加条件").click();
+        harness.step();
+        // Popup option「均线」— unique: no MA card exists yet (「行业」would
+        // multi-match the first card's type dropdown and panic).
+        harness.get_by_label("均线").click();
+        harness.step();
+        drop(harness);
+
+        assert_eq!(
+            panel.builder_root.len(),
+            7,
+            "add menu appends a card to the root group"
+        );
+        match &panel.builder_root[6] {
+            CondItem::Leaf(l) => assert_eq!(
+                l.kind,
+                LeafKind::Ma,
+                "appended card must be the selected MA kind"
+            ),
+            other => panic!("last item must be a leaf card, got {other:?}"),
+        }
+        match panel.build_filter() {
+            Filter::And(nodes) => assert!(
+                nodes.contains(&Filter::Series(SeriesCond::Cmp {
+                    factor: SeriesFactor::Close,
+                    op: CmpOp::Gt,
+                    value: FactorRef::Factor(SeriesFactor::Sma(20)),
+                })),
+                "fresh MA card compiles to Close > Sma(20)"
+            ),
+            other => panic!("expected And root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_first_card_removes_card_and_ast_node() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        let del: Vec<_> = harness
+            .query_all_by_label(egui_phosphor::regular::X)
+            .collect();
+        assert_eq!(del.len(), 6, "one delete button per default card");
+        del[0].click();
+        harness.step();
+        drop(harness);
+
+        assert_eq!(panel.builder_root.len(), 5, "first card removed");
+        match panel.build_filter() {
+            Filter::And(nodes) => assert!(
+                !nodes.contains(&Filter::Meta(MetaCond::Industry(vec![]))),
+                "deleted industry card must not appear in the AST"
+            ),
+            other => panic!("expected And root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_operator_segmented_toggles_or_and_back() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        // Root group header segmented — unique with no sub-groups.
+        harness.get_by_label_contains("或 (OR)").click();
+        harness.step();
+        drop(harness);
+        assert_eq!(
+            panel.builder_root_operator,
+            BoolOp::Or,
+            "segmented OR click must flip the root operator"
+        );
+        assert!(
+            matches!(panel.build_filter(), Filter::Or(_)),
+            "root operator must compile to an Or root"
+        );
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        harness.get_by_label_contains("且 (AND)").click();
+        harness.step();
+        drop(harness);
+        assert_eq!(
+            panel.builder_root_operator,
+            BoolOp::And,
+            "segmented AND click must flip back"
+        );
+        assert!(
+            matches!(panel.build_filter(), Filter::And(_)),
+            "root operator must compile back to an And root"
+        );
+    }
+
+    #[test]
+    fn clear_button_empties_builder_and_shows_empty_state() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        harness.get_by_label(egui_phosphor::regular::ERASER).click();
+        harness.step();
+        assert!(
+            harness.query_by_label_contains("暂无筛选条件").is_some(),
+            "cleared builder must show the empty state title"
+        );
+        drop(harness);
+        assert!(
+            panel.builder_root.is_empty(),
+            "clear button must empty the root group"
+        );
+    }
+
+    #[test]
+    fn add_sub_group_and_nested_cards_compile_nested_and() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        harness.get_by_label_contains("添加条件").click();
+        harness.step();
+        harness.get_by_label("子分组").click();
+        harness.step();
+        drop(harness);
+        match &panel.builder_root[6] {
+            CondItem::Group(g) => {
+                assert_eq!(g.operator, BoolOp::And, "fresh sub-group defaults to AND");
+                assert!(g.items.is_empty(), "fresh sub-group has no cards");
+            }
+            other => panic!("expected a nested group, got {other:?}"),
+        }
+        match panel.build_filter() {
+            Filter::And(nodes) => assert_eq!(
+                nodes[6],
+                Filter::And(vec![]),
+                "empty sub-group compiles to a nested And node"
+            ),
+            other => panic!("expected And root, got {other:?}"),
+        }
+
+        // kittest cannot reliably click a second popup inside the nested
+        // sub-group scope (the first in-group popup works, the second click
+        // is swallowed by the Area close-on-outside logic — see
+        // kb/dev/toolchain.md). Add the two cards via the view model instead;
+        // the in-group popup interaction itself is covered by the root add
+        // menu in `add_condition_via_root_menu_appends_card`.
+        if let CondItem::Group(g) = &mut panel.builder_root[6] {
+            g.items.push(CondItem::Leaf(CondLeaf {
+                kind: LeafKind::Ma,
+                params: LeafParams::Ma(MaKind::AboveMa20),
+                negated: false,
+            }));
+            g.items.push(CondItem::Leaf(CondLeaf {
+                kind: LeafKind::Breakout,
+                params: LeafParams::Breakout(60),
+                negated: false,
+            }));
+        } else {
+            panic!("expected a nested group");
+        }
+        match panel.build_filter() {
+            Filter::And(nodes) => assert_eq!(
+                nodes[6],
+                Filter::And(vec![
+                    Filter::Series(SeriesCond::Cmp {
+                        factor: SeriesFactor::Close,
+                        op: CmpOp::Gt,
+                        value: FactorRef::Factor(SeriesFactor::Sma(20)),
+                    }),
+                    Filter::Series(SeriesCond::Cmp {
+                        factor: SeriesFactor::Close,
+                        op: CmpOp::Gt,
+                        value: FactorRef::Factor(SeriesFactor::NDayHigh(60)),
+                    }),
+                ]),
+                "sub-group with two cards compiles to a nested And"
+            ),
+            other => panic!("expected And root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn restore_query_renders_cards_and_filter_saves_equivalent_query() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+
+        // Phase A — the multi-member restore shape (task spec): Industry +
+        // MA bullish + Delisted seed one nested root group of three cards.
+        // The save round-trips for flat shapes run in phases B/C (a nested
+        // root group compresses identically through the engine oracle).
+        let query = ScreenerQuery {
+            industries: vec!["银行".to_string()],
+            ma: Some(MaCondition::BullishAlign),
+            ..ScreenerQuery::default()
+        };
+        let mut panel = ScreenerPanel::new(
+            CitizenId::new("screener"),
+            CitizenState::new(),
+            Some(&query),
+            Box::new(|_| {}),
+            &tokens,
+        );
+        assert_eq!(
+            panel.builder_root.len(),
+            1,
+            "multi-member restore seeds a root group"
+        );
+        match &panel.builder_root[0] {
+            CondItem::Group(g) => assert_eq!(
+                g.items.len(),
+                3,
+                "Industry + MA bullish + Delisted restore as three cards"
+            ),
+            other => panic!("expected a nested root group, got {other:?}"),
+        }
+
+        // Phase B — flat industries-only restore: clicking 筛选 must
+        // compress the builder back to the equivalent legacy query.
+        let saved_b: std::sync::Arc<std::sync::Mutex<Option<ScreenerQuery>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let saved_b_clone = saved_b.clone();
+        let query_b = ScreenerQuery {
+            industries: vec!["银行".to_string()],
+            exclude_delisted: false,
+            ..ScreenerQuery::default()
+        };
+        let mut panel_b = ScreenerPanel::new(
+            CitizenId::new("screener"),
+            CitizenState::new(),
+            Some(&query_b),
+            Box::new(move |q: &ScreenerQuery| {
+                *saved_b_clone
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(q.clone());
+            }),
+            &tokens,
+        );
+        assert_eq!(
+            panel_b.builder_root.len(),
+            1,
+            "single-member restore folds to a flat card"
+        );
+        let shared_b = SharedState::new("SZ000001", "1d");
+        let (run_signal_b, work_signal_b) = builder_signals();
+        let industries_b: Vec<String> = Vec::new();
+        let boards_b: Vec<String> = Vec::new();
+        let mut harness_b = panel_harness(
+            &mut panel_b,
+            &shared_b,
+            &run_signal_b,
+            &work_signal_b,
+            &industries_b,
+            &boards_b,
+        );
+        harness_b.get_by_label("筛选").click();
+        harness_b.step();
+        drop(harness_b);
+        let q_b = saved_b
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("flat restore must compress back to a legacy query");
+        assert_eq!(
+            q_b.industries,
+            vec!["银行".to_string()],
+            "restored industry selection survives the save round trip"
+        );
+
+        // Phase C — flat MA-only restore: the bullish-alignment card must
+        // survive the save round trip.
+        let saved_c: std::sync::Arc<std::sync::Mutex<Option<ScreenerQuery>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let saved_c_clone = saved_c.clone();
+        let query_c = ScreenerQuery {
+            ma: Some(MaCondition::BullishAlign),
+            exclude_delisted: false,
+            ..ScreenerQuery::default()
+        };
+        let mut panel_c = ScreenerPanel::new(
+            CitizenId::new("screener"),
+            CitizenState::new(),
+            Some(&query_c),
+            Box::new(move |q: &ScreenerQuery| {
+                *saved_c_clone
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(q.clone());
+            }),
+            &tokens,
+        );
+        match &panel_c.builder_root[0] {
+            CondItem::Leaf(l) => assert_eq!(
+                l.params,
+                LeafParams::Ma(MaKind::BullishAlign),
+                "bullish pair folds to a single MA card"
+            ),
+            other => panic!("expected a flat MA card, got {other:?}"),
+        }
+        let shared_c = SharedState::new("SZ000001", "1d");
+        let (run_signal_c, work_signal_c) = builder_signals();
+        let industries_c: Vec<String> = Vec::new();
+        let boards_c: Vec<String> = Vec::new();
+        let mut harness_c = panel_harness(
+            &mut panel_c,
+            &shared_c,
+            &run_signal_c,
+            &work_signal_c,
+            &industries_c,
+            &boards_c,
+        );
+        harness_c.get_by_label("筛选").click();
+        harness_c.step();
+        drop(harness_c);
+        let q_c = saved_c
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("flat MA restore must compress back to a legacy query");
+        assert_eq!(
+            q_c.ma,
+            Some(MaCondition::BullishAlign),
+            "restored bullish alignment survives the save round trip"
+        );
+    }
+
+    #[test]
+    fn negate_toggle_wraps_leaf_in_not() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        let neg: Vec<_> = harness
+            .query_all_by_label(egui_phosphor::regular::EXCLUDE)
+            .collect();
+        assert_eq!(neg.len(), 6, "one negate button per default card");
+        neg[0].click();
+        harness.step();
+        drop(harness);
+
+        match &panel.builder_root[0] {
+            CondItem::Leaf(l) => assert!(l.negated, "negate toggle must flip the leaf"),
+            other => panic!("card 0 must be a leaf, got {other:?}"),
+        }
+        match panel.build_filter() {
+            Filter::And(nodes) => assert_eq!(
+                nodes[0],
+                Filter::Not(Box::new(Filter::Meta(MetaCond::Industry(vec![])))),
+                "negated industry card compiles to Not(Industry)"
+            ),
+            other => panic!("expected And root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_shape_renders_readonly_summary_and_deletes() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = panel_with_form();
+        // ScreenerQuery cannot express the Count shape — inject the unknown
+        // AST directly through the reverse mapping (the production fallback).
+        let unknown_filter = Filter::Series(SeriesCond::Count {
+            factor: SeriesFactor::DayPct,
+            op: CmpOp::Gt,
+            value: FactorRef::Const(0.0),
+            window: 10,
+            at_least: 5,
+        });
+        panel.builder_root = filter_to_items(&unknown_filter);
+        assert_eq!(
+            panel.builder_root.len(),
+            1,
+            "unrecognized shape falls back to a single Unknown card"
+        );
+        let (run_signal, work_signal) = builder_signals();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+
+        let mut harness = panel_harness(
+            &mut panel,
+            &shared,
+            &run_signal,
+            &work_signal,
+            &industries,
+            &boards,
+        );
+        assert!(
+            harness.query_by_label_contains("高级条件").is_some(),
+            "Unknown card renders its read-only summary title"
+        );
+        let del: Vec<_> = harness
+            .query_all_by_label(egui_phosphor::regular::X)
+            .collect();
+        assert_eq!(del.len(), 1, "only the Unknown card has a delete button");
+        del[0].click();
+        harness.step();
+        drop(harness);
+        assert!(
+            panel.builder_root.is_empty(),
+            "deleting the Unknown card empties the builder"
+        );
     }
 }
