@@ -1,61 +1,37 @@
-//! Screener panel citizen — condition input + results table.
+//! Screener panel citizen — Metabase-style condition card builder + results table.
+//!
+//! The builder (epic #243 Batch 2, issue #245) replaces the fixed
+//! `ConditionForm` with an AND/OR card group that operates directly on the
+//! Batch 1 `Filter` AST. The view model lives in [`screener_builder`]; this
+//! module owns the widget state (card items + MultiSelect popup instances)
+//! and renders the card group tree.
+
+use std::collections::HashMap;
 
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 use egui_mobius::signals::Signal;
 
 use compass_types::{
-    BreakoutCondition, MaCondition, MomentumCondition, ScreenerQuery, VolumeCondition,
+    BreakoutCondition, Filter, MetaCond, MomentumCondition, ScreenerQuery, VolumeCondition,
 };
 use compass_ui::tokens::ThemeTokens;
+use compass_ui::widgets::badge::Badge;
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
 use compass_ui::widgets::card::Card;
 use compass_ui::widgets::checkbox::Checkbox;
 use compass_ui::widgets::data_table::{ColumnSpec, DataCell, DataTable};
 use compass_ui::widgets::dropdown::Dropdown;
+use compass_ui::widgets::empty_state::EmptyState;
+use compass_ui::widgets::icon_button::IconButton;
 use compass_ui::widgets::multi_select::MultiSelect;
-use compass_ui::widgets::section_title::SectionTitle;
+use compass_ui::widgets::segmented::Segmented;
 
+use crate::citizens::screener_builder::{
+    BoolOp, CondGroup, CondItem, CondLeaf, LeafKind, LeafParams, MaKind, filter_to_items,
+    group_to_filter,
+};
 use crate::messages::{FetchRequest, RunScreenerRequest};
 use crate::state::SharedState;
-
-/// Mutable UI state for the condition form.
-#[derive(Default)]
-struct ConditionForm {
-    list_years: Option<u32>,
-    market_cap_min: Option<f64>,
-    market_cap_max: Option<f64>,
-    exclude_delisted: bool,
-    ma_enabled: bool,
-    ma_kind: MaKind,
-    breakout_enabled: bool,
-    breakout_days: u32,
-    momentum_enabled: bool,
-    momentum_days: u32,
-    momentum_min_pct: f64,
-    momentum_max_pct: f64,
-    volume_enabled: bool,
-    volume_days: u32,
-    volume_times: f64,
-}
-
-/// MA condition selector options.
-#[derive(Default, Clone, Copy, PartialEq)]
-enum MaKind {
-    #[default]
-    AboveMa20,
-    AboveMa60,
-    BullishAlign,
-}
-
-impl MaKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::AboveMa20 => "screener.ma_above20",
-            Self::AboveMa60 => "screener.ma_above60",
-            Self::BullishAlign => "screener.ma_bullish",
-        }
-    }
-}
 
 /// Results table column specs (design §6.6). Headers hold **i18n keys**
 /// (design `.omo/designs/gui-i18n.md` §1); `DataTable::show` resolves them
@@ -91,25 +67,46 @@ const COLUMNS: [ColumnSpec; 6] = [
 /// (descending, biggest first), matching the pre-componentization behavior.
 const MARKET_CAP_COLUMN: usize = 4;
 
+/// Card kinds offered by the type dropdown / add menu (the add menu appends
+/// the 「子分组」 sentinel after these). [`LeafKind::Unknown`] is read-only
+/// and never selectable.
+const SELECTABLE_KINDS: [LeafKind; 11] = [
+    LeafKind::Industry,
+    LeafKind::Exchange,
+    LeafKind::Board,
+    LeafKind::ListYears,
+    LeafKind::MarketCap,
+    LeafKind::Delisted,
+    LeafKind::Ma,
+    LeafKind::Breakout,
+    LeafKind::Momentum,
+    LeafKind::VolumeSurge,
+    LeafKind::UpDays,
+];
+
 /// Screener panel citizen.
 ///
-/// Renders the condition form (two card sections) and the results table.
-/// The heavy lifting runs on the backend via `run_screener_signal`.
+/// Renders the condition card builder and the results table. The heavy
+/// lifting runs on the backend via `run_screener_signal`.
 pub struct ScreenerPanel {
     pub citizen_id: CitizenId,
     pub citizen_state: CitizenState,
-    form: ConditionForm,
     /// Theme tokens copied at construction (component styling).
     tokens: ThemeTokens,
-    /// Industry multi-select (options refreshed each frame).
-    ms_industry: MultiSelect,
-    /// Exchange multi-select (fixed SH/SZ/BJ).
-    ms_exchange: MultiSelect,
-    /// Board multi-select (options refreshed each frame).
-    ms_board: MultiSelect,
+    /// Condition card builder root group items.
+    builder_root: Vec<CondItem>,
+    /// Root group boolean operator (AND default).
+    builder_root_operator: BoolOp,
+    /// MultiSelect instances keyed by card path (stateful — open/filter live
+    /// in the instance; selections are mirrored to/from `CondLeaf.params`
+    /// each frame).
+    builder_multi_selects: HashMap<String, MultiSelect>,
     /// Results table — owns its sort state across frames.
     table: DataTable,
     /// Persists the current query whenever a filter run is triggered.
+    #[allow(dead_code)]
+    // Invocation is restored in Todo 4 (legacy compress via the engine
+    // `filter_to_query`); a bespoke compressor here would duplicate it.
     on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
 }
 
@@ -139,102 +136,47 @@ impl ScreenerPanel {
         on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
         tokens: &ThemeTokens,
     ) -> Self {
-        let mut form = ConditionForm {
-            exclude_delisted: true,
-            breakout_days: BreakoutCondition::default().days,
-            momentum_days: MomentumCondition::default().days,
-            momentum_min_pct: MomentumCondition::default().min_pct,
-            momentum_max_pct: MomentumCondition::default().max_pct,
-            volume_days: VolumeCondition::default().days,
-            volume_times: VolumeCondition::default().times,
-            ..ConditionForm::default()
+        // Restore of the default empty shape (bare `Delisted(false)` node or
+        // empty `And` — the `From<ScreenerQuery>` outputs of an empty query)
+        // seeds the standard 6 base cards, matching the pre-builder default
+        // behavior (exclude-delisted checked, everything else unbounded).
+        let (builder_root, builder_multi_selects) = match restore {
+            None => (default_root_cards(), HashMap::new()),
+            Some(query) => {
+                let filter = Filter::from(query.clone());
+                match &filter {
+                    Filter::Meta(MetaCond::Delisted(false)) => {
+                        (default_root_cards(), HashMap::new())
+                    }
+                    Filter::And(v) if v.is_empty() => (default_root_cards(), HashMap::new()),
+                    _ => (filter_to_items(&filter), HashMap::new()),
+                }
+            }
         };
-        let mut ms_industry =
-            MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt("screener_industry");
-        let mut ms_exchange =
-            MultiSelect::new(tokens, ["SH", "SZ", "BJ"]).id_salt("screener_exchange");
-        let mut ms_board =
-            MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt("screener_board");
-        if let Some(q) = restore {
-            form.list_years = q.list_years;
-            form.market_cap_min = q.market_cap_min;
-            form.market_cap_max = q.market_cap_max;
-            form.exclude_delisted = q.exclude_delisted;
-            form.ma_enabled = q.ma.is_some();
-            form.ma_kind = match q.ma {
-                Some(MaCondition::AboveMa60) => MaKind::AboveMa60,
-                Some(MaCondition::BullishAlign) => MaKind::BullishAlign,
-                _ => MaKind::AboveMa20,
-            };
-            form.breakout_enabled = q.breakout.is_some();
-            if let Some(b) = q.breakout {
-                form.breakout_days = b.days;
-            }
-            form.momentum_enabled = q.momentum.is_some();
-            if let Some(m) = q.momentum {
-                form.momentum_days = m.days;
-                form.momentum_min_pct = m.min_pct;
-                form.momentum_max_pct = m.max_pct;
-            }
-            form.volume_enabled = q.volume.is_some();
-            if let Some(v) = q.volume {
-                form.volume_days = v.days;
-                form.volume_times = v.times;
-            }
-            ms_industry = ms_industry.selected(q.industries.iter().cloned());
-            ms_exchange = ms_exchange.selected(q.exchanges.iter().cloned());
-            ms_board = ms_board.selected(q.boards.iter().cloned());
-        }
         let mut table = DataTable::new(tokens, COLUMNS.to_vec());
         table.set_sort(MARKET_CAP_COLUMN, true);
         table.set_descending_default(MARKET_CAP_COLUMN, true);
         Self {
             citizen_id,
             citizen_state,
-            form,
             tokens: *tokens,
-            ms_industry,
-            ms_exchange,
-            ms_board,
+            builder_root,
+            builder_root_operator: BoolOp::And,
+            builder_multi_selects,
             table,
             on_save,
         }
     }
 
-    /// Build the query from the form state plus the multi-select selections.
-    fn build_query(&self) -> ScreenerQuery {
-        ScreenerQuery {
-            industries: self.ms_industry.selected.clone(),
-            exchanges: self.ms_exchange.selected.clone(),
-            boards: self.ms_board.selected.clone(),
-            list_years: self.form.list_years,
-            market_cap_min: self.form.market_cap_min,
-            market_cap_max: self.form.market_cap_max,
-            exclude_delisted: self.form.exclude_delisted,
-            ma: self.form.ma_enabled.then_some(match self.form.ma_kind {
-                MaKind::AboveMa20 => MaCondition::AboveMa20,
-                MaKind::AboveMa60 => MaCondition::AboveMa60,
-                MaKind::BullishAlign => MaCondition::BullishAlign,
-            }),
-            breakout: self
-                .form
-                .breakout_enabled
-                .then(|| BreakoutCondition::new(self.form.breakout_days)),
-            momentum: self.form.momentum_enabled.then(|| {
-                MomentumCondition::new(
-                    self.form.momentum_days,
-                    self.form.momentum_min_pct,
-                    self.form.momentum_max_pct,
-                )
-            }),
-            volume: self
-                .form
-                .volume_enabled
-                .then(|| VolumeCondition::new(self.form.volume_days, self.form.volume_times)),
-        }
+    /// Compile the builder cards into the `Filter` AST (the run contract).
+    fn build_filter(&self) -> Filter {
+        group_to_filter(&CondGroup {
+            operator: self.builder_root_operator,
+            items: self.builder_root.clone(),
+        })
     }
 
-    /// Render the panel: condition form + results area.
+    /// Render the panel: condition builder + results area.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -245,7 +187,7 @@ impl ScreenerPanel {
         boards: &[String],
     ) {
         ui.vertical(|ui| {
-            self.condition_form(ui, industries, boards);
+            self.condition_builder(ui, industries, boards);
 
             ui.add_space(self.form_tokens().spacing.sm);
             if Button::new(&self.form_tokens(), compass_i18n::t!("screener.filter"))
@@ -254,11 +196,12 @@ impl ScreenerPanel {
                 .show(ui)
                 .clicked()
             {
-                let query = self.build_query();
-                (self.on_save)(&query);
+                let filter = self.build_filter();
+                // TODO(todo4): legacy compress — `on_save(&ScreenerQuery)` is
+                // restored in Todo 4 via the engine `filter_to_query`.
                 shared_state.screener_loading.set(true);
                 shared_state.screener_error.set(None);
-                if let Err(e) = run_screener_signal.send(RunScreenerRequest { query }) {
+                if let Err(e) = run_screener_signal.send(RunScreenerRequest { filter }) {
                     shared_state.screener_loading.set(false);
                     shared_state.screener_error.set(Some(
                         compass_i18n::t!("error.screener_run", e = e.to_string()).into_owned(),
@@ -318,222 +261,49 @@ impl ScreenerPanel {
         ]
     }
 
-    /// Condition form split into two card sections (design §6.6): 基础条件
-    /// (filters) and 技术面条件 (indicator toggles).
-    fn condition_form(&mut self, ui: &mut egui::Ui, industries: &[String], boards: &[String]) {
-        self.ms_industry.options = industries.to_vec();
-        self.ms_board.options = boards.to_vec();
+    /// Condition card builder (design `.omo/designs/llm-screener-ui.md` §3-5):
+    /// one root `Card` whose header carries the AND/OR segmented + condition
+    /// count + clear button, followed by the card list (leaf rows /
+    /// recursively nested group frames) and the bottom add menu.
+    fn condition_builder(&mut self, ui: &mut egui::Ui, industries: &[String], boards: &[String]) {
         let tokens = self.form_tokens();
-
         ui.vertical(|ui| {
             Card::new(&tokens)
-                .title(&compass_i18n::t!("screener.card_basic"))
+                .title(&compass_i18n::t!("screener.builder.card_title"))
                 .padding(compass_ui::widgets::card::CardPadding::Md)
                 .show(ui, |ui| {
-                    self.basic_conditions(ui);
-                });
-            ui.add_space(tokens.spacing.sm);
-            Card::new(&tokens)
-                .title(&compass_i18n::t!("screener.card_technical"))
-                .padding(compass_ui::widgets::card::CardPadding::Md)
-                .show(ui, |ui| {
-                    self.technical_conditions(ui);
-                });
-        });
-    }
-
-    /// 基础条件 card: industry/exchange/board multi-selects, listing years,
-    /// market-cap range and the delisted-exclusion checkbox.
-    ///
-    /// Each label+control pair is an atomic group rendered in a child ui
-    /// whose `max_rect` is label-width × `control_md` tall. That keeps the
-    /// `SectionTitle` and its control vertically centered on the same row
-    /// (egui 0.35 horizontals are only `interact_size.y` tall and clamp
-    /// taller children to the top), while the outer `horizontal_wrapped`
-    /// only ever breaks between groups.
-    fn basic_conditions(&mut self, ui: &mut egui::Ui) {
-        let tokens = self.form_tokens();
-
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
-
-            basic_group(ui, &tokens, &compass_i18n::t!("screener.industry"), |ui| {
-                self.ms_industry.show(ui);
-            });
-            ui.add_space(tokens.spacing.md);
-
-            basic_group(ui, &tokens, &compass_i18n::t!("screener.exchange"), |ui| {
-                self.ms_exchange.show(ui);
-            });
-            ui.add_space(tokens.spacing.md);
-
-            basic_group(ui, &tokens, &compass_i18n::t!("screener.board"), |ui| {
-                self.ms_board.show(ui);
-            });
-            ui.add_space(tokens.spacing.md);
-
-            basic_group(
-                ui,
-                &tokens,
-                &compass_i18n::t!("screener.list_years"),
-                |ui| {
-                    let options = [
-                        compass_i18n::t!("screener.any"),
-                        compass_i18n::t!("screener.years_1"),
-                        compass_i18n::t!("screener.years_3"),
-                        compass_i18n::t!("screener.years_5"),
-                    ];
-                    let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
-                    let current = options
-                        .iter()
-                        .zip(values.iter())
-                        .position(|(_, v)| *v == self.form.list_years)
-                        .unwrap_or(0);
-                    if let Some(idx) = Dropdown::new(&tokens, options)
-                        .selected(current)
-                        .width(100.0)
-                        .show(ui)
-                    {
-                        self.form.list_years = values[idx];
-                    }
-                },
-            );
-            ui.add_space(tokens.spacing.md);
-
-            basic_group(
-                ui,
-                &tokens,
-                &compass_i18n::t!("screener.market_cap"),
-                |ui| {
-                    let mut min = self.form.market_cap_min.unwrap_or(0.0);
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut min)
-                                .speed(1.0)
-                                .prefix(compass_i18n::t!("screener.min_pct")),
-                        )
-                        .changed()
-                    {
-                        self.form.market_cap_min = (min > 0.0).then_some(min);
-                    }
-                    let mut max = self.form.market_cap_max.unwrap_or(0.0);
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut max)
-                                .speed(1.0)
-                                .prefix(compass_i18n::t!("screener.max_pct")),
-                        )
-                        .changed()
-                    {
-                        self.form.market_cap_max = (max > 0.0).then_some(max);
-                    }
-                },
-            );
-            ui.add_space(tokens.spacing.md);
-
-            Checkbox::new(
-                &tokens,
-                &mut self.form.exclude_delisted,
-                compass_i18n::t!("screener.exclude_delisted"),
-            )
-            .show(ui);
-        });
-    }
-
-    /// 技术面条件 card: MA / breakout / momentum / volume toggles.
-    ///
-    /// Same atomic-group pattern as `basic_group` (a module-level helper,
-    /// not a method — the intra-doc link is omitted because rustdoc cannot
-    /// resolve private free functions): each toggle plus its parameter
-    /// section shares one child ui, so the outer wrapped layout never
-    /// splits a toggle from its parameters across rows.
-    fn technical_conditions(&mut self, ui: &mut egui::Ui) {
-        let tokens = self.form_tokens();
-
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
-
-            technical_group(ui, &tokens, 286.0, |ui| {
-                Checkbox::new(
-                    &tokens,
-                    &mut self.form.ma_enabled,
-                    compass_i18n::t!("screener.ma"),
-                )
-                .show(ui);
-                if self.form.ma_enabled {
-                    let current = match self.form.ma_kind {
-                        MaKind::AboveMa20 => 0,
-                        MaKind::AboveMa60 => 1,
-                        MaKind::BullishAlign => 2,
-                    };
-                    if let Some(idx) = Dropdown::new(
+                    if render_root_header(
+                        ui,
                         &tokens,
-                        [
-                            compass_i18n::t!(MaKind::AboveMa20.label()),
-                            compass_i18n::t!(MaKind::AboveMa60.label()),
-                            compass_i18n::t!(MaKind::BullishAlign.label()),
-                        ],
-                    )
-                    .selected(current)
-                    .width(210.0)
-                    .show(ui)
-                    {
-                        self.form.ma_kind = match idx {
-                            1 => MaKind::AboveMa60,
-                            2 => MaKind::BullishAlign,
-                            _ => MaKind::AboveMa20,
-                        };
+                        &mut self.builder_root_operator,
+                        self.builder_root.len(),
+                    ) {
+                        self.builder_root.clear();
+                        self.builder_multi_selects.clear();
                     }
-                }
-            });
-            ui.add_space(tokens.spacing.md);
-
-            technical_group(ui, &tokens, 158.0, |ui| {
-                Checkbox::new(
-                    &tokens,
-                    &mut self.form.breakout_enabled,
-                    compass_i18n::t!("screener.breakout"),
-                )
-                .show(ui);
-                if self.form.breakout_enabled {
-                    ui.label(compass_i18n::t!("screener.n_label"));
-                    ui.add(egui::DragValue::new(&mut self.form.breakout_days).range(1..=250));
-                }
-            });
-            ui.add_space(tokens.spacing.md);
-
-            technical_group(ui, &tokens, 390.0, |ui| {
-                Checkbox::new(
-                    &tokens,
-                    &mut self.form.momentum_enabled,
-                    compass_i18n::t!("screener.momentum"),
-                )
-                .show(ui);
-                if self.form.momentum_enabled {
-                    ui.label(compass_i18n::t!("screener.n_label"));
-                    ui.add(egui::DragValue::new(&mut self.form.momentum_days).range(1..=250));
-                    ui.label(compass_i18n::t!("screener.min_pct"));
-                    ui.add(egui::DragValue::new(&mut self.form.momentum_min_pct).speed(1.0));
-                    ui.label(compass_i18n::t!("screener.max_pct"));
-                    ui.add(egui::DragValue::new(&mut self.form.momentum_max_pct).speed(1.0));
-                }
-            });
-            ui.add_space(tokens.spacing.md);
-
-            technical_group(ui, &tokens, 274.0, |ui| {
-                Checkbox::new(
-                    &tokens,
-                    &mut self.form.volume_enabled,
-                    compass_i18n::t!("screener.volume"),
-                )
-                .show(ui);
-                if self.form.volume_enabled {
-                    ui.label(compass_i18n::t!("screener.n_label"));
-                    ui.add(egui::DragValue::new(&mut self.form.volume_days).range(1..=80));
-                    ui.label(compass_i18n::t!("screener.times"));
-                    ui.add(egui::DragValue::new(&mut self.form.volume_times).speed(0.1));
-                }
-            });
+                    ui.add_space(tokens.spacing.sm);
+                    if self.builder_root.is_empty() {
+                        EmptyState::new(
+                            &tokens,
+                            egui_phosphor::regular::FUNNEL,
+                            &compass_i18n::t!("screener.builder.empty_title"),
+                        )
+                        .description(&compass_i18n::t!("screener.builder.empty_desc"))
+                        .show(ui);
+                    } else {
+                        render_group_items(
+                            ui,
+                            &tokens,
+                            "cond_root",
+                            &mut self.builder_root,
+                            &mut self.builder_multi_selects,
+                            industries,
+                            boards,
+                        );
+                    }
+                    ui.add_space(tokens.spacing.sm);
+                    render_add_menu(ui, &tokens, "cond_root", &mut self.builder_root);
+                });
         });
     }
 
@@ -543,66 +313,131 @@ impl ScreenerPanel {
     }
 
     /// Update the theme tokens after a theme switch so the condition cards
-    /// and results table restyle without losing the query state.
+    /// and results table restyle without losing the builder state.
     pub fn set_tokens(&mut self, tokens: ThemeTokens) {
         self.tokens = tokens;
-        self.ms_industry.set_tokens(tokens);
-        self.ms_exchange.set_tokens(tokens);
-        self.ms_board.set_tokens(tokens);
+        for ms in self.builder_multi_selects.values_mut() {
+            ms.set_tokens(tokens);
+        }
         self.table.set_tokens(tokens);
     }
 }
 
-/// Render one atomic label+control group. The child ui's `max_rect` is
-/// capped at the measured label width and `control_md` in height, so the
-/// group centers its contents vertically and the parent row cursor only
-/// advances past the actual content. The wrap check uses a generous
-/// width bound (label + 176) covering the widest control pair.
-fn basic_group(
+/// Root group header: AND/OR segmented + condition-count badge + clear
+/// button. Returns whether the clear button was clicked.
+fn render_root_header(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
-    label: &str,
-    control: impl FnOnce(&mut egui::Ui),
-) {
-    let label_w = ui
-        .painter()
-        .layout_no_wrap(
-            label.to_owned(),
-            egui::FontId::proportional(tokens.typography.heading),
-            tokens.color.text_primary,
+    operator: &mut BoolOp,
+    count: usize,
+) -> bool {
+    let mut cleared = false;
+    ui.horizontal(|ui| {
+        let selected = match *operator {
+            BoolOp::And => 0,
+            BoolOp::Or => 1,
+        };
+        if let Some(idx) = Segmented::new(
+            tokens,
+            [
+                compass_i18n::t!("screener.builder.group_and"),
+                compass_i18n::t!("screener.builder.group_or"),
+            ],
         )
-        .size()
-        .x;
-    if ui.available_size_before_wrap().x < label_w + 176.0 {
-        ui.end_row();
-    }
-    let start = ui.cursor().min;
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(egui::Rect::from_min_max(
-                start,
-                egui::pos2(start.x + label_w, start.y + tokens.spacing.control_md),
-            ))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        |ui| {
-            SectionTitle::new(tokens, label).show(ui);
-            control(ui);
-        },
-    );
+        .selected(selected)
+        .show(ui)
+        {
+            *operator = if idx == 1 { BoolOp::Or } else { BoolOp::And };
+        }
+        Badge::new(tokens, count).show(ui);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if IconButton::new(tokens, egui_phosphor::regular::ERASER)
+                .tooltip(&compass_i18n::t!("screener.builder.clear_tooltip"))
+                .small()
+                .show(ui)
+            {
+                cleared = true;
+            }
+        });
+    });
+    cleared
 }
-/// Render one atomic toggle+params group; `width` is the group's width
-/// estimate used for the wrap check (controls size themselves).
-fn technical_group(
+
+/// Render a group's items: leaf cards flow in an atomic-group wrapped row
+/// pattern (ref #220 — label+control never split across rows), nested group
+/// frames occupy full-width rows and recurse. Removals are collected and
+/// applied after the loop (borrow-safe with the `iter_mut` walk).
+fn render_group_items(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
-    width: f32,
-    contents: impl FnOnce(&mut egui::Ui),
+    path: &str,
+    items: &mut Vec<CondItem>,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    industries: &[String],
+    boards: &[String],
 ) {
-    if ui.available_size_before_wrap().x < width {
+    let mut to_remove: Vec<usize> = Vec::new();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.y = tokens.spacing.sm;
+        for (index, item) in items.iter_mut().enumerate() {
+            let item_path = format!("{path}_{index}");
+            let remove = match item {
+                CondItem::Leaf(leaf) => {
+                    render_leaf_row(ui, tokens, &item_path, leaf, ms_map, industries, boards)
+                }
+                CondItem::Group(group) => {
+                    // Full-width nested container: start on a fresh row so the
+                    // frame does not begin mid-row after preceding cards.
+                    if ui.available_size_before_wrap().x < 320.0 {
+                        ui.end_row();
+                    }
+                    let start = ui.cursor().min;
+                    let row_w = ui.available_size_before_wrap().x;
+                    ui.scope_builder(
+                        egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                            start,
+                            egui::pos2(start.x + row_w, start.y + f32::INFINITY),
+                        )),
+                        |ui| {
+                            render_sub_group(
+                                ui, tokens, &item_path, group, ms_map, industries, boards,
+                            )
+                        },
+                    )
+                    .inner
+                }
+            };
+            if remove {
+                to_remove.push(index);
+            }
+            ui.add_space(tokens.spacing.md);
+        }
+    });
+    for index in to_remove.iter().rev() {
+        items.remove(*index);
+    }
+}
+
+/// One leaf card row: type dropdown + kind parameters + negate + delete as a
+/// single atomic group (ref #220). Returns whether the card was deleted.
+fn render_leaf_row(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    path: &str,
+    leaf: &mut CondLeaf,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    industries: &[String],
+    boards: &[String],
+) -> bool {
+    if leaf.kind == LeafKind::Unknown {
+        return render_unknown_row(ui, tokens, leaf);
+    }
+    if ui.available_size_before_wrap().x < leaf_row_min_width(leaf.kind) {
         ui.end_row();
     }
     let start = ui.cursor().min;
     let row_w = ui.available_size_before_wrap().x;
+    let mut remove = false;
     ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(egui::Rect::from_min_max(
@@ -611,9 +446,473 @@ fn technical_group(
             ))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
-            contents(ui);
+            // Type dropdown. Switching kind resets the params to defaults and
+            // rebuilds the path's MultiSelect instance (prune stale keys).
+            let kind_idx = SELECTABLE_KINDS
+                .iter()
+                .position(|k| *k == leaf.kind)
+                .unwrap_or(0);
+            if let Some(idx) = Dropdown::new(tokens, kind_options())
+                .selected(kind_idx)
+                .width(160.0)
+                .id_salt(&format!("{path}_kind"))
+                .show(ui)
+            {
+                leaf.kind = SELECTABLE_KINDS[idx];
+                leaf.params = default_params(leaf.kind);
+                leaf.negated = false;
+                prune_ms_prefix(ms_map, &format!("{path}_"));
+            }
+            remove |= render_leaf_params(ui, tokens, path, leaf, ms_map, industries, boards);
+            if IconButton::new(tokens, egui_phosphor::regular::EXCLUDE)
+                .tooltip(&compass_i18n::t!("screener.builder.negate_tooltip"))
+                .small()
+                .show(ui)
+            {
+                leaf.negated = !leaf.negated;
+            }
+            if IconButton::new(tokens, egui_phosphor::regular::X)
+                .tooltip(&compass_i18n::t!("screener.builder.delete_tooltip"))
+                .small()
+                .show(ui)
+            {
+                remove = true;
+                prune_ms_prefix(ms_map, &format!("{path}_"));
+            }
         },
     );
+    remove
+}
+
+/// Read-only summary row for an unrecognized AST shape (mono, weak) plus a
+/// delete button. Returns whether the card was deleted.
+fn render_unknown_row(ui: &mut egui::Ui, tokens: &ThemeTokens, leaf: &mut CondLeaf) -> bool {
+    if ui.available_size_before_wrap().x < 240.0 {
+        ui.end_row();
+    }
+    let summary = match &leaf.params {
+        LeafParams::Unknown(json) => json.chars().take(24).collect::<String>(),
+        _ => String::new(),
+    };
+    let mut remove = false;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                ui.cursor().min,
+                egui::pos2(
+                    ui.cursor().min.x + 400.0,
+                    ui.cursor().min.y + tokens.spacing.control_md,
+                ),
+            ))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            ui.label(
+                egui::RichText::new(compass_i18n::t!("screener.builder.unknown_shape"))
+                    .monospace()
+                    .weak(),
+            );
+            ui.label(egui::RichText::new(summary).monospace().weak());
+            if IconButton::new(tokens, egui_phosphor::regular::X)
+                .tooltip(&compass_i18n::t!("screener.builder.delete_tooltip"))
+                .small()
+                .show(ui)
+            {
+                remove = true;
+            }
+        },
+    );
+    remove
+}
+
+/// Kind parameter controls (design §3-5). Returns whether the card was
+/// deleted (only the Delisted checkbox can remove its card, by unchecking).
+fn render_leaf_params(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    path: &str,
+    leaf: &mut CondLeaf,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    industries: &[String],
+    boards: &[String],
+) -> bool {
+    let mut remove = false;
+    match &mut leaf.params {
+        LeafParams::MultiSelect(v) => match leaf.kind {
+            LeafKind::Industry => {
+                render_multi_select(ui, tokens, path, "industry", v, ms_map, industries)
+            }
+            LeafKind::Exchange => {
+                let exchanges = ["SH", "SZ", "BJ"].map(String::from);
+                render_multi_select(ui, tokens, path, "exchange", v, ms_map, &exchanges)
+            }
+            LeafKind::Board => render_multi_select(ui, tokens, path, "board", v, ms_map, boards),
+            _ => false,
+        },
+        LeafParams::ListYears(years) => {
+            let options = [
+                compass_i18n::t!("screener.any"),
+                compass_i18n::t!("screener.years_1"),
+                compass_i18n::t!("screener.years_3"),
+                compass_i18n::t!("screener.years_5"),
+            ];
+            let values: [Option<u32>; 4] = [None, Some(1), Some(3), Some(5)];
+            let current = options
+                .iter()
+                .zip(values.iter())
+                .position(|(_, v)| *v == *years)
+                .unwrap_or(0);
+            if let Some(idx) = Dropdown::new(tokens, options)
+                .selected(current)
+                .width(100.0)
+                .id_salt(&format!("{path}_years"))
+                .show(ui)
+            {
+                *years = values[idx];
+            }
+            false
+        }
+        LeafParams::MarketCap { min, max } => {
+            let mut min_v = min.unwrap_or(0.0);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut min_v)
+                        .speed(1.0)
+                        .prefix(compass_i18n::t!("screener.min_pct")),
+                )
+                .changed()
+            {
+                *min = (min_v > 0.0).then_some(min_v);
+            }
+            let mut max_v = max.unwrap_or(0.0);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut max_v)
+                        .speed(1.0)
+                        .prefix(compass_i18n::t!("screener.max_pct")),
+                )
+                .changed()
+            {
+                *max = (max_v > 0.0).then_some(max_v);
+            }
+            false
+        }
+        LeafParams::Delisted(exclude) => {
+            // Checked = card exists (exclusion on, `Delisted(false)` AST).
+            // Unchecking removes the card entirely.
+            let mut checked = !*exclude;
+            let resp = Checkbox::new(
+                tokens,
+                &mut checked,
+                compass_i18n::t!("screener.exclude_delisted"),
+            )
+            .show(ui);
+            if resp.changed() {
+                if checked {
+                    *exclude = false;
+                } else {
+                    remove = true;
+                }
+            }
+            remove
+        }
+        LeafParams::Ma(kind) => {
+            let options = [
+                compass_i18n::t!("screener.ma_above20"),
+                compass_i18n::t!("screener.ma_above60"),
+                compass_i18n::t!("screener.ma_bullish"),
+            ];
+            let current = match kind {
+                MaKind::AboveMa20 => 0,
+                MaKind::AboveMa60 => 1,
+                MaKind::BullishAlign => 2,
+            };
+            if let Some(idx) = Dropdown::new(tokens, options)
+                .selected(current)
+                .width(210.0)
+                .id_salt(&format!("{path}_ma_kind"))
+                .show(ui)
+            {
+                *kind = match idx {
+                    1 => MaKind::AboveMa60,
+                    2 => MaKind::BullishAlign,
+                    _ => MaKind::AboveMa20,
+                };
+            }
+            false
+        }
+        LeafParams::Breakout(days) => {
+            ui.label(compass_i18n::t!("screener.n_label"));
+            ui.add(egui::DragValue::new(days).range(1..=250));
+            false
+        }
+        LeafParams::Momentum {
+            days,
+            min_pct,
+            max_pct,
+        } => {
+            ui.label(compass_i18n::t!("screener.n_label"));
+            ui.add(egui::DragValue::new(days).range(1..=250));
+            ui.label(compass_i18n::t!("screener.min_pct"));
+            ui.add(egui::DragValue::new(min_pct).speed(1.0));
+            ui.label(compass_i18n::t!("screener.max_pct"));
+            ui.add(egui::DragValue::new(max_pct).speed(1.0));
+            false
+        }
+        LeafParams::VolumeSurge { days, times } => {
+            ui.label(compass_i18n::t!("screener.n_label"));
+            ui.add(egui::DragValue::new(days).range(1..=80));
+            ui.label(compass_i18n::t!("screener.times"));
+            ui.add(egui::DragValue::new(times).speed(0.1));
+            false
+        }
+        LeafParams::UpDays { n, min_pct } => {
+            ui.label(compass_i18n::t!("screener.n_label"));
+            ui.add(egui::DragValue::new(n).range(1..=250));
+            ui.label(compass_i18n::t!("screener.min_pct"));
+            ui.add(egui::DragValue::new(min_pct).speed(1.0));
+            false
+        }
+        LeafParams::Unknown(_) | LeafParams::None => false,
+    }
+}
+
+/// One multi-select parameter. The instance is cached in `ms_map` keyed by
+/// the card path (id_salt = same path, ref #220/#222); `CondLeaf.params` is
+/// the single source of truth — mirrored into the instance before rendering
+/// and written back after interaction.
+fn render_multi_select(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    path: &str,
+    slug: &str,
+    values: &mut Vec<String>,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    options: &[String],
+) -> bool {
+    let key = format!("{path}_{slug}");
+    let entry = ms_map
+        .entry(key.clone())
+        .or_insert_with(|| MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt(&key));
+    entry.options = options.to_vec();
+    entry.selected = values.clone();
+    let changed = entry.show(ui);
+    if changed {
+        *values = entry.selected.clone();
+    }
+    false
+}
+
+/// Nested AND/OR group container (design §3): lightweight `Frame` (never a
+/// Card-in-Card) with a header row (segmented + delete) and a recursive item
+/// list. Returns whether the group was deleted.
+fn render_sub_group(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    path: &str,
+    group: &mut CondGroup,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    industries: &[String],
+    boards: &[String],
+) -> bool {
+    let c = &tokens.color;
+    let mut remove = false;
+    let frame = egui::Frame::new()
+        .fill(c.bg_panel_alt)
+        .stroke(egui::Stroke::new(1.0, c.border_strong))
+        .corner_radius(tokens.radius.sm)
+        .inner_margin(egui::Margin::symmetric(10, 8));
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let selected = match group.operator {
+                BoolOp::And => 0,
+                BoolOp::Or => 1,
+            };
+            if let Some(idx) = Segmented::new(
+                tokens,
+                [
+                    compass_i18n::t!("screener.builder.group_and"),
+                    compass_i18n::t!("screener.builder.group_or"),
+                ],
+            )
+            .selected(selected)
+            .show(ui)
+            {
+                group.operator = if idx == 1 { BoolOp::Or } else { BoolOp::And };
+            }
+            if IconButton::new(tokens, egui_phosphor::regular::X)
+                .tooltip(&compass_i18n::t!("screener.builder.delete_tooltip"))
+                .small()
+                .show(ui)
+            {
+                remove = true;
+                prune_ms_prefix(ms_map, &format!("{path}_"));
+            }
+        });
+        if group.items.is_empty() {
+            ui.label(egui::RichText::new(compass_i18n::t!("screener.builder.empty_group")).weak());
+        } else {
+            ui.add_space(tokens.spacing.xs);
+            render_group_items(
+                ui,
+                tokens,
+                path,
+                &mut group.items,
+                ms_map,
+                industries,
+                boards,
+            );
+        }
+        ui.add_space(tokens.spacing.xs);
+        render_add_menu(ui, tokens, path, &mut group.items);
+    });
+    remove
+}
+
+/// Bottom add menu: a Dropdown whose trigger always shows the add-condition
+/// sentinel (`.selected(0)` re-applied every frame), with the 11 selectable
+/// kinds plus the 「子分组」 sentinel. Selecting a kind appends a default card;
+/// selecting the group sentinel appends an empty AND group.
+fn render_add_menu(ui: &mut egui::Ui, tokens: &ThemeTokens, path: &str, items: &mut Vec<CondItem>) {
+    let add_group_idx = SELECTABLE_KINDS.len() + 1;
+    let mut options: Vec<String> =
+        vec![compass_i18n::t!("screener.builder.add_condition").into_owned()];
+    options.extend(kind_options());
+    options.push(compass_i18n::t!("screener.builder.add_group").into_owned());
+    if let Some(idx) = Dropdown::new(tokens, options)
+        .selected(0)
+        .width(150.0)
+        .id_salt(&format!("{path}_add"))
+        .show(ui)
+    {
+        if idx == add_group_idx {
+            items.push(CondItem::Group(CondGroup::default()));
+        } else if idx > 0 {
+            let kind = SELECTABLE_KINDS[idx - 1];
+            items.push(CondItem::Leaf(CondLeaf {
+                kind,
+                params: default_params(kind),
+                negated: false,
+            }));
+        }
+    }
+}
+
+/// The default 6 base cards (design §4, decision: default = 现状 behavior):
+/// industry / exchange / board / listing years / market cap / delisted
+/// (exclusion checked).
+fn default_root_cards() -> Vec<CondItem> {
+    vec![
+        CondItem::Leaf(CondLeaf {
+            kind: LeafKind::Industry,
+            params: LeafParams::MultiSelect(Vec::new()),
+            negated: false,
+        }),
+        CondItem::Leaf(CondLeaf {
+            kind: LeafKind::Exchange,
+            params: LeafParams::MultiSelect(Vec::new()),
+            negated: false,
+        }),
+        CondItem::Leaf(CondLeaf {
+            kind: LeafKind::Board,
+            params: LeafParams::MultiSelect(Vec::new()),
+            negated: false,
+        }),
+        CondItem::Leaf(CondLeaf {
+            kind: LeafKind::ListYears,
+            params: LeafParams::ListYears(None),
+            negated: false,
+        }),
+        CondItem::Leaf(CondLeaf {
+            kind: LeafKind::MarketCap,
+            params: LeafParams::MarketCap {
+                min: None,
+                max: None,
+            },
+            negated: false,
+        }),
+        CondItem::Leaf(CondLeaf {
+            kind: LeafKind::Delisted,
+            params: LeafParams::Delisted(false),
+            negated: false,
+        }),
+    ]
+}
+
+/// Default parameters for a freshly added / type-switched card.
+fn default_params(kind: LeafKind) -> LeafParams {
+    match kind {
+        LeafKind::Industry | LeafKind::Exchange | LeafKind::Board => {
+            LeafParams::MultiSelect(Vec::new())
+        }
+        LeafKind::ListYears => LeafParams::ListYears(None),
+        LeafKind::MarketCap => LeafParams::MarketCap {
+            min: None,
+            max: None,
+        },
+        LeafKind::Delisted => LeafParams::Delisted(false),
+        LeafKind::Ma => LeafParams::Ma(MaKind::AboveMa20),
+        LeafKind::Breakout => LeafParams::Breakout(BreakoutCondition::default().days),
+        LeafKind::Momentum => LeafParams::Momentum {
+            days: MomentumCondition::default().days,
+            min_pct: MomentumCondition::default().min_pct,
+            max_pct: MomentumCondition::default().max_pct,
+        },
+        LeafKind::VolumeSurge => LeafParams::VolumeSurge {
+            days: VolumeCondition::default().days,
+            times: VolumeCondition::default().times,
+        },
+        LeafKind::UpDays => LeafParams::UpDays { n: 3, min_pct: 0.0 },
+        LeafKind::Unknown => LeafParams::Unknown(String::new()),
+    }
+}
+
+/// I18n key for a leaf kind's display label.
+fn leaf_kind_label(kind: LeafKind) -> &'static str {
+    match kind {
+        LeafKind::Industry => "screener.industry",
+        LeafKind::Exchange => "screener.exchange",
+        LeafKind::Board => "screener.board",
+        LeafKind::ListYears => "screener.list_years",
+        LeafKind::MarketCap => "screener.market_cap",
+        LeafKind::Delisted => "screener.exclude_delisted",
+        LeafKind::Ma => "screener.ma",
+        LeafKind::Breakout => "screener.breakout",
+        LeafKind::Momentum => "screener.momentum",
+        LeafKind::VolumeSurge => "screener.volume",
+        LeafKind::UpDays => "screener.builder.cond_up_days",
+        LeafKind::Unknown => "screener.builder.unknown_shape",
+    }
+}
+
+/// Translated kind labels for the type dropdown / add menu.
+fn kind_options() -> Vec<String> {
+    SELECTABLE_KINDS
+        .iter()
+        .map(|k| compass_i18n::t!(leaf_kind_label(*k)).into_owned())
+        .collect()
+}
+
+/// Width estimate of a leaf card row, used by the wrap check (ref #220):
+/// the whole card moves to a fresh row when it would not fit.
+fn leaf_row_min_width(kind: LeafKind) -> f32 {
+    match kind {
+        LeafKind::Industry | LeafKind::Exchange | LeafKind::Board => 330.0,
+        LeafKind::ListYears => 340.0,
+        LeafKind::MarketCap => 390.0,
+        LeafKind::Delisted => 360.0,
+        LeafKind::Ma => 460.0,
+        LeafKind::Breakout => 340.0,
+        LeafKind::Momentum => 470.0,
+        LeafKind::VolumeSurge => 360.0,
+        LeafKind::UpDays => 390.0,
+        LeafKind::Unknown => 300.0,
+    }
+}
+
+/// Drop stale MultiSelect instances under a card path (deleted cards, type
+/// switches) so shifted paths never resurrect old selections.
+fn prune_ms_prefix(ms_map: &mut HashMap<String, MultiSelect>, prefix: &str) {
+    ms_map.retain(|key, _| !key.starts_with(prefix));
 }
 
 /// Row-click linkage: fetch bars for the clicked result row (design §6.6).
@@ -633,6 +932,7 @@ fn dispatch_row_fetch(
 mod tests {
     use super::*;
     use crate::citizens::ui_fixes_218::LANG_LOCK;
+    use compass_types::{CmpOp, FactorRef, MaCondition, SeriesCond, SeriesFactor};
     use compass_ui::tokens::ThemeTokens;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
@@ -656,46 +956,76 @@ mod tests {
     }
 
     #[test]
-    fn new_form_defaults_match_query_contract() {
+    fn new_builder_seeds_default_six_cards_matching_query_contract() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (panel, _) = panel_with_form();
-        let q = panel.build_query();
-        assert!(q.exclude_delisted, "exclude_delisted defaults true");
-        assert_eq!(q.breakout, None);
-        assert_eq!(q.momentum, None);
-        assert_eq!(q.volume, None);
-        assert_eq!(q.ma, None);
-        assert!(q.industries.is_empty());
+        assert_eq!(
+            panel.builder_root.len(),
+            6,
+            "default root group seeds 6 base cards"
+        );
+        match panel.build_filter() {
+            Filter::And(nodes) => assert!(
+                nodes.contains(&Filter::Meta(MetaCond::Delisted(false))),
+                "exclude-delisted defaults checked → Meta(Delisted(false)) present"
+            ),
+            other => panic!("default 6 cards must compile to an And root, got {other:?}"),
+        }
     }
 
     #[test]
-    fn build_query_reflects_conditions() {
+    fn build_filter_reflects_builder_state() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _) = panel_with_form();
-        panel.form.ma_enabled = true;
-        panel.form.ma_kind = MaKind::BullishAlign;
-        panel.form.breakout_enabled = true;
-        panel.form.breakout_days = 120;
-        panel.form.momentum_enabled = true;
-        panel.form.volume_enabled = true;
-        panel.form.market_cap_min = Some(100.0);
-        panel.ms_industry.toggle("白酒");
-
-        let q = panel.build_query();
-        assert_eq!(q.ma, Some(MaCondition::BullishAlign));
-        assert_eq!(q.breakout, Some(BreakoutCondition::new(120)));
-        assert_eq!(q.momentum, Some(MomentumCondition::default()));
-        assert_eq!(q.volume, Some(VolumeCondition::default()));
-        assert_eq!(q.market_cap_min, Some(100.0));
-        assert_eq!(q.industries, vec!["白酒".to_string()]);
+        match &mut panel.builder_root[0] {
+            CondItem::Leaf(leaf) => {
+                leaf.params = LeafParams::MultiSelect(vec!["白酒".to_string()]);
+            }
+            _ => panic!("card 0 must be a leaf"),
+        }
+        panel.builder_root.push(CondItem::Leaf(CondLeaf {
+            kind: LeafKind::Ma,
+            params: LeafParams::Ma(MaKind::BullishAlign),
+            negated: false,
+        }));
+        panel.builder_root.push(CondItem::Leaf(CondLeaf {
+            kind: LeafKind::Breakout,
+            params: LeafParams::Breakout(120),
+            negated: false,
+        }));
+        match panel.build_filter() {
+            Filter::And(nodes) => {
+                assert!(
+                    nodes.contains(&Filter::Meta(MetaCond::Industry(vec!["白酒".to_string()])))
+                );
+                assert!(nodes.contains(&Filter::Series(SeriesCond::Cmp {
+                    factor: SeriesFactor::Close,
+                    op: CmpOp::Gt,
+                    value: FactorRef::Factor(SeriesFactor::NDayHigh(120)),
+                })));
+                assert!(nodes.contains(&Filter::And(vec![
+                    Filter::Series(SeriesCond::Cmp {
+                        factor: SeriesFactor::Sma(5),
+                        op: CmpOp::Gt,
+                        value: FactorRef::Factor(SeriesFactor::Sma(20)),
+                    }),
+                    Filter::Series(SeriesCond::Cmp {
+                        factor: SeriesFactor::Sma(20),
+                        op: CmpOp::Gt,
+                        value: FactorRef::Factor(SeriesFactor::Sma(60)),
+                    }),
+                ])));
+            }
+            other => panic!("expected And root, got {other:?}"),
+        }
     }
 
     #[test]
-    fn restore_seeds_form_and_multi_selects() {
+    fn restore_seeds_builder_cards_from_query() {
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
@@ -706,32 +1036,80 @@ mod tests {
         };
         let panel = ScreenerPanel::new(id, state, Some(&query), Box::new(|_| {}), &tokens);
 
-        let q = panel.build_query();
-        assert_eq!(q.industries, vec!["银行".to_string()]);
-        assert_eq!(q.ma, Some(MaCondition::BullishAlign));
+        // From(query) = And[Industry(银行), bullish pair, Delisted(false)] —
+        // a non-empty shape restores as a single nested root group.
+        assert_eq!(
+            panel.builder_root.len(),
+            1,
+            "multi-member restore seeds a root group"
+        );
+        match &panel.builder_root[0] {
+            CondItem::Group(group) => {
+                assert_eq!(group.items.len(), 3);
+                let industry = group
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        CondItem::Leaf(leaf) if leaf.kind == LeafKind::Industry => Some(leaf),
+                        _ => None,
+                    })
+                    .expect("industry card");
+                assert_eq!(
+                    industry.params,
+                    LeafParams::MultiSelect(vec!["银行".to_string()])
+                );
+                let ma = group
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        CondItem::Leaf(leaf) if leaf.kind == LeafKind::Ma => Some(leaf),
+                        _ => None,
+                    })
+                    .expect("ma card");
+                assert_eq!(ma.params, LeafParams::Ma(MaKind::BullishAlign));
+            }
+            _ => panic!(
+                "expected a nested root group, got {:?}",
+                panel.builder_root[0]
+            ),
+        }
     }
 
     #[test]
-    fn multi_selects_are_independent() {
+    fn builder_multi_select_cards_are_independent() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _) = panel_with_form();
-        panel.ms_industry.toggle("银行");
-        panel.ms_exchange.toggle("SH");
-
-        assert!(
-            panel.ms_board.selected.is_empty(),
-            "board selection must stay untouched"
-        );
-        let q = panel.build_query();
-        assert_eq!(q.industries, vec!["银行".to_string()]);
-        assert_eq!(q.exchanges, vec!["SH".to_string()]);
-        assert!(q.boards.is_empty());
+        match &mut panel.builder_root[0] {
+            CondItem::Leaf(leaf) => {
+                leaf.params = LeafParams::MultiSelect(vec!["银行".to_string()]);
+            }
+            _ => panic!("card 0 must be a leaf"),
+        }
+        match &mut panel.builder_root[1] {
+            CondItem::Leaf(leaf) => {
+                leaf.params = LeafParams::MultiSelect(vec!["SH".to_string()]);
+            }
+            _ => panic!("card 1 must be a leaf"),
+        }
+        match panel.build_filter() {
+            Filter::And(nodes) => {
+                assert!(
+                    nodes.contains(&Filter::Meta(MetaCond::Industry(vec!["银行".to_string()])))
+                );
+                assert!(nodes.contains(&Filter::Meta(MetaCond::Exchange(vec!["SH".to_string()]))));
+                assert!(
+                    nodes.contains(&Filter::Meta(MetaCond::Board(vec![]))),
+                    "board card stays untouched"
+                );
+            }
+            other => panic!("expected And root, got {other:?}"),
+        }
     }
 
     #[test]
-    fn show_renders_condition_form_no_panic() {
+    fn show_renders_condition_builder_no_panic() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -746,9 +1124,12 @@ mod tests {
             panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
         });
         harness.run();
-        let _ = harness.get_by_label("基础条件");
-        let _ = harness.get_by_label("技术面条件");
-        let _ = harness.get_by_label("排除退市");
+        let _ = harness.get_by_label_contains("筛选条件");
+        // "排除退市" appears twice: the card's type dropdown and its checkbox.
+        let _ = harness.query_all_by_label_contains("排除退市").count();
+        // "全部" appears three times: the industry/exchange/board multi-select
+        // triggers of the six preset cards.
+        let _ = harness.query_all_by_label_contains("全部").count();
     }
 
     #[test]
@@ -918,38 +1299,49 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // #220 atomic condition groups: each label+control stays on one row
+    // #220 atomic condition groups: each card's label+control stays on one
+    // row (migrated from the fixed-form GROUP_ALIGNMENT series)
     // ------------------------------------------------------------------
 
     /// Widths swept by the alignment test. 500 px is a stress case below the
-    /// design's supported minimum (>600 px): it must still keep each group's
-    /// label and control on the same row at ANY width.
+    /// design's supported minimum (>600 px): it must still keep each card's
+    /// type dropdown and parameter control on the same row at ANY width.
     const GROUP_ALIGNMENT_WIDTHS: [f32; 5] = [500.0, 600.0, 800.0, 1000.0, 1200.0];
 
-    fn assert_same_row(
+    fn assert_same_row_contains(
         harness: &egui_kittest::Harness<'_, ()>,
-        label: &str,
+        label_fragment: &str,
         control: &egui_kittest::Node<'_>,
         width: f32,
     ) {
-        let label_node = harness.get_by_label(label);
+        // Take the first matching node in document order (the card's type
+        // dropdown renders before its parameter controls, so "MA" resolves to
+        // the type dropdown even though "Above MA20" also contains "MA").
+        let label_node = harness
+            .query_all_by_label_contains(label_fragment)
+            .next()
+            .unwrap_or_else(|| panic!("label fragment {label_fragment:?} not found"));
         let dy = (label_node.rect().center().y - control.rect().center().y).abs();
         assert!(
             dy <= 1.0,
-            "label {label:?} and its control must share a row at width {width}px, dy={dy}"
+            "label {label_fragment:?} and its control must share a row at width {width}px, dy={dy}"
         );
     }
 
+    fn builder_harness(panel: &mut ScreenerPanel, width: f32) -> egui_kittest::Harness<'_, ()> {
+        egui_kittest::Harness::builder()
+            .with_size([width, 600.0])
+            .build_ui(|ui| panel.condition_builder(ui, &[], &[]))
+    }
+
     #[test]
-    fn basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+    fn builder_card_rows_keep_label_and_control_aligned_across_widths() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
-            let mut harness = egui_kittest::Harness::builder()
-                .with_size([width, 600.0])
-                .build_ui(|ui| panel.basic_conditions(ui));
+            let mut harness = builder_harness(&mut panel, width);
             harness.run();
 
             let selects = harness
@@ -960,37 +1352,60 @@ mod tests {
                 3,
                 "three multi-select triggers rendered at width {width}px"
             );
-            assert_same_row(&harness, "行业", &selects[0], width);
-            assert_same_row(&harness, "交易所", &selects[1], width);
-            assert_same_row(&harness, "板块", &selects[2], width);
+            assert_same_row_contains(&harness, "行业", &selects[0], width);
+            assert_same_row_contains(&harness, "交易所", &selects[1], width);
+            assert_same_row_contains(&harness, "板块", &selects[2], width);
 
             let years = harness
                 .query_by_label_contains("不限")
                 .expect("上市时长 dropdown rendered");
-            assert_same_row(&harness, "上市时长", &years, width);
+            assert_same_row_contains(&harness, "上市时长", &years, width);
         }
     }
 
     #[test]
-    fn technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+    fn builder_technical_cards_keep_label_and_control_aligned_across_widths() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
-            panel.form.ma_enabled = true;
-            panel.form.breakout_enabled = true;
-            panel.form.momentum_enabled = true;
-            panel.form.volume_enabled = true;
-            let mut harness = egui_kittest::Harness::builder()
-                .with_size([width, 600.0])
-                .build_ui(|ui| panel.technical_conditions(ui));
+            panel.builder_root = vec![
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::Ma,
+                    params: LeafParams::Ma(MaKind::AboveMa20),
+                    negated: false,
+                }),
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::Breakout,
+                    params: LeafParams::Breakout(60),
+                    negated: false,
+                }),
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::Momentum,
+                    params: LeafParams::Momentum {
+                        days: 30,
+                        min_pct: -5.0,
+                        max_pct: 50.0,
+                    },
+                    negated: false,
+                }),
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::VolumeSurge,
+                    params: LeafParams::VolumeSurge {
+                        days: 10,
+                        times: 1.5,
+                    },
+                    negated: false,
+                }),
+            ];
+            let mut harness = builder_harness(&mut panel, width);
             harness.run();
 
             let ma_dropdown = harness
                 .query_by_label_contains("站上 MA20")
-                .expect("MA dropdown rendered when ma_enabled");
-            assert_same_row(&harness, "均线", &ma_dropdown, width);
+                .expect("MA kind dropdown rendered");
+            assert_same_row_contains(&harness, "均线", &ma_dropdown, width);
 
             let n_labels = harness
                 .query_all_by_label_contains("N:")
@@ -1000,21 +1415,21 @@ mod tests {
                 3,
                 "three N: parameter labels rendered at width {width}px"
             );
-            assert_same_row(&harness, "突破新高", &n_labels[0], width);
-            assert_same_row(&harness, "动量", &n_labels[1], width);
-            assert_same_row(&harness, "量能", &n_labels[2], width);
+            assert_same_row_contains(&harness, "突破新高", &n_labels[0], width);
+            assert_same_row_contains(&harness, "动量", &n_labels[1], width);
+            assert_same_row_contains(&harness, "量能", &n_labels[2], width);
         }
     }
 
     #[test]
-    fn condition_groups_still_wrap_between_on_narrow_width() {
+    fn builder_cards_wrap_to_own_rows_on_narrow_width() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, _shared) = panel_with_form();
         let mut harness = egui_kittest::Harness::builder()
             .with_size([500.0, 600.0])
-            .build_ui(|ui| panel.basic_conditions(ui));
+            .build_ui(|ui| panel.condition_builder(ui, &[], &[]));
         harness.run();
 
         let selects = harness
@@ -1027,7 +1442,7 @@ mod tests {
         let dy_between = (selects[0].rect().center().y - years.rect().center().y).abs();
         assert!(
             dy_between > 1.0,
-            "industry and 上市时长 groups must wrap to different rows at 500px (groups, not labels, wrap), dy={dy_between}"
+            "industry and 上市时长 cards must wrap to different rows at 500px, dy={dy_between}"
         );
     }
 
@@ -1039,16 +1454,14 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn en_basic_condition_groups_keep_label_and_control_aligned_across_widths() {
+    fn en_builder_card_rows_keep_label_and_control_aligned_across_widths() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
             compass_i18n::set_locale("en");
-            let mut harness = egui_kittest::Harness::builder()
-                .with_size([width, 600.0])
-                .build_ui(|ui| panel.basic_conditions(ui));
+            let mut harness = builder_harness(&mut panel, width);
             harness.run();
 
             let selects = harness
@@ -1059,39 +1472,62 @@ mod tests {
                 3,
                 "three multi-select triggers rendered at width {width}px"
             );
-            assert_same_row(&harness, "Industry", &selects[0], width);
-            assert_same_row(&harness, "Exchange", &selects[1], width);
-            assert_same_row(&harness, "Board", &selects[2], width);
+            assert_same_row_contains(&harness, "Industry", &selects[0], width);
+            assert_same_row_contains(&harness, "Exchange", &selects[1], width);
+            assert_same_row_contains(&harness, "Board", &selects[2], width);
 
             let years = harness
                 .query_by_label_contains("Any")
                 .expect("上市时长 dropdown rendered in en");
-            assert_same_row(&harness, "Listed ≥", &years, width);
+            assert_same_row_contains(&harness, "Listed ≥", &years, width);
         }
         compass_i18n::set_locale("zh");
     }
 
     #[test]
-    fn en_technical_condition_groups_keep_label_and_control_aligned_across_widths() {
+    fn en_builder_technical_cards_keep_label_and_control_aligned_across_widths() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
             let (mut panel, _shared) = panel_with_form();
             compass_i18n::set_locale("en");
-            panel.form.ma_enabled = true;
-            panel.form.breakout_enabled = true;
-            panel.form.momentum_enabled = true;
-            panel.form.volume_enabled = true;
-            let mut harness = egui_kittest::Harness::builder()
-                .with_size([width, 600.0])
-                .build_ui(|ui| panel.technical_conditions(ui));
+            panel.builder_root = vec![
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::Ma,
+                    params: LeafParams::Ma(MaKind::AboveMa20),
+                    negated: false,
+                }),
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::Breakout,
+                    params: LeafParams::Breakout(60),
+                    negated: false,
+                }),
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::Momentum,
+                    params: LeafParams::Momentum {
+                        days: 30,
+                        min_pct: -5.0,
+                        max_pct: 50.0,
+                    },
+                    negated: false,
+                }),
+                CondItem::Leaf(CondLeaf {
+                    kind: LeafKind::VolumeSurge,
+                    params: LeafParams::VolumeSurge {
+                        days: 10,
+                        times: 1.5,
+                    },
+                    negated: false,
+                }),
+            ];
+            let mut harness = builder_harness(&mut panel, width);
             harness.run();
 
             let ma_dropdown = harness
                 .query_by_label_contains("Above MA20")
-                .expect("MA dropdown rendered when ma_enabled");
-            assert_same_row(&harness, "MA", &ma_dropdown, width);
+                .expect("MA kind dropdown rendered in en");
+            assert_same_row_contains(&harness, "MA", &ma_dropdown, width);
 
             let n_labels = harness
                 .query_all_by_label_contains("N:")
@@ -1101,9 +1537,9 @@ mod tests {
                 3,
                 "three N: parameter labels rendered at width {width}px"
             );
-            assert_same_row(&harness, "New High", &n_labels[0], width);
-            assert_same_row(&harness, "Momentum", &n_labels[1], width);
-            assert_same_row(&harness, "Volume", &n_labels[2], width);
+            assert_same_row_contains(&harness, "New High", &n_labels[0], width);
+            assert_same_row_contains(&harness, "Momentum", &n_labels[1], width);
+            assert_same_row_contains(&harness, "Volume", &n_labels[2], width);
         }
         compass_i18n::set_locale("zh");
     }

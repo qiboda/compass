@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use compass_types::{ScreenerQuery, ScreenerRow};
+use compass_types::{Filter, ScreenerRow};
 use egui_charts::model::Bar;
 
 /// Application-level message for egui-mobius citizen pattern.
@@ -28,9 +28,12 @@ pub struct FetchResponse {
 }
 
 /// Sent from the screener panel to the backend via the screener signal.
+///
+/// Carries the Batch 1 `Filter` AST directly (epic #243) — the backend no
+/// longer compiles a legacy `ScreenerQuery` on its side.
 #[derive(Clone)]
 pub struct RunScreenerRequest {
-    pub query: ScreenerQuery,
+    pub filter: Filter,
 }
 
 /// Sent from the backend worker back to the UI after a screener run.
