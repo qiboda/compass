@@ -32,6 +32,7 @@ __all__ = [
     "Throttle",
     "build_dates",
     "csv_dir",
+    "dedupe_csv",
     "dolt_sql",
     "dolt_sql_csv",
     "dolt_table_import",
@@ -210,22 +211,27 @@ def import_replace_table(
     With ``merge=False`` (default) the table is atomically REPLACED: the CSV
     is staged in a temp table, the old table is renamed aside, a fresh table
     is created with ``ddl`` and filled via ``insert_sql``; any failure rolls
-    back. With ``merge=True`` the CSV rows are INSERT IGNORE'd into the
-    EXISTING table (created with ``ddl`` on first run), so incremental-window
-    CSVs append to history instead of clobbering it — the caller's
-    ``insert_sql`` must use ``INSERT IGNORE INTO {dolt_table}`` and the PK
-    dedupes overlapping windows.
+    back. With ``merge=True`` the CSV rows are upserted into the EXISTING
+    table (created with ``ddl`` on first run), so incremental-window CSVs
+    append to history instead of clobbering it. The caller's ``insert_sql``
+    normally uses ``INSERT IGNORE INTO {dolt_table}`` with the PK deduping
+    overlapping windows; a caller that must OVERWRITE revised rows (e.g.
+    fin_indicators revision detection, issue #135) may pass an
+    ``INSERT ... ON DUPLICATE KEY UPDATE`` statement instead — see
+    ``main.py::_import_fin_indicators`` for the Dolt-2.2.3-compatible form
+    (SELECT-side unique aliases + ODKU prefixless alias references; qualified
+    source-column refs and ``VALUES()`` are rejected by Dolt).
 
     Flow (replace): CSV → optional wide temp create → old table renamed aside
     → DDL creates fresh table → INSERT SELECT fills → failure rolls back →
     data_updates upsert. Flow (merge): optional wide temp create → DDL
-    CREATE IF NOT EXISTS → INSERT IGNORE SELECT → data_updates upsert.
+    CREATE IF NOT EXISTS → INSERT IGNORE/UPSERT SELECT → data_updates upsert.
 
     Returns the final full-table row count after import, or 0 when the CSV is
     missing or the import fails (previous table contents are preserved).
-    In merge mode the number of rows actually inserted this run (INSERT IGNORE
-    dedupes overlapping PKs) is logged via ``logger.info``; failures log the
-    SQL error via ``logger.error`` (never silently swallowed).
+    In merge mode the number of rows actually inserted this run (the PK
+    dedupes overlapping windows) is logged via ``logger.info``; failures log
+    the SQL error via ``logger.error`` (never silently swallowed).
     """
     before_total = 0
     if not csv_path.exists():
@@ -411,6 +417,51 @@ def write_csv(
         if write_header:
             writer.writeheader()
         writer.writerows(records)
+
+
+def dedupe_csv(path: Path) -> None:
+    """Dedupe a CSV file in place, keeping the LAST row per (SECURITY_CODE, REPORTDATE).
+
+    Reads the whole file (utf-8-sig, BOM-safe) and rewrites it with the same
+    header and column order. Keep-LAST means the final occurrence's values win
+    for each PK; rows with distinct PKs keep their relative order. Empty files
+    and files missing either PK column are left untouched (silent no-op).
+    Rewriting is skipped when the file already has unique PKs.
+
+    Called after every write so a revised row (same PK, newer UPDATE_DATE)
+    overwrites the old one instead of duplicating it in the CSV.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return
+        try:
+            code_idx = header.index("SECURITY_CODE")
+            date_idx = header.index("REPORTDATE")
+        except ValueError:
+            return  # missing PK columns — leave the file untouched
+
+        seen: dict[tuple[str, str], list[str]] = {}
+        dupes = 0
+        for row in reader:
+            if not row or len(row) <= code_idx or len(row) <= date_idx:
+                continue  # blank or malformed row — no key to dedupe on
+            key = (row[code_idx], row[date_idx])
+            if key in seen:
+                dupes += 1
+            seen[key] = row
+
+    if dupes == 0:
+        return
+
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(seen.values())
 
 
 # ── Date builder ────────────────────────────────────────────────

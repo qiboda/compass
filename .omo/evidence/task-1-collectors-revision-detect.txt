@@ -1,0 +1,321 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: /data/codes/compass/.worktrees/collectors-revision-detect/collectors
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 121 items
+
+tests/test_fin_indicators_adversarial.py FFFFFFFFFF.FFFF.                [ 13%]
+tests/test_fin_indicators.py ...........................FFFFFFFFFFFFFFFF [ 48%]
+FF.....                                                                  [ 54%]
+tests/test_main.py ..................................................... [ 98%]
+..                                                                       [100%]
+
+=================================== FAILURES ===================================
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-08-03')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_missing_and_empty_update_0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 3 records
+
+Done: 3 records → /tmp/pytest-of-skwy/pytest-59/test_missing_and_empty_update_0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 3,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-08-03')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_malformed_update_date_nor0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 3 records
+
+Done: 3 records → /tmp/pytest-of-skwy/pytest-59/test_malformed_update_date_nor0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 3,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: boundary rows must all be retained and dup PK deduped to one row each — expected 3 rows, got 4
+    assert 4 == 3
+     +  where 4 = len([{'SECUCODE': '000001.SZ', 'SECURITY_CODE': '000001', 'REPORTDATE': '2025-03-31', 'UPDATE_DATE': '2026-08-03', ...}, {....}, {'SECUCODE': '000003.SZ', 'SECURITY_CODE': '000003', 'REPORTDATE': '2025-09-30', 'UPDATE_DATE': '2026-08-03', ...}])
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_boundary_rows_included_an0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 4 records
+
+Done: 4 records → /tmp/pytest-of-skwy/pytest-59/test_boundary_rows_included_an0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 4,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:365: AssertionError: boundary rows must all be retained and dup PK deduped to one row each — expected 3 rows, got 4
+E   AssertionError: a future anchor must NOT fall back to REPORTDATE enumeration — got filter "(REPORTDATE='2026-12-31')"
+    assert 'UPDATE_DATE' in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+No prior data found, fetching full history.
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_future_anchor_clamped_no_0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... empty
+
+Done: 0 records → /tmp/pytest-of-skwy/pytest-59/test_future_anchor_clamped_no_0/RPT_LICO_FN_CPD.csv
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:417: AssertionError: a future anchor must NOT fall back to REPORTDATE enumeration — got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-08-03')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_zero_rows_no_crash_no_anc0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... empty
+
+Done: 0 records → /tmp/pytest-of-skwy/pytest-59/test_zero_rows_no_crash_no_anc0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={"last_update_date": "2026-08-03", "last_report_date": "2026-08-03"}...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-07-01', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-07-01')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-07-01
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_min_state_earlier_than_da0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-59/test_min_state_earlier_than_da0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 1,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-07-01', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-07-01', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-07-01')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_min_data_updates_earlier_0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-59/test_min_data_updates_earlier_0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 1,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-07-01', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-07-01', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-07-01')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+No prior data found, fetching full history.
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_null_last_updated_falls_b0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-59/test_null_last_updated_falls_b0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 1,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-07-01', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-08-03')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-07-01
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_state_missing_key_falls_b0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-59/test_state_missing_key_falls_b0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 1,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+E   KeyError: 'last_update_date'
+----------------------------- Captured stderr call -----------------------------
+No prior data found, fetching full history.
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_fallback_full_reportdate_0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-59/test_fallback_full_reportdate_0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 1,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:649: KeyError: 'last_update_date'
+E   AssertionError: incremental run must fetch the revision even though its REPORTDATE is outside the --years/--periods window (anchor crosses periods)
+    assert False
+     +  where False = exists()
+     +    where exists = PosixPath('/tmp/pytest-of-skwy/pytest-59/test_revision_outside_years_wi0/RPT_LICO_FN_CPD.csv').exists
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+No new report periods to fetch.
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:757: AssertionError: incremental run must fetch the revision even though its REPORTDATE is outside the --years/--periods window (anchor crosses periods)
+E   AssertionError: incremental fetch must sort by UPDATE_DATE, got 'SECURITY_CODE'
+    assert 'SECURITY_CODE' == 'UPDATE_DATE'
+      
+      - UPDATE_DATE
+      + SECURITY_CODE
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_multiple_pages_aggregated0/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 3 records
+
+Done: 3 records → /tmp/pytest-of-skwy/pytest-59/test_multiple_pages_aggregated0/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 3,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:837: AssertionError: incremental fetch must sort by UPDATE_DATE, got 'SECURITY_CODE'
+E   AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+    assert "(UPDATE_DATE>='2026-08-03')" in "(REPORTDATE='2026-12-31')"
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-08-03
+Report: RPT_LICO_FN_CPD
+Periods: 1 (['FY'], 2026-12-31..2026-12-31)
+Output: /tmp/pytest-of-skwy/pytest-59/test_total_pages_capped_at_5000/RPT_LICO_FN_CPD.csv
+Page size: 100
+
+[1/1] 2026-12-31 ... 1 records
+
+Done: 1 records → /tmp/pytest-of-skwy/pytest-59/test_total_pages_capped_at_5000/RPT_LICO_FN_CPD.csv
+State: RPT_LICO_FN_CPD.state.json → last_report_date={
+  "last_report_date": "2026-12-31",
+  "total_rows": 1,
+  "last_run": "2026-08-...
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:147: AssertionError: incremental mode must fetch by UPDATE_DATE>='2026-08-03', got filter "(REPORTDATE='2026-12-31')"
+E   AssertionError: revision must overwrite update_date: expected '2026-04-30', got '2025-04-26' — a column left out of the UPSERT silently mixes old+new values
+    assert '2025-04-26' == '2026-04-30'
+      
+      - 2026-04-30
+      + 2025-04-26
+----------------------------- Captured stderr call -----------------------------
+[import fin_indicators]
+[import fin_indicators]
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators_adversarial.py:1060: AssertionError: revision must overwrite update_date: expected '2026-04-30', got '2025-04-26' — a column left out of the UPSERT silently mixes old+new values
+E   AssertionError: incremental mode must issue an API request for revised rows
+    assert []
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-04-30
+No new report periods to fetch.
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:788: AssertionError: incremental mode must issue an API request for revised rows
+E   AssertionError: revision row must be fetched and CSV written
+    assert False
+     +  where False = exists()
+     +    where exists = PosixPath('/tmp/pytest-of-skwy/pytest-59/test_revision_captured_csv_pk_0/RPT_LICO_FN_CPD.csv').exists
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-04-30
+No new report periods to fetch.
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:828: AssertionError: revision row must be fetched and CSV written
+E   AssertionError: revised value must overwrite old one in Dolt, got revenue='369.4'
+    assert '369.4' == '170.86'
+      
+      - 170.86
+      + 369.4
+----------------------------- Captured stderr call -----------------------------
+Incremental: last data from 2026-04-30
+No new report periods to fetch.
+[import fin_indicators]
+  ERROR: /tmp/pytest-of-skwy/pytest-59/test_dolt_import_overwrites_re0/RPT_LICO_FN_CPD.csv not found. Run fetch first.
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:892: AssertionError: revised value must overwrite old one in Dolt, got revenue='369.4'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:967: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:920: AttributeError: module 'fetch_fin_indicators' has no attribute '_update_anchor'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1032: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1042: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1055: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1070: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1080: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1087: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+E   AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+/data/codes/compass/.worktrees/collectors-revision-detect/collectors/tests/test_fin_indicators.py:1094: AttributeError: module 'fetch_fin_indicators' has no attribute 'dedupe_csv'
+=========================== short test summary info ============================
+FAILED tests/test_fin_indicators_adversarial.py::TestUpdateDateMissingOrEmpty::test_missing_and_empty_update_date_skipped_in_state_and_filter
+FAILED tests/test_fin_indicators_adversarial.py::TestUpdateDateFormatAbnormal::test_malformed_update_date_normalized_no_crash
+FAILED tests/test_fin_indicators_adversarial.py::TestSameKeyBoundaryRows::test_boundary_rows_included_and_dup_pk_keep_last
+FAILED tests/test_fin_indicators_adversarial.py::TestFutureAnchorClamp::test_future_anchor_clamped_no_infinite_loop
+FAILED tests/test_fin_indicators_adversarial.py::TestZeroRowRun::test_zero_rows_no_crash_no_anchor_advance
+FAILED tests/test_fin_indicators_adversarial.py::TestAnchorMinDualSource::test_min_state_earlier_than_data_updates
+FAILED tests/test_fin_indicators_adversarial.py::TestAnchorMinDualSource::test_min_data_updates_earlier_than_state
+FAILED tests/test_fin_indicators_adversarial.py::TestAnchorMinDualSource::test_null_last_updated_falls_back_to_state
+FAILED tests/test_fin_indicators_adversarial.py::TestAnchorMinDualSource::test_state_missing_key_falls_back_to_data_updates
+FAILED tests/test_fin_indicators_adversarial.py::TestBothSourcesAbsent::test_fallback_full_reportdate_enumeration_with_double_write
+FAILED tests/test_fin_indicators_adversarial.py::TestIncrementalIgnoresYearsPeriods::test_revision_outside_years_window_is_fetched
+FAILED tests/test_fin_indicators_adversarial.py::TestPaginationBoundary::test_multiple_pages_aggregated
+FAILED tests/test_fin_indicators_adversarial.py::TestPaginationBoundary::test_total_pages_capped_at_500
+FAILED tests/test_fin_indicators_adversarial.py::TestUpsertRevisionOverwrite::test_revision_overwrites_all_35_value_columns
+FAILED tests/test_fin_indicators.py::TestRevisionDetect::test_incremental_filter_uses_update_date_anchor
+FAILED tests/test_fin_indicators.py::TestRevisionDetect::test_revision_captured_csv_pk_unique_new_value
+FAILED tests/test_fin_indicators.py::TestRevisionDetect::test_dolt_import_overwrites_revised_value
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_data_updates_row_wins_when_state_absent
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_state_wins_when_data_updates_missing
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_min_of_both_sources_takes_state
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_both_absent_returns_empty
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_no_dolt_dir_state_single_source
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_null_last_updated_treated_as_missing_source
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_null_last_updated_no_state_returns_empty
+FAILED tests/test_fin_indicators.py::TestUpdateAnchor::test_state_missing_last_update_date_key_ignored
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_keep_last_wins_same_pk
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_bom_does_not_pollute_first_line
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_incremental_append_path_deduped
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_full_write_path_deduped
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_dedup_key_is_security_code_reportdate
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_empty_file_no_crash
+FAILED tests/test_fin_indicators.py::TestCsvDedup::test_missing_pk_columns_no_crash
+======================== 32 failed, 89 passed in 16.53s ========================
