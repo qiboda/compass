@@ -124,8 +124,6 @@ screener:
     delete_tooltip: Delete Condition
     negate_tooltip: Negate (exclude)
     unknown_shape: Advanced
-    unsupported_run: "This condition type is not supported by the engine yet, available in a later version: %{e}"
-    unsupported_save: This condition combination cannot be saved to the config file
     cond_up_days: Consecutive Up Days
   table:
     code: Code
