@@ -25,11 +25,12 @@ use egui_kittest::kittest::Queryable;
 use crate::CompassApp;
 use crate::citizens::chart::ChartCitizen;
 use crate::citizens::logger::LoggerPanel;
+use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
 use crate::state::SharedState;
 use crate::stock_projection;
-use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
+use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
 use crate::theme::CompassTheme;
 
 /// Serializes `set_locale` calls across ALL test modules — `rust_i18n::set_locale`
@@ -51,7 +52,7 @@ pub(crate) fn build_compass_app_with_timeframe(
     let config = AppConfig::default();
     let shared_state = Arc::new(SharedState::new("SZ000001", default_timeframe));
 
-    let (work_signal, run_screener_signal, sepa_signal, _backend_handle) =
+    let (work_signal, run_screener_signal, sepa_signal, index_signal, _backend_handle) =
         crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
 
     let mut dispatcher = Dispatcher::new();
@@ -69,10 +70,15 @@ pub(crate) fn build_compass_app_with_timeframe(
         &theme_tokens,
     );
     let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &theme_tokens);
+    let market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &theme_tokens);
     let stock_picker = StockPicker::new(theme_tokens, "SZ000001", stock_projection());
     let dock_style = egui_dock::Style::default();
 
-    let mut dock_state = DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
+    let mut dock_state = DockState::new(vec![
+        Tab::new(TabKind::Chart),
+        Tab::new(TabKind::Market),
+        Tab::new(TabKind::Sepa),
+    ]);
     if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
         && let Some(tree) = surface.node_tree_mut()
     {
@@ -98,13 +104,17 @@ pub(crate) fn build_compass_app_with_timeframe(
         logger,
         screener,
         sepa,
+        market,
         run_screener_signal,
         sepa_signal,
+        index_signal,
         screener_industries: Vec::new(),
         screener_boards: Vec::new(),
         shared_state,
         work_signal,
         stock_list: Vec::new(),
+        index_list: Vec::new(),
+        picker_list: Vec::new(),
         stock_picker,
         // Mirrors the production constructor (main.rs L162): the index is
         // derived from `shared_state.timeframe` via the shared
@@ -121,6 +131,8 @@ pub(crate) fn build_compass_app_with_timeframe(
         last_screener_error: None,
         last_sepa_error: None,
         last_sepa_loading: false,
+        last_index_error: None,
+        last_index_loading: false,
         last_screener_synced_symbol: startup_symbol,
         sidebar_visible: true,
         sidebar_search: String::new(),
@@ -142,7 +154,8 @@ pub(crate) fn build_compass_app_with_stocks(
     stocks: Vec<compass_core::model::StockBasic>,
 ) -> CompassApp {
     let mut app = build_compass_app(egui_ctx);
-    app.stock_list = stocks;
+    app.stock_list = stocks.clone();
+    app.picker_list = stocks;
     app
 }
 

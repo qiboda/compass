@@ -58,3 +58,18 @@ pub struct RunSepaResponse {
     pub data: compass_types::SepaData,
     pub error: Option<String>,
 }
+
+/// Sent from the market panel to the backend via the index signal. No
+/// payload — the snapshot always covers the full `index_daily.parquet`.
+#[derive(Clone)]
+pub struct RunIndexSnapshotRequest {}
+
+/// Sent from the backend worker back to the UI after an index snapshot run.
+#[derive(Clone)]
+pub struct RunIndexSnapshotResponse {
+    /// Latest-quote snapshot of every index/board symbol; `rows` is empty
+    /// when `index_daily.parquet` is missing (the panel shows the empty
+    /// state instead of an error — plan T6).
+    pub data: compass_types::IndexSnapshot,
+    pub error: Option<String>,
+}

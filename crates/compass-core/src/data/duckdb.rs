@@ -639,6 +639,94 @@ impl DataProvider for DuckDbProvider {
                 }
             }
 
+            // Epic #255: dual-parquet fallback — when the stock file yields
+            // nothing, route to `index_daily.parquet` (official indexes /
+            // BK boards). The two files are mutually exclusive: ref #201
+            // removed the 6 indexes from stock_daily, so an empty stock
+            // result makes the index lookup deterministic; stock symbols
+            // never exist in the index file, so the fallback cannot leak.
+            if rows.is_empty()
+                && let Some(ref parquet_dir) = parquet_dir
+            {
+                let index_path = parquet_dir.join("index_daily.parquet");
+                if index_path.exists() {
+                    tracing::debug!(
+                        symbol = %symbol,
+                        parquet = %"index_daily.parquet",
+                        "index fallback - reading from index file"
+                    );
+                    let path_str = index_path.to_string_lossy();
+                    let sql = format!(
+                        "SELECT CAST(tradedate AS VARCHAR), open, high, low, close, volume, adjclose, amount
+                         FROM read_parquet('{path_str}')
+                         WHERE symbol = ? AND tradedate >= ? AND tradedate <= ?
+                         ORDER BY tradedate ASC"
+                    );
+                    let mut pstmt = conn.prepare(&sql).map_err(DataError::Database)?;
+                    let index_rows: Vec<(String, f64, f64, f64, f64, f64, f64, f64)> = pstmt
+                        .query_map(
+                            params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, f64>(1)?,
+                                    row.get::<_, f64>(2)?,
+                                    row.get::<_, f64>(3)?,
+                                    row.get::<_, f64>(4)?,
+                                    row.get::<_, f64>(5)?,
+                                    row.get::<_, f64>(6)?,
+                                    row.get::<_, f64>(7)?,
+                                ))
+                            },
+                        )
+                        .map_err(DataError::Database)?
+                        .collect::<Result<Vec<_>, duckdb::Error>>()
+                        .map_err(DataError::Database)?;
+
+                    rows = index_rows
+                        .iter()
+                        .map(|(d, o, h, l, c, v, a, _)| {
+                            (d.clone(), *o, *h, *l, *c, *v, Some(*a))
+                        })
+                        .collect();
+
+                    tracing::debug!(
+                        symbol = %symbol,
+                        rows_from_index_parquet = rows.len(),
+                        "index fallback result"
+                    );
+
+                    // Cache-warm into the in-memory table so the 1w/1M
+                    // date_trunc aggregation below (which re-queries
+                    // `stock_daily` in memory) covers the index path with
+                    // zero extra aggregation logic.
+                    if !index_rows.is_empty() {
+                        let mut insert = conn
+                            .prepare(
+                                "INSERT OR IGNORE INTO stock_daily
+                                 (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            )
+                            .map_err(DataError::Database)?;
+                        for (date_str, open, high, low, close, volume, adjclose, amount) in &index_rows {
+                            insert
+                                .execute(params![
+                                    symbol.as_str(),
+                                    date_str.as_str(),
+                                    open,
+                                    high,
+                                    low,
+                                    close,
+                                    adjclose,
+                                    volume,
+                                    amount,
+                                ])
+                                .map_err(DataError::Database)?;
+                        }
+                    }
+                }
+            }
+
             // Issue #46: timeframe aggregation — re-query with date_trunc
             // GROUP BY for weekly/monthly OHLCV resample from daily data.
             // Forward-adjustment (ref #176): daily bars are scaled by

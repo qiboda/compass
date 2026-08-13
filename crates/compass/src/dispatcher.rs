@@ -8,7 +8,7 @@ use egui_mobius::signals::Signal;
 
 use crate::messages::{AppMessage, FetchRequest};
 use crate::state::SharedState;
-use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
+use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID};
 
 /// Holds the `CitizenState` handles returned during registration.
 ///
@@ -19,6 +19,7 @@ pub struct RegisteredCitizens {
     pub logger: CitizenState,
     pub screener: CitizenState,
     pub sepa: CitizenState,
+    pub market: CitizenState,
 }
 
 /// Register the core citizens with the dispatcher and activate the
@@ -31,6 +32,7 @@ pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
     let logger = dispatcher.register(CitizenId::new(LOGGER_ID));
     let screener = dispatcher.register(CitizenId::new(SCREENER_ID));
     let sepa = dispatcher.register(CitizenId::new(SEPA_ID));
+    let market = dispatcher.register(CitizenId::new(MARKET_ID));
 
     dispatcher.activate(&CitizenId::new(CHART_ID));
 
@@ -39,6 +41,7 @@ pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
         logger,
         screener,
         sepa,
+        market,
     }
 }
 

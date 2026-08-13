@@ -14,6 +14,7 @@ tab:
   logger: Log
   screener: Screener
   sepa: East SEPA
+tab.market: Market
 
 toolbar:
   fetch: Fetch
@@ -56,6 +57,8 @@ logger:
   log_screener_completed: "screener completed: %{count} matched"
   log_sepa_failed: "sepa failed: %{e}"
   log_sepa_completed: "sepa completed: %{count} ranked"
+  log_index_failed: "index snapshot failed: %{e}"
+  log_index_completed: "index snapshot completed: %{count} symbols"
 
 modal:
   startup:
@@ -77,6 +80,7 @@ toast:
   log_exported: "Logs exported: %{path}"
   log_export_failed: "Log export failed: %{error}"
   sepa_updated: "SEPA scores updated · %{count}"
+  index_updated: "Index data updated · %{count}"
 
 error:
   duckdb_open: "Failed to open DuckDB: %{e}"
@@ -84,6 +88,7 @@ error:
   no_data: "No data for %{symbol}"
   screener_run: "Screener run failed: %{e}"
   sepa_run: "SEPA run failed: %{e}"
+  index_run: "Index snapshot run failed: %{e}"
 
 screener:
   filter: Filter
@@ -201,6 +206,25 @@ sepa:
     news_default: "v1: default 10/20"
     big_capital: "main %{main} + dragon %{dragon} + survey %{survey} + block %{block}"
     thermometer: "Thermometer %{score}"
+
+index:
+  card_title: Core Indexes
+  count: "%{count} symbols · %{date}"
+  no_data: No snapshot yet
+  computing: Loading...
+  refresh: Refresh
+  empty_title: No index data
+  empty_desc: Import index_daily data first, then click Refresh
+  segment:
+    industry: Industry
+    concept: Concept
+    official: Official
+  table:
+    name: Name
+    code: Code
+    latest: Latest
+    change: Chg%
+    amount: Turnover(Bn)
 
 widgets:
   multi_select:

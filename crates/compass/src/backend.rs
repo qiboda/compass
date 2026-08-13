@@ -17,15 +17,15 @@ use egui_mobius::dispatching::AsyncDispatcher;
 use egui_mobius::factory;
 use egui_mobius::signals::Signal;
 
-use compass_core::data::{duckdb::DuckDbProvider, provider::DataProvider};
+use compass_core::data::{duckdb::DuckDbProvider, provider::DataError, provider::DataProvider};
 use compass_core::model::AppConfig;
 use compass_strategy::run_screener;
 use compass_strategy::sepa::run_sepa;
 use compass_types::SepaQuery;
 
 use crate::messages::{
-    FetchRequest, FetchResponse, RunScreenerRequest, RunScreenerResponse, RunSepaRequest,
-    RunSepaResponse,
+    FetchRequest, FetchResponse, RunIndexSnapshotRequest, RunIndexSnapshotResponse,
+    RunScreenerRequest, RunScreenerResponse, RunSepaRequest, RunSepaResponse,
 };
 use crate::state::SharedState;
 use compass_i18n::t;
@@ -40,12 +40,14 @@ pub struct BackendHandle {
     _dispatcher: AsyncDispatcher<FetchRequest, FetchResponse>,
     _screener_dispatcher: AsyncDispatcher<RunScreenerRequest, RunScreenerResponse>,
     _sepa_dispatcher: AsyncDispatcher<RunSepaRequest, RunSepaResponse>,
+    _index_dispatcher: AsyncDispatcher<RunIndexSnapshotRequest, RunIndexSnapshotResponse>,
 }
 
 /// Build the async work pipeline. Returns:
 /// - `Signal<FetchRequest>` — UI thread submits bar fetches via `.send(req)`
 /// - `Signal<RunScreenerRequest>` — UI thread submits screener runs
 /// - `Signal<RunSepaRequest>` — UI thread submits SEPA scoring runs
+/// - `Signal<RunIndexSnapshotRequest>` — UI thread submits index snapshot runs
 /// - `BackendHandle` — keep alive on the App struct
 ///
 /// The result slots are started internally — they write response values
@@ -58,6 +60,7 @@ pub fn wire_backend(
     Signal<FetchRequest>,
     Signal<RunScreenerRequest>,
     Signal<RunSepaRequest>,
+    Signal<RunIndexSnapshotRequest>,
     BackendHandle,
 ) {
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
@@ -70,6 +73,10 @@ pub fn wire_backend(
     let (sepa_signal, sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
     let (sepa_result_signal, mut sepa_result_slot) =
         factory::create_signal_slot::<RunSepaResponse>();
+
+    let (index_signal, index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
+    let (index_result_signal, mut index_result_slot) =
+        factory::create_signal_slot::<RunIndexSnapshotResponse>();
 
     let parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
 
@@ -257,16 +264,138 @@ pub fn wire_backend(
         sepa_repaint_ctx.request_repaint();
     });
 
+    // Fourth channel (epic #255 C4): index/board market snapshot — SEPA
+    // 同构. The handler reads index_daily.parquet + index_basic.parquet via
+    // ParquetReader (window rn<=2 per symbol) and joins names locally; a
+    // missing index file yields an empty snapshot (panel empty state), not
+    // an error.
+    let index_parquet_dir = std::path::PathBuf::from(&config.parquet.dir);
+    let index_dispatcher =
+        AsyncDispatcher::<RunIndexSnapshotRequest, RunIndexSnapshotResponse>::new();
+    index_dispatcher.attach_async(
+        index_slot,
+        index_result_signal,
+        move |_req: RunIndexSnapshotRequest| {
+            let parquet_dir = index_parquet_dir.clone();
+            async move {
+                let reader = match ParquetReader::new(&parquet_dir) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return RunIndexSnapshotResponse {
+                            data: compass_types::IndexSnapshot {
+                                rows: vec![],
+                                date: String::new(),
+                            },
+                            error: Some(t!("error.parquet_open", e = e).to_string()),
+                        };
+                    }
+                };
+                match build_index_snapshot(&reader) {
+                    Ok(data) => RunIndexSnapshotResponse { data, error: None },
+                    Err(e) => RunIndexSnapshotResponse {
+                        data: compass_types::IndexSnapshot {
+                            rows: vec![],
+                            date: String::new(),
+                        },
+                        error: Some(format!("{e}")),
+                    },
+                }
+            }
+        },
+    );
+
+    let index_snapshot_dyn = state.index_snapshot.clone();
+    let index_loading = state.index_snapshot_loading.clone();
+    let index_error = state.index_snapshot_error.clone();
+    let index_log_dyn = state.log.clone();
+    let index_repaint_ctx = egui_ctx.clone();
+
+    index_result_slot.start(move |resp: RunIndexSnapshotResponse| {
+        let logger = ReactiveEventLogger::new(&index_log_dyn);
+        let row_count = resp.data.rows.len();
+        index_snapshot_dyn.set(Some(resp.data));
+        index_loading.set(false);
+        if let Some(ref err) = resp.error {
+            index_error.set(Some(err.clone()));
+            logger.log_error(&t!("logger.log_index_failed", e = err));
+        } else {
+            index_error.set(None);
+            logger.log_info(&t!("logger.log_index_completed", count = row_count));
+        }
+        index_repaint_ctx.request_repaint();
+    });
+
     (
         work_signal,
         screener_signal,
         sepa_signal,
+        index_signal,
         BackendHandle {
             _dispatcher: dispatcher,
             _screener_dispatcher: screener_dispatcher,
             _sepa_dispatcher: sepa_dispatcher,
+            _index_dispatcher: index_dispatcher,
         },
     )
+}
+
+/// Build the full index/board market snapshot from the local parquet files.
+///
+/// `load_index_daily_rows` returns the last two trading days per symbol
+/// (window rn<=2, ordered by symbol + tradedate ASC); the name table comes
+/// from `index_basic.parquet` (falling back to the symbol itself when the
+/// file is missing). The snapshot date is the latest tradedate seen.
+fn build_index_snapshot(reader: &ParquetReader) -> Result<compass_types::IndexSnapshot, DataError> {
+    use compass_types::{IndexRow, IndexSnapshot};
+    use std::collections::HashMap;
+
+    let daily = reader.load_index_daily_rows()?;
+    let basics = reader.load_all_index_basics()?;
+    let name_map: HashMap<String, (String, String)> = basics
+        .into_iter()
+        .map(|b| (b.symbol, (b.name, b.index_type)))
+        .collect();
+
+    let mut rows: Vec<IndexRow> = Vec::with_capacity(daily.len());
+    let mut snapshot_date = String::new();
+    let mut iter = daily.into_iter().peekable();
+    while let Some(first) = iter.next() {
+        let symbol = first.symbol.clone();
+        let mut group = vec![first];
+        while let Some(next) = iter.peek()
+            && next.symbol == symbol
+        {
+            group.push(iter.next().expect("peeked row is still present"));
+        }
+        // Group is tradedate ASC — the last row is the latest quote.
+        let last = group.last().expect("group is non-empty");
+        let prev = group.get(group.len().saturating_sub(2));
+        let change_pct = match prev {
+            Some(p) if p.close > 0.0 => (last.close - p.close) / p.close * 100.0,
+            _ => 0.0,
+        };
+        let (name, index_type) = name_map
+            .get(&symbol)
+            .cloned()
+            .unwrap_or_else(|| (symbol.clone(), last.index_type.clone()));
+        let date_str = last.trade_date.to_string();
+        if date_str > snapshot_date {
+            snapshot_date = date_str;
+        }
+        rows.push(IndexRow {
+            symbol,
+            name,
+            index_type,
+            latest: last.close,
+            change_pct,
+            amount: last.amount,
+        });
+    }
+
+    Ok(IndexSnapshot {
+        rows,
+        date: snapshot_date,
+    })
 }
 
 // ===========================================================================
@@ -376,7 +505,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _backend) =
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         // Signal that work is in flight so wait_for_response can detect
@@ -426,7 +555,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _backend) =
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
         state.loading.set(true);
         work_signal
@@ -468,7 +597,7 @@ mod tests {
         let state = Arc::new(SharedState::new("999999", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _backend) =
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
         state.loading.set(true);
         work_signal
@@ -591,7 +720,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _sepa_signal, _backend) =
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         state.screener_loading.set(true);
@@ -640,7 +769,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _sepa_signal, _backend) =
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         state.screener_loading.set(true);
@@ -694,7 +823,7 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, _screener_signal, sepa_signal, _backend) =
+        let (_work_signal, _screener_signal, sepa_signal, _index_signal, _backend) =
             wire_backend(config, state.clone(), egui_ctx);
 
         state.sepa_loading.set(true);
