@@ -270,10 +270,10 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 - **取反**：卡头 EXCLUDE 开关 → `Not` 包裹。
 - **AND-OR 切换**：组头 Segmented 仅改组类型，内容不变。
 - **运行**：筛选按钮 `group_to_filter(根组)` → `RunScreenerRequest{filter}`；
-  on_save 复用引擎 `filter_to_query`（改 pub）作 legacy 压缩 oracle——
-  可压缩则写 TOML，不可压缩（Or/Not/UpDays/重复字段）→ unsupported_save 提示。
-  UnsupportedFilter 运行错误 → Display 前缀匹配 → unsupported_run 友好说明
-  （引擎 Batch 3 支持后自然消失）。
+  on_save 直接持久化 Filter AST（新格式 JSON，ref #246）——任意组合含
+  Or/Not/UpDays 均可保存，无 legacy 压缩 oracle、无 unsupported_save 提示。
+  运行错误 → 引擎 Display 文本直接显示（求值器无 UnsupportedFilter，Batch 3
+  落地）。
 - **id_salt 约定**（ref #220/#222）：全部弹层组件显式 `cond_{路径}_{字段}`。
 
 ### 测试锚点
@@ -352,6 +352,7 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 消息契约（ref #245） | `RunScreenerRequest` 携 Filter / 保留 ScreenerQuery | 携 `Filter` | 后端本就收 `&Filter`（backend.rs）；保留 ScreenerQuery 则 Or/Not/序列卡无法传输 | 保持现状需 UI 侧受限反向转换，丢 AST 表达力 |
 | legacy 保存（ref #245，用户确认项 5） | 复用引擎 `filter_to_query` / 自建私有压缩 | 复用引擎 `filter_to_query`（改 pub）作压缩 oracle | 引擎 accept-grammar 即精确的可压缩判定（含重复字段检测）；不自建第三份语法拷贝 | 自建压缩与引擎语法漂移、重复字段静默丢数据 |
 | UnsupportedFilter 提示（ref #245） | Display 前缀匹配 / 结构化 error_kind | Display 前缀 `starts_with("unsupported filter shape")` | ScreenerError Display 稳定前缀；零契约改动；匹配变体名 "UnsupportedFilter" 永不命中（大小写/文案不同） | 结构化 error_kind 扩 RunScreenerResponse 契约 |
+| 保存路径（ref #246，取代上两行） | 保留 legacy 压缩 oracle / 直接持久化 Filter AST | 直接持久化 Filter AST（`[screener]` 节 `filter` JSON） | 求值器支持任意 AST（Batch 3）——legacy 可压缩性判定失去意义；AST 是 config/LLM 统一格式 | 保留 oracle 增加死代码与"无法保存"假限制 |
 | 单成员折叠语义（ref #245 评审） | 构建也折叠为裸节点 / 显示折叠、构建仍 And(vec![x]) | 显示与构建**双向**折叠为裸节点 | 与 `From<ScreenerQuery>` 的 `1 => nodes.pop()` 形状对齐；round-trip 对裸单节点 leaf 级等价成立 | 仅显示折叠使 round-trip 对单节点形状必然失败 |
 | i18n 键（ref #245） | `screener.builder.*` 子命名空间 / 扁平加键 | `screener.builder.*` | 既有模块前缀点分惯例；构建器是 screener 面板子域 | 扁平键混入既有 screener.* 语义不清 |
 | 动画范围（ref #245） | 全部瞬时（组件内建 hover/press）/ 自定义布局动画 | 全部瞬时 | egui 无布局过渡，硬做成本高、kittest 难稳定 | 自定义动画违背克制原则 |

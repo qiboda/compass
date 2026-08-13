@@ -12,32 +12,6 @@
 
 
 
-## 2026-08-06 — ref #184/#182 CI hooks：pre-commit fmt 落地 + temp 竞争根治（#189 收尾）
-
-**What was done**: fix/ci-hooks worktree 处理三个 CI issues：#189（GIT_EDITOR=true 排查卡）确认已由 master 直推 `523e615` 完成、补收尾（comment + close）；#184 temp CSV 竞争修复（test-first RED → 唯一后缀 GREEN，后续 review 驱动扩展为共享 `stage_csv` helper + O_EXCL 防 symlink + import 后 `remove_file` 清理，sepa.rs 同类竞争一并修复）；#182 pre-commit 追加 `cargo fmt --check`（#171 反思排期项落地）。5 commits，2 轮 review（10 次审查）全 PASS 无 blocking。
-
-**User corrections**（逐字引用对话记录）:
-1. "本 PR 顺带修复 (Recommended)" —— 用户确认 Context review 发现的 sepa.rs 同类竞争纳入本 PR（超出原 plan 范围，用户批准扩展）。
-2. "一并清理 + 重构测试" —— 用户未采纳我的"保持现状"推荐，选择同时清理 temp 文件并重构回归测试（接受 Goal/CodeQuality 的 MINOR 发现）。
-
-**What went wrong**:
-1. **commit-msg 拒绝：正文引用已关闭 issue 需用 #N 不带 ref 前缀**（ref #119/#172 教训再犯）：`7084d16` 首次 commit 时正文叙述性提及已关闭的 #154 却写了 `ref #154`，commit-msg hook 当场拒绝。AGENTS.md 已有明文规则（"叙述性提及已关闭/合并 issue 时，用 #N 不带 ref 前缀"），执行时未遵守——「文档已固化但未遵守」模式第五次出现（#96 → #104 → #171 → #190 → 本次）。
-2. **review 的修复建议存在隐藏冲突**：Goal/CodeQuality agent 建议 `dolt_import` 后 `remove_file` 清理 temp 文件，但未发现该建议会破坏回归测试 `files.len()==2` 断言（数残留文件验证唯一性）——两 agent 均未察觉，我在实施前识别出该冲突并向用户提出。若盲目采纳会引入测试空洞。
-3. **security review 的 create_new 建议与回归测试交互**：O_EXCL 修复与 `files.len()==2` 断言兼容，但共享 helper 提取后两处调用（backtest/sepa）语义需一致——通过统一 `stage_csv` + 显式契约文档化解。
-
-**Lessons learned**:
-1. **commit message 正文引用已关闭 issue 时一律 `#N` 不带 `ref` 前缀**——commit-msg hook 是硬钩子但只拦截"提交后"，写 message 时就要遵守；引用历史 issue 讲解背景时先确认其状态再决定前缀（#119 正文示例误判、#172 正文引用已合并、本次 #154 三重教训）。
-2. **采纳 review agent 建议前先核对与既有测试断言的交互**：remove_file 建议与 files.len()==2 断言的冲突是隐藏依赖，agent 不会自动察觉——实现者必须验证"建议的修复是否破坏现有测试的观测点"，必要时向用户提出而非盲目执行。
-3. **共享 helper 提取的时机**：sepa.rs 同类竞争（Context agent 发现）与 backtest.rs 原 bug 完全同根因，一次性提取 `stage_csv` 解决两处——review 发现同类问题时，优先评估"共享修复"而非"逐点补丁"。
-
-**Process improvements**:
-- 已落实：#182 pre-commit `cargo fmt --check`（#171 反思排期项，本 session 落地为 hook 硬钩子）；`stage_csv` helper + O_EXCL + remove_file（代码级，含唯一性直接单测）
-- proposed（代码类，未排期）：`stage_csv` 的 `f.write_all` 失败时清理已创建文件（ENOSPC 边界）；目录级 symlink 变体（攻击者预建 `compass_sepa_writeback` 为 symlink）加固——单用户开发机可接受，如需要走 gate 建 issue
-
-### Trends (last 10)
-- **「文档已固化但未遵守」模式第五次出现**（ref #96 → #104 → #171 fmt → #190 Dolt → 本次 commit-msg ref 前缀）：AGENTS.md 明文规则（叙述性提及已关闭 issue 用 #N）执行时未遵守，被 commit-msg hook 硬拦截——文档规则必须配套执行侧硬钩子（本次 #182 的 fmt hook 正是该模式的正向固化：从文档规则升级为 pre-commit 硬钩子）
-- **review 驱动的同类问题发现 → 共享修复**（ref #139 六轮、#171 两轮、本次两轮）：Context agent 发现的 sepa.rs 竞争与 backtest.rs 原 bug 同根因，一次提取共享 helper 解决两处——review 的价值不只是抓 bug，还在于发现"修一个留一个"的同类风险
-
 ## 2026-08-08 — ref #181 symbol 前缀规范化全面修复
 
 **What was done**: 修复 issue #181（import 剥 SH/SZ/BJ 前缀导致指数 SH000905 与股票 SZ000905 汇合为裸码 000905，stock_daily.parquet 出现 (symbol, date) 重复行）。方案：恢复 Dolt-native 前缀符号全链路（五 crate），废弃裸码+exchange 分离设计（D9 输入层禁裸码）、D10 旧 config 自动迁移、D11 搜索语义。14 commits（fec8781..1948a0c），含 10 轮 plan 双审（momus+Oracle r1-r10）、F2/F3 验证波、两轮 review-work（5-lane 首轮 FAIL → 修复轮 PASS）。
@@ -93,60 +67,6 @@
 
 ### Trends (last 10)
 - **用户纠正持续指向"原则/建模"而非"值/细节"**（ref #200 "去掉模型约束" → 本次 "认知独立 vs 权限隔离"）：AI 倾向工具化最小修正（权限白名单/改引用），用户倾向原则性建模（认知主体/配置归属）——设计新机制时应先问"这个机制在系统里的正确抽象是什么"，再谈具体参数
-
-
-## 2026-08-08 — ref #201 SEPA 单位口径修复：import 侧换算 + 指数剔除
-
-**What was done**: 修复 SEPA 评分单位 bug——`import` 侧 SELECT 对 `volume × 100`（手→股）、`amount × 1000`（千元→元），并无条件剔除 6 个指数代码（SH000300/SH000852/SH000905/SH000906/SH000985/SZ399300）于主查询与 symbols.txt 枚举；重跑全量 import + `sepa score --top 50` 冒烟验证选满 50 只、无指数、茅台通过过滤。
-
-**User corrections**:
-1. "rebase，然后review" —— 用户指定**顺序：先 rebase 再 review**。实际执行时 review（5-agent review-work）在 rebase **前**已完成，rebase 后仅重跑测试+clippy 验证、未重新触发 review-work。rebase 是干净 fast-forward 无冲突、review 结论对 rebase 后内容仍成立，但执行顺序与用户指令不完全一致——应在 rebase 后显式重跑 review 或向用户说明 review 已在前一 base 上完成且结论不变。
-
-**What went wrong**:
-- **冒烟时 matched=0（真实数据坑）**：重跑 `import` 生成前缀格式 `stock_daily.parquet` 后，`sepa score` 匹配 0 只——`stock_basic.parquet` 仍是 8-01 的旧裸码格式（`000001`），与前缀 daily 无法 join。修复：重跑 `import-compass --table stock_basic` 刷新前缀格式，matched 恢复 4703。此问题属于 handoff 契约"顺带解决旧 parquet 裸码 symbol 问题"的直接体现，但当时只计划重跑 import、未预见 stock_basic 也需刷新——真实数据冒烟（ref #154 教训）正是暴露此依赖链的唯一途径。
-- **review 顺序偏差**（见 User corrections 1）：rebase 后未重跑 review-work，仅以测试+clippy 代替。
-
-**Lessons learned**:
-1. 用户给出"先 X 再 Y"的顺序指令时，严格按序执行：先 rebase 到最新 base，再在 rebase 后的内容上跑 review-work；若 review 已先行完成，必须在 rebase 后显式重跑（或向用户声明"review 在前一 base 上已通过、rebase 无冲突、结论不变"并获认可）。
-2. 数据管线变更的冒烟必须是**全链路**（import → 下游消费方）：单位/格式修正会影响所有关联 parquet（stock_daily 与 stock_basic 的 symbol 格式必须一致才能 join）——刷新主表时盘点所有依赖它的副表，一并刷新。
-
-**Process improvements**: 
-- 已落实（docs）：`kb/dev/toolchain.md` 指数混源卡片补注 #201 已落地 import 侧剔除（随本 PR 提交）。
-- 建议（可检测）：数据管线变更的 plan 中，冒烟步骤显式列出"全链路验证（含所有依赖副表格式一致性）"——proposed（下次 plan 模板层面落实）。
-
-### Trends (last 10)
-- **用户纠正指向"顺序/流程语义"**（ref #201 "rebase，然后review"）：AI 倾向于"先做重要的事（review）再做形式步骤（rebase）"，用户关注指令字面顺序——复合指令中的顺序词（先/然后）是硬约束，不是建议；本条与 ref #190（写库后立即 commit）同属"执行顺序纪律"类别
-- **真实数据冒烟暴露格式不一致**（ref #154 → ref #201 matched=0）：跨文件依赖（daily 前缀 ↔ basic 前缀）在 fixture 测试中不可见，只有全链路真实冒烟能暴露——数据管线变更的冒烟清单应从"单命令验证"扩展为"消费链末端验证"
-
-
-## 2026-08-08 — ref #205 open-worktrees.sh worktree 内 --close 失效修复
-
-**What was done**: 修复 `scripts/open-worktrees.sh` 从 worktree 内部执行 `--close` 时输出 "not a worktree" 的 bug。根因：`PROJECT_ROOT` 用 `dirname "$0"` 相对路径解析，worktree 内调用时 `$0` 相对路径指向 worktree 自身。修复：抽出 `resolve_project_root()` 用 `git rev-parse --git-common-dir` 定位主仓库（worktree 内返回绝对路径），`SELF` 改为基于 PROJECT_ROOT；加守卫防 PROJECT_ROOT 静默为空（Security review 发现）。扩展测试 3 例 + docs 同步。
-
-**User corrections**（逐字引用对话记录）:
-1. "脚本输出'not a worktree'——检查实际状态：关闭worktree的时候发现关闭有问题？" —— 引导我实际检查而非直接假设脚本行为
-2. "是的，在worktree里面执行的。" —— 澄清关键触发条件：脚本是从 worktree 内部（相对路径）执行的，这是复现 bug 的必要前提
-3. "自己新建一个worktree，模拟一下这个脚本运行情况。" —— 纠正我的诊断方式：我此前只做代码分析和 dry-run 复现，用户要求新建 worktree 完整模拟真实执行路径——实际模拟立刻暴露了"测试套件用 sed 提取函数 + eval 通过、但真实执行仍失败"的差异（worktree 内执行的是旧 checkout 副本）
-
-**What went wrong**:
-- **流程违规（agent 自身，ref #206 机制后补记）**：执行 #205 修复时存在活跃 worktree `fix/financial-f10`，但实现直接在 master 提交（判定为"单文件修复跳过 worktree"）。按 AGENTS.md 规则"存在活跃 worktree 时实现类提交落在 master 即流程违规"——Context Mining lane 明确指出此偏差，当时的反思却未记录。教训：单文件修复判定也不能绕过 worktree 规则；涉及"关闭 worktree 的脚本"本身时更应谨慎（脚本修复影响 worktree 管理，属于工具链，但实现位置判定仍需显式向用户声明）。
-- **效果不符预期（agent 自身）**：测试套件（sed 提取函数 + eval）全绿但真实脚本执行仍失败——因为 worktree 内的 `scripts/` 是独立 checkout 副本，测试用的 SCRIPT 是主仓库路径，而用户场景执行的是 worktree 副本。首次冒烟只做了 dry-run，未在 worktree 内相对路径模拟，直到用户要求"新建 worktree 模拟"才暴露。冒烟测试（wt-sim 新建 worktree 从内部执行）才完整验证。
-- **命令/工具用错（agent 自身）**：诊断 F10 报表 filter 参数时多次尝试 `(SECUCODE="...")(REPORT_DATE='...')` 复合条件（Python urllib 编码、单/双引号变体），均失败，最后用 curl 直接测试才成功——filter 复合条件的正确编码方式（%28...%3D...%29）应在 toolchain 记录，避免重复试错。
-- **效率摩擦（agent 自身）**：第二轮 Code Quality re-review 运行 19 分钟未完成（7 行 delta 正常应 1-2 分钟），延迟识别为卡住并取消重试——review lane 长时间无输出时应及早标记 inconclusive 并重派，而非被动等待。
-- 修复对"已存在 worktree"（financial-f10）不生效：其脚本副本是旧版，需 merge 后重新同步。已在 docs 中注明该限制。
-
-**Lessons learned**:
-1. bash 脚本的"自包含测试"（sed 提取函数 + eval）无法覆盖顶层初始化逻辑（如 PROJECT_ROOT 解析），此类脚本必须补真实执行冒烟（新建 fixture worktree 从目标 cwd 调用）——测试套件全绿 ≠ 真实场景可用。
-2. worktree 内执行脚本时 `$0` 相对路径解析的是 worktree 副本而非主仓库脚本——涉及"定位主仓库/项目根"的脚本逻辑，一律用 `git rev-parse --git-common-dir` 而非 `dirname $0`；同时注意已存在 worktree 的脚本副本需同步才生效。
-
-**Process improvements**: 
-- 已落实：`scripts/open-worktrees.sh` 抽 `resolve_project_root()`（git-common-dir 定位）+ PROJECT_ROOT 空值守卫；`kb/dev/process.md` 记录 worktree 副本同步注意点。
-- 已落实：测试扩展 3 例（worktree cwd / repo root / 仓库外 fallback），其中 worktree cwd 用例正是本 bug 的回归保护。
-- 建议（可检测）：`open-worktrees-test.sh` 可增加"从 fixture worktree 内部真实执行脚本"的端到端用例（当前 #22 只验证 resolve_project_root 函数，未验证顶层 PROJECT_ROOT 集成）——proposed
-
-### Trends (last 10)
-- **测试全绿 ≠ 真实可用 反复出现**（ref #139 真实数据冒烟、ref #154 冒烟证据、本次 worktree 内执行）：fixture/单测覆盖不到"真实执行路径"（副本、cwd、环境）——脚本类变更必须做真实路径冒烟，不能只看测试套件
-- **用户纠正持续指向"实际验证"而非"代码推理"**（ref #200 "去掉模型约束" → 本次 "新建worktree模拟"）：AI 倾向从代码/测试推导结论，用户倾向真实场景复现——发现"测试通过但用户说不行"时应立即怀疑测试与真实路径的差异
 
 
 ## 2026-08-08 — ref #208 mold 链接器 + collectors CSV 输出目录统一
@@ -472,3 +392,31 @@
 - **子代理交付验证重复 2 次**（ref #244 worker 超时零交付 → ref #245 两次只分析未落盘）：委派 prompt 必须内置"交付前 git status 验证 + 未落盘视为失败"的硬性检查，纯"注意"不固化则每批再犯——本批已通过 prompt 显式要求缓解，但尚未固化为 skill/AGENTS.md 规则
 - **kittest 测试时序/查询摩擦跨批重复**（ref #244/#245 均出现 locale 与 label 查询踩坑）：同一类"测试契约未显式化"反复——set_locale 与 query_all 应固化为项目测试基建（如 panel_with_form 自带 locale、helper 封装多匹配查询），而非每个测试手写易错
 - **测试驱动发现生产 bug 是稳定收益**（ref #244 AST 形状 C2 修订 → ref #245 INFINITY 布局）：RED 测试在实现前暴露契约/布局缺陷——test-first 的价值已两次实证，继续保持
+
+## 2026-08-13 — ref #246 llm-screener Batch 3：通用 Filter AST 求值器 + 序列条件 + 持久化
+
+**What was done**: epic #243 Batch 3（#246）把选股器从"受限反向转换 filter_to_query + 硬编码 screen_symbol"升级为通用递归求值器 `screener_eval.rs`（evaluate 递归：Meta/Series/And/Or/Not，UpDays/Count/VolumeSurge 真实过滤，NDayHigh 前 N 根不含最新等语义复刻），删除 filter_to_query 全套机制 + UnsupportedFilter；持久化双格式（[screener] filter JSON key + legacy 11 键兼容读取 + 坏 JSON 回退）；GUI on_save/restore 迁移 &Filter、oracle/i18n 清理；criterion bench 性能对比（同量级，-0.25%/-2.84%）。5 commits 全含独立成行 `ref #246`，34 个门禁 RED 测试（9 需求 + 25 对抗）转 GREEN，21 语义测试断言不变，覆盖率 strategy 97.48% ≥ 95%，真实数据冒烟（6126 标的）全部形状验证正确，5-way review 全 PASS。
+
+**User corrections**: 无明确纠偏——"开始"（启动 worktree 工作）、"批准，并跑高精度审查"（要求双审）、"开始"（批准 plan 执行）、"完成后自动push，合并pr，并关闭worktree"（授权收尾）均为流程推进决策。1 项分叉（是否跑高精度审查）经 question 工具用户选择跑双审（非推荐项），采纳执行。
+
+**What went wrong**:
+1. **task() 委派首调缺 subagent_type 参数失败 2 次**：门禁 3.5/4 步委派 skwy-adversarial-test / skwy-requirement-test 时第一次调用漏传 `subagent_type` 被拒（missing_category_or_agent），重试补齐后成功。教训：使用 task() 委派专用 agent 时 subagent_type 是必填，与 category 二选一——调用前核对参数。
+2. **bench 数据规模与 criterion 默认采样冲突**：screener_eval bench 首跑 6000×400 在默认 criterion 采样（100 samples）下编译+运行超时（900s 截断）。教训：数据密集型 bench 首次验证先用 `--sample-size 10 --warm-up-time 1 --measurement-time 3` 快速确认可跑，再决定是否全量。
+3. **filter JSON 写入 TOML 转义踩坑 2 次**：持久化测试手写 `filter = "{json}"` 未转义 JSON 内引号导致解析失败；改用 `toml::to_string(&toml::Value::String)` 又遇 toml 0.8 不支持顶层 String 值（UnsupportedType）。最终手工 `replace('"', "\\\"")` 转义。教训：JSON 字符串嵌入 TOML basic string 必须转义内层引号，且 toml crate 的 to_string 不支持顶层裸 String——先查 toml 序列化能力再写。
+4. **NDayHigh 在 Count 内的语义先写错后修正**：初版把 Count 内 NDayHigh 写成"含当日"，与顶层 Cmp 的"前 N 根不含最新"不一致，Oracle 审查前自我修正为统一 `series[i-n..i]`。教训：factor 语义在求值器内必须单一来源（顶层与逐日求值共用 factor_at 定义），避免两处漂移。
+5. **Review 5-agent 中 2 个 oracle lane 各耗时 30m/8m**：goal 验证 lane 运行 30m53s（大量读文件+跑测试），与 QA lane 部分工作重叠（都跑了 workspace 测试）。教训：oracle lane 的 prompt 应更聚焦（给足 file_contents 减少读文件），避免与 QA lane 重复执行重型验证。
+
+**Lessons learned**:
+1. task() 委派专用 agent（skwy-*）必须显式传 subagent_type；category/subagent_type 二选一必填。
+2. criterion bench 首次验证用缩减采样参数（--sample-size 10 --warm-up-time 1 --measurement-time 3）快速冒烟，全量采样留给正式记录。
+3. JSON 嵌入 TOML 字符串必须手工转义内层引号（`\` → `\\`，`"` → `\"`）；toml crate 顶层 String 序列化不可依赖（UnsupportedType）。
+4. 递归求值器内 factor 语义单一来源（顶层 Cmp 与 Count 逐日求值共用同一 factor_at），任何"上下文相关"的语义差异须显式注明并测试钉住。
+5. 多 agent review 时给 oracle lane 足量 file_contents 内联（减少其读文件耗时），并把重型验证（workspace 测试/冒烟）收敛到 QA lane 单点执行，避免重复。
+
+**Process improvements**:
+- 无 AGENTS.md/hook/skill 变更——4 条教训（task 参数、bench 采样、TOML 转义、factor 单一来源）均为一次性技术摩擦，已沉淀本条目；toolchain 排查卡可考虑补"toml 内嵌 JSON 转义"卡（proposed，待下次遇到同类序列化问题时固化）
+
+### Trends (last 10)
+- **子代理交付验证**（ref #244/#245 零交付/只分析 → 本批 3.5/4 步测试 agent 均正常落盘）：本批委派 prompt 显式要求"写文件 + 跑验证 + 报告"，效果良好——交付验证前置为 prompt 硬性要求已见效，趋势缓解
+- **测试驱动价值持续实证**（ref #244 C2 → #245 INFINITY → 本批 34 RED→GREEN + 真实数据冒烟）：test-first 连续三批捕获契约/语义问题，继续维持
+- **epic 批次间编译级联动**（#244 run_screener 签名 → #245 GUI 调用点 → #246 filter_to_query 删除破坏 screener.rs:208）：跨 crate 删除公共函数必须同步扫描全部调用方（grep 前置），本批因 filter_to_query 删除与 GUI oracle 的编译耦合被迫联动 Todo 2/4——plan 依赖矩阵应预判跨 crate 删除的联动

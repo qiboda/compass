@@ -122,8 +122,6 @@ screener:
     delete_tooltip: 删除条件
     negate_tooltip: 取反（排除）
     unknown_shape: 高级条件
-    unsupported_run: "该条件类型引擎暂不支持，将在后续版本可用: %{e}"
-    unsupported_save: 该条件组合无法保存到配置文件
     cond_up_days: 连续上涨
   table:
     code: 代码

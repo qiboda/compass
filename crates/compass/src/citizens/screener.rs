@@ -11,9 +11,7 @@ use std::collections::HashMap;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 use egui_mobius::signals::Signal;
 
-use compass_types::{
-    BreakoutCondition, Filter, MetaCond, MomentumCondition, ScreenerQuery, VolumeCondition,
-};
+use compass_types::{BreakoutCondition, Filter, MetaCond, MomentumCondition, VolumeCondition};
 use compass_ui::tokens::ThemeTokens;
 use compass_ui::widgets::badge::Badge;
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
@@ -104,7 +102,7 @@ pub struct ScreenerPanel {
     /// Results table — owns its sort state across frames.
     table: DataTable,
     /// Persists the current query whenever a filter run is triggered.
-    on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
+    on_save: Box<dyn Fn(&Filter) + Send + Sync>,
 }
 
 impl Citizen for ScreenerPanel {
@@ -125,12 +123,12 @@ impl ScreenerPanel {
     /// Create a screener panel with the given citizen identity/state.
     ///
     /// `restore` optionally provides saved conditions from config; `on_save`
-    /// is invoked with the current query whenever the filter runs.
+    /// is invoked with the current filter whenever the filter runs.
     pub fn new(
         citizen_id: CitizenId,
         citizen_state: CitizenState,
-        restore: Option<&ScreenerQuery>,
-        on_save: Box<dyn Fn(&ScreenerQuery) + Send + Sync>,
+        restore: Option<&Filter>,
+        on_save: Box<dyn Fn(&Filter) + Send + Sync>,
         tokens: &ThemeTokens,
     ) -> Self {
         // Restore of the default empty shape (bare `Delisted(false)` node or
@@ -139,16 +137,11 @@ impl ScreenerPanel {
         // behavior (exclude-delisted checked, everything else unbounded).
         let (builder_root, builder_multi_selects) = match restore {
             None => (default_root_cards(), HashMap::new()),
-            Some(query) => {
-                let filter = Filter::from(query.clone());
-                match &filter {
-                    Filter::Meta(MetaCond::Delisted(false)) => {
-                        (default_root_cards(), HashMap::new())
-                    }
-                    Filter::And(v) if v.is_empty() => (default_root_cards(), HashMap::new()),
-                    _ => (filter_to_items(&filter), HashMap::new()),
-                }
-            }
+            Some(filter) => match filter {
+                Filter::Meta(MetaCond::Delisted(false)) => (default_root_cards(), HashMap::new()),
+                Filter::And(v) if v.is_empty() => (default_root_cards(), HashMap::new()),
+                _ => (filter_to_items(filter), HashMap::new()),
+            },
         };
         let mut table = DataTable::new(tokens, COLUMNS.to_vec());
         table.set_sort(MARKET_CAP_COLUMN, true);
@@ -195,22 +188,14 @@ impl ScreenerPanel {
             {
                 let filter = self.build_filter();
                 shared_state.screener_loading.set(true);
-                // Clear the previous run error before compressing: the legacy
-                // save hint below must survive the whole run (the toast layer
-                // in main.rs pushes it on the None→Some transition).
+                // Clear the previous run error before saving: the save hint
+                // below must survive the whole run (the toast layer in
+                // main.rs pushes it on the None→Some transition).
                 shared_state.screener_error.set(None);
-                // Legacy save: reuse the engine's restricted reverse-compile
-                // as the compressibility oracle — the same accept-grammar the
-                // run path uses, so a query that compresses here is exactly a
-                // query the engine can run. Inexpressible combinations
-                // (Or/Not/UpDays/duplicate fields) surface the unsaved-state
-                // hint instead of writing a lossy config.
-                match compass_strategy::filter_to_query(&filter) {
-                    Ok(query) => (self.on_save)(&query),
-                    Err(_) => shared_state.screener_error.set(Some(
-                        compass_i18n::t!("screener.builder.unsupported_save").into_owned(),
-                    )),
-                }
+                // Persist the Filter AST directly — the engine evaluates any
+                // AST shape (issue #246), so no legacy compressibility oracle
+                // is needed and no combination is unsaved.
+                (self.on_save)(&filter);
                 if let Err(e) = run_screener_signal.send(RunScreenerRequest { filter }) {
                     shared_state.screener_loading.set(false);
                     shared_state.screener_error.set(Some(
@@ -238,16 +223,8 @@ impl ScreenerPanel {
             ui.spinner();
             ui.label(compass_i18n::t!("screener.filtering"));
         } else if let Some(err) = shared_state.screener_error.get() {
-            // Engine's Display prefix for the restricted accept-grammar
-            // rejection (compass-strategy ScreenerError::UnsupportedFilter).
-            // Batch 2 builder shapes outside it (Or/Not/UpDays/sub-groups)
-            // are supported in a later engine batch — add the friendly note.
-            let label = if err.starts_with("unsupported filter shape") {
-                compass_i18n::t!("screener.builder.unsupported_run", e = err).into_owned()
-            } else {
-                err
-            };
-            ui.colored_label(ui.visuals().error_fg_color, label);
+            // A run/data error surfaces as the engine's Display text.
+            ui.colored_label(ui.visuals().error_fg_color, err);
         } else {
             self.table
                 .set_rows(rows.iter().map(Self::row_cells).collect());
@@ -955,7 +932,7 @@ fn dispatch_row_fetch(
 mod tests {
     use super::*;
     use crate::citizens::ui_fixes_218::LANG_LOCK;
-    use compass_types::{CmpOp, FactorRef, MaCondition, SeriesCond, SeriesFactor};
+    use compass_types::{CmpOp, FactorRef, MaCondition, ScreenerQuery, SeriesCond, SeriesFactor};
     use compass_ui::tokens::ThemeTokens;
     use egui_citizen::CitizenState;
     use egui_kittest::kittest::Queryable;
@@ -1057,7 +1034,13 @@ mod tests {
             ma: Some(MaCondition::BullishAlign),
             ..ScreenerQuery::default()
         };
-        let panel = ScreenerPanel::new(id, state, Some(&query), Box::new(|_| {}), &tokens);
+        let panel = ScreenerPanel::new(
+            id,
+            state,
+            Some(&Filter::from(query)),
+            Box::new(|_| {}),
+            &tokens,
+        );
 
         // From(query) = And[Industry(银行), bullish pair, Delisted(false)] —
         // a non-empty shape restores as a single nested root group.
@@ -1182,12 +1165,12 @@ mod tests {
     }
 
     #[test]
-    fn filter_click_compresses_to_legacy_query_on_save() {
+    fn filter_click_saves_filter_ast() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
-        let saved: std::sync::Arc<std::sync::Mutex<Option<ScreenerQuery>>> =
+        let saved: std::sync::Arc<std::sync::Mutex<Option<Filter>>> =
             std::sync::Arc::new(std::sync::Mutex::new(None));
         let saved_clone = saved.clone();
         let id = CitizenId::new("screener");
@@ -1197,15 +1180,15 @@ mod tests {
             id,
             state,
             None,
-            Box::new(move |q: &ScreenerQuery| {
+            Box::new(move |f: &Filter| {
                 *saved_clone
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(q.clone());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
         );
-        // Industry selection in the first preset card compresses to the legacy
-        // query without loss (engine accept-grammar covers Meta nodes).
+        // Industry selection in the first preset card is saved as the Filter
+        // AST node (no legacy compression oracle).
         if let CondItem::Leaf(l) = &mut panel.builder_root[0] {
             l.params = LeafParams::MultiSelect(vec!["白酒".to_string()]);
         }
@@ -1222,26 +1205,40 @@ mod tests {
         harness.fit_contents();
         harness.get_by_label("筛选").click();
         harness.step();
+        drop(harness);
 
-        let q = saved
+        let f = saved
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-            .expect("compressible builder state must invoke on_save");
-        assert_eq!(q.industries, vec!["白酒".to_string()]);
+            .expect("clicking 筛选 must invoke on_save with the filter");
         assert!(
-            q.exclude_delisted,
-            "preset Delisted card compresses to exclude"
+            f == panel.build_filter(),
+            "saved filter equals the builder-compiled AST"
         );
+        match f {
+            Filter::And(nodes) => {
+                assert!(
+                    nodes.contains(&Filter::Meta(MetaCond::Industry(vec!["白酒".to_string()]))),
+                    "industry selection is part of the saved AST"
+                );
+                assert!(
+                    nodes.contains(&Filter::Meta(MetaCond::Delisted(false))),
+                    "preset Delisted card is part of the saved AST"
+                );
+            }
+            other => panic!("expected And root, got {other:?}"),
+        }
     }
 
     #[test]
-    fn filter_click_uncompressible_state_shows_hint_without_save() {
+    fn filter_click_saves_up_days_combination() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
-        let saved = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let saved: std::sync::Arc<std::sync::Mutex<Option<Filter>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
         let saved_clone = saved.clone();
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
@@ -1250,15 +1247,16 @@ mod tests {
             id,
             state,
             None,
-            Box::new(move |_: &ScreenerQuery| {
+            Box::new(move |f: &Filter| {
                 *saved_clone
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
         );
-        // UpDays is outside the engine accept-grammar (Batch 3): the run
-        // compiles, but the legacy save must refuse instead of dropping it.
+        // UpDays was previously unsaveable (outside the legacy accept-
+        // grammar); the AST persistence path saves any combination (issue
+        // #246).
         panel.builder_root.push(CondItem::Leaf(CondLeaf {
             kind: LeafKind::UpDays,
             params: LeafParams::UpDays { n: 3, min_pct: 0.0 },
@@ -1277,19 +1275,20 @@ mod tests {
         harness.fit_contents();
         harness.get_by_label("筛选").click();
         harness.step();
+        drop(harness);
 
+        let f = saved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("UpDays combination must save");
         assert!(
-            !*saved
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-            "uncompressible builder state must NOT invoke on_save"
+            f == panel.build_filter(),
+            "saved filter equals the builder-compiled AST"
         );
         assert!(
-            shared
-                .screener_error
-                .get()
-                .is_some_and(|e| e.contains("无法保存")),
-            "uncompressible save must surface the unsupported_save hint"
+            shared.screener_error.get().is_none(),
+            "no unsaved-state hint for an UpDays combination"
         );
     }
 
@@ -1984,7 +1983,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_query_renders_cards_and_filter_saves_equivalent_query() {
+    fn restore_query_renders_cards_and_filter_saves_equivalent_filter() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1993,8 +1992,6 @@ mod tests {
 
         // Phase A — the multi-member restore shape (task spec): Industry +
         // MA bullish + Delisted seed one nested root group of three cards.
-        // The save round-trips for flat shapes run in phases B/C (a nested
-        // root group compresses identically through the engine oracle).
         let query = ScreenerQuery {
             industries: vec!["银行".to_string()],
             ma: Some(MaCondition::BullishAlign),
@@ -2003,7 +2000,7 @@ mod tests {
         let panel = ScreenerPanel::new(
             CitizenId::new("screener"),
             CitizenState::new(),
-            Some(&query),
+            Some(&Filter::from(query)),
             Box::new(|_| {}),
             &tokens,
         );
@@ -2021,9 +2018,9 @@ mod tests {
             other => panic!("expected a nested root group, got {other:?}"),
         }
 
-        // Phase B — flat industries-only restore: clicking 筛选 must
-        // compress the builder back to the equivalent legacy query.
-        let saved_b: std::sync::Arc<std::sync::Mutex<Option<ScreenerQuery>>> =
+        // Phase B — flat industries-only restore: clicking 筛选 must save
+        // the equivalent Filter AST.
+        let saved_b: std::sync::Arc<std::sync::Mutex<Option<Filter>>> =
             std::sync::Arc::new(std::sync::Mutex::new(None));
         let saved_b_clone = saved_b.clone();
         let query_b = ScreenerQuery {
@@ -2034,11 +2031,11 @@ mod tests {
         let mut panel_b = ScreenerPanel::new(
             CitizenId::new("screener"),
             CitizenState::new(),
-            Some(&query_b),
-            Box::new(move |q: &ScreenerQuery| {
+            Some(&Filter::from(query_b)),
+            Box::new(move |f: &Filter| {
                 *saved_b_clone
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(q.clone());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
         );
@@ -2062,20 +2059,20 @@ mod tests {
         harness_b.get_by_label("筛选").click();
         harness_b.step();
         drop(harness_b);
-        let q_b = saved_b
+        let f_b = saved_b
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-            .expect("flat restore must compress back to a legacy query");
+            .expect("flat restore must save the equivalent filter");
         assert_eq!(
-            q_b.industries,
-            vec!["银行".to_string()],
+            f_b,
+            Filter::Meta(MetaCond::Industry(vec!["银行".to_string()])),
             "restored industry selection survives the save round trip"
         );
 
         // Phase C — flat MA-only restore: the bullish-alignment card must
         // survive the save round trip.
-        let saved_c: std::sync::Arc<std::sync::Mutex<Option<ScreenerQuery>>> =
+        let saved_c: std::sync::Arc<std::sync::Mutex<Option<Filter>>> =
             std::sync::Arc::new(std::sync::Mutex::new(None));
         let saved_c_clone = saved_c.clone();
         let query_c = ScreenerQuery {
@@ -2086,11 +2083,11 @@ mod tests {
         let mut panel_c = ScreenerPanel::new(
             CitizenId::new("screener"),
             CitizenState::new(),
-            Some(&query_c),
-            Box::new(move |q: &ScreenerQuery| {
+            Some(&Filter::from(query_c)),
+            Box::new(move |f: &Filter| {
                 *saved_c_clone
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(q.clone());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
         );
@@ -2117,14 +2114,25 @@ mod tests {
         harness_c.get_by_label("筛选").click();
         harness_c.step();
         drop(harness_c);
-        let q_c = saved_c
+        let f_c = saved_c
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-            .expect("flat MA restore must compress back to a legacy query");
+            .expect("flat MA restore must save the equivalent filter");
         assert_eq!(
-            q_c.ma,
-            Some(MaCondition::BullishAlign),
+            f_c,
+            Filter::And(vec![
+                Filter::Series(SeriesCond::Cmp {
+                    factor: SeriesFactor::Sma(5),
+                    op: CmpOp::Gt,
+                    value: FactorRef::Factor(SeriesFactor::Sma(20)),
+                }),
+                Filter::Series(SeriesCond::Cmp {
+                    factor: SeriesFactor::Sma(20),
+                    op: CmpOp::Gt,
+                    value: FactorRef::Factor(SeriesFactor::Sma(60)),
+                }),
+            ]),
             "restored bullish alignment survives the save round trip"
         );
     }

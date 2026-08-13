@@ -1,0 +1,11 @@
+Real-data smoke (issue #246): run_screener against production parquet
+Data: /data/compass-data/parquet_data — 6126 symbols, 18,284,901 rows, latest 2026-08-07
+Date: 2026-08-13 | filter | total | sanity |
+|-------------------------------------|-------|----------------------------------|
+| empty (whole market, non-delisted) | 5566 | >5000 expected ✓ |
+| UpDays{n:3, min_pct:1.0} | 703 | genuine filter down from 5566 ✓ |
+| Or([白酒, UpDays]) | 703 | superset of UpDays ✓ (白酒 ∩ streak = ∅ today) |
+| Count{Close>Sma20, window:20, at_least:15} | 1056 | strong-trend count plausible ✓ |
+| Not(Delisted(false)) | 32 | only-delisted semantics works ✓ |
+| And([白酒, cap 100-5000亿, UpDays]) | 0 | empty real intersection, valid ✓ | Verdict: all AST shapes (Meta/Series Cmp/UpDays/Count/Or/Not/And) evaluate correctly on real data;
+row assembly (market cap 亿, change_20d, sort, cap) sound. Smoke example removed after run.
