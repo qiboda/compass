@@ -2,7 +2,7 @@
 //!
 //! The builder (epic #243 Batch 2, issue #245) replaces the fixed
 //! `ConditionForm` with an AND/OR card group that operates directly on the
-//! Batch 1 `Filter` AST. The view model lives in [`screener_builder`]; this
+//! Batch 1 `Filter` AST. The view model lives in `screener_builder`; this
 //! module owns the widget state (card items + MultiSelect popup instances)
 //! and renders the card group tree.
 
