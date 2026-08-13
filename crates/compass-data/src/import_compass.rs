@@ -75,6 +75,15 @@ pub fn run(
     overwrite: bool,
     since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Validate `--since` up front (B2, ref #181): the value is interpolated
+    // raw into the WHERE clause, so anything else — quote chars, SQL comment
+    // markers, short/non-digit input — is an injection vector. Contract:
+    // exactly `YYYY-MM-DD` (matching every existing caller and test).
+    if let Some(s) = since
+        && !s.is_empty()
+    {
+        validate_since_arg("--since", s)?;
+    }
     match table {
         CompassTable::StockBasic => import_stock_basic(&dolt_dir, &output),
         CompassTable::FinIndicators => import_fin_indicators(&dolt_dir, &output, overwrite, since),
@@ -192,8 +201,25 @@ pub fn run(
     }
 }
 
+/// Validate a `--since` CLI value: must be exactly `YYYY-MM-DD` (the
+/// import-compass contract, distinct from import_dolt's YYYYMMDD). The value
+/// is interpolated raw into the WHERE clause (B2, ref #181 — same hardening
+/// as `import_dolt::validate_date_arg`).
+fn validate_since_arg(flag: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = value.as_bytes();
+    let valid = bytes.len() == 10
+        && bytes[0..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit);
+    if !valid {
+        return Err(format!("{flag} must be YYYY-MM-DD (10 chars), got '{value}'").into());
+    }
+    Ok(())
+}
+
 /// Warn when the source data is stale (issue #136, Q5: warn-only).
-///
 /// Thresholds: fin_* tables 120 days (quarterly reports), market tables
 /// (main_flow/dragon_list/block_trade/institution_survey/concept_member/
 /// index_daily/index_basic) 7 days. `stock_basic` is skipped: its
@@ -642,6 +668,32 @@ mod tests {
             "dolt init failed: {}",
             String::from_utf8_lossy(&init.stderr)
         );
+    }
+
+    #[test]
+    fn validate_since_arg_accepts_iso_date() {
+        assert!(validate_since_arg("--since", "2025-01-01").is_ok());
+        assert!(validate_since_arg("--since", "1990-12-19").is_ok());
+    }
+
+    #[test]
+    fn validate_since_arg_rejects_injection_and_malformed() {
+        // B2 (ref #181): the value is interpolated raw into SQL — quote
+        // chars, comment markers and wrong lengths must all be rejected.
+        for bad in [
+            "2025-01-01' OR '1'='1",
+            "2025-01-01'; DROP TABLE index_daily; --",
+            "20250101",    // import_dolt's YYYYMMDD contract does not apply here
+            "2025-1-01",   // non-padded month
+            "2025-01-01x", // trailing garbage
+            "not-a-date",
+            "",
+        ] {
+            assert!(
+                validate_since_arg("--since", bad).is_err(),
+                "must reject {bad:?}"
+            );
+        }
     }
 
     #[test]

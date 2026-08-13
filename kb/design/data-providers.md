@@ -123,17 +123,74 @@ Parquet 主数据库布局（`stock_daily.parquet` 由 `compass-data import` 生
 parquet_data/
 ├── stock_basic.parquet        # symbol, name, list_date, delist_date, board, full_name, total_share, industry, region
 ├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
+├── index_basic.parquet        # symbol, name, index_type（指数/板块名称表，epic #255）
+├── index_daily.parquet        # symbol, index_type, tradedate, open, high, low, close, volume, amount, adjclose（指数/板块日线，epic #255）
 ├── fin_income.parquet         # 利润表 — F10 完整版（203 字段），PK (symbol, report_date)
 ├── fin_balance_sheet.parquet  # 资产负债表 — F10 完整版（319 字段），PK (symbol, report_date)
 ├── fin_cash_flow.parquet      # 现金流量表 — F10 完整版（254 字段），PK (symbol, report_date)
 └── stock_daily.symbols.txt    # 每行一个标的（快速列表）
 ```
 
+### 指数/板块表（epic #255）
+
+指数与板块行情**独立于股票**建表/落盘——尊重 ref #201「股票数据剔除指数」决策，
+不污染选股/评分。两张 Dolt 表建在 `compass_data` 库（`collectors/fetch_index_daily.py`
+创建），经 `import-compass --table index_daily|index_basic` 导出 Parquet：
+
+**index_daily**（指数/板块日线，`index_type` 区分三类标的）：
+
+```sql
+CREATE TABLE IF NOT EXISTS index_daily (
+    symbol      VARCHAR(20) NOT NULL,
+    trade_date  DATE NOT NULL,
+    index_type  VARCHAR(20) NOT NULL,
+    open        DOUBLE,
+    close       DOUBLE,
+    high        DOUBLE,
+    low         DOUBLE,
+    volume      DOUBLE,
+    amount      DOUBLE,
+    update_date DATE,
+    PRIMARY KEY (symbol, trade_date)
+)
+```
+
+**index_basic**（名称表，picker 与板块列表的名称/类型来源）：
+
+```sql
+CREATE TABLE IF NOT EXISTS index_basic (
+    symbol      VARCHAR(20) NOT NULL PRIMARY KEY,
+    name        VARCHAR(100),
+    index_type  VARCHAR(20)
+)
+```
+
+- **`index_type` 取值**：`official`（交易所官方指数）/ `concept`（概念板块）/
+  `industry`（行业板块）。官方指数为**硬编码白名单**（约 30 只主流指数，
+  `fetch_index_daily.py::OFFICIAL_INDICES`，akshare index_zh_em 同款做法：SH000001 上证指数 /
+  SZ399001 深证成指 / SZ399006 创业板指 / SH000300 沪深300 / SH000905 中证500 /
+  SH000852 中证1000 等）；概念/行业板块从东财 clist（`fs=m:90 t:3` / `t:2`）全量发现，
+  新板块自动入库。
+- **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线 `beg=0` 全量拉取 +
+  `INSERT IGNORE` 按 PK (symbol, trade_date) 去重，新标的自动补全量历史。
+- **Parquet 布局**：
+  - `index_daily.parquet`：`symbol, index_type, tradedate, open, high, low, close, volume, amount, adjclose`
+    ——导出时 Dolt `trade_date` 重命名为 `tradedate`（对齐 `stock_daily.parquet` 列名），
+    **`adjclose = close` 占位**（指数无复权概念，东财 `fqt=0` 不复权拉取；占位列使
+    `DuckDbProvider` 既有 7 列查询 / 前复权缩放（factor=1.0 恒等）/ 1w·1M 聚合零改动复用）。
+  - `index_basic.parquet`：`symbol, name, index_type`。
+- **导出语义**：`import-compass --table index_daily` 走**增量 merge**
+  （parquet 侧 PK (symbol, tradedate)，`prefer_new` 即 Dolt 新值优先，`--since` 支持，
+  与 capital_main_flow 同款 `import_append_table`）；`--table index_basic` **全量覆盖**
+  （仿 concept_member 版本快照语义——上游删板块即从 parquet 消失）。两者新鲜度阈值 7 天
+  （行情表档）。
+
 **单位约定（ref #201）**：`stock_daily.parquet` 的 `volume` 为**股**（Dolt 源为"手"，import 时 ×100）、
 `amount` 为**元**（Dolt 源为"千元"，import 时 ×1000）。SEPA 引擎的 `MIN_AVG_AMOUNT=3000万`
 以元为准；其他消费者（GUI 图表柱高、screener 量能相对倍数）不受换算影响。
 另外 import 无条件剔除 6 个指数代码（见 `symbols.md` 指数剔除约定），parquet 与
-`symbols.txt` 均不含指数。
+`symbols.txt` 均不含指数（指数行情自 epic #255 起独立入库 `index_daily.parquet`，
+见上文「指数/板块表」章节）。
 
 财务三表（fin_income/fin_balance_sheet/fin_cash_flow，ref #202）：
 
@@ -210,6 +267,20 @@ ORDER BY grp_date
   周/月线高低点准确（聚合后再缩放会失真）。
 - close≤0 或 adjclose 非有限时 factor 回落 1.0（不产生 inf/NaN）。
 - 指标（MA/BOLL）在缩放后的 adjusted 序列上实时计算；渲染层无感知。
+
+### 指数/板块数据读取：双 parquet 路由（epic #255）
+
+`DuckDbProvider::fetch_bars` 在内存表 miss 时**按序回退两个 parquet 文件**：先查
+`stock_daily.parquet`（issue #31 既有回退路径），结果为空再查 `index_daily.parquet`
+（同一 SQL 形状，`tradedate/open/high/low/close/volume/adjclose/amount` 8 列）。
+
+两个文件**互斥**，顺序回退语义精确：
+- ref #201 已把 6 个指数从 `stock_daily.parquet` 剔除 → 指数代码在 stock 文件必然查空，
+  回退 index 文件是**确定性路由**而非碰运气；
+- 反向股票代码在 index 文件也不存在（index 文件只含指数/板块），fallback 不会泄漏。
+
+index 行回退后同样 cache-warm 进内存 `stock_daily` 表，1w/1M 的 `date_trunc` 聚合
+（647+ 行）对指数路径**零新增代码**复用。消息契约（FetchRequest）与 GUI 调用方零改动。
 
 ## ParquetReader — 主数据库
 
@@ -416,3 +487,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 财务三表 TRIM 列清单（issue #235，Oracle 实证） | 三表共用同一清单 / **逐表独立** | balance_sheet 7 列**含** LISTING_STATE；cash_flow/income 6 列**无** LISTING_STATE | DDL 实证：LISTING_STATE 仅存在于 fin_balance_sheet（cash_flow/income COLS 无此列），共用清单会导致 cash_flow/income SQL 报错 | 共用清单基于错误假设（"同上 COLS 集"），会导致整表导入失败 |
 | hook issue 校验（ref #213） | 逐 issue `gh issue view` / **单次 `gh issue list` 批量** | `gh issue list --repo qiboda/compass --state open --json number --limit 5000 --jq '.[].number'` 一次拉取 + 本地 `grep -qx` 查集 | 无界 API 调用（每次 commit/push 对每个唯一 issue 一次）触发限流误报；批量后每 commit/push 恰好 1 次调用；fail-closed（GH_FAIL/空集拒绝）保持与现状一致的拒绝语义 | 逐条查询在 push 大范围时 API 调用数无界（#213 根因）；`gh issue list` 默认分页 30/页须 `--limit 5000` 拉全量 |
 | hook 批量查询共享（ref #213，用户 F2=B） | 提取共享脚本 / **内联重复** | commit-msg + pre-push 各自内联实现批量查询（不新建共享脚本） | 用户确认 F2=B：改动小、符合现状（两 hook 本就独立内联）；mirror-drift guard 扩展覆盖批量查询片段防一改一漏 | 共享脚本增加 hook 依赖面，违背用户明确决策 |
+| index_daily 独立建表（epic #255） | 混入 stock_daily / 独立 index_daily 表 + 独立 parquet | **独立建表/独立 parquet**（compass_data 库，不写 investment_data） | 尊重 ref #201「股票数据剔除指数」决策，指数不污染选股/评分；双文件互斥使 fetch_bars 路由确定性成立 | 混入 stock_daily 重新引入 ref #201 修复的污染问题（指数占位 SEPA 过滤线） |
+| index_daily 列对齐（epic #255） | 自定义列名 / 与 DuckDbProvider 查询列对齐 | DDL 按 DuckDbProvider 查询列设计（trade_date/open/high/low/close/volume/amount + PK(symbol, trade_date)），导出时 `trade_date → tradedate` 重命名 | 查询/聚合/前复权代码零改动；`adjclose=close` 占位使 factor=1.0 恒等 | 自定义列名需改 duckdb.rs 查询 SQL 与映射，波及共享路径 |
+| 双 parquet 路由（epic #255） | FetchRequest 加 domain 字段 / 双文件 fallback / 独立 IndexProvider | DuckDbProvider 双文件 fallback（stock → index） | 零消息契约改动、零 GUI 调用方改动；ref #201 剔除使路由确定性成立（指数在 stock 文件必然查空）；1w/1M 聚合逻辑直接复用 | domain 字段扩大消息契约波及三处消费点；独立 provider 重复 fetch/聚合逻辑 |
+| index_basic 名称表（epic #255） | 名称硬编码在 GUI / 独立名称表 | 独立 `index_basic` 表 + `index_basic.parquet`（symbol/name/index_type），全量覆盖导出 | picker 与板块列表需要名称与类型（官方/概念/行业）来源；板块由 clist 动态发现，硬编码无法覆盖新板块 | GUI 硬编码使新板块不可搜索，且名称与数据分离维护 |

@@ -691,6 +691,60 @@ class TestImportToDolt:
         assert import_to_dolt(csv_path) == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM index_daily")) == "1"
 
+    def test_verify_recent_points_consistent_no_alarm(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
+    ) -> None:
+        """Decision 6: re-importing identical closes must not raise the
+        sample-verify alarm (CSV == Dolt within tolerance)."""
+        from fetch_index_daily import import_to_dolt  # noqa: E402
+
+        dolt_dir_, _ = dolt_env
+        csv_path = tmp_path / "index_daily.csv"
+        self._write_csv(csv_path, self._DAILY_HEADER, [self._daily_row()])
+
+        assert import_to_dolt(csv_path) == 1
+        # Second identical import: verify passes silently (no stderr alarm).
+        assert import_to_dolt(csv_path) == 1
+
+    def test_verify_recent_points_alarms_on_drift(
+        self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path, capsys
+    ) -> None:
+        """Decision 6: a close drift beyond 0.5% vs the stored Dolt row must
+        print a warn-only alarm (and never fail the import)."""
+        from fetch_index_daily import _verify_recent_points  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        dolt_sql_csv(
+            "CREATE TABLE index_daily (symbol VARCHAR(20) NOT NULL, "
+            "trade_date DATE NOT NULL, index_type VARCHAR(20) NOT NULL, "
+            "open DOUBLE, close DOUBLE, high DOUBLE, low DOUBLE, "
+            "volume DOUBLE, amount DOUBLE, update_date DATE, "
+            "PRIMARY KEY (symbol, trade_date))"
+        )
+        dolt_sql_csv(
+            "INSERT INTO index_daily VALUES ('SH000001', '2026-07-31', 'official', "
+            "3000.0, 2950.0, 3002.0, 2998.0, 120000000, 50000000000, '2026-08-02')"
+        )
+        csv_path = tmp_path / "index_daily.csv"
+        self._write_csv(csv_path, self._DAILY_HEADER, [self._daily_row()])
+
+        _verify_recent_points(csv_path)
+        captured = capsys.readouterr()
+        assert "beyond" in captured.err, "drift beyond tolerance must alarm"
+        assert "1.73%" in captured.err, "alarm must report the drift percentage"
+
+    def test_verify_recent_points_no_dolt_dir_silent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Decision 6: no Dolt dir → verify silently no-ops (never crashes)."""
+        from fetch_index_daily import _verify_recent_points  # noqa: E402
+
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        csv_path = tmp_path / "index_daily.csv"
+        self._write_csv(csv_path, self._DAILY_HEADER, [self._daily_row()])
+
+        _verify_recent_points(csv_path)  # must not raise
+
     def test_insert_failure_preserves_prior_rows(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:

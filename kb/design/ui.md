@@ -76,8 +76,8 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
 ┌─ 工具栏 (40px, Toolbar 组件)：[标的] [周期 1d|1w|1M] | [操作 Fetch] | [显示 侧栏/主题/语言] ┐
 ├──────────┬──────────────────────────────────────────────────────────────┤
 │ Sidebar  │  DockArea（egui_dock，可拖拽/关/开标签页）                      │
-│ 240px    │  标签页: 图表 | 日志 | 选股器（中文标题 + Phosphor 图标）        │
-│ 自选/搜索 │                                                                 │
+│ 240px    │  顶层 leaf：图表 | 大盘 | 东方SEPA；底层 leaf：日志 | 选股器      │
+│ 自选/搜索 │  （中文标题 + Phosphor 图标）                                   │
 ├──────────┴──────────────────────────────────────────────────────────────┤
 │ StatusBar (26px)：标的摘要(mono 涨跌) │ 加载/错误状态 │ 数据源 · 时钟        │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -110,11 +110,12 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
 | Chart | `chart` | K 线图表（平移/缩放/十字准线），默认 100 根可见柱；空态引导（「输入代码并点击获取数据」） |
 | Logger | `logger` | 可滚动日志面板（tracing 事件）+ 导出按钮（保存文件对话框） |
 | Screener | `screener` | 条件选股（基础/技术面两张卡片 + 结果 `DataTable`） |
-| Sepa | `sepa` | 东方SEPA 评分（温度计 + TOP50 排名表 + 详情 + 图表联动），叠入 Chart leaf 双 tab |
+| Sepa | `sepa` | 东方SEPA 评分（温度计 + TOP50 排名表 + 详情 + 图表联动），叠入 Chart leaf 三 tab |
+| Market | `market` | 大盘概览（核心指数 Card + 板块/指数排序表 + Segmented + 手动刷新），叠入 Chart leaf 三 tab |
 
 ### SEPA 评分面板（`TabKind::Sepa`，ref #152）
 
-独立标签页「东方SEPA」，**叠入顶部 Chart leaf 双 tab**（dock tab 栏 `[图表] [东方SEPA]`）；
+独立标签页「东方SEPA」，**叠入顶部 Chart leaf 三 tab**（dock tab 栏 `[图表] [大盘] [东方SEPA]`）；
 报告型心智模型（每日预计算排名，打开即读），与选股器的查询型模型分开。
 
 面板内部自上而下：**① 温度计条 → ② 工具条 → ③④ 表格+详情水平分栏**。
@@ -145,6 +146,40 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
 - **数据流**：第三条 citizen→Signal→AsyncDispatcher 通道（`RunSepaRequest` /
   `RunSepaResponse`），backend handler **进程内**调 `compass_strategy::sepa::run_sepa`
   ——GUI 只读 Parquet，不依赖 CLI 写回
+
+### 大盘面板（`TabKind::Market`，epic #255）
+
+新 dock tab「大盘」，**叠入顶部 Chart leaf 三 tab**（dock tab 栏 `[图表] [大盘] [东方SEPA]`，
+icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构。**不重排三栏布局，
+不新增 UI 组件**（全复用现有 24 组件）。
+
+面板内部自上而下：**① 核心指数 Card → ② 工具条 → ③ 板块/指数列表 DataTable**。
+
+- **① 核心指数 Card**（恒显示）：官方指数**核心白名单 6 只**——`SH000001` 上证指数 /
+  `SZ399001` 深证成指 / `SZ399006` 创业板指 / `SH000300` 沪深300 / `SH000905` 中证500 /
+  `SH000852` 中证1000；每项 = 名称 caption + mono 点位（复用 `format_price` 规则：
+  ≥100 → 2 位小数，适配指数 3000+ 点位）+ 涨跌幅 PriceText（红涨绿跌）；hover 高亮
+  （`bg_hover`，100ms `motion.fast`）；点击 `dispatch_symbol_fetch` 联动图表
+  （**不切 tab**，SEPA 行点击先例）。快照缺行时名称回退白名单内嵌值、点位显示 `--`。
+  其余官方指数 + 全部板块经 ③ 列表按 Segmented 切换可达，与「全部官方指数」锁定决策不冲突。
+- **② 工具条**：计数标签「共 N 个 · 日期」+ `Segmented [行业板块|概念板块|官方指数]`
+  （**行业板块为默认段**）+ 刷新按钮（Primary + ARROW_CLOCKWISE；loading 禁用 + spinner；
+  **纯手动触发，无自动刷新**，SEPA 先例）。Segmented 切换仅过滤**本地内存副本**
+  （`index_type` 匹配），**绝不回写 shared_state、不重新 fetch**（SEPA TOP-N 本地截断先例）。
+- **③ 板块/指数列表 DataTable**：列 = 名称 `Text` / 代码 `Text`(mono) / 最新 `Price` /
+  涨跌幅 `PriceText::percent_only()` / 成交额 `Count`（亿元，整数）；
+  **默认按涨跌幅降序**（板块轮动视角：当日强势/弱势板块优先）；表头点击可改列与升降序
+  （DataTable 内建）；官方指数段成交额列仍显示（沪市指数成交额有语义）。
+- **行点击**：`dispatch_symbol_fetch(symbol)` → 图表加载该指数/板块 K 线，**不切 tab**。
+- **数据流**：第四条 citizen→Signal→AsyncDispatcher 通道（`RunIndexSnapshotRequest` /
+  `RunIndexSnapshotResponse`），backend handler 用 `ParquetReader` 直读
+  `index_daily.parquet` + `index_basic.parquet`，窗口函数 ROW_NUMBER 取每标的最后 2 根
+  算点位 + 涨跌幅，结果写入 `shared_state.index_snapshot`（镜像 sepa_* 三件套状态）。
+- **状态**：loading spinner / error colored_label / 空态 EmptyState「暂无指数数据」
+  （`index_daily.parquet` 缺失时，含刷新引导）；个别板块无数据 → 行内 `—`。
+- **前复权 Tag**：当前标的为指数/板块时**隐藏**（判断：符号带 `BK` 前缀或列于
+  `index_basic.parquet` 且 `index_type` 非空）——指数无复权，显示「前复权」是错误信息；
+  股票保持显示。
 
 ## 交互规范
 
@@ -202,7 +237,8 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
   数值格式复用 vendored `format_price`（≥100→2 位、≥1→4 位、<1→6 位）；暖机
   显示 `—`；不消费输入事件。
 - **前复权 Tag**（工具栏「周期」组内）：非交互 `Tag`（`TagVariant::Custom` +
-  info 色）——K 线均为前复权价（fetch 层缩放），本迭代无模式切换开关。
+  info 色）——K 线均为前复权价（fetch 层缩放），本迭代无模式切换开关；
+  **当前标的为指数/板块时隐藏**（epic #255：指数无复权，显示是错误信息），股票保持显示。
 
 ### 反馈状态
 
@@ -295,6 +331,7 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.omo/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
 | 2026-08-10 | GUI 全面中文化 + 多语言 i18n（rust-i18n 键表 + 工具栏语言下拉 + config language 键 + fork 图表日期/tooltip 键化）（ref #222） | `.omo/designs/gui-i18n.md` | 已实现（与代码同步） |
 | 2026-08-13 | 选股器条件构建器（Epic #243 Batch 2）：Metabase 范式条件卡片组（AND/OR 嵌套）操作 Filter AST，替换固定表单（ref #245） | `.omo/designs/llm-screener-ui.md` | 已实现（与代码同步） |
+| 2026-08-14 | 大盘 tab（epic #255）：核心指数 Card（6 白名单）+ 板块/指数排序表 + Segmented 行业/概念/官方 + 手动刷新 + 行点击联动不切 tab + BK 前缀搜索 + 前复权 Tag 按类型隐藏 | `.omo/designs/index-data.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
@@ -358,3 +395,10 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 动画范围（ref #245） | 全部瞬时（组件内建 hover/press）/ 自定义布局动画 | 全部瞬时 | egui 无布局过渡，硬做成本高、kittest 难稳定 | 自定义动画违背克制原则 |
 | 子组 scope 高度（ref #245 测试发现） | `f32::INFINITY` / `available_rect_before_wrap().bottom()` | 有限底部 | INFINITY 使 wrap 垂直居中算 NaN → 组内与组后控件 rect 全毁、点击静默丢弃（生产 + kittest 同受影响） | INFINITY 写法直白但布局不可用 |
 | en locale 测试并发（ref #222） | 并行 / LANG_LOCK 串行 | `LANG_LOCK: Mutex` 串行（ui_fixes_218.rs 定义） | `set_locale` 进程全局，并行测试互相污染 locale 造成 flaky；复用 HOME_LOCK 先例 | 并行省时但不可靠 |
+| 大盘 tab 入口（epic #255） | 新 dock tab「大盘」/ 仅增强 picker / 侧栏分组 | 新 dock tab（报告型面板，TabKind::Market，叠入 Chart leaf 三 tab） | 板块轮动需要「排序列表 + 概览」这类浏览场景，picker 是精确查找不是浏览；与 SEPA 报告型先例同构；SEPA 先例证明每 leaf 多 tab 已支持 | 仅 picker 无法承载板块排序列表；侧栏分组把 500 行塞进 240px 侧栏，浏览效率差 |
+| 核心指数白名单 6 只（epic #255） | 全量官方指数进 Card / 核心白名单 Card + 全量进列表 | 白名单 Card（6 只：上证/深成/创业板/沪深300/中证500/中证1000）+ 全量进 Segmented 列表 | Card 横向空间有限，白名单保证概览可读；全量仍可经列表/搜索可达，不违背「全部官方指数」锁定决策 | 全量进 Card 横向溢出、可读性差 |
+| 板块列表默认排序（epic #255） | 名称升序 / 涨跌幅降序 | 涨跌幅降序（板块轮动视角） | 核心用途「板块轮动」即找当日强势/弱势板块，默认排序直击场景；表头可改 | 名称升序是中性默认但无信息价值 |
+| 行点击不切 tab（epic #255） | 切图表 tab / 不切（与 SEPA 一致） | 不切 tab | 与 SEPA/选股器行点击行为完全统一（ref #152 先例）；用户可连续点行对比 | 切 tab 打断连续浏览，且引入 dock_state 操作复杂度 |
+| 前复权 Tag 按类型隐藏（epic #255） | 指数也显示 / 按类型隐藏 | 标的为指数/板块（`BK` 前缀或 `index_type` 非空）时隐藏 | 指数不复权（东财 fqt=0），显示「前复权」是错误信息 | 统一显示会误导用户 |
+| 板块快照通道（epic #255） | 复用 FetchRequest 逐标的拉 / 新 RunIndexSnapshotRequest 批量 | 新第四条通道批量快照（SEPA 同构） | 500 标的逐次 fetch 是 500 次异步往返；批量一次查询毫秒级；与 SEPA 通道同构 | 复用 FetchRequest 需逐标的循环、状态管理复杂 |
+| 刷新机制（epic #255） | 自动定时刷新 / 纯手动刷新 | 纯手动（Button loading 禁用 + spinner） | 与 SEPA「纯手动、无自动」先例一致；避免无谓磁盘读取 | 自动刷新需定时器与后台线程，违背 SEPA 心智 |

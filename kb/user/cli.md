@@ -98,11 +98,28 @@ cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 
 | 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow` |
+| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow`、`index_daily`、`index_basic` |
 | `--dolt-dir` | 来自配置 `[dolt].compass_data_dir` | Dolt 数据库目录 |
 | `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
 | `--overwrite` | `false` | 替换已有数据而非合并 |
 | `--since` | （无） | 增量导入：仅导入 report_date >= since 的数据（YYYYMMDD） |
+
+**指数/板块表（epic #255）**：`index_daily` / `index_basic` 存指数与板块数据
+（官方指数 + 概念/行业板块，来源：东财，采集器 `collectors/fetch_index_daily.py`）：
+
+- `index_daily`（指数/板块日线，含 `index_type` 列）：**增量 merge**——按 parquet 侧 PK
+  `(symbol, tradedate)` 与既有 parquet 去重合并，`--since` 后新行并入、旧行不丢
+  （与 `capital_main_flow` 同款 `import_append_table` 语义）；导出列含
+  `adjclose = close` 占位（指数无复权，供 GUI 查询对齐）
+- `index_basic`（指数/板块名称表）：**全量覆盖**——每次导入镜像 Dolt 当前状态
+  （仿 `concept_member` 版本快照语义），上游删板块即从 parquet 消失
+
+```sh
+# 导出指数/板块日线（增量 merge）
+cargo run --bin compass-data -- import-compass --table index_daily --since 20260101
+# 导出指数/板块名称表（全量覆盖）
+cargo run --bin compass-data -- import-compass --table index_basic
+```
 
 ### 示例
 
@@ -121,7 +138,7 @@ cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 
 - **全量导入**（无 `--since`/`--overwrite`/首次）：源 Dolt COUNT（含过滤条件）vs parquet 行数精确对比，不一致 → 报错退出（exit 1）
 - **增量 merge**：校验"不丢数据"——merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败走 fallback 时跳过此校验（fallback 是修复损坏文件的恢复机制，改为对比过滤后的源 COUNT）
-- **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/institution_survey/concept_member）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，collectors 写库时不填）
+- **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/institution_survey/concept_member/index_daily/index_basic）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，collectors 写库时不填）
 
 ---
 

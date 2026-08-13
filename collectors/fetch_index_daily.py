@@ -42,6 +42,7 @@ from common import (
     AsyncSession,
     Throttle,
     csv_dir,
+    dolt_sql_csv,
     import_replace_table,
     last_report_date,
     write_csv,
@@ -494,13 +495,94 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
 
     With an explicit ``csv_path`` only that file is imported (routed by
     filename); without one both CSVs are imported (daily result returned).
+    After the daily import the most recent 3-5 day points are sampled and
+    cross-checked against Dolt (decision 6: 增量后数值抽样核对，容差报警).
     """
     if csv_path is not None:
         if "index_basic" in csv_path.name:
             return _import_index_basic(csv_path)
-        return _import_index_daily(csv_path)
+        rows = _import_index_daily(csv_path)
+        if rows > 0:
+            _verify_recent_points(csv_path)
+        return rows
     _import_index_basic(csv_dir() / "index_basic.csv")
-    return _import_index_daily(csv_dir() / "index_daily.csv")
+    rows = _import_index_daily(csv_dir() / "index_daily.csv")
+    if rows > 0:
+        _verify_recent_points(csv_dir() / "index_daily.csv")
+    return rows
+
+
+# Decision 6: 增量后数值抽样核对 — the most recent 3 trading-day closes per
+# symbol are compared between the just-imported CSV and the Dolt table. A
+# mismatch beyond 0.5% (float rounding / duplicate-date drift) means the
+# fetch or merge went wrong; this is a warn-only gate, never a failure.
+_SAMPLE_DAYS = 3
+_SAMPLE_TOLERANCE = 0.005
+
+
+def _verify_recent_points(csv_path: Path) -> None:
+    """Cross-check the newest closes in the CSV against Dolt (warn-only)."""
+    if not csv_path.exists() or not (dolt_dir := _dolt_dir_exists()):
+        return
+    newest: dict[tuple[str, str], float] = {}
+    with open(csv_path, newline="", encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            symbol = (row.get("symbol") or "").strip()
+            trade_date = (row.get("trade_date") or "").strip()
+            close_raw = (row.get("close") or "").strip()
+            if symbol and trade_date and close_raw:
+                try:
+                    close = float(close_raw)
+                except ValueError:
+                    continue
+                newest[(symbol, trade_date)] = close
+    if not newest:
+        return
+    # The most recent `_SAMPLE_DAYS` rows per symbol, ordered newest-first.
+    sample: dict[str, list[tuple[str, float]]] = {}
+    for (symbol, trade_date), close in sorted(
+        newest.items(), key=lambda kv: (kv[0][0], kv[0][1]), reverse=True
+    ):
+        sample.setdefault(symbol, [])
+        if len(sample[symbol]) < _SAMPLE_DAYS:
+            sample[symbol].append((trade_date, close))
+    for symbol, dates in sample.items():
+        for trade_date, csv_close in dates:
+            stored = _dolt_close(dolt_dir, symbol, trade_date)
+            if stored is None or abs(stored - csv_close) / csv_close <= _SAMPLE_TOLERANCE:
+                continue
+            print(
+                f"  [verify] {symbol} {trade_date}: CSV {csv_close} vs "
+                f"Dolt {stored} ({(csv_close - stored) / stored:.2%}) — "
+                f"beyond {_SAMPLE_TOLERANCE:.1%} tolerance",
+                file=sys.stderr,
+            )
+
+
+def _dolt_dir_exists() -> Path | None:
+    """Return the Dolt data dir when it exists, else None."""
+    import os
+
+    path = Path(os.environ.get("COMPASS_DATA_DIR", "/data/compass-data/compass_data"))
+    return path if (path / ".dolt").exists() else None
+
+
+def _dolt_close(dolt_dir: Path, symbol: str, trade_date: str) -> float | None:
+    """Fetch a single close from Dolt (None when the row is absent)."""
+    try:
+        out = dolt_sql_csv(
+            f"SELECT close FROM index_daily "
+            f"WHERE symbol = '{symbol}' AND trade_date = '{trade_date}'"
+        )
+    except Exception:
+        return None
+    lines = out.strip().split("\n")
+    if len(lines) < 2:
+        return None
+    try:
+        return float(lines[-1])
+    except ValueError:
+        return None
 
 
 if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest
