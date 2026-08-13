@@ -11,7 +11,7 @@ use compass_core::data::parquet::ParquetReader;
 use compass_core::data::symbol::{
     exchange_of_symbol, infer_exchange_prefix, parse_explicit_prefix,
 };
-use compass_core::model::{AppConfig, WatchlistConfig};
+use compass_core::model::{AppConfig, IndexBasic, WatchlistConfig};
 use compass_types::{Filter, ScreenerQuery};
 use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
 use compass_ui::widgets::dropdown::Dropdown;
@@ -41,9 +41,10 @@ use compass_i18n::t;
 
 use citizens::chart::ChartCitizen;
 use citizens::logger::LoggerPanel;
+use citizens::market::MarketPanel;
 use citizens::screener::ScreenerPanel;
 use citizens::sepa::SepaPanel;
-use tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID, Tab, TabKind, TabViewer};
+use tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind, TabViewer};
 use theme::CompassTheme;
 
 /// Default inner window size (design doc §Q8: 1440×900).
@@ -80,9 +81,12 @@ fn main() -> eframe::Result {
 
             // Load stock list from parquet at startup
             let stock_list = load_stock_list(&config.app);
+            let index_list = load_index_list(&config.app);
+            let mut picker_list = stock_list.clone();
+            picker_list.extend(index_list.clone().into_iter().map(index_basic_to_stock));
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
-            let (work_signal, run_screener_signal, sepa_signal, _backend_handle) =
+            let (work_signal, run_screener_signal, sepa_signal, index_signal, _backend_handle) =
                 backend::wire_backend(config.app.clone(), shared_state.clone(), egui_ctx);
 
             // Register citizens
@@ -109,6 +113,8 @@ fn main() -> eframe::Result {
                 theme.tokens(),
             );
             let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, theme.tokens());
+            let market =
+                MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, theme.tokens());
 
             // Derive distinct industry/board lists for the screener conditions.
             let mut industries: Vec<String> = stock_list
@@ -122,11 +128,15 @@ fn main() -> eframe::Result {
             boards.sort();
             boards.dedup();
 
-            // Create initial dock state: Chart + 东方SEPA share the top leaf
-            // (SEPA's 12-column table + detail panel need the full width),
-            // Logger + Screener below.
-            let mut dock_state =
-                DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
+            // Create initial dock state: Chart + 大盘 + 东方SEPA share the top
+            // leaf (SEPA's 12-column table + detail panel and the market
+            // panel's card + table need the full width), Logger + Screener
+            // below.
+            let mut dock_state = DockState::new(vec![
+                Tab::new(TabKind::Chart),
+                Tab::new(TabKind::Market),
+                Tab::new(TabKind::Sepa),
+            ]);
             if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
                 && let Some(tree) = surface.node_tree_mut()
             {
@@ -159,13 +169,17 @@ fn main() -> eframe::Result {
                 logger,
                 screener,
                 sepa,
+                market,
                 run_screener_signal,
                 sepa_signal,
+                index_signal,
                 screener_industries: industries,
                 screener_boards: boards,
                 shared_state,
                 work_signal,
                 stock_list,
+                index_list,
+                picker_list,
                 stock_picker,
                 timeframe_index: timeframe_index_from_value(&config.app.app.default_timeframe),
                 theme,
@@ -179,6 +193,8 @@ fn main() -> eframe::Result {
                 last_screener_error: None,
                 last_sepa_error: None,
                 last_sepa_loading: false,
+                last_index_error: None,
+                last_index_loading: false,
                 last_screener_synced_symbol: startup_symbol,
                 sidebar_visible: true,
                 sidebar_search: String::new(),
@@ -613,6 +629,46 @@ fn load_stock_list(config: &AppConfig) -> Vec<compass_core::model::StockBasic> {
     }
 }
 
+/// Load the index/board name table for the GUI picker and the market tab
+/// (epic #255 C4, plan T7). `index_basic.parquet` is optional — when it is
+/// missing the picker degrades gracefully to the stock-only list.
+fn load_index_list(config: &AppConfig) -> Vec<IndexBasic> {
+    match ParquetReader::new(&config.parquet.dir) {
+        Ok(reader) => match reader.load_all_index_basics() {
+            Ok(list) => {
+                info!(count = list.len(), "index list loaded from parquet");
+                list
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to load index list from parquet");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to create parquet reader for index list");
+            Vec::new()
+        }
+    }
+}
+
+/// Map an `IndexBasic` row onto the picker's `StockBasic` shape so the
+/// merged picker list keeps a single row type. Index/board rows are always
+/// "listed" (`delist_date = None` — the stock filter keeps them).
+fn index_basic_to_stock(index: IndexBasic) -> compass_core::model::StockBasic {
+    compass_core::model::StockBasic {
+        symbol: index.symbol,
+        name: index.name,
+        area: None,
+        industry: None,
+        market: None,
+        board: None,
+        full_name: None,
+        total_share: None,
+        list_date: None,
+        delist_date: None,
+    }
+}
+
 /// Write the shared log entries to `path` in a plain-text export format
 /// (header + `[timestamp] [level] message` lines, oldest first).
 fn export_logs(state: &state::SharedState, path: &std::path::Path) -> Result<(), String> {
@@ -658,13 +714,19 @@ struct CompassApp {
     logger: LoggerPanel,
     screener: ScreenerPanel,
     sepa: SepaPanel,
+    market: MarketPanel,
     run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
     sepa_signal: egui_mobius::signals::Signal<messages::RunSepaRequest>,
+    index_signal: egui_mobius::signals::Signal<messages::RunIndexSnapshotRequest>,
     screener_industries: Vec<String>,
     screener_boards: Vec<String>,
     shared_state: Arc<state::SharedState>,
     work_signal: egui_mobius::signals::Signal<messages::FetchRequest>,
     stock_list: Vec<compass_core::model::StockBasic>,
+    /// Index/board name table from index_basic.parquet (epic #255 C4).
+    index_list: Vec<IndexBasic>,
+    /// Merged picker list = stock_list + index_list (as StockBasic rows).
+    picker_list: Vec<compass_core::model::StockBasic>,
     stock_picker: StockPicker<compass_core::model::StockBasic>,
     timeframe_index: usize,
     theme: CompassTheme,
@@ -678,6 +740,8 @@ struct CompassApp {
     last_screener_error: Option<String>,
     last_sepa_error: Option<String>,
     last_sepa_loading: bool,
+    last_index_error: Option<String>,
+    last_index_loading: bool,
     last_screener_synced_symbol: String,
     /// Whether the left watchlist sidebar is visible.
     sidebar_visible: bool,
@@ -753,8 +817,10 @@ impl eframe::App for CompassApp {
                         logger: &mut self.logger,
                         screener: &mut self.screener,
                         sepa: &mut self.sepa,
+                        market: &mut self.market,
                         run_screener_signal: &self.run_screener_signal,
                         sepa_signal: &self.sepa_signal,
+                        index_signal: &self.index_signal,
                         work_signal: &self.work_signal,
                         screener_industries: &self.screener_industries,
                         screener_boards: &self.screener_boards,
@@ -831,6 +897,36 @@ impl eframe::App for CompassApp {
                 }
             }
             self.last_sepa_loading = current_sepa_loading;
+
+            // Index snapshot error toast on None→Some transition (same
+            // pattern as the screener/sepa errors above).
+            let current_index_err = self.shared_state.index_snapshot_error.get();
+            if current_index_err != self.last_index_error {
+                if let Some(ref err) = current_index_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_index_error = current_index_err;
+            }
+
+            // Index snapshot success toast on loading true→false with no
+            // error (设计交互表: 刷新 → toast「指数数据已更新 · N 个」).
+            let current_index_loading = self.shared_state.index_snapshot_loading.get();
+            if self.last_index_loading
+                && !current_index_loading
+                && self.shared_state.index_snapshot_error.get().is_none()
+            {
+                let count = self
+                    .shared_state
+                    .index_snapshot
+                    .get()
+                    .map(|s| s.rows.len())
+                    .unwrap_or(0);
+                self.toast.push(
+                    ToastLevel::Success,
+                    t!("toast.index_updated", count = count),
+                );
+            }
+            self.last_index_loading = current_index_loading;
 
             // Reverse-sync: when the symbol changed (e.g. a screener row
             // click), reflect it in the StockPicker — but only when the new
@@ -953,13 +1049,16 @@ impl CompassApp {
         }
         self.last_screener_synced_symbol = symbol.clone();
         let (exchange, code) = parse_explicit_prefix(&symbol);
-        let is_prefixed =
-            !exchange.is_empty() && code.len() == 6 && code.chars().all(|c| c.is_ascii_digit());
+        // Stocks are SH/SZ/BJ + 6 digits; board/index codes are BK + 4 digits
+        // (epic #255 C3). Both sync back into the picker.
+        let is_prefixed = !exchange.is_empty()
+            && code.chars().all(|c| c.is_ascii_digit())
+            && (code.len() == 6 || (exchange == "BK" && code.len() == 4));
         if !is_prefixed {
             return;
         }
         let name = self
-            .stock_list
+            .picker_list
             .iter()
             .find(|s| s.symbol == symbol)
             .map(|s| s.name.clone())
@@ -968,6 +1067,18 @@ impl CompassApp {
         self.stock_picker.selected_symbol = symbol;
         self.stock_picker.selected_name = name;
         self.stock_picker.selected_exchange = exchange;
+    }
+
+    /// Whether `symbol` is an index/board (epic #255 C4): BK-prefixed board
+    /// codes or any symbol listed in index_basic.parquet. Drives the 前复权
+    /// tag hide guard — indexes are not adjusted (fqt=0), so showing the tag
+    /// would be wrong information.
+    fn is_index_or_board(&self, symbol: &str) -> bool {
+        parse_explicit_prefix(symbol).0 == "BK"
+            || self
+                .index_list
+                .iter()
+                .any(|i| i.symbol == symbol && !i.index_type.is_empty())
     }
 
     /// Left watchlist sidebar: search row + the "自选" group backed by
@@ -1111,7 +1222,7 @@ impl CompassApp {
 
         let symbol = self.shared_state.symbol.get();
         let name = self
-            .stock_list
+            .picker_list
             .iter()
             .find(|s| s.symbol == symbol)
             .map(|s| s.name.clone())
@@ -1153,13 +1264,15 @@ impl CompassApp {
         let loading = self.shared_state.loading.get();
 
         Toolbar::new(&tokens).show(ui, |tb, ui| {
-            // Group A — 标的: symbol picker.
+            // Group A — 标的: symbol picker (merged stock + index/board list).
             tb.group(ui, |ui| {
-                let response = self.stock_picker.show(ui, &self.stock_list);
+                let response = self.stock_picker.show(ui, &self.picker_list);
                 self.symbol_input_id = Some(response.id);
             });
 
-            // Group B — 周期: segmented 1d/1w/1M + 前复权 tag.
+            // Group B — 周期: segmented 1d/1w/1M + 前复权 tag. The adjust tag
+            // is hidden when the current symbol is an index/board (指数不
+            // 复权, fqt=0 — plan T7); stocks keep it.
             tb.group(ui, |ui| {
                 if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
                     .selected(self.timeframe_index)
@@ -1167,11 +1280,15 @@ impl CompassApp {
                 {
                     self.set_timeframe(idx);
                 }
-                let adjust = t!("toolbar.adjust");
-                Tag::new(&tokens, &adjust)
-                    .variant(TagVariant::Custom)
-                    .color(tokens.color.info)
-                    .show(ui);
+                let current_symbol = self.shared_state.symbol.get();
+                let is_index = self.is_index_or_board(&current_symbol);
+                if !is_index {
+                    let adjust = t!("toolbar.adjust");
+                    Tag::new(&tokens, &adjust)
+                        .variant(TagVariant::Custom)
+                        .color(tokens.color.info)
+                        .show(ui);
+                }
             });
 
             // Group C — 操作: primary Fetch button with loading state.
@@ -1228,6 +1345,7 @@ impl CompassApp {
                         self.modal.set_tokens(tokens);
                         self.screener.set_tokens(tokens);
                         self.sepa.set_tokens(tokens);
+                        self.market.set_tokens(tokens);
                         self.toast
                             .push(ToastLevel::Info, t!("toast.theme_switched"));
                     }
@@ -1951,11 +2069,15 @@ default_timeframe = "1w"
     fn double_tab_leaf_renders_active_and_inactive_styles() {
         use crate::citizens::chart::ChartCitizen;
         use crate::citizens::logger::LoggerPanel;
+        use crate::citizens::market::MarketPanel;
         use crate::citizens::screener::ScreenerPanel;
         use crate::citizens::sepa::SepaPanel;
         use crate::dispatcher::register_citizens;
-        use crate::messages::{FetchRequest, RunScreenerRequest, RunSepaRequest};
+        use crate::messages::{
+            FetchRequest, RunIndexSnapshotRequest, RunScreenerRequest, RunSepaRequest,
+        };
         use crate::state::SharedState;
+        use crate::tabs::MARKET_ID;
         use crate::tabs::TabViewer;
         use egui_dock::{DockArea, DockState};
         use egui_mobius::factory;
@@ -1973,8 +2095,10 @@ default_timeframe = "1w"
             &tokens,
         );
         let mut sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
+        let mut market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &tokens);
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
+        let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
         let shared = SharedState::new("SZ000001", "1d");
         let theme = CompassTheme::compass_dark();
@@ -1988,8 +2112,10 @@ default_timeframe = "1w"
             logger: &mut logger,
             screener: &mut screener,
             sepa: &mut sepa,
+            market: &mut market,
             run_screener_signal: &run_signal,
             sepa_signal: &sepa_signal,
+            index_signal: &index_signal,
             work_signal: &work_signal,
             screener_industries: &[],
             screener_boards: &[],
@@ -2887,6 +3013,60 @@ default_timeframe = "1w"
         app.sync_picker_from_symbol();
         assert_eq!(app.stock_picker.selected_symbol, "SZ000001");
         assert_eq!(app.last_screener_synced_symbol, "SZ000001");
+    }
+
+    #[test]
+    fn sync_picker_from_symbol_bk_board_code_syncs() {
+        // Epic #255 C3: BK + 4-digit board codes sync back into the picker
+        // with symbol + name + exchange (BK must not fall back to SZ).
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![StockBasic {
+                symbol: "BK0475".into(),
+                name: "半导体".into(),
+                area: None,
+                industry: None,
+                market: None,
+                board: None,
+                full_name: None,
+                total_share: None,
+                list_date: None,
+                delist_date: None,
+            }],
+        );
+        app.shared_state.symbol.set("BK0475".to_string());
+        app.last_screener_synced_symbol = "SZ000001".to_string();
+
+        app.sync_picker_from_symbol();
+
+        assert_eq!(app.stock_picker.selected_symbol, "BK0475");
+        assert_eq!(app.stock_picker.selected_name, "半导体");
+        assert_eq!(app.stock_picker.selected_exchange, "BK");
+        assert_eq!(app.last_screener_synced_symbol, "BK0475");
+    }
+
+    #[test]
+    fn sync_picker_from_symbol_rejects_malformed_bk_codes() {
+        // Guard: BK + 3 digits / BK + 5 digits are not valid board codes and
+        // must not clobber the picker selection.
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for bad in ["BK047", "BK04755"] {
+            let mut app = build_compass_app(egui::Context::default());
+            app.shared_state.symbol.set(bad.to_string());
+            app.last_screener_synced_symbol = "SZ000001".to_string();
+
+            app.sync_picker_from_symbol();
+
+            assert_eq!(
+                app.stock_picker.selected_symbol, "SZ000001",
+                "malformed BK code {bad:?} must not clobber picker selection"
+            );
+        }
     }
 
     // ------------------------------------------------------------------

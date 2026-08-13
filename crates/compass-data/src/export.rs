@@ -66,10 +66,62 @@ pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwri
                     warn!("save_stock_daily failed for {}: {}", info.code, e);
                 }
             }
+            export_index_tables(&db, &input, overwrite).await;
             info!("Exported {} symbols to {}", symbols.len(), output.display());
         }
         other => {
             warn!("Unknown export format: {other}. Supported: duckdb");
+        }
+    }
+}
+
+/// Mirror the standalone index parquet files into the output DuckDB.
+///
+/// `index_daily.parquet` / `index_basic.parquet` are kept out of
+/// `stock_daily` by design (ref #201), so they are copied into the DuckDB
+/// file as tables of the same name. A missing or empty parquet is skipped —
+/// the export must never fail the whole run over optional index data. With
+/// `overwrite` the existing table is dropped first (replace semantics).
+async fn export_index_tables(db: &DuckDbProvider, input: &Path, overwrite: bool) {
+    const INDEX_TABLES: &[(&str, &str)] = &[
+        ("index_daily", "index_daily.parquet"),
+        ("index_basic", "index_basic.parquet"),
+    ];
+    for (table, file_name) in INDEX_TABLES {
+        let parquet_path = input.join(file_name);
+        if !parquet_path.exists() {
+            info!("{table}: parquet not present, skipping");
+            continue;
+        }
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM read_parquet('{}')",
+            parquet_path.display()
+        );
+        let has_rows = match db.table_has_rows(&count_sql).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("{table}: unreadable parquet ({e}), skipping");
+                continue;
+            }
+        };
+        if !has_rows {
+            info!("{table}: 0 rows, skipping");
+            continue;
+        }
+        if overwrite
+            && let Err(e) = db
+                .execute_batch(&format!("DROP TABLE IF EXISTS {table}"))
+                .await
+        {
+            warn!("{table}: drop failed: {e}");
+        }
+        let copy_sql = format!(
+            "CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{}')",
+            parquet_path.display()
+        );
+        match db.execute_batch(&copy_sql).await {
+            Ok(()) => info!("{table}: exported → duckdb"),
+            Err(e) => warn!("{table}: export failed: {e}"),
         }
     }
 }
@@ -416,6 +468,117 @@ mod tests {
         .await;
 
         // Should not panic; DuckDB file created even though no data was exported
+        assert!(duckdb_path.exists(), "DuckDB file should be created");
+    }
+
+    fn write_index_parquet(dir: &Path, file_name: &str, create_sql: &str, insert_sql: &str) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(&format!("{create_sql}; {insert_sql};"))
+            .expect("seed");
+        conn.execute_batch(&format!(
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            dir.join(file_name).display()
+        ))
+        .expect("copy");
+    }
+
+    #[tokio::test]
+    async fn run_export_duckdb_exports_index_tables() {
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+        write_index_parquet(
+            parquet_tmp.path(),
+            "index_daily.parquet",
+            "CREATE TABLE t (symbol VARCHAR, index_type VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE, amount DOUBLE, adjclose DOUBLE)",
+            "INSERT INTO t VALUES ('SH000001', 'official', '2026-01-05', 3000, 3002, 2998, 3001, 1e8, 1e10, 3001)",
+        );
+        write_index_parquet(
+            parquet_tmp.path(),
+            "index_basic.parquet",
+            "CREATE TABLE t (symbol VARCHAR, name VARCHAR, index_type VARCHAR)",
+            "INSERT INTO t VALUES ('BK0475', '半导体', 'concept')",
+        );
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path.clone(),
+            true,
+        )
+        .await;
+
+        let out = duckdb::Connection::open(&duckdb_path).expect("open export db");
+        let daily: usize = out
+            .query_row("SELECT COUNT(*) FROM index_daily", [], |row| row.get(0))
+            .expect("index_daily count");
+        assert_eq!(daily, 1, "index_daily must be mirrored into DuckDB");
+        let basic: usize = out
+            .query_row("SELECT COUNT(*) FROM index_basic", [], |row| row.get(0))
+            .expect("index_basic count");
+        assert_eq!(basic, 1, "index_basic must be mirrored into DuckDB");
+        let adjclose: f64 = out
+            .query_row(
+                "SELECT adjclose FROM index_daily WHERE symbol = 'SH000001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("adjclose");
+        assert!((adjclose - 3001.0).abs() < 1e-9, "adjclose carried through");
+    }
+
+    #[tokio::test]
+    async fn run_export_duckdb_skips_empty_index_parquet() {
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+        write_index_parquet(
+            parquet_tmp.path(),
+            "index_daily.parquet",
+            "CREATE TABLE t (symbol VARCHAR, index_type VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE, amount DOUBLE, adjclose DOUBLE)",
+            "",
+        );
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path.clone(),
+            true,
+        )
+        .await;
+
+        let out = duckdb::Connection::open(&duckdb_path).expect("open export db");
+        let has_table: usize = out
+            .query_row(
+                "SELECT COUNT(*) FROM information_schema.tables \
+                 WHERE table_name = 'index_daily'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("table check");
+        assert_eq!(has_table, 0, "empty index parquet must be skipped");
+    }
+
+    #[tokio::test]
+    async fn run_export_duckdb_skips_unreadable_index_parquet() {
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            parquet_tmp.path().join("index_daily.parquet"),
+            b"not a parquet file",
+        )
+        .expect("write corrupt");
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path.clone(),
+            true,
+        )
+        .await;
+
+        // Must not panic; the unreadable parquet is logged and skipped.
         assert!(duckdb_path.exists(), "DuckDB file should be created");
     }
 }

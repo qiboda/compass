@@ -26,9 +26,10 @@ use egui_mobius::signals::Signal;
 
 use crate::citizens::chart::ChartCitizen;
 use crate::citizens::logger::LoggerPanel;
+use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
-use crate::messages::{FetchRequest, RunScreenerRequest, RunSepaRequest};
+use crate::messages::{FetchRequest, RunIndexSnapshotRequest, RunScreenerRequest, RunSepaRequest};
 use crate::state::SharedState;
 use compass_i18n::t;
 
@@ -40,6 +41,7 @@ pub const CHART_ID: &str = "chart";
 pub const LOGGER_ID: &str = "logger";
 pub const SCREENER_ID: &str = "screener";
 pub const SEPA_ID: &str = "sepa";
+pub const MARKET_ID: &str = "market";
 
 // ---------------------------------------------------------------------------
 // TabKind — enum of dockable panel types
@@ -55,6 +57,7 @@ pub enum TabKind {
     Logger,
     Screener,
     Sepa,
+    Market,
 }
 
 impl TabKind {
@@ -68,6 +71,7 @@ impl TabKind {
             Self::Logger => "tab.logger",
             Self::Screener => "tab.screener",
             Self::Sepa => "tab.sepa",
+            Self::Market => "tab.market",
         }
     }
 
@@ -78,6 +82,7 @@ impl TabKind {
             Self::Logger => egui_phosphor::regular::TERMINAL,
             Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
             Self::Sepa => egui_phosphor::regular::GAUGE,
+            Self::Market => egui_phosphor::regular::TREND_UP,
         }
     }
 
@@ -87,6 +92,7 @@ impl TabKind {
             Self::Logger => CitizenId::new(LOGGER_ID),
             Self::Screener => CitizenId::new(SCREENER_ID),
             Self::Sepa => CitizenId::new(SEPA_ID),
+            Self::Market => CitizenId::new(MARKET_ID),
         }
     }
 }
@@ -137,8 +143,10 @@ pub struct TabViewer<'a> {
     pub logger: &'a mut LoggerPanel,
     pub screener: &'a mut ScreenerPanel,
     pub sepa: &'a mut SepaPanel,
+    pub market: &'a mut MarketPanel,
     pub run_screener_signal: &'a Signal<RunScreenerRequest>,
     pub sepa_signal: &'a Signal<RunSepaRequest>,
+    pub index_signal: &'a Signal<RunIndexSnapshotRequest>,
     pub work_signal: &'a Signal<FetchRequest>,
     pub screener_industries: &'a [String],
     pub screener_boards: &'a [String],
@@ -173,6 +181,10 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             TabKind::Sepa => {
                 self.sepa
                     .show(ui, self.shared_state, self.sepa_signal, self.work_signal);
+            }
+            TabKind::Market => {
+                self.market
+                    .show(ui, self.shared_state, self.index_signal, self.work_signal);
             }
         }
     }
@@ -394,8 +406,14 @@ mod tests {
             registered.sepa,
             &compass_ui::tokens::ThemeTokens::dark(),
         );
+        let mut market = MarketPanel::new(
+            CitizenId::new(MARKET_ID),
+            registered.market,
+            &compass_ui::tokens::ThemeTokens::dark(),
+        );
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
+        let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
         let shared = SharedState::new("000001", "1d");
         let theme = CompassTheme::compass_dark();
@@ -407,8 +425,10 @@ mod tests {
             logger: &mut logger,
             screener: &mut screener,
             sepa: &mut sepa,
+            market: &mut market,
             run_screener_signal: &run_signal,
             sepa_signal: &sepa_signal,
+            index_signal: &index_signal,
             work_signal: &work_signal,
             screener_industries: &[],
             screener_boards: &[],
@@ -422,6 +442,7 @@ mod tests {
             (TabKind::Logger, tr("tab.logger")),
             (TabKind::Screener, tr("tab.screener")),
             (TabKind::Sepa, tr("tab.sepa")),
+            (TabKind::Market, tr("tab.market")),
         ] {
             let mut tab = Tab::new(kind);
             let text = viewer.title(&mut tab).text().to_string();

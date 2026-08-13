@@ -55,30 +55,33 @@ impl<T> StockProjection<T> {
 }
 
 /// Normalize a free-text search query (D11): lowercase, strip a `sh.`/`sz.`/
-/// `bj.` dot prefix, then strip an optional `SH`/`SZ`/`BJ` letter prefix to
-/// get the pure code. E.g. `"SZ000001"` → `("sz000001", "000001")`,
-/// `"sz.000001"` → `("000001", "000001")`, `"600519"` → `("600519", "600519")`.
+/// `bj.`/`bk.` dot prefix, then strip an optional `SH`/`SZ`/`BJ`/`BK` letter
+/// prefix to get the pure code. E.g. `"SZ000001"` → `("sz000001", "000001")`,
+/// `"sz.000001"` → `("000001", "000001")`, `"BK0475"` → `("bk0475", "0475")`,
+/// `"600519"` → `("600519", "600519")`.
 fn normalize_query(query: &str) -> (String, String) {
     let lower = query.trim().to_lowercase();
     let q = lower
         .strip_prefix("sh.")
         .or_else(|| lower.strip_prefix("sz."))
         .or_else(|| lower.strip_prefix("bj."))
+        .or_else(|| lower.strip_prefix("bk."))
         .unwrap_or(&lower)
         .to_string();
     let q_code = q
         .strip_prefix("sh")
         .or_else(|| q.strip_prefix("sz"))
         .or_else(|| q.strip_prefix("bj"))
+        .or_else(|| q.strip_prefix("bk"))
         .unwrap_or(&q)
         .to_string();
     (q, q_code)
 }
 
-/// Strip an exchange prefix (`SH`/`SZ`/`BJ`, any case) from a symbol for the
-/// bare-code display/match terms; unprefixed symbols pass through.
+/// Strip an exchange prefix (`SH`/`SZ`/`BJ`/`BK`, any case) from a symbol for
+/// the bare-code display/match terms; unprefixed symbols pass through.
 pub(crate) fn strip_exchange_prefix(symbol: &str) -> &str {
-    for prefix in ["sh", "sz", "bj"] {
+    for prefix in ["sh", "sz", "bj", "bk"] {
         if let Some(head) = symbol.get(..2)
             && head.eq_ignore_ascii_case(prefix)
         {
@@ -541,6 +544,70 @@ mod tests {
     fn format_display_bare_symbol_passes_through() {
         // Unprefixed symbols are not double-stripped.
         assert_eq!(format_display("SZ", "000001", ""), "SZ | 000001");
+    }
+
+    // --- BK board/index namespace (epic #255 C3) ---
+
+    #[test]
+    fn normalize_query_bk_prefix() {
+        // "BK0475" → ("bk0475", "0475"): the pure code feeds the bare-code
+        // match so "0475" finds BK0475.
+        assert_eq!(normalize_query("BK0475"), ("bk0475".into(), "0475".into()));
+        assert_eq!(normalize_query("bk0475"), ("bk0475".into(), "0475".into()));
+        assert_eq!(normalize_query("bk.0475"), ("0475".into(), "0475".into()));
+        // Existing prefixes unchanged (zero regression).
+        assert_eq!(
+            normalize_query("SZ000001"),
+            ("sz000001".into(), "000001".into())
+        );
+        assert_eq!(
+            normalize_query("600519"),
+            ("600519".into(), "600519".into())
+        );
+    }
+
+    #[test]
+    fn strip_exchange_prefix_bk() {
+        assert_eq!(strip_exchange_prefix("BK0475"), "0475");
+        assert_eq!(strip_exchange_prefix("bk0475"), "0475");
+        // Existing prefixes unchanged (zero regression).
+        assert_eq!(strip_exchange_prefix("SH600519"), "600519");
+        assert_eq!(strip_exchange_prefix("000001"), "000001");
+    }
+
+    #[test]
+    fn format_display_bk_prefix_not_duplicated() {
+        // Plan T4 Must NOT do: "BK | BK0475" would duplicate the prefix.
+        assert_eq!(
+            format_display("BK", "BK0475", "半导体"),
+            "BK | 0475 | 半导体"
+        );
+        assert_eq!(format_display("BK", "BK0475", ""), "BK | 0475");
+    }
+
+    #[test]
+    fn filter_stocks_bk_query_variants_match() {
+        // All three spellings surface BK0475 (plan T4 QA: "0475"/"BK0475"/"半导体").
+        let stocks = vec![
+            TestStock::new("BK0475", "半导体", "BK"),
+            TestStock::new("SZ000001", "平安银行", "SZ"),
+        ];
+        for query in ["0475", "BK0475", "bk0475", "半导体"] {
+            let result = filter_stocks(&stocks, query, None, &test_projection());
+            let symbols: Vec<&str> = result.iter().map(|s| s.symbol.as_str()).collect();
+            assert!(
+                symbols.contains(&"BK0475"),
+                "query {query:?} must match BK0475; got {symbols:?}"
+            );
+        }
+        // Empty query returns everything; exchange=Some("BK") narrows.
+        assert_eq!(
+            filter_stocks(&stocks, "", None, &test_projection()).len(),
+            2
+        );
+        let bk_only = filter_stocks(&stocks, "", Some("BK"), &test_projection());
+        assert_eq!(bk_only.len(), 1);
+        assert_eq!(bk_only[0].symbol, "BK0475");
     }
 
     // --- filter_stocks (migrated + exchange filter) ---

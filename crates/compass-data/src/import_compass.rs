@@ -35,6 +35,15 @@ pub enum CompassTable {
     BlockTrade,
     /// Institution surveys (机构调研), incremental merge on (symbol, survey_date, org_name).
     InstitutionSurvey,
+    /// Index/board daily bars (指数/板块日线), incremental merge on (symbol, trade_date).
+    ///
+    /// The exported parquet renames Dolt `trade_date` → `tradedate` and adds
+    /// `adjclose = close` (placeholder) so the GUI's stock-shaped daily
+    /// queries work unchanged on index data (plan T3 column contract).
+    IndexDaily,
+    /// Index/board name table (指数/板块名称), full-overwrite import
+    /// (mirrors Dolt state, DELETE+rewrite semantics like ConceptMember).
+    IndexBasic,
 }
 
 impl std::str::FromStr for CompassTable {
@@ -51,6 +60,8 @@ impl std::str::FromStr for CompassTable {
             "dragon_list" => Ok(CompassTable::DragonList),
             "block_trade" => Ok(CompassTable::BlockTrade),
             "institution_survey" => Ok(CompassTable::InstitutionSurvey),
+            "index_daily" => Ok(CompassTable::IndexDaily),
+            "index_basic" => Ok(CompassTable::IndexBasic),
             _ => Err(format!("unknown table: {s}")),
         }
     }
@@ -64,6 +75,15 @@ pub fn run(
     overwrite: bool,
     since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Validate `--since` up front (B2, ref #181): the value is interpolated
+    // raw into the WHERE clause, so anything else — quote chars, SQL comment
+    // markers, short/non-digit input — is an injection vector. Contract:
+    // exactly `YYYY-MM-DD` (matching every existing caller and test).
+    if let Some(s) = since
+        && !s.is_empty()
+    {
+        validate_since_arg("--since", s)?;
+    }
     match table {
         CompassTable::StockBasic => import_stock_basic(&dolt_dir, &output),
         CompassTable::FinIndicators => import_fin_indicators(&dolt_dir, &output, overwrite, since),
@@ -84,6 +104,8 @@ pub fn run(
                     date_col: "trade_date",
                     partition_cols: "symbol, trade_date",
                     prefer_new: true,
+                    dolt_order_cols: None,
+                    select_cols: None,
                 },
                 &dolt_dir,
                 &output,
@@ -100,6 +122,8 @@ pub fn run(
                     date_col: "trade_date",
                     partition_cols: "symbol, trade_date, seat_type",
                     prefer_new: true,
+                    dolt_order_cols: None,
+                    select_cols: None,
                 },
                 &dolt_dir,
                 &output,
@@ -116,6 +140,8 @@ pub fn run(
                     date_col: "trade_date",
                     partition_cols: "symbol, trade_date, price",
                     prefer_new: true,
+                    dolt_order_cols: None,
+                    select_cols: None,
                 },
                 &dolt_dir,
                 &output,
@@ -132,6 +158,8 @@ pub fn run(
                     date_col: "survey_date",
                     partition_cols: "symbol, survey_date, org_name",
                     prefer_new: true,
+                    dolt_order_cols: None,
+                    select_cols: None,
                 },
                 &dolt_dir,
                 &output,
@@ -141,15 +169,62 @@ pub fn run(
             warn_if_stale(&dolt_dir, "institution_survey", MARKET_FRESHNESS_DAYS);
             Ok(())
         }
+        CompassTable::IndexDaily => {
+            import_append_table(
+                AppendTableSpec {
+                    table_name: "index_daily",
+                    date_col: "trade_date",
+                    // Parquet-side partition columns: the export renames Dolt
+                    // `trade_date` → `tradedate`, so the merge dedups on the
+                    // parquet column name (plan T3/C4 contract).
+                    partition_cols: "symbol, tradedate",
+                    prefer_new: true,
+                    dolt_order_cols: Some("symbol, trade_date"),
+                    select_cols: Some(
+                        "symbol, index_type, trade_date AS tradedate, open, high, low, close, \
+                         volume, amount, close AS adjclose",
+                    ),
+                },
+                &dolt_dir,
+                &output,
+                overwrite,
+                since,
+            )?;
+            warn_if_stale(&dolt_dir, "index_daily", MARKET_FRESHNESS_DAYS);
+            Ok(())
+        }
+        CompassTable::IndexBasic => {
+            import_index_basic(&dolt_dir, &output)?;
+            warn_if_stale(&dolt_dir, "index_basic", MARKET_FRESHNESS_DAYS);
+            Ok(())
+        }
     }
 }
 
+/// Validate a `--since` CLI value: must be exactly `YYYY-MM-DD` (the
+/// import-compass contract, distinct from import_dolt's YYYYMMDD). The value
+/// is interpolated raw into the WHERE clause (B2, ref #181 — same hardening
+/// as `import_dolt::validate_date_arg`).
+fn validate_since_arg(flag: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = value.as_bytes();
+    let valid = bytes.len() == 10
+        && bytes[0..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit);
+    if !valid {
+        return Err(format!("{flag} must be YYYY-MM-DD (10 chars), got '{value}'").into());
+    }
+    Ok(())
+}
+
 /// Warn when the source data is stale (issue #136, Q5: warn-only).
-///
 /// Thresholds: fin_* tables 120 days (quarterly reports), market tables
-/// (main_flow/dragon_list/block_trade/institution_survey/concept_member)
-/// 7 days. `stock_basic` is skipped: its data_updates row has a NULL
-/// last_report_date (collectors write only 4 columns, main.py:79-85).
+/// (main_flow/dragon_list/block_trade/institution_survey/concept_member/
+/// index_daily/index_basic) 7 days. `stock_basic` is skipped: its
+/// data_updates row has a NULL last_report_date (collectors write only
+/// 4 columns, main.py:79-85).
 fn warn_if_stale(dolt_dir: &Path, table: &str, threshold_days: i64) {
     let Ok(Some(last)) = crate::validate::data_updates_last_report_date(dolt_dir, table) else {
         return; // no data_updates row / NULL / missing table -> nothing to compare
@@ -316,6 +391,8 @@ fn import_financial_table(
             date_col: "report_date",
             partition_cols: "symbol, report_date",
             prefer_new: false,
+            dolt_order_cols: None,
+            select_cols: None,
         },
         dolt_dir,
         output,
@@ -333,8 +410,19 @@ struct AppendTableSpec<'a> {
     /// Column used for the `--since` filter.
     date_col: &'a str,
     /// Primary-key columns, used to dedupe old parquet rows against new Dolt
-    /// rows on the same key (comma-separated, also the output sort order).
+    /// rows on the same key (comma-separated, also the merge sort order).
+    ///
+    /// These are the **parquet-side** column names — use
+    /// [`AppendTableSpec::dolt_order_cols`] when the export renames Dolt
+    /// columns (e.g. index_daily `trade_date` → `tradedate`).
     partition_cols: &'a str,
+    /// Dolt-side ORDER BY columns for the source query (defaults to
+    /// `partition_cols` when the Dolt and parquet column names agree).
+    dolt_order_cols: Option<&'a str>,
+    /// SELECT list replacing `*` (defaults to `*`), for exports that add
+    /// renamed or derived columns (e.g. `trade_date AS tradedate`,
+    /// `close AS adjclose`).
+    select_cols: Option<&'a str>,
     /// Which version wins when both sides hold the same key: SEPA capital
     /// tables are DELETE+rewritten by collectors each run, so the Dolt state
     /// is newer and must win (`true`); financial rows never change after
@@ -358,6 +446,8 @@ fn import_append_table<'a>(
         table_name,
         date_col,
         partition_cols,
+        dolt_order_cols,
+        select_cols,
         prefer_new,
     } = spec;
     let parquet_name = format!("{table_name}.parquet");
@@ -367,7 +457,10 @@ fn import_append_table<'a>(
         Some(s) if !s.is_empty() => format!(" WHERE {date_col} >= '{s}'"),
         _ => String::new(),
     };
-    let query = format!("SELECT * FROM {table_name}{date_filter} ORDER BY {partition_cols}");
+    let select_cols = select_cols.unwrap_or("*");
+    let order_cols = dolt_order_cols.unwrap_or(partition_cols);
+    let query =
+        format!("SELECT {select_cols} FROM {table_name}{date_filter} ORDER BY {order_cols}");
 
     info!("Exporting {table_name}...");
     let new_data = run_dolt_sql_parquet(dolt_dir, &query)?;
@@ -456,6 +549,28 @@ fn import_concept_member(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn s
     crate::validate::verify_row_count(src_count, parquet_count, "concept_member")?;
     info!("  → {}", path.display());
     warn_if_stale(dolt_dir, "concept_member", MARKET_FRESHNESS_DAYS);
+    Ok(())
+}
+
+/// Import index_basic as a full overwrite.
+///
+/// Like `concept_member`, `index_basic` is a version-tracked name table
+/// (collectors rewrite the whole Dolt table on each full run), so the export
+/// must always mirror the current Dolt state — boards/indices deleted
+/// upstream must disappear from the parquet. No incremental merge, regardless
+/// of the `--overwrite` / `--since` flags.
+fn import_index_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Exporting index_basic...");
+    let data = run_dolt_sql_parquet(
+        dolt_dir,
+        "SELECT symbol, name, index_type FROM index_basic ORDER BY symbol",
+    )?;
+    let path = output.join("index_basic.parquet");
+    std::fs::write(&path, &data)?;
+    let src_count = crate::validate::dolt_count(dolt_dir, "index_basic", "")?;
+    let parquet_count = crate::validate::parquet_row_count(&path)?;
+    crate::validate::verify_row_count(src_count, parquet_count, "index_basic")?;
+    info!("  → {}", path.display());
     Ok(())
 }
 #[cfg(test)]
@@ -553,6 +668,32 @@ mod tests {
             "dolt init failed: {}",
             String::from_utf8_lossy(&init.stderr)
         );
+    }
+
+    #[test]
+    fn validate_since_arg_accepts_iso_date() {
+        assert!(validate_since_arg("--since", "2025-01-01").is_ok());
+        assert!(validate_since_arg("--since", "1990-12-19").is_ok());
+    }
+
+    #[test]
+    fn validate_since_arg_rejects_injection_and_malformed() {
+        // B2 (ref #181): the value is interpolated raw into SQL — quote
+        // chars, comment markers and wrong lengths must all be rejected.
+        for bad in [
+            "2025-01-01' OR '1'='1",
+            "2025-01-01'; DROP TABLE index_daily; --",
+            "20250101",    // import_dolt's YYYYMMDD contract does not apply here
+            "2025-1-01",   // non-padded month
+            "2025-01-01x", // trailing garbage
+            "not-a-date",
+            "",
+        ] {
+            assert!(
+                validate_since_arg("--since", bad).is_err(),
+                "must reject {bad:?}"
+            );
+        }
     }
 
     #[test]
@@ -720,6 +861,14 @@ mod tests {
         assert!(matches!(
             "institution_survey".parse::<CompassTable>(),
             Ok(CompassTable::InstitutionSurvey)
+        ));
+        assert!(matches!(
+            "index_daily".parse::<CompassTable>(),
+            Ok(CompassTable::IndexDaily)
+        ));
+        assert!(matches!(
+            "index_basic".parse::<CompassTable>(),
+            Ok(CompassTable::IndexBasic)
         ));
     }
 

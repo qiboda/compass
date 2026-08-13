@@ -15,8 +15,8 @@ use egui_charts::model::Bar;
 use crate::data::provider::{DataError, DataProvider};
 use crate::indicators::{RawBar, adjust_ohlc};
 use crate::model::{
-    BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow,
-    InstitutionSurveyRow, StockBasic, SymbolInfo,
+    BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow, IndexBasic,
+    IndexDailyRow, InstitutionSurveyRow, StockBasic, SymbolInfo,
 };
 
 /// One row from the daily parquet query: (date_str, open, high, low, close,
@@ -29,13 +29,15 @@ type DailyRow = (String, f64, f64, f64, f64, f64, Option<f64>);
 /// With the single-file format, symbols are bound as DuckDB parameters (`?`),
 /// not inserted into SQL strings. This function provides defense-in-depth:
 /// only the canonical exchange-prefixed form (`SH`/`SZ`/`BJ` + 6 digits, e.g.
-/// `SZ000001`) is accepted (D9). Bare codes, dot forms (`sh.000001`) and any
-/// other alphanumeric shapes are rejected.
+/// `SZ000001`, or `BK` + 4 digits for board/index codes, e.g. `BK0475`) is
+/// accepted (D9; BK namespace epic #255). Bare codes, dot forms
+/// (`sh.000001`) and any other alphanumeric shapes are rejected.
 pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
     let bytes = symbol.as_bytes();
-    let valid = bytes.len() == 8
+    let valid = (bytes.len() == 8
         && matches!(&bytes[..2], b"SH" | b"SZ" | b"BJ")
-        && bytes[2..].iter().all(u8::is_ascii_digit);
+        && bytes[2..].iter().all(u8::is_ascii_digit))
+        || (bytes.len() == 6 && &bytes[..2] == b"BK" && bytes[2..].iter().all(u8::is_ascii_digit));
     if !valid {
         return Err(DataError::NoData {
             symbol: symbol.to_string(),
@@ -430,6 +432,98 @@ impl ParquetReader {
                     delist_date: row
                         .get::<_, Option<String>>("delist_date")?
                         .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                })
+            })
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+
+        Ok(rows)
+    }
+
+    /// Load all rows from `index_basic.parquet` (epic #255).
+    ///
+    /// Returns the full index/board name table (symbol, name, index_type)
+    /// for the GUI toolbar picker and the market tab. If
+    /// `index_basic.parquet` doesn't exist, returns an empty vec — the GUI
+    /// degrades gracefully to the stock-only list.
+    pub fn load_all_index_basics(&self) -> Result<Vec<IndexBasic>, DataError> {
+        let path = self.parquet_dir.join("index_basic.parquet");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let path_str = path.to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT symbol, name, index_type FROM read_parquet('{escaped}') ORDER BY symbol"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<IndexBasic> = stmt
+            .query_map([], |row| {
+                Ok(IndexBasic {
+                    symbol: row.get("symbol")?,
+                    name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                    index_type: row
+                        .get::<_, Option<String>>("index_type")?
+                        .unwrap_or_default(),
+                })
+            })
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+
+        Ok(rows)
+    }
+
+    /// Load the last two trading days of every symbol from
+    /// `index_daily.parquet` (epic #255 C4).
+    ///
+    /// The window function `ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY
+    /// tradedate DESC) <= 2` keeps exactly two rows per index/board — enough
+    /// for the backend to compute the latest point value and the day-over-day
+    /// change in one pass. Rows come back ordered by `(symbol, tradedate
+    /// ASC)`. If `index_daily.parquet` doesn't exist, returns an empty vec.
+    pub fn load_index_daily_rows(&self) -> Result<Vec<IndexDailyRow>, DataError> {
+        let path = self.parquet_dir.join("index_daily.parquet");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let path_str = path.to_string_lossy().to_string();
+        let escaped = escape_sql_path(&path_str);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+
+        let sql = format!(
+            "SELECT symbol, index_type, CAST(tradedate AS VARCHAR) AS tradedate, \
+                    close, volume, amount
+             FROM (
+                 SELECT symbol, index_type, tradedate, close, volume, amount,
+                        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY tradedate DESC) AS rn
+                 FROM read_parquet('{escaped}')
+             )
+             WHERE rn <= 2
+             ORDER BY symbol, tradedate ASC"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<IndexDailyRow> = stmt
+            .query_map([], |row| {
+                let date_str: String = row.get("tradedate")?;
+                Ok(IndexDailyRow {
+                    symbol: row.get("symbol")?,
+                    index_type: row.get("index_type")?,
+                    trade_date: date_str_to_utc(&date_str)
+                        .map(|dt| dt.date_naive())
+                        .unwrap_or(chrono::NaiveDate::MIN),
+                    close: row.get("close")?,
+                    volume: row.get("volume")?,
+                    amount: row.get("amount")?,
                 })
             })
             .map_err(DataError::Database)?
@@ -1394,6 +1488,38 @@ mod tests {
     fn validate_symbol_rejects_slashes() {
         // Slashes are not alphanumeric, so they are rejected
         assert!(validate_symbol("../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn validate_symbol_accepts_bk_board_codes() {
+        // Board/index namespace (epic #255 C3): BK + exactly 4 ASCII digits.
+        validate_symbol("BK0475").expect("BK0475 should be valid");
+        validate_symbol("BK0000").expect("BK0000 should be valid");
+        validate_symbol("BK9999").expect("BK9999 should be valid");
+        // SH/SZ/BJ 6-digit codes keep working (zero regression).
+        validate_symbol("SZ000001").expect("SZ000001 should be valid");
+        validate_symbol("SH600519").expect("SH600519 should be valid");
+        validate_symbol("BJ830799").expect("BJ830799 should be valid");
+    }
+
+    #[test]
+    fn validate_symbol_rejects_malformed_bk_codes() {
+        // Wrong length (3/5 digits), non-digit tails and wrong case rejected.
+        assert!(validate_symbol("BK047").is_err(), "BK + 3 digits rejected");
+        assert!(
+            validate_symbol("BK04755").is_err(),
+            "BK + 5 digits rejected"
+        );
+        assert!(validate_symbol("BKAB12").is_err(), "BK + letters rejected");
+        assert!(
+            validate_symbol("bk0475").is_err(),
+            "lowercase prefix rejected"
+        );
+        assert!(validate_symbol("BK0475'").is_err(), "quote chars rejected");
+        assert!(
+            validate_symbol("BK0475;DROP").is_err(),
+            "stacked SQL rejected"
+        );
     }
 
     #[test]

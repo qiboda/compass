@@ -1,6 +1,7 @@
 pub mod chart;
 pub mod indicators;
 pub mod logger;
+pub mod market;
 pub mod screener;
 pub mod screener_builder;
 pub mod sepa;

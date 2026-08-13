@@ -12,6 +12,7 @@ tab:
   logger: 日志
   screener: 选股器
   sepa: 东方SEPA
+tab.market: 大盘
 
 toolbar:
   fetch: 获取数据
@@ -54,6 +55,8 @@ logger:
   log_screener_completed: "选股完成: %{count} 条匹配"
   log_sepa_failed: "SEPA 计算失败: %{e}"
   log_sepa_completed: "SEPA 计算完成: %{count} 条排名"
+  log_index_failed: "指数快照失败: %{e}"
+  log_index_completed: "指数快照完成: %{count} 个标的"
 
 modal:
   startup:
@@ -75,6 +78,7 @@ toast:
   log_exported: "日志已导出: %{path}"
   log_export_failed: "日志导出失败: %{error}"
   sepa_updated: "SEPA 评分已更新 · %{count} 只"
+  index_updated: "指数数据已更新 · %{count} 个"
 
 error:
   duckdb_open: "打开 DuckDB 失败: %{e}"
@@ -82,6 +86,7 @@ error:
   no_data: "没有 %{symbol} 的数据"
   screener_run: "选股运行失败: %{e}"
   sepa_run: "SEPA 计算失败: %{e}"
+  index_run: "指数快照运行失败: %{e}"
 
 screener:
   filter: 筛选
@@ -199,6 +204,25 @@ sepa:
     news_default: v1 默认 10/20
     big_capital: "主力%{main}+龙虎%{dragon}+调研%{survey}+大宗%{block}"
     thermometer: "温度计 %{score}"
+
+index:
+  card_title: 核心指数
+  count: "共 %{count} 个 · %{date}"
+  no_data: 暂无快照数据
+  computing: 加载中…
+  refresh: 刷新
+  empty_title: 暂无指数数据
+  empty_desc: 请先导入 index_daily 数据，再点击刷新
+  segment:
+    industry: 行业板块
+    concept: 概念板块
+    official: 官方指数
+  table:
+    name: 名称
+    code: 代码
+    latest: 最新
+    change: 涨跌幅
+    amount: 成交额(亿)
 
 widgets:
   multi_select:

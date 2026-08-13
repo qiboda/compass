@@ -1,4 +1,4 @@
-use compass_types::{ScreenerRow, SepaData};
+use compass_types::{IndexSnapshot, ScreenerRow, SepaData};
 use egui_charts::model::Bar;
 use egui_lens::ReactiveEventLoggerState;
 use egui_mobius_reactive::Dynamic;
@@ -36,6 +36,12 @@ pub struct SharedState {
     pub sepa_loading: Dynamic<bool>,
     /// Last SEPA error message, if any.
     pub sepa_error: Dynamic<Option<String>>,
+    /// Latest index/board market snapshot (epic #255 C4) — mirrors `sepa_data`.
+    pub index_snapshot: Dynamic<Option<IndexSnapshot>>,
+    /// `true` while an index snapshot run is in flight.
+    pub index_snapshot_loading: Dynamic<bool>,
+    /// Last index snapshot error message, if any.
+    pub index_snapshot_error: Dynamic<Option<String>>,
     /// Watchlist (自选股) — exchange-prefixed symbols in display order.
     pub watchlist: Dynamic<Vec<String>>,
 }
@@ -60,6 +66,9 @@ impl SharedState {
             sepa_data: Dynamic::new(None),
             sepa_loading: Dynamic::new(false),
             sepa_error: Dynamic::new(None),
+            index_snapshot: Dynamic::new(None),
+            index_snapshot_loading: Dynamic::new(false),
+            index_snapshot_error: Dynamic::new(None),
             watchlist: Dynamic::new(Vec::new()),
         }
     }

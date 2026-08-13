@@ -354,6 +354,37 @@ pub struct SepaData {
     pub date: String,
 }
 
+/// One index/board row of the market snapshot (epic #255 C4).
+///
+/// The market tab renders these in its ranking table (板块轮动) and the
+/// core-index card consumes the `official` subset. `index_type` is one of
+/// `"official"` / `"concept"` / `"industry"` (index_daily.parquet column).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexRow {
+    /// Exchange-prefixed symbol (e.g. `SH000001`, `BK0475`).
+    pub symbol: String,
+    /// Chinese display name (from index_basic.parquet).
+    pub name: String,
+    /// `"official"` | `"concept"` | `"industry"`.
+    pub index_type: String,
+    /// Latest close (点位).
+    pub latest: f64,
+    /// Day-over-day change percent vs the previous close (A-share red-up).
+    pub change_pct: f64,
+    /// Latest turnover in yuan (成交额).
+    pub amount: f64,
+}
+
+/// Full market snapshot payload: every index/board symbol with its latest
+/// quote, computed by the fourth `AsyncDispatcher` channel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexSnapshot {
+    /// All symbols (one row each), unsorted — the GUI filters/sorts locally.
+    pub rows: Vec<IndexRow>,
+    /// Snapshot date (latest tradedate, e.g. "2026-08-13"); empty when no data.
+    pub date: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

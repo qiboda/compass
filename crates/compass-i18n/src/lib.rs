@@ -30,6 +30,7 @@ pub const KEY_TAB_CHART: &str = "tab.chart";
 pub const KEY_TAB_LOGGER: &str = "tab.logger";
 pub const KEY_TAB_SCREENER: &str = "tab.screener";
 pub const KEY_TAB_SEPA: &str = "tab.sepa";
+pub const KEY_TAB_MARKET: &str = "tab.market";
 pub const KEY_TOOLBAR_FETCH: &str = "toolbar.fetch";
 pub const KEY_TOOLBAR_LOADING: &str = "toolbar.loading";
 pub const KEY_TOOLBAR_ADJUST: &str = "toolbar.adjust";
@@ -60,6 +61,8 @@ pub const KEY_LOGGER_LOG_SCREENER_FAILED: &str = "logger.log_screener_failed";
 pub const KEY_LOGGER_LOG_SCREENER_COMPLETED: &str = "logger.log_screener_completed";
 pub const KEY_LOGGER_LOG_SEPA_FAILED: &str = "logger.log_sepa_failed";
 pub const KEY_LOGGER_LOG_SEPA_COMPLETED: &str = "logger.log_sepa_completed";
+pub const KEY_LOGGER_LOG_INDEX_FAILED: &str = "logger.log_index_failed";
+pub const KEY_LOGGER_LOG_INDEX_COMPLETED: &str = "logger.log_index_completed";
 pub const KEY_MODAL_STARTUP_TITLE: &str = "modal.startup.title";
 pub const KEY_MODAL_STARTUP_BODY: &str = "modal.startup.body";
 pub const KEY_MODAL_STARTUP_CONFIRM: &str = "modal.startup.confirm";
@@ -75,11 +78,13 @@ pub const KEY_TOAST_WATCHLIST_REMOVED: &str = "toast.watchlist_removed";
 pub const KEY_TOAST_LOG_EXPORTED: &str = "toast.log_exported";
 pub const KEY_TOAST_LOG_EXPORT_FAILED: &str = "toast.log_export_failed";
 pub const KEY_TOAST_SEPA_UPDATED: &str = "toast.sepa_updated";
+pub const KEY_TOAST_INDEX_UPDATED: &str = "toast.index_updated";
 pub const KEY_ERROR_DUCKDB_OPEN: &str = "error.duckdb_open";
 pub const KEY_ERROR_PARQUET_OPEN: &str = "error.parquet_open";
 pub const KEY_ERROR_NO_DATA: &str = "error.no_data";
 pub const KEY_ERROR_SCREENER_RUN: &str = "error.screener_run";
 pub const KEY_ERROR_SEPA_RUN: &str = "error.sepa_run";
+pub const KEY_ERROR_INDEX_RUN: &str = "error.index_run";
 pub const KEY_SCREENER_FILTER: &str = "screener.filter";
 pub const KEY_SCREENER_FILTERING: &str = "screener.filtering";
 pub const KEY_SCREENER_CARD_BASIC: &str = "screener.card_basic";
@@ -165,6 +170,21 @@ pub const KEY_SEPA_NOTE_NEWS_V1: &str = "sepa.note.news_v1";
 pub const KEY_SEPA_NOTE_NEWS_DEFAULT: &str = "sepa.note.news_default";
 pub const KEY_SEPA_NOTE_BIG_CAPITAL: &str = "sepa.note.big_capital";
 pub const KEY_SEPA_NOTE_THERMOMETER: &str = "sepa.note.thermometer";
+pub const KEY_INDEX_CARD_TITLE: &str = "index.card_title";
+pub const KEY_INDEX_COUNT: &str = "index.count";
+pub const KEY_INDEX_NO_DATA: &str = "index.no_data";
+pub const KEY_INDEX_COMPUTING: &str = "index.computing";
+pub const KEY_INDEX_REFRESH: &str = "index.refresh";
+pub const KEY_INDEX_EMPTY_TITLE: &str = "index.empty_title";
+pub const KEY_INDEX_EMPTY_DESC: &str = "index.empty_desc";
+pub const KEY_INDEX_SEGMENT_INDUSTRY: &str = "index.segment.industry";
+pub const KEY_INDEX_SEGMENT_CONCEPT: &str = "index.segment.concept";
+pub const KEY_INDEX_SEGMENT_OFFICIAL: &str = "index.segment.official";
+pub const KEY_INDEX_TABLE_NAME: &str = "index.table.name";
+pub const KEY_INDEX_TABLE_CODE: &str = "index.table.code";
+pub const KEY_INDEX_TABLE_LATEST: &str = "index.table.latest";
+pub const KEY_INDEX_TABLE_CHANGE: &str = "index.table.change";
+pub const KEY_INDEX_TABLE_AMOUNT: &str = "index.table.amount";
 pub const KEY_WIDGETS_SEARCHABLE_DROPDOWN_NO_MATCHES: &str =
     "widgets.searchable_dropdown.no_matches";
 pub const KEY_WIDGETS_DATA_TABLE_COUNT: &str = "widgets.data_table.count";
@@ -179,6 +199,7 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_TAB_LOGGER,
     KEY_TAB_SCREENER,
     KEY_TAB_SEPA,
+    KEY_TAB_MARKET,
     KEY_TOOLBAR_FETCH,
     KEY_TOOLBAR_LOADING,
     KEY_TOOLBAR_ADJUST,
@@ -209,6 +230,8 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_LOGGER_LOG_SCREENER_COMPLETED,
     KEY_LOGGER_LOG_SEPA_FAILED,
     KEY_LOGGER_LOG_SEPA_COMPLETED,
+    KEY_LOGGER_LOG_INDEX_FAILED,
+    KEY_LOGGER_LOG_INDEX_COMPLETED,
     KEY_MODAL_STARTUP_TITLE,
     KEY_MODAL_STARTUP_BODY,
     KEY_MODAL_STARTUP_CONFIRM,
@@ -224,11 +247,13 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_TOAST_LOG_EXPORTED,
     KEY_TOAST_LOG_EXPORT_FAILED,
     KEY_TOAST_SEPA_UPDATED,
+    KEY_TOAST_INDEX_UPDATED,
     KEY_ERROR_DUCKDB_OPEN,
     KEY_ERROR_PARQUET_OPEN,
     KEY_ERROR_NO_DATA,
     KEY_ERROR_SCREENER_RUN,
     KEY_ERROR_SEPA_RUN,
+    KEY_ERROR_INDEX_RUN,
     KEY_SCREENER_FILTER,
     KEY_SCREENER_FILTERING,
     KEY_SCREENER_CARD_BASIC,
@@ -314,6 +339,21 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_SEPA_NOTE_NEWS_DEFAULT,
     KEY_SEPA_NOTE_BIG_CAPITAL,
     KEY_SEPA_NOTE_THERMOMETER,
+    KEY_INDEX_CARD_TITLE,
+    KEY_INDEX_COUNT,
+    KEY_INDEX_NO_DATA,
+    KEY_INDEX_COMPUTING,
+    KEY_INDEX_REFRESH,
+    KEY_INDEX_EMPTY_TITLE,
+    KEY_INDEX_EMPTY_DESC,
+    KEY_INDEX_SEGMENT_INDUSTRY,
+    KEY_INDEX_SEGMENT_CONCEPT,
+    KEY_INDEX_SEGMENT_OFFICIAL,
+    KEY_INDEX_TABLE_NAME,
+    KEY_INDEX_TABLE_CODE,
+    KEY_INDEX_TABLE_LATEST,
+    KEY_INDEX_TABLE_CHANGE,
+    KEY_INDEX_TABLE_AMOUNT,
     KEY_WIDGETS_SEARCHABLE_DROPDOWN_NO_MATCHES,
     KEY_WIDGETS_DATA_TABLE_COUNT,
     KEY_WIDGETS_DATA_TABLE_EMPTY,

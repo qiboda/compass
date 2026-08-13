@@ -427,8 +427,9 @@ class TestDoSync:
 
         main_mod.do_sync()
 
-        # stock_basic is sync (official source); 9 remaining tables via asyncio.run
-        assert mock_run.call_count == 9
+        # stock_basic is sync (official source); 10 tables via asyncio.run
+        # (9 legacy + index_daily step 11, epic #255)
+        assert mock_run.call_count == 10
         # data_updates loop for the 5 legacy tables (new tables upsert inside import_to_dolt)
         assert mock_dolt.call_count >= 5
 
@@ -472,7 +473,8 @@ class TestDoSync:
 
         main_mod.do_sync(restart=True)
 
-        assert mock_run.call_count == 9
+        # 10 asyncio steps: 9 legacy + index_daily step 11 (epic #255)
+        assert mock_run.call_count == 10
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -311,7 +311,7 @@ def dispatch_fetch(
     Args:
         target: One of stock_basic, fin_indicators, balance_sheet, income,
             cash_flow, main_flow, dragon, block_trade, institution_survey,
-            concept_member.
+            concept_member, index_daily.
         years: Years to fetch (financial tables only; defaults to sub-module default).
     """
     if target == "stock_basic":
@@ -358,6 +358,10 @@ def dispatch_fetch(
         import fetch_main_flow
         asyncio.run(fetch_main_flow.run())
 
+    elif target == "index_daily":
+        import fetch_index_daily
+        asyncio.run(fetch_index_daily.run())
+
 
 def dispatch_import(target: str) -> None:
     """Import CSV data into Dolt for the given target table.
@@ -365,7 +369,7 @@ def dispatch_import(target: str) -> None:
     Args:
         target: One of stock_basic, fin_indicators, balance_sheet, income,
             cash_flow, main_flow, dragon, block_trade, institution_survey,
-            concept_member.
+            concept_member, index_daily.
     """
     if target == "stock_basic":
         _import_stock_basic()
@@ -395,6 +399,10 @@ def dispatch_import(target: str) -> None:
     elif target == "main_flow":
         import fetch_main_flow
         fetch_main_flow.import_to_dolt()
+
+    elif target == "index_daily":
+        import fetch_index_daily
+        fetch_index_daily.import_to_dolt()
 
 
 def do_sync(restart: bool = False) -> None:
@@ -469,11 +477,18 @@ def do_sync(restart: bool = False) -> None:
     asyncio.run(fetch_main_flow.run())
     fetch_main_flow.import_to_dolt()
 
+    # 11. index_daily (指数日线: 官方/概念/行业)
+    print("\n[sync] Fetching index_daily...", file=sys.stderr)
+    import fetch_index_daily
+    asyncio.run(fetch_index_daily.run())
+    fetch_index_daily.import_to_dolt()
+
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)
     for tbl in [
         "stock_basic", "fin_indicators",
         "fin_balance_sheet", "fin_income", "fin_cash_flow",
+        "index_daily",
     ]:
         dolt_sql(
             f"INSERT INTO data_updates (table_name, last_updated, row_count) "
@@ -493,14 +508,14 @@ def main() -> None:
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
     fetch.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow", "index_daily"],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow"],
+        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow", "index_daily"],
     )
 
     sub.add_parser("sync", help="Fetch all + import all")

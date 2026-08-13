@@ -1,0 +1,69 @@
+task-3-index-data — C2 import-compass IndexDaily/IndexBasic + export 到 DuckDB
+=============================================================================
+
+Status: GREEN (all RED tests + full-suite zero regression + tempdir smoke)
+
+1. Test evidence (cargo test -p compass-data, target dir shared worktree)
+-------------------------------------------------------------------------
+- crates/compass-data/tests/requirement_index_import.rs: 4/4 ok
+    index_daily_incremental_merge_keeps_old_rows ........ ok (600 + 200 -> 800, no loss)
+    index_daily_export_column_contract .................. ok (1200 rows, index_type + adjclose==close)
+    index_basic_full_overwrite_reflects_dolt_state ...... ok (3 -> 2 after DELETE)
+    existing_compass_tables_unaffected .................. ok
+- crates/compass-data/tests/index_import_compass.rs: 8/8 ok
+    compass_table_from_str_index_daily / index_basic .... ok (C2)
+    typo_still_rejected / existing_tables_unaffected .... ok
+    4 x import_dolt BK tests ............................ ok (C3 batch, kept green)
+- full suite: 88 + 71 + 20 + 8 + 4 + 0 = 191 tests, 0 failed, 0 ignored
+    (lib unit 88 incl. 3 new export_index_tables tests + new FromStr variants)
+
+2. Implementation
+-----------------
+- crates/compass-data/src/import_compass.rs
+    - CompassTable::IndexDaily / IndexBasic (+ FromStr "index_daily"/"index_basic")
+    - AppendTableSpec gains dolt_order_cols + select_cols (None for all legacy
+      tables => behavior unchanged); IndexDaily spec:
+        table_name "index_daily", date_col "trade_date",
+        partition_cols "symbol, tradedate" (parquet-side, C4 fallback contract),
+        prefer_new true, dolt_order_cols Some("symbol, trade_date"),
+        select_cols Some("symbol, index_type, trade_date AS tradedate, open, high,
+                          low, close, volume, amount, close AS adjclose")
+    - import_index_basic(): full overwrite mirror (ConceptMember pattern,
+      SELECT symbol, name, index_type ORDER BY symbol + row-count verify)
+    - warn_if_stale for both tables with MARKET_FRESHNESS_DAYS (7)
+- crates/compass-data/src/export.rs
+    - run_export duckdb arm calls export_index_tables(): mirrors
+      index_daily.parquet/index_basic.parquet into DuckDB tables of same name;
+      missing/empty/unreadable parquet skipped (never fails the run);
+      overwrite=true drops table first
+- crates/compass-core/src/data/parquet.rs (one-line compile repair of C4 WIP:
+  .unwrap_or_else(NaiveDate::MIN) -> .unwrap_or(NaiveDate::MIN), semantics
+  identical; without it the whole dependency tree did not compile)
+
+3. Real-data smoke (plan: 提交前真实数据冒烟)
+---------------------------------------------
+Real Dolt /data/compass-data/compass_data has NO index_daily/index_basic
+tables (C1 collector has not been run against it: "table not found").
+Per task instruction, smoke degraded to tempdir Dolt with realistic fake
+data (same SQL shapes the code executes), script /tmp/opencode/index_smoke.py:
+
+  seed: index_daily 112,000 rows (30 official + 50 boards, 2019-12-02..2025-04-11)
+         index_basic 80 rows
+  1. full export      : 112,000 rows; columns exactly
+        [symbol, index_type, tradedate, open, high, low, close, volume,
+         amount, adjclose]; adjclose==close on ALL rows (0 violations);
+        date range 2019-12-02..2025-04-11; per-type concept 25 / industry 25 /
+        official 30
+  2. incremental merge: old=112,000 + since-filtered new=200 -> merged=112,200
+        (ROW_NUMBER PARTITION BY symbol, tradedate, prefer_new; no loss)
+  3. index_basic overwrite: 80 -> 70 rows after DELETE of 10 boards; parquet
+        reflects deletion (full state mirror)
+  4. duckdb export    : index_daily=112,000 / index_basic=70 rows mirrored
+        into export.duckdb via CREATE TABLE AS SELECT (export_index_tables SQL)
+
+4. Deviations
+-------------
+- parquet.rs one-liner: compile repair of C4 work-in-progress (uncommitted)
+  blocking the whole tree; no semantic change. To be folded into C4's commit.
+- Smoke is tempdir-only because real Dolt lacks index tables (C1 not run);
+  genuine end-to-end CLI run on real Dolt pending C1 collector execution.
