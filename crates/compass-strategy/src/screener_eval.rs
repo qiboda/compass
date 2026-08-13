@@ -27,8 +27,8 @@
 //!   bars ("as of" each bar index) and requires `at_least` matches; bars
 //!   whose factor window is insufficient do not count.
 //! - `NDayHigh(n)` is the max adjusted close of the **previous** `n` bars
-//!   (excluding the current bar) — the engine's breakout reference
-//!   (`matches_breakout`, lib.rs:527-535).
+//!   (excluding the current bar) — the engine's breakout reference: a new
+//!   N-day high is `Close > NDayHigh(n)`, requiring `n + 1` bars.
 //!
 //! The evaluator never panics and never returns `NaN`-contaminated results.
 
@@ -102,7 +102,7 @@ fn evaluate_meta(
             let market_cap = match basic.total_share {
                 Some(share) => share * latest.close / 1e8,
                 // Missing total_share: excluded when a bound is active
-                // (mirrors lib.rs:435-444); otherwise treated as 0.0 which
+                // (legacy engine contract); otherwise treated as 0.0 which
                 // passes both None bounds.
                 None => {
                     if min.is_some() || max.is_some() {
@@ -266,11 +266,17 @@ fn factor_at(series: &[&CrossSectionBar], end: usize, factor: SeriesFactor) -> O
             if n == 0 || end < n {
                 return None;
             }
-            let max = series[end - n..end]
+            let window = &series[end - n..end];
+            // Non-finite input anywhere in the window invalidates the max —
+            // same contract as Sma/AvgVolume (no silent NaN skipping).
+            if !window.iter().all(|b| b.adjclose.is_finite()) {
+                return None;
+            }
+            let max = window
                 .iter()
                 .map(|b| b.adjclose)
                 .fold(f64::NEG_INFINITY, f64::max);
-            finite(max)
+            Some(max)
         }
     }
 }

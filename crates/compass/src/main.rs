@@ -4,7 +4,7 @@ use std::time::Duration;
 use egui_citizen::{CitizenId, Dispatcher};
 use egui_dock::{DockArea, DockState};
 use egui_file_dialog::FileDialog;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{debug, info};
 
 use compass_core::data::parquet::ParquetReader;
@@ -253,7 +253,12 @@ struct FullConfig {
 /// Legacy format: the flat 11-key `ScreenerQuery` TOML from pre-Batch-3
 /// builds, still readable for migration. `resolve` prefers the new format
 /// and falls back to compiling the legacy query into a `Filter`.
-#[derive(Serialize, Deserialize, Default)]
+///
+/// Only `Deserialize` is derived: the save path writes the section by hand
+/// as a `toml::Value` table (see `save_screener_config`), and a `Serialize`
+/// derive on the flattened legacy field would emit the 11 default keys
+/// beside `filter` (toml flatten serializes at the wrong level).
+#[derive(Deserialize, Default)]
 struct ScreenerSection {
     /// Filter AST as JSON (new format). `None` = legacy/missing.
     #[serde(default)]
