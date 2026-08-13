@@ -227,6 +227,62 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
   2. **日志导出**：Logger 面板导出按钮 → 保存文件对话框 → 写日志文本 → toast 反馈
   3. **移除自选确认**：Sidebar 行 hover 点 × → Danger 确认框（移除/保留）→ 移除 + 持久化
 
+## 条件构建器（ref #245，Epic #243 Batch 2）
+
+选股器条件区从固定表单（基础/技术面两张卡）升级为 **Metabase 范式条件卡片组**，
+操作 Batch 1 的 `Filter` AST（`compass-types::screener`）而非硬编码表单。
+
+### 数据模型（视图模型 ↔ AST 双向映射）
+
+卡片是 Filter 的**视图模型**（`crates/compass/src/citizens/screener_builder.rs`）——
+UI 状态树持有 AST 的结构等价物，两方向各一个纯函数：
+
+- `filter_to_items(&Filter) -> Vec<CondItem>`：反向识别（渲染/restore）
+- `leaf_to_filter(&CondLeaf) -> Filter` / `group_to_filter(&CondGroup) -> Filter`：正向构建
+
+类型：`CondItem::{Leaf, Group}`（递归）、`CondGroup{operator: And|Or, items}`、
+`CondLeaf{kind: LeafKind, params: LeafParams, negated}`。11 种模板（不含 Count，
+延后批次）：Meta 6（行业/交易所/板块/上市时长/市值/排除退市）+ Ma 三形状 +
+突破新高 + 动量成对 + 放量 + 连续上涨（UPNDAY 风格）。
+
+**round-trip 保证**：多成员/嵌套形状结构等价；裸单节点 leaf 级等价。单成员
+And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nodes.pop()`）。
+无法识别的 AST 形状（如 Batch 4 LLM 产物）→ 只读摘要卡（mono 弱化 JSON + 删除）。
+
+### 布局
+
+- **根组 Card**「筛选条件」：组头行 [Segmented 且(AND)/或(OR) + Badge 条件数 +
+  清空按钮(ERASER)]；Leaf 卡行；组底「添加条件」菜单（Dropdown，哨兵选项 +
+  11 类 +「子分组」，`.selected(0)` 恒重置回哨兵）。
+- **子组**：Frame 轻量容器（`bg_panel_alt` + `border_strong` + `radius.sm`），
+  组头 [Segmented + 删除]；递归渲染任意深度。
+- **Leaf 卡行**：类型 Dropdown（切换重置参数）+ 参数控件（MultiSelect/Dropdown/
+  DragValue/Checkbox）+ 取反(EXCLUDE) + 删除(X)。原子组布局（ref #220）——
+  卡片行水平包裹、组间换行、组内不拆行。
+- **空态**：根组空 → EmptyState「暂无筛选条件」；子组空 → 弱化「空分组」。
+- **MultiSelect 状态归属**：`CondLeaf.params` 为唯一真相；实例 map 按卡片路径
+  缓存（仅 `open`/`filter` 瞬态），删卡/切类型 prune。
+
+### 交互
+
+- **添加**：菜单选类型 → 组尾插入默认参数卡，就地编辑（无确认按钮）。
+- **删除/清空**：无确认（Metabase 惯例，条件可重建）。
+- **取反**：卡头 EXCLUDE 开关 → `Not` 包裹。
+- **AND-OR 切换**：组头 Segmented 仅改组类型，内容不变。
+- **运行**：筛选按钮 `group_to_filter(根组)` → `RunScreenerRequest{filter}`；
+  on_save 复用引擎 `filter_to_query`（改 pub）作 legacy 压缩 oracle——
+  可压缩则写 TOML，不可压缩（Or/Not/UpDays/重复字段）→ unsupported_save 提示。
+  UnsupportedFilter 运行错误 → Display 前缀匹配 → unsupported_run 友好说明
+  （引擎 Batch 3 支持后自然消失）。
+- **id_salt 约定**（ref #220/#222）：全部弹层组件显式 `cond_{路径}_{字段}`。
+
+### 测试锚点
+
+- 纯函数层：round-trip 结构等价（11 类模板 + 折叠 + Not + 未知兜底）。
+- kittest 交互层：添加/删除/AND-OR 切换/清空/嵌套/restore/取反/未知形状；
+  原子组宽度扫描（zh/en 双套）；label 多匹配一律 `query_all_*`（「排除退市」
+  出现两次、「全部」三次）。
+
 ## 设计变更记录
 
 | 日期 | 变更 | 来源归档 | 实现状态 |
@@ -238,6 +294,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.omo/designs/ui-fixes-chinese-date.md` + `.omo/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
 | 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.omo/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
 | 2026-08-10 | GUI 全面中文化 + 多语言 i18n（rust-i18n 键表 + 工具栏语言下拉 + config language 键 + fork 图表日期/tooltip 键化）（ref #222） | `.omo/designs/gui-i18n.md` | 已实现（与代码同步） |
+| 2026-08-13 | 选股器条件构建器（Epic #243 Batch 2）：Metabase 范式条件卡片组（AND/OR 嵌套）操作 Filter AST，替换固定表单（ref #245） | `.omo/designs/llm-screener-ui.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.omo/designs/<feature>.md` 归档文件、实现状态。
@@ -285,4 +342,18 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 | 语言下拉位置（ref #222） | 工具栏 Group D / 状态栏 / 设置页 | 工具栏 Group D（主题旁） | 与主题并列，用户已熟悉「下拉即全局生效」交互；工具栏有空间；选项用母语原生名（中文/English），宽度 76px | 状态栏位偏角落发现性差；无设置页 |
 | 切换后窗口标题（ref #222） | 保持启动标题 / `ViewportCommand::Title` 更新 | `ViewportCommand::Title` 更新（保持英文品牌 "Compass — Stock Chart"） | egui 官方示例同款；标题即 `t!("app.title")` 键，切换重发一次即可 | 保持启动标题则切换后标题与 locale 不一致 |
 | fork 日期格式键化（ref #222） | fork 内嵌格式串写死 / fork 自带 locales 键化 | fork 自带 locales 键化（`chart.date.*` 等键，fork 独立 locales/ 目录） | 锁定决策：fork 用自身 rust-i18n + 自带 locales；`set_locale` 全局同日生效 | fork 写死无法随语言切换 |
+| 条件构建器归属（ref #245） | compass 业务层（screener_builder.rs 新模块）/ compass-ui 新复合组件 | compass 业务层新模块 | 视图模型依赖 `compass-types::Filter`；compass-ui 零业务依赖是硬边界；AST↔卡片映射是 screener 领域逻辑 | 入 compass-ui 违反依赖方向（ui 引 types） |
+| 卡片数据模型（ref #245） | 视图模型双向映射 Filter / 新造独立查询模型 | 视图模型（CondItem/CondGroup/CondLeaf + `filter_to_items`/`leaf_to_filter`/`group_to_filter` 纯函数） | UI 必须操作 AST（epic 锁定）；round-trip 结构等价保证不回归（多成员结构等价 + 裸单节点 leaf 级等价） | 新模型双份真相、与 Batch 4 LLM 路径分叉 |
+| 嵌套组容器（ref #245） | Card 内嵌 Card / Frame 轻量容器 | Frame 轻量容器（`bg_panel_alt` + `border_strong` + `radius.sm`） | ui-widgets.md 反模式：卡片内套卡片叠边框；层级靠边框+底色 | Card-in-Card 视觉脏 |
+| 编辑交互（ref #245，用户确认项 6） | 就地常驻编辑 / Metabase 向导式 | 就地常驻编辑（插入默认卡 + 卡上参数控件） | 零模态状态机、kittest 直接驱动、改动即时写入模型 | 向导式需临时态/弹层，成本高 |
+| 删除/清空确认（ref #245） | 无确认直接删 / 清空走 Modal | 无确认 | Metabase 惯例；条件可轻易重建，非破坏性 | Modal 打断高频编辑流 |
+| 嵌套交互（ref #245） | 添加菜单「子分组」递归 / 拖拽进组 | 添加菜单递归 | 拖拽成本高、非验收项、Metabase 也有菜单式入口 | 拖拽易误操作且测试难 |
+| 未知 AST 形状（ref #245） | 只读摘要卡 / 报错拒绝渲染 | 只读摘要卡（mono 弱化 JSON 摘要 + 删除） | UI 必须能显示任意 Filter（Batch 4 LLM 产物）；健壮性兜底 | 报错拒绝导致 restore/LLM 路径崩溃 |
+| 消息契约（ref #245） | `RunScreenerRequest` 携 Filter / 保留 ScreenerQuery | 携 `Filter` | 后端本就收 `&Filter`（backend.rs）；保留 ScreenerQuery 则 Or/Not/序列卡无法传输 | 保持现状需 UI 侧受限反向转换，丢 AST 表达力 |
+| legacy 保存（ref #245，用户确认项 5） | 复用引擎 `filter_to_query` / 自建私有压缩 | 复用引擎 `filter_to_query`（改 pub）作压缩 oracle | 引擎 accept-grammar 即精确的可压缩判定（含重复字段检测）；不自建第三份语法拷贝 | 自建压缩与引擎语法漂移、重复字段静默丢数据 |
+| UnsupportedFilter 提示（ref #245） | Display 前缀匹配 / 结构化 error_kind | Display 前缀 `starts_with("unsupported filter shape")` | ScreenerError Display 稳定前缀；零契约改动；匹配变体名 "UnsupportedFilter" 永不命中（大小写/文案不同） | 结构化 error_kind 扩 RunScreenerResponse 契约 |
+| 单成员折叠语义（ref #245 评审） | 构建也折叠为裸节点 / 显示折叠、构建仍 And(vec![x]) | 显示与构建**双向**折叠为裸节点 | 与 `From<ScreenerQuery>` 的 `1 => nodes.pop()` 形状对齐；round-trip 对裸单节点 leaf 级等价成立 | 仅显示折叠使 round-trip 对单节点形状必然失败 |
+| i18n 键（ref #245） | `screener.builder.*` 子命名空间 / 扁平加键 | `screener.builder.*` | 既有模块前缀点分惯例；构建器是 screener 面板子域 | 扁平键混入既有 screener.* 语义不清 |
+| 动画范围（ref #245） | 全部瞬时（组件内建 hover/press）/ 自定义布局动画 | 全部瞬时 | egui 无布局过渡，硬做成本高、kittest 难稳定 | 自定义动画违背克制原则 |
+| 子组 scope 高度（ref #245 测试发现） | `f32::INFINITY` / `available_rect_before_wrap().bottom()` | 有限底部 | INFINITY 使 wrap 垂直居中算 NaN → 组内与组后控件 rect 全毁、点击静默丢弃（生产 + kittest 同受影响） | INFINITY 写法直白但布局不可用 |
 | en locale 测试并发（ref #222） | 并行 / LANG_LOCK 串行 | `LANG_LOCK: Mutex` 串行（ui_fixes_218.rs 定义） | `set_locale` 进程全局，并行测试互相污染 locale 造成 flaky；复用 HOME_LOCK 先例 | 并行省时但不可靠 |
