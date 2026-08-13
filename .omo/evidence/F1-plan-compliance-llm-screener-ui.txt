@@ -1,0 +1,33 @@
+# F-wave evidence — llm-screener-ui (issue #245, Epic #243 Batch 2)
+
+生成日期: 2026-08-13（全部实现 commit 完成后一次性写入，ref #181 教训）
+
+## 实现 commit（6 个，全部含独立成行 ref #245）
+
+| commit | 内容 |
+|---|---|
+| d810404 | feat(screener): condition builder view model + Filter mapping |
+| 6836ada | feat(i18n): screener builder namespace keys |
+| 24f70d3 | feat(screener): condition card group UI + Filter request contract |
+| 1bfbd45 | refactor(screener): legacy save via engine compress + unsupported hints |
+| d5bccd8 | test(screener): builder interaction paths + sub-group layout fix |
+| 183f001 | docs: screener builder design + decision records |
+
+commit 数: 6（`git log origin/master..HEAD --format=%B | grep -c "ref #245"` = 6，独立成行 `^ref #245$` = 6）
+
+## 门禁 3.5 / 4 委派记录
+
+- 门禁 3.5 adversarial（skwy-adversarial-test）：37 测试落盘
+  `crates/compass/tests/adversarial_245_screener_builder.rs`，RED（34 fail / 3 pass）
+  → Todo 1 实现后 GREEN（37 pass）
+- 门禁 4 requirement（skwy-requirement-test）：37 测试落盘
+  `crates/compass/src/citizens/screener_builder.rs` mod tests，RED（36 fail / 1 pass）
+  → Todo 1 实现后 GREEN（37 pass）
+- Todo 5 交互路径（skwy-requirement-test agent）：8 测试落盘 screener.rs tests，
+  实现后 GREEN（28/28 screener tests）
+
+## F1 验收
+
+- [x] 6 个 todo 的 evidence 本文件汇总
+- [x] 每个 commit 含独立成行 `ref #245`
+- [x] 门禁 3.5/4 两批 RED 测试委派记录存在（见上，RED→GREEN 已闭环）

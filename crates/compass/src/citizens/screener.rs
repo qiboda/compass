@@ -2000,7 +2000,7 @@ mod tests {
             ma: Some(MaCondition::BullishAlign),
             ..ScreenerQuery::default()
         };
-        let mut panel = ScreenerPanel::new(
+        let panel = ScreenerPanel::new(
             CitizenId::new("screener"),
             CitizenState::new(),
             Some(&query),
