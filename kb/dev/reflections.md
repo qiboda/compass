@@ -157,33 +157,6 @@
 - **数据操作脚本的工具链摩擦**（ref #186 脚本切分成功先例 → 本次脚本两次返工）：脚本化+校验（行级丢失）是正确方法，但脚本自身需 dry-run；可复用的数据操作（归档）应入库而非 /tmp 一次性
 - **一次性临时工具导致返工**（ref #205 自包含测试不覆盖顶层 → 本次 /tmp 归档脚本）：工具质量与流程同等重要——数据操作的"工具验证"应与"数据校验"并列
 
-## 2026-08-10 — ref #222 gui-i18n 中断恢复 + F2 review 修复 + push 前收尾
-
-**What was done**: 恢复中断的 gui-i18n rebase（abort 过期 rebase 基点 ef0fbc8 → 重做 16 picks 到最新 origin/master），解决 3 处冲突；修复 2 个 rebase 引入的测试回归（语言下拉 harness 尺寸、dropdown hint 测试适配）；执行 plan F2 门禁（/review-work 5 lanes → 2 FAIL），修复 2 个 blocking（factor-note 精度回归、locale 顺序依赖测试）+ 增量重审双 PASS；同步 origin/master 二次推进（#238），push 前就绪核查通过。分支 feat/gui-i18n 21 commits。
-
-**User corrections**: 无纠正型消息 — 本 session 仅"继续，之前系统重启了，被打断了"（中断恢复指令）与"push并合并pr。关闭worktree。"（明确 push 指示）。全程无方向纠偏。
-
-**What went wrong**:
-1. **git rebase --continue 挂起 120s 超时**（GIT_EDITOR=nvim 环境，git 打开编辑器等待输入）——toolchain.md L150 已有排查卡（原 session 沉淀），但首次遇到时先按"hook 慢/gh 慢"猜了 2 轮（查 hooks、查 pre-commit）才想起查工具链卡。教训：git 命令挂起/超时第一动作是查 toolchain.md 已知坑表，不是猜根因。
-2. **F2 review 暴露 2 个实现期缺陷**：① factor-note 精度回归——`factor_note_text` 裸 f64 插值丢 `{:.1}`/`{:.0}`/`{:+.0}`，实现期测试全用干净值（12.3/75）掩盖；② 9 个 zh 断言测试依赖全局 locale 污染（隔离必失败），违反 toolchain.md L222 已记录的 default-locale no-op 契约。两者都是"实现时该发现的坑，靠 F2 独立 review 才暴露"。
-3. **origin/master 在 push 准备期二次推进**（#238 反思归档，2 commits）——rebase 后至 push 前又落后，需二次 rebase。教训：rebase 完成 ≠ 永远同步，push 前必须重新 fetch 校验（AGENTS.md 已有规则，执行了但未预期这么快再推进）。
-4. **LSP 陈旧缓存误报**：sepa.rs 编辑后 LSP 报"no such field: label/note"（旧字段名），实际是 rebase 冲突解决后的 stale 索引——重复 3 轮才确认是缓存问题，浪费诊断轮次。教训：冲突解决后的 LSP 报错先 cargo check 验证再信。
-
-**Lessons learned**:
-1. git 命令挂起/超时/非预期行为 → 第一步查 kb/dev/toolchain.md 已知坑表（GIT_EDITOR/TTY/权限卡），确认无匹配再诊断根因
-2. 数值/格式化类 i18n 变更的测试必须用非干净值（小数、正负号、边界）锁定精度契约——干净值测试让精度回归静默通过（factor-note 教训）
-3. 冲突解决/LSP 索引过期的报错以 cargo check 为准，不逐轮猜 LSP 输出
-4. push 前就绪核查必须包含"fetch + ahead/behind 复验"，不信任早前 rebase 结果
-
-**Process improvements**:
-- 已复用（非新增）：toolchain.md L150 GIT_EDITOR 卡、L222 default-locale no-op 卡——两条卡在 F2 review 中被独立验证准确
-- 教训 2（非干净值测试）为一次性实现教训，写入本条目；可考虑后续在 skwy-requirement-test skill 补充"数值断言用非干净值"提示（proposed，未建 issue——低优先）
-- 其余教训为一次性，写入本条目
-
-### Trends (last 10)
-- **"已知坑未先查"模式**（本次 GIT_EDITOR 挂起猜 2 轮才查 toolchain.md）：工具链卡存在但不作为第一查询对象——建议遇到非预期命令行为时强制先 grep toolchain.md 再诊断
-- **"实现期测试干净值掩盖回归"**（本次 factor-note 精度）：review 是最终防线但成本高——数值/格式化断言应主动用非平凡值，写进测试方法论
-
 ## 2026-08-11 — ref #234/#236/#237/#239/#240 docs 批次：5 个文档 issue 批量处理
 
 **What was done**: 批量处理 5 个 docs issue——compass 仓库 4 commits（#234 toolchain.md 进程检测排查卡、#240 process.md 磁盘预检+小样本 QA、#237 AGENTS.md F1 evidence 一致性自检、#239 testing.md GUI 测试方法论四节）+ skwy 仓库 1 commit（#236 skwy-requirement-test SKILL.md 委派 prompt 两条款）。纯文档变更，门禁例外适用；commit 后证据式核对 5 个 issue 验收标准全过。
@@ -420,3 +393,32 @@
 - **子代理交付验证**（ref #244/#245 零交付/只分析 → 本批 3.5/4 步测试 agent 均正常落盘）：本批委派 prompt 显式要求"写文件 + 跑验证 + 报告"，效果良好——交付验证前置为 prompt 硬性要求已见效，趋势缓解
 - **测试驱动价值持续实证**（ref #244 C2 → #245 INFINITY → 本批 34 RED→GREEN + 真实数据冒烟）：test-first 连续三批捕获契约/语义问题，继续维持
 - **epic 批次间编译级联动**（#244 run_screener 签名 → #245 GUI 调用点 → #246 filter_to_query 删除破坏 screener.rs:208）：跨 crate 删除公共函数必须同步扫描全部调用方（grep 前置），本批因 filter_to_query 删除与 GUI oracle 的编译耦合被迫联动 Todo 2/4——plan 依赖矩阵应预判跨 crate 删除的联动
+
+## 2026-08-13 — ref #255 epic index-data：指数采集/导出/BK 符号/大盘 tab
+
+**What was done**: 完成 epic #255 全链路——东财指数采集器（官方 30 白名单 + 概念/行业板块 clist + push2his kline + last_report_date 增量）+ Dolt index_daily/index_basic 双表 + import-compass 导出（index_daily 增量 merge / index_basic 全量覆盖）+ BK 前缀符号体系（6 消费点扩展）+ GUI 大盘 tab（6 白名单 Card + 板块轮动列表 + 双 parquet 路由 + 第四快照通道）。4 子 issue（#256-259）+ review-fix 共 5 commits，全部测试绿（Rust 全 workspace + Python 442 passed 95.74%）。
+
+**User corrections**: 用户仅发三次指令——"开始"（执行 handoff 流程）、"按推荐"（批准 grill-me 推荐）、"完成后自动 push 合并 PR 关闭 worktree"（收尾授权）。全程批准推荐，无纠正。
+
+**What went wrong**:
+1. **C1 实现子代理输出截断、零落盘**（13:32→15:12 浪费约 40 分钟）：bg_b12ab50f 首次委派在分析阶段被截断，fetch_index_daily.py 未创建、main.py 未改——必须 task_id 续会话重做才落地。与 ref #244/#245 trends 的"子代理交付验证"模式**第三次重复**（worker 超时零交付 → 两次只分析未落盘 → 本次分析截断零落盘）。
+2. **pre-commit hook 多轮拒绝**（C1 commit 时）：ruff SIM105（try-except-pass ×2）+ SIM117（嵌套 with ×2）共 4 处修复才通过。hook 规则明确但实现 agent 未预检 ruff。
+3. **FIX-3 抽样核对测试数据设计错误**：3001 vs 2990 差 0.37% 在 0.5% 容差内——测试断言"必须报警"但数据未超容差，多轮调试后定位是测试数据问题而非实现缺陷。
+4. **FIX-4 真实数据冒烟被网络阻塞**：东财 push2his 全部 host（主域 + 91./79./17./7./80./29. 镜像）HTTP 000 不可达，真实采集无法执行；仅 quote.eastmoney.com 首页可达。按问题闭环记录根因（环境网络策略），降级为 tempdir 真实形态数据验证管线，真实采集待网络恢复。
+5. **review-work 5-lane 的 Goal/Security FAIL 暴露的缺口**：T8 文档同步缺失（kb/ 零更新）、决策 6 抽样核对未实现、--since 注入校验缺失——均为实现 agent 的 scope 遗漏，review 独立发现（体现 review 价值）。
+
+**Lessons learned**:
+1. **子代理委派必须内置"落盘验证"硬性检查**：prompt 加"交付前 git status 确认改动落盘，未落盘视为失败并立即报告"——本次虽已写但 C1 agent 仍截断零落盘，说明对**后台长任务**还需加"完成后主 agent 必须 git status 核验落盘"（本批主 agent 已核验，但应固化为流程）。
+2. **委派实现 agent 前预跑静态检查**：提交前对 Python 改动跑 `ruff check`、Rust 跑 `cargo fmt --check`——hook 拒绝是既知摩擦，agent 应预检而非等 hook 弹回。
+3. **测试数据必须与断言同量级**：容差类断言（0.5%）的测试数据要设计成明显超差（>2%），不能贴着阈值（0.37% 看似该报警实则不超）。
+4. **网络依赖的真实冒烟需前置探测**：FIX-4 若在实现前先 `curl -s -o /dev/null -w "%{http_code}" push2his` 探测网络，可提前规划"网络不可达 → 直接安排 tempdir 冒烟"而非实现后才发现。
+
+**Process improvements**:
+- AGENTS.md/委派惯例：本批主 agent 已对后台任务执行"完成后 git status 核验落盘"（C1 截断即由此发现）——建议固化为 skwy-workflow 的委派后核验步骤（proposed，待建 issue）
+- toolchain.md 新增排查卡：`push2his 行情 API 网络不可达（HTTP 000，仅 quote 首页可通）→ 真实数据冒烟前置探测`（proposed）
+- 反思条目第 3/4 条为一次性教训，无法固化为机制（None）
+
+### Trends (last 10)
+- **子代理交付验证第四次出现**（ref #244 超时零交付 → #245 两次只分析 → #255 C1 截断零落盘）："委派后核验落盘"至今是主 agent 手动行为，未固化为 skill/hook——本次已通过主 agent 核验补救，建议正式写入 skwy-workflow 委派协议（proposed）
+- **hook 静态检查预检缺失跨批重复**（#245 pre-commit 拒绝 → #255 ruff SIM 4 处）：实现 agent 提交前不预检 lint/fmt，靠 hook 弹回——建议委派 prompt 内置"提交前 ruff/fmt 预检"条款
+- **review-work 独立发现 scope 遗漏是稳定收益**（#255 Goal/Security FAIL 暴露 T8 文档缺失 + 决策 6 未实现 + 注入校验缺失）：独立审查 agent 发现主 agent 盲区——5-lane review 价值持续实证，保持强制
