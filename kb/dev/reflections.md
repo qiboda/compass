@@ -422,3 +422,25 @@
 - **子代理交付验证第四次出现**（ref #244 超时零交付 → #245 两次只分析 → #255 C1 截断零落盘）："委派后核验落盘"至今是主 agent 手动行为，未固化为 skill/hook——本次已通过主 agent 核验补救，建议正式写入 skwy-workflow 委派协议（proposed）
 - **hook 静态检查预检缺失跨批重复**（#245 pre-commit 拒绝 → #255 ruff SIM 4 处）：实现 agent 提交前不预检 lint/fmt，靠 hook 弹回——建议委派 prompt 内置"提交前 ruff/fmt 预检"条款
 - **review-work 独立发现 scope 遗漏是稳定收益**（#255 Goal/Security FAIL 暴露 T8 文档缺失 + 决策 6 未实现 + 注入校验缺失）：独立审查 agent 发现主 agent 盲区——5-lane review 价值持续实证，保持强制
+## 2026-08-14 — ref #247 llm-screener Batch 4：内嵌 LLM 生成选股 Filter AST（epic #243 收尾）
+
+**What was done**: epic #243 最终批次——LLM 客户端（compass-core::llm，OpenAI 兼容 chat completions）、validate_filter 语义校验（compass-types）、prompt/parse 业务层（compass::llm_screener）、[llm] config 节、backend 第 5 AsyncDispatcher 通道（seq 守卫）、ScreenerPanel 自然语言输入区 + i18n + docs。4 commit + 2 fix commit，36 测试套件全绿，coverage 全达标（core 96.5%/types 99.4%/compass 90.5%）。
+
+**User corrections**: 无（用户仅"开始"+"完成后自动 push 并合并 PR 关闭 worktree，有问题自行解决"——全程自主推进）。
+
+**What went wrong**:
+1. **设计偏离后中途改判**：实现前裁决"消息无 seq、不做 Esc 取消（轻量原则）"，与用户确认的设计文件 `.omo/designs/llm-screener-llm.md` §3/§5（seq 守卫 + Esc 取消）冲突——直到实现 Todo 5 才细读设计文件发现，改判为按设计实现。根因：plan 摘要未含 seq 细节，实现前未完整读设计文件契约。
+2. **review 抓出 4 个 blocking（契约落实缺口）**：① AC3 模板外形状（Count/单边 Cmp）静默丢失——Unknown 卡在 `leaf_to_filter` 被转 `And(vec![])`，与设计"可随筛选发送"承诺矛盾；② llm_error→Error toast 未实现（设计 §5 双通道，只做了内联）；③ 后端 LLM 通道零测试（plan Todo 5 验收"backend 测试新增 roundtrip/未配置/5xx"未落实）；④ llm_merge_into_root 与 seq 守卫 drop 路径零测试（设计 §7 测试锚点）。全部是"plan/设计声明的验收标准在实现阶段未逐条核对"，靠 5-agent review 才暴露，返工 2 轮。
+3. **测试契约冲突**：requirement-test agent 按 plan（无 seq）写测试并明确标注 plan vs 设计文件冲突待裁决；我裁决"以设计为准（带 seq）"后，其代落盘的 backend 测试需调整——契约冲突未在实现前统一裁决。
+4. **sed 按行号批量修改多次失效**：edit 插入行后行号 +1 偏移，后续 sed 用旧行号未命中；多次 grep 重定位重跑（效率摩擦）。
+
+**Lessons learned**:
+1. 实现前必须完整读用户确认的设计文件（`.omo/designs/*.md`）的契约细节（消息字段/交互/测试锚点），不能只看 plan 摘要——设计文件是权威，plan 是执行摘要，两者冲突时以设计为准且需记录裁决。
+2. 宣称"plan 完成"前逐条核对 plan 的 Todo acceptance criteria 与设计 §7 测试锚点（本项目 review 是门禁，但自查在先可省 2 轮返工）——特别是"测试新增"类验收（如 Todo 5 的 backend roundtrip 测试）必须在实现 commit 中落地，不能只靠 review 抓。
+3. sed 按行号修改后必须 grep 重验命中（行号偏移是常态）；批量调用点修改优先用模式匹配（replaceAll）而非行号。
+
+**Process improvements**: None（一次性教训——plan 的 Todo acceptance 已写明"实现+测试=ONE todo"、设计文件路径已在 plan 引用；本轮为执行未落实，非流程缺失）。
+
+### Trends (last 10)
+- Batch 2/3/4（#245/#246/#247）均为"plan 声明的验收标准 → 实现 → review 验证"模式，仅本批出现契约缺口返工——前两批的 review 未抓出同类问题，本批 4 个 blocking 集中在"设计承诺 vs 实现行为"差异（Unknown 卡丢弃/toast 缺失），提示实现后自查应比对设计文件的用户可见承诺（gui.md"与手动卡片完全同构"等措辞）。
+- 无其他显著重复模式。
