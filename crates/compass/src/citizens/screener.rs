@@ -28,7 +28,7 @@ use crate::citizens::screener_builder::{
     BoolOp, CondGroup, CondItem, CondLeaf, LeafKind, LeafParams, MaKind, filter_to_items,
     group_to_filter,
 };
-use crate::messages::{FetchRequest, RunScreenerRequest};
+use crate::messages::{FetchRequest, RunLlmRequest, RunScreenerRequest};
 use crate::state::SharedState;
 
 /// Results table column specs (design §6.6). Headers hold **i18n keys**
@@ -103,6 +103,9 @@ pub struct ScreenerPanel {
     table: DataTable,
     /// Persists the current query whenever a filter run is triggered.
     on_save: Box<dyn Fn(&Filter) + Send + Sync>,
+    /// Whether the LLM natural-language entry is rendered (API key present
+    /// at startup — design §1, issue #247).
+    llm_enabled: bool,
 }
 
 impl Citizen for ScreenerPanel {
@@ -130,6 +133,7 @@ impl ScreenerPanel {
         restore: Option<&Filter>,
         on_save: Box<dyn Fn(&Filter) + Send + Sync>,
         tokens: &ThemeTokens,
+        llm_enabled: bool,
     ) -> Self {
         // Restore of the default empty shape (bare `Delisted(false)` node or
         // empty `And` — the `From<ScreenerQuery>` outputs of an empty query)
@@ -155,6 +159,7 @@ impl ScreenerPanel {
             builder_multi_selects,
             table,
             on_save,
+            llm_enabled,
         }
     }
 
@@ -167,6 +172,7 @@ impl ScreenerPanel {
     }
 
     /// Render the panel: condition builder + results area.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -175,9 +181,11 @@ impl ScreenerPanel {
         work_signal: &Signal<FetchRequest>,
         industries: &[String],
         boards: &[String],
+        llm_signal: &Signal<RunLlmRequest>,
     ) {
+        self.consume_llm_result(shared_state);
         ui.vertical(|ui| {
-            self.condition_builder(ui, industries, boards);
+            self.condition_builder(ui, shared_state, llm_signal, industries, boards);
 
             ui.add_space(self.form_tokens().spacing.sm);
             if Button::new(&self.form_tokens(), compass_i18n::t!("screener.filter"))
@@ -261,7 +269,14 @@ impl ScreenerPanel {
     /// one root `Card` whose header carries the AND/OR segmented + condition
     /// count + clear button, followed by the card list (leaf rows /
     /// recursively nested group frames) and the bottom add menu.
-    fn condition_builder(&mut self, ui: &mut egui::Ui, industries: &[String], boards: &[String]) {
+    fn condition_builder(
+        &mut self,
+        ui: &mut egui::Ui,
+        shared_state: &SharedState,
+        llm_signal: &Signal<RunLlmRequest>,
+        industries: &[String],
+        boards: &[String],
+    ) {
         let tokens = self.form_tokens();
         ui.vertical(|ui| {
             Card::new(&tokens)
@@ -276,6 +291,9 @@ impl ScreenerPanel {
                     ) {
                         self.builder_root.clear();
                         self.builder_multi_selects.clear();
+                    }
+                    if self.llm_enabled {
+                        self.render_llm_entry(ui, shared_state, llm_signal);
                     }
                     ui.add_space(tokens.spacing.sm);
                     if self.builder_root.is_empty() {
@@ -303,6 +321,95 @@ impl ScreenerPanel {
         });
     }
 
+    /// Merge a pending LLM-generated filter into the builder root once the
+    /// generation finished (design §3). Runs every frame before rendering.
+    fn consume_llm_result(&mut self, shared_state: &SharedState) {
+        if shared_state.llm_loading.get() {
+            return;
+        }
+        if let Some(generated) = shared_state.llm_result.get() {
+            llm_merge_into_root(
+                &mut self.builder_root,
+                self.builder_root_operator,
+                generated,
+            );
+            shared_state.llm_result.set(None);
+        }
+    }
+
+    /// The LLM natural-language entry (design §1): input + generate button,
+    /// inline error line, Enter-to-submit and Esc-to-cancel while loading.
+    fn render_llm_entry(
+        &mut self,
+        ui: &mut egui::Ui,
+        shared_state: &SharedState,
+        llm_signal: &Signal<RunLlmRequest>,
+    ) {
+        let tokens = self.form_tokens();
+        let loading = shared_state.llm_loading.get();
+        ui.add_space(tokens.spacing.sm);
+
+        let mut submit = false;
+        ui.horizontal(|ui| {
+            let mut input = shared_state.llm_input.get();
+            let input_w = (ui.available_width() - 120.0 - tokens.spacing.md).max(200.0);
+            let input_resp = ui
+                .add_enabled_ui(!loading, |ui| {
+                    compass_ui::widgets::input::Input::new(&tokens, &mut input)
+                        .placeholder(&compass_i18n::t!("screener.llm.placeholder"))
+                        .prefix_icon(egui_phosphor::regular::LIGHTNING)
+                        .width(input_w)
+                        .show(ui)
+                })
+                .inner;
+            let enter_pressed =
+                input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            shared_state.llm_input.set(input);
+
+            let empty = shared_state.llm_input.get().trim().is_empty();
+            let label = if loading {
+                compass_i18n::t!("screener.llm.generating")
+            } else {
+                compass_i18n::t!("screener.llm.generate")
+            };
+            let clicked = ui
+                .add_enabled_ui(!empty && !loading, |ui| {
+                    Button::new(&tokens, label)
+                        .variant(ButtonVariant::Primary)
+                        .size(ButtonSize::Md)
+                        .loading(loading)
+                        .show(ui)
+                })
+                .inner
+                .clicked();
+            if !empty && !loading && (clicked || enter_pressed) {
+                submit = true;
+            }
+        });
+
+        if submit {
+            let seq = shared_state.llm_seq.get() + 1;
+            shared_state.llm_seq.set(seq);
+            shared_state.llm_loading.set(true);
+            shared_state.llm_error.set(None);
+            let _ = llm_signal.send(RunLlmRequest {
+                prompt: shared_state.llm_input.get(),
+                seq,
+            });
+        }
+
+        if loading && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            shared_state.llm_seq.set(shared_state.llm_seq.get() + 1);
+            shared_state.llm_loading.set(false);
+            shared_state.llm_error.set(None);
+        }
+
+        if let Some(err) = shared_state.llm_error.get() {
+            ui.add_space(tokens.spacing.xs);
+            ui.colored_label(ui.visuals().error_fg_color, err);
+        }
+    }
+
     /// The panel's theme tokens (copied at construction).
     fn form_tokens(&self) -> ThemeTokens {
         self.tokens
@@ -316,6 +423,25 @@ impl ScreenerPanel {
             ms.set_tokens(tokens);
         }
         self.table.set_tokens(tokens);
+    }
+}
+
+/// Merge a generated filter into the root card group (design §2).
+///
+/// And-flattens when both the root operator and the generated shape are AND
+/// (associativity: `And[And[a,b], ...]` == `And[a,b,...]`), keeping the common
+/// "A 且 B 且 C" case as peer cards; Or/Not/nested shapes stay as subgroups.
+/// Non-destructive: existing cards are never replaced or removed.
+fn llm_merge_into_root(root_items: &mut Vec<CondItem>, root_op: BoolOp, generated: Filter) {
+    let items = filter_to_items(&generated);
+    if root_op == BoolOp::And
+        && items.len() == 1
+        && let CondItem::Group(g) = &items[0]
+        && g.operator == BoolOp::And
+    {
+        root_items.extend(g.items.clone());
+    } else {
+        root_items.extend(items);
     }
 }
 
@@ -932,6 +1058,7 @@ fn dispatch_row_fetch(
 mod tests {
     use super::*;
     use crate::citizens::ui_fixes_218::LANG_LOCK;
+    use crate::messages::RunLlmRequest;
     use compass_types::{CmpOp, FactorRef, MaCondition, ScreenerQuery, SeriesCond, SeriesFactor};
     use compass_ui::tokens::ThemeTokens;
     use egui_citizen::CitizenState;
@@ -942,7 +1069,7 @@ mod tests {
         let id = CitizenId::new("screener");
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
-        let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens);
+        let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens, false);
         (panel, SharedState::new("SZ000001", "1d"))
     }
 
@@ -1040,6 +1167,7 @@ mod tests {
             Some(&Filter::from(query)),
             Box::new(|_| {}),
             &tokens,
+            false,
         );
 
         // From(query) = And[Industry(银行), bullish pair, Delisted(false)] —
@@ -1123,11 +1251,20 @@ mod tests {
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
         let industries = vec!["银行".to_string(), "白酒".to_string()];
         let boards = vec!["主板".to_string(), "创业板".to_string()];
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.run();
         let _ = harness.get_by_label_contains("筛选条件");
@@ -1147,11 +1284,20 @@ mod tests {
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.fit_contents();
         let btn = harness.get_by_label("筛选");
@@ -1186,6 +1332,7 @@ mod tests {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
+            false,
         );
         // Industry selection in the first preset card is saved as the Filter
         // AST node (no legacy compression oracle).
@@ -1196,11 +1343,20 @@ mod tests {
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.fit_contents();
         harness.get_by_label("筛选").click();
@@ -1253,6 +1409,7 @@ mod tests {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
+            false,
         );
         // UpDays was previously unsaveable (outside the legacy accept-
         // grammar); the AST persistence path saves any combination (issue
@@ -1266,11 +1423,20 @@ mod tests {
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.fit_contents();
         harness.get_by_label("筛选").click();
@@ -1310,11 +1476,13 @@ mod tests {
     fn signals() -> (
         egui_mobius::signals::Signal<RunScreenerRequest>,
         egui_mobius::signals::Signal<FetchRequest>,
+        egui_mobius::signals::Signal<RunLlmRequest>,
     ) {
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
-        (run_signal, work_signal)
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+        (run_signal, work_signal, llm_signal)
     }
 
     #[test]
@@ -1329,12 +1497,20 @@ mod tests {
             sample_row("SH600519", "贵州茅台", 200.0),
             sample_row("SZ000002", "万科A", 50.0),
         ]);
-        let (run_signal, work_signal) = signals();
+        let (run_signal, work_signal, llm_signal) = signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.fit_contents();
         harness.step();
@@ -1347,12 +1523,20 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = signals();
+        let (run_signal, work_signal, llm_signal) = signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.run();
         let _ = harness.get_by_label("无符合条件");
@@ -1368,12 +1552,20 @@ mod tests {
         shared
             .screener_result
             .set(vec![sample_row("SZ000001", "平安银行", 0.0)]);
-        let (run_signal, work_signal) = signals();
+        let (run_signal, work_signal, llm_signal) = signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            panel.show(ui, &shared, &run_signal, &work_signal, &industries, &boards);
+            panel.show(
+                ui,
+                &shared,
+                &run_signal,
+                &work_signal,
+                &industries,
+                &boards,
+                &llm_signal,
+            );
         });
         harness.step();
     }
@@ -1420,7 +1612,7 @@ mod tests {
     #[test]
     fn dispatch_row_fetch_ignores_out_of_range_index() {
         let shared = SharedState::new("SZ000001", "1d");
-        let (_, work_signal) = signals();
+        let (_, work_signal, _) = signals();
         let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
 
         dispatch_row_fetch(&shared, &work_signal, &rows, 5);
@@ -1462,10 +1654,15 @@ mod tests {
         );
     }
 
-    fn builder_harness(panel: &mut ScreenerPanel, width: f32) -> egui_kittest::Harness<'_, ()> {
+    fn builder_harness<'a>(
+        panel: &'a mut ScreenerPanel,
+        shared: &'a SharedState,
+        llm_signal: &'a Signal<RunLlmRequest>,
+        width: f32,
+    ) -> egui_kittest::Harness<'a, ()> {
         egui_kittest::Harness::builder()
             .with_size([width, 600.0])
-            .build_ui(|ui| panel.condition_builder(ui, &[], &[]))
+            .build_ui(|ui| panel.condition_builder(ui, shared, llm_signal, &[], &[]))
     }
 
     #[test]
@@ -1474,8 +1671,10 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
-            let (mut panel, _shared) = panel_with_form();
-            let mut harness = builder_harness(&mut panel, width);
+            let (mut panel, shared) = panel_with_form();
+            let (llm_signal, _llm_slot) =
+                egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+            let mut harness = builder_harness(&mut panel, &shared, &llm_signal, width);
             harness.run();
 
             let selects = harness
@@ -1503,7 +1702,9 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
-            let (mut panel, _shared) = panel_with_form();
+            let (mut panel, shared) = panel_with_form();
+            let (llm_signal, _llm_slot) =
+                egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
             panel.builder_root = vec![
                 CondItem::Leaf(CondLeaf {
                     kind: LeafKind::Ma,
@@ -1533,7 +1734,7 @@ mod tests {
                     negated: false,
                 }),
             ];
-            let mut harness = builder_harness(&mut panel, width);
+            let mut harness = builder_harness(&mut panel, &shared, &llm_signal, width);
             harness.run();
 
             let ma_dropdown = harness
@@ -1560,10 +1761,11 @@ mod tests {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (mut panel, _shared) = panel_with_form();
+        let (mut panel, shared) = panel_with_form();
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
         let mut harness = egui_kittest::Harness::builder()
             .with_size([500.0, 600.0])
-            .build_ui(|ui| panel.condition_builder(ui, &[], &[]));
+            .build_ui(|ui| panel.condition_builder(ui, &shared, &llm_signal, &[], &[]));
         harness.run();
 
         let selects = harness
@@ -1593,9 +1795,11 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
-            let (mut panel, _shared) = panel_with_form();
+            let (mut panel, shared) = panel_with_form();
+            let (llm_signal, _llm_slot) =
+                egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
             compass_i18n::set_locale("en");
-            let mut harness = builder_harness(&mut panel, width);
+            let mut harness = builder_harness(&mut panel, &shared, &llm_signal, width);
             harness.run();
 
             let selects = harness
@@ -1624,7 +1828,9 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for width in GROUP_ALIGNMENT_WIDTHS {
-            let (mut panel, _shared) = panel_with_form();
+            let (mut panel, shared) = panel_with_form();
+            let (llm_signal, _llm_slot) =
+                egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
             compass_i18n::set_locale("en");
             panel.builder_root = vec![
                 CondItem::Leaf(CondLeaf {
@@ -1655,7 +1861,7 @@ mod tests {
                     negated: false,
                 }),
             ];
-            let mut harness = builder_harness(&mut panel, width);
+            let mut harness = builder_harness(&mut panel, &shared, &llm_signal, width);
             harness.run();
 
             let ma_dropdown = harness
@@ -1701,13 +1907,22 @@ mod tests {
         shared: &'a SharedState,
         run_signal: &'a egui_mobius::signals::Signal<RunScreenerRequest>,
         work_signal: &'a egui_mobius::signals::Signal<FetchRequest>,
+        llm_signal: &'a egui_mobius::signals::Signal<RunLlmRequest>,
         industries: &'a [String],
         boards: &'a [String],
     ) -> egui_kittest::Harness<'a, ()> {
         let mut harness = egui_kittest::Harness::builder()
             .with_size([1000.0, 1400.0])
             .build_ui(|ui| {
-                panel.show(ui, shared, run_signal, work_signal, industries, boards);
+                panel.show(
+                    ui,
+                    shared,
+                    run_signal,
+                    work_signal,
+                    industries,
+                    boards,
+                    llm_signal,
+                );
             });
         harness.step();
         harness
@@ -1716,11 +1931,13 @@ mod tests {
     fn builder_signals() -> (
         egui_mobius::signals::Signal<RunScreenerRequest>,
         egui_mobius::signals::Signal<FetchRequest>,
+        egui_mobius::signals::Signal<RunLlmRequest>,
     ) {
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
-        (run_signal, work_signal)
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+        (run_signal, work_signal, llm_signal)
     }
 
     #[test]
@@ -1730,7 +1947,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -1739,6 +1956,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -1784,7 +2002,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -1793,6 +2011,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -1821,7 +2040,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -1830,6 +2049,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -1852,6 +2072,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -1876,7 +2097,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -1885,6 +2106,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -1908,7 +2130,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -1917,6 +2139,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -2003,6 +2226,7 @@ mod tests {
             Some(&Filter::from(query)),
             Box::new(|_| {}),
             &tokens,
+            false,
         );
         assert_eq!(
             panel.builder_root.len(),
@@ -2038,6 +2262,7 @@ mod tests {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
+            false,
         );
         assert_eq!(
             panel_b.builder_root.len(),
@@ -2045,7 +2270,7 @@ mod tests {
             "single-member restore folds to a flat card"
         );
         let shared_b = SharedState::new("SZ000001", "1d");
-        let (run_signal_b, work_signal_b) = builder_signals();
+        let (run_signal_b, work_signal_b, llm_signal_b) = builder_signals();
         let industries_b: Vec<String> = Vec::new();
         let boards_b: Vec<String> = Vec::new();
         let mut harness_b = panel_harness(
@@ -2053,6 +2278,7 @@ mod tests {
             &shared_b,
             &run_signal_b,
             &work_signal_b,
+            &llm_signal_b,
             &industries_b,
             &boards_b,
         );
@@ -2090,6 +2316,7 @@ mod tests {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(f.clone());
             }),
             &tokens,
+            false,
         );
         match &panel_c.builder_root[0] {
             CondItem::Leaf(l) => assert_eq!(
@@ -2100,7 +2327,7 @@ mod tests {
             other => panic!("expected a flat MA card, got {other:?}"),
         }
         let shared_c = SharedState::new("SZ000001", "1d");
-        let (run_signal_c, work_signal_c) = builder_signals();
+        let (run_signal_c, work_signal_c, llm_signal_c) = builder_signals();
         let industries_c: Vec<String> = Vec::new();
         let boards_c: Vec<String> = Vec::new();
         let mut harness_c = panel_harness(
@@ -2108,6 +2335,7 @@ mod tests {
             &shared_c,
             &run_signal_c,
             &work_signal_c,
+            &llm_signal_c,
             &industries_c,
             &boards_c,
         );
@@ -2144,7 +2372,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("zh");
         let (mut panel, shared) = panel_with_form();
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -2153,6 +2381,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -2200,7 +2429,7 @@ mod tests {
             1,
             "unrecognized shape falls back to a single Unknown card"
         );
-        let (run_signal, work_signal) = builder_signals();
+        let (run_signal, work_signal, llm_signal) = builder_signals();
         let industries: Vec<String> = Vec::new();
         let boards: Vec<String> = Vec::new();
 
@@ -2209,6 +2438,7 @@ mod tests {
             &shared,
             &run_signal,
             &work_signal,
+            &llm_signal,
             &industries,
             &boards,
         );
@@ -2226,6 +2456,185 @@ mod tests {
         assert!(
             panel.builder_root.is_empty(),
             "deleting the Unknown card empties the builder"
+        );
+    }
+
+    // --- LLM natural-language entry (epic #243 Batch 4, ref #247, Todo 6) ---
+    //
+    // RED phase: these tests compile only after the Todo 6 signatures land —
+    // `ScreenerPanel::new(..., llm_enabled: bool)` and
+    // `show(..., llm_signal: &Signal<RunLlmRequest>)` (design
+    // .omo/designs/llm-screener-llm.md §8). i18n labels below follow the
+    // design §6 zh values (screener.llm.placeholder / generate / generating).
+
+    /// Panel with the LLM entry enabled/disabled per the constructor flag.
+    fn llm_panel_with_form(llm_enabled: bool) -> (ScreenerPanel, SharedState) {
+        rust_i18n::set_locale("zh");
+        let id = CitizenId::new("screener");
+        let state = CitizenState::new();
+        let tokens = ThemeTokens::dark();
+        let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens, llm_enabled);
+        (panel, SharedState::new("SZ000001", "1d"))
+    }
+
+    /// Harness with the Todo 6 `show` signature (llm_signal added last).
+    fn llm_panel_harness<'a>(
+        panel: &'a mut ScreenerPanel,
+        shared: &'a SharedState,
+        llm_signal: &'a egui_mobius::signals::Signal<RunLlmRequest>,
+    ) -> egui_kittest::Harness<'a, ()> {
+        let (run_signal, _run_slot) =
+            egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
+        let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
+        let industries: Vec<String> = Vec::new();
+        let boards: Vec<String> = Vec::new();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size([1000.0, 1400.0])
+            .build_ui(move |ui| {
+                panel.show(
+                    ui,
+                    shared,
+                    &run_signal,
+                    &work_signal,
+                    &industries,
+                    &boards,
+                    llm_signal,
+                );
+            });
+        harness.step();
+        harness
+    }
+
+    #[test]
+    fn llm_entry_visible_when_enabled() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = llm_panel_with_form(true);
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+
+        let harness = llm_panel_harness(&mut panel, &shared, &llm_signal);
+
+        let _ = harness.get_by_label("AI 生成");
+        let _ = harness.get_by(|n| n.placeholder() == Some("用自然语言描述选股条件…"));
+    }
+
+    #[test]
+    fn llm_entry_hidden_when_not_configured() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = llm_panel_with_form(false);
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+
+        let harness = llm_panel_harness(&mut panel, &shared, &llm_signal);
+
+        assert_eq!(
+            harness.query_all_by_label("AI 生成").count(),
+            0,
+            "no generate button when LLM is not configured"
+        );
+        assert_eq!(
+            harness
+                .query_all_by(|n| n.placeholder() == Some("用自然语言描述选股条件…"))
+                .count(),
+            0,
+            "no input row when LLM is not configured"
+        );
+    }
+
+    #[test]
+    fn llm_generate_click_sends_request_with_typed_prompt() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = llm_panel_with_form(true);
+        let (llm_signal, mut llm_slot) =
+            egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+        let sent: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let sent_clone = sent.clone();
+        llm_slot.start(move |req: RunLlmRequest| {
+            *sent_clone
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(req.prompt);
+        });
+
+        let mut harness = llm_panel_harness(&mut panel, &shared, &llm_signal);
+        let input = harness.get_by(|n| n.placeholder() == Some("用自然语言描述选股条件…"));
+        input.focus();
+        input.type_text("最近5天每天涨超3%");
+        harness.step();
+        harness.get_by_label("AI 生成").click();
+        harness.step();
+        drop(harness);
+
+        let prompt = {
+            let mut guard = sent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for _ in 0..20 {
+                if guard.is_some() {
+                    break;
+                }
+                drop(guard);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                guard = sent
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+            guard
+                .clone()
+                .expect("generate click must send RunLlmRequest")
+        };
+        assert_eq!(prompt, "最近5天每天涨超3%");
+    }
+
+    #[test]
+    fn llm_loading_disables_generate_button() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = llm_panel_with_form(true);
+        shared.llm_loading.set(true);
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+
+        let harness = llm_panel_harness(&mut panel, &shared, &llm_signal);
+
+        // Loading state must render a disabled generate control — the label
+        // may switch to 生成中… (design §5) or stay AI 生成 with a spinner.
+        let disabled_generate = harness
+            .query_all_by(|n| {
+                n.is_disabled()
+                    && (n.label() == Some("AI 生成".to_string())
+                        || n.label() == Some("生成中…".to_string()))
+            })
+            .count();
+        assert_eq!(
+            disabled_generate, 1,
+            "generate button must be disabled while llm_loading is true"
+        );
+    }
+
+    #[test]
+    fn llm_error_renders_inline_message() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        let (mut panel, shared) = llm_panel_with_form(true);
+        shared.llm_error.set(Some("生成失败：测试错误".to_string()));
+        let (llm_signal, _llm_slot) = egui_mobius::factory::create_signal_slot::<RunLlmRequest>();
+
+        let harness = llm_panel_harness(&mut panel, &shared, &llm_signal);
+
+        assert!(
+            harness.query_all_by_label_contains("生成失败").count() >= 1,
+            "llm_error must render as an inline message"
         );
     }
 }

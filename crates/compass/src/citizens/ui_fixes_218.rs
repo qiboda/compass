@@ -52,8 +52,8 @@ pub(crate) fn build_compass_app_with_timeframe(
     let config = AppConfig::default();
     let shared_state = Arc::new(SharedState::new("SZ000001", default_timeframe));
 
-    let (work_signal, run_screener_signal, sepa_signal, index_signal, _backend_handle) =
-        crate::backend::wire_backend(config, shared_state.clone(), egui_ctx);
+    let (work_signal, run_screener_signal, sepa_signal, index_signal, llm_signal, _backend_handle) =
+        crate::backend::wire_backend(config, shared_state.clone(), egui_ctx, None);
 
     let mut dispatcher = Dispatcher::new();
     let registered = crate::dispatcher::register_citizens(&mut dispatcher);
@@ -68,6 +68,7 @@ pub(crate) fn build_compass_app_with_timeframe(
         None,
         Box::new(|_| {}),
         &theme_tokens,
+        false,
     );
     let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &theme_tokens);
     let market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &theme_tokens);
@@ -108,6 +109,7 @@ pub(crate) fn build_compass_app_with_timeframe(
         run_screener_signal,
         sepa_signal,
         index_signal,
+        llm_signal,
         screener_industries: Vec::new(),
         screener_boards: Vec::new(),
         shared_state,

@@ -18,14 +18,16 @@ use egui_mobius::factory;
 use egui_mobius::signals::Signal;
 
 use compass_core::data::{duckdb::DuckDbProvider, provider::DataError, provider::DataProvider};
+use compass_core::llm::{LlmClient, LlmConfig, LlmError};
 use compass_core::model::AppConfig;
 use compass_strategy::run_screener;
 use compass_strategy::sepa::run_sepa;
 use compass_types::SepaQuery;
 
+use crate::llm_screener::{build_screener_prompt, parse_filter_response};
 use crate::messages::{
-    FetchRequest, FetchResponse, RunIndexSnapshotRequest, RunIndexSnapshotResponse,
-    RunScreenerRequest, RunScreenerResponse, RunSepaRequest, RunSepaResponse,
+    FetchRequest, FetchResponse, RunIndexSnapshotRequest, RunIndexSnapshotResponse, RunLlmRequest,
+    RunLlmResponse, RunScreenerRequest, RunScreenerResponse, RunSepaRequest, RunSepaResponse,
 };
 use crate::state::SharedState;
 use compass_i18n::t;
@@ -41,6 +43,7 @@ pub struct BackendHandle {
     _screener_dispatcher: AsyncDispatcher<RunScreenerRequest, RunScreenerResponse>,
     _sepa_dispatcher: AsyncDispatcher<RunSepaRequest, RunSepaResponse>,
     _index_dispatcher: AsyncDispatcher<RunIndexSnapshotRequest, RunIndexSnapshotResponse>,
+    _llm_dispatcher: AsyncDispatcher<RunLlmRequest, RunLlmResponse>,
 }
 
 /// Build the async work pipeline. Returns:
@@ -52,15 +55,18 @@ pub struct BackendHandle {
 ///
 /// The result slots are started internally — they write response values
 /// into the reactive `SharedState` and request a UI repaint.
+#[allow(clippy::type_complexity)]
 pub fn wire_backend(
     config: AppConfig,
     state: Arc<SharedState>,
     egui_ctx: egui::Context,
+    llm_config: Option<LlmConfig>,
 ) -> (
     Signal<FetchRequest>,
     Signal<RunScreenerRequest>,
     Signal<RunSepaRequest>,
     Signal<RunIndexSnapshotRequest>,
+    Signal<RunLlmRequest>,
     BackendHandle,
 ) {
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
@@ -325,16 +331,106 @@ pub fn wire_backend(
         index_repaint_ctx.request_repaint();
     });
 
+    // Fifth channel (epic #243 Batch 4, ref #247): natural-language → Filter
+    // AST generation. `llm_config` is `None` when no API key is configured —
+    // the handler then answers with a translated error and never touches the
+    // network. Success writes the filter into `SharedState.llm_result` for
+    // the screener panel to consume on the loading → idle transition.
+    let llm_dispatcher = AsyncDispatcher::<RunLlmRequest, RunLlmResponse>::new();
+    let (llm_signal, llm_slot) = factory::create_signal_slot::<RunLlmRequest>();
+    let (llm_result_signal, mut llm_result_slot) = factory::create_signal_slot::<RunLlmResponse>();
+    llm_dispatcher.attach_async(llm_slot, llm_result_signal, move |req: RunLlmRequest| {
+        let llm_config = llm_config.clone();
+        async move {
+            let seq = req.seq;
+            let cfg = match llm_config {
+                Some(c) => c,
+                None => {
+                    return RunLlmResponse {
+                        filter: None,
+                        error: Some(t!("error.llm_not_configured").to_string()),
+                        seq,
+                    };
+                }
+            };
+            let client = match LlmClient::new(cfg) {
+                Ok(c) => c,
+                Err(e) => {
+                    return RunLlmResponse {
+                        filter: None,
+                        error: Some(format!("{e}")),
+                        seq,
+                    };
+                }
+            };
+            match client
+                .chat_json(&build_screener_prompt(&req.prompt), &req.prompt)
+                .await
+            {
+                Ok(value) => match parse_filter_response(&value.to_string()) {
+                    Ok(filter) => RunLlmResponse {
+                        filter: Some(filter),
+                        error: None,
+                        seq,
+                    },
+                    Err(e) => RunLlmResponse {
+                        filter: None,
+                        error: Some(
+                            t!("screener.llm.error_parse").to_string() + &format!(" ({e})"),
+                        ),
+                        seq,
+                    },
+                },
+                Err(LlmError::NoContent) => RunLlmResponse {
+                    filter: None,
+                    error: Some(t!("screener.llm.error_empty").to_string()),
+                    seq,
+                },
+                Err(LlmError::InvalidJson(raw)) => RunLlmResponse {
+                    filter: None,
+                    error: Some(t!("screener.llm.error_parse").to_string() + &format!(" ({raw})")),
+                    seq,
+                },
+                Err(e) => RunLlmResponse {
+                    filter: None,
+                    error: Some(t!("screener.llm.error_network", e = e).to_string()),
+                    seq,
+                },
+            }
+        }
+    });
+
+    let llm_loading = state.llm_loading.clone();
+    let llm_error = state.llm_error.clone();
+    let llm_result = state.llm_result.clone();
+    let llm_seq = state.llm_seq.clone();
+    let llm_repaint_ctx = egui_ctx.clone();
+    llm_result_slot.start(move |resp: RunLlmResponse| {
+        if resp.seq != llm_seq.get() {
+            return;
+        }
+        llm_loading.set(false);
+        llm_result.set(resp.filter);
+        if let Some(ref err) = resp.error {
+            llm_error.set(Some(err.clone()));
+        } else {
+            llm_error.set(None);
+        }
+        llm_repaint_ctx.request_repaint();
+    });
+
     (
         work_signal,
         screener_signal,
         sepa_signal,
         index_signal,
+        llm_signal,
         BackendHandle {
             _dispatcher: dispatcher,
             _screener_dispatcher: screener_dispatcher,
             _sepa_dispatcher: sepa_dispatcher,
             _index_dispatcher: index_dispatcher,
+            _llm_dispatcher: llm_dispatcher,
         },
     )
 }
@@ -505,8 +601,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         // Signal that work is in flight so wait_for_response can detect
         // the handler's loading.set(false).
@@ -555,8 +651,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
         state.loading.set(true);
         work_signal
             .send(fetch_request("000001"))
@@ -597,8 +693,8 @@ mod tests {
         let state = Arc::new(SharedState::new("999999", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
         state.loading.set(true);
         work_signal
             .send(fetch_request("999999"))
@@ -720,8 +816,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         state.screener_loading.set(true);
         let query = compass_types::ScreenerQuery::default();
@@ -769,8 +865,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         state.screener_loading.set(true);
         let query = compass_types::ScreenerQuery {
@@ -823,8 +919,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, _screener_signal, sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (_work_signal, _screener_signal, sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         state.sepa_loading.set(true);
         sepa_signal

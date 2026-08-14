@@ -1,4 +1,4 @@
-use compass_types::{IndexSnapshot, ScreenerRow, SepaData};
+use compass_types::{Filter, IndexSnapshot, ScreenerRow, SepaData};
 use egui_charts::model::Bar;
 use egui_lens::ReactiveEventLoggerState;
 use egui_mobius_reactive::Dynamic;
@@ -29,6 +29,19 @@ pub struct SharedState {
     pub screener_loading: Dynamic<bool>,
     /// Last screener error message, if any.
     pub screener_error: Dynamic<Option<String>>,
+    /// `true` while an LLM condition generation is in flight.
+    pub llm_loading: Dynamic<bool>,
+    /// Last LLM generation error message, if any.
+    pub llm_error: Dynamic<Option<String>>,
+    /// Pending LLM-generated filter, consumed by the screener panel on the
+    /// loading → idle transition (`None` after consumption or on failure).
+    pub llm_result: Dynamic<Option<Filter>>,
+    /// Natural-language prompt draft — kept in shared state so the draft
+    /// survives tab switches and panel rebuilds (design §3).
+    pub llm_input: Dynamic<String>,
+    /// Latest request sequence — bumped on every send and on Esc-cancel so
+    /// stale backend responses are dropped (design §3/§5).
+    pub llm_seq: Dynamic<u64>,
     /// Latest SEPA scoring snapshot (rows + thermometer in one `Option` so
     /// the panel never observes a half-updated state).
     pub sepa_data: Dynamic<Option<SepaData>>,
@@ -63,6 +76,11 @@ impl SharedState {
             screener_total: Dynamic::new(0),
             screener_loading: Dynamic::new(false),
             screener_error: Dynamic::new(None),
+            llm_loading: Dynamic::new(false),
+            llm_error: Dynamic::new(None),
+            llm_result: Dynamic::new(None),
+            llm_input: Dynamic::new(String::new()),
+            llm_seq: Dynamic::new(0),
             sepa_data: Dynamic::new(None),
             sepa_loading: Dynamic::new(false),
             sepa_error: Dynamic::new(None),

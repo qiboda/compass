@@ -28,6 +28,7 @@ use compass_ui::widgets::toolbar::Toolbar;
 mod backend;
 mod citizens;
 mod dispatcher;
+mod llm_screener;
 mod messages;
 mod state;
 mod tabs;
@@ -86,8 +87,19 @@ fn main() -> eframe::Result {
             picker_list.extend(index_list.clone().into_iter().map(index_basic_to_stock));
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
-            let (work_signal, run_screener_signal, sepa_signal, index_signal, _backend_handle) =
-                backend::wire_backend(config.app.clone(), shared_state.clone(), egui_ctx);
+            let (
+                work_signal,
+                run_screener_signal,
+                sepa_signal,
+                index_signal,
+                llm_signal,
+                _backend_handle,
+            ) = backend::wire_backend(
+                config.app.clone(),
+                shared_state.clone(),
+                egui_ctx,
+                config.llm.to_client_config(),
+            );
 
             // Register citizens
             let mut dispatcher = Dispatcher::new();
@@ -111,6 +123,7 @@ fn main() -> eframe::Result {
                     }
                 }),
                 theme.tokens(),
+                config.llm.is_configured(),
             );
             let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, theme.tokens());
             let market =
@@ -173,6 +186,7 @@ fn main() -> eframe::Result {
                 run_screener_signal,
                 sepa_signal,
                 index_signal,
+                llm_signal,
                 screener_industries: industries,
                 screener_boards: boards,
                 shared_state,
@@ -261,6 +275,8 @@ struct FullConfig {
     screener: ScreenerSection,
     #[serde(default)]
     watchlist: WatchlistConfig,
+    #[serde(default)]
+    llm: LlmSection,
 }
 
 /// The `[screener]` config section — dual-format (issue #246).
@@ -294,6 +310,63 @@ impl ScreenerSection {
             }
             None => Ok(Filter::from(self.legacy.clone())),
         }
+    }
+}
+
+/// The `[llm]` config section (epic #243 Batch 4, issue #247).
+///
+/// OpenAI-compatible chat-completions endpoint settings. `api_key` is
+/// optional: when absent the LLM entry is hidden in the GUI (no network
+/// calls are ever made without a key). Empty `base_url`/`model` fall back
+/// to the defaults below; unknown keys in the section are ignored by serde.
+#[derive(Deserialize)]
+struct LlmSection {
+    #[serde(default)]
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    model: String,
+}
+
+impl Default for LlmSection {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key: String::new(),
+            model: "gpt-4o-mini".to_string(),
+        }
+    }
+}
+
+impl LlmSection {
+    /// Whether the LLM feature is enabled — an API key is present.
+    fn is_configured(&self) -> bool {
+        !self.api_key.is_empty()
+    }
+
+    /// The client config for the LLM backend, or `None` when unconfigured.
+    ///
+    /// Empty `base_url`/`model` fall back to [`LlmSection::default`] values so
+    /// a partial `[llm]` section (key only) still works out of the box.
+    fn to_client_config(&self) -> Option<compass_core::llm::LlmConfig> {
+        if !self.is_configured() {
+            return None;
+        }
+        let defaults = LlmSection::default();
+        Some(compass_core::llm::LlmConfig {
+            base_url: if self.base_url.is_empty() {
+                defaults.base_url
+            } else {
+                self.base_url.clone()
+            },
+            api_key: self.api_key.clone(),
+            model: if self.model.is_empty() {
+                defaults.model
+            } else {
+                self.model.clone()
+            },
+        })
     }
 }
 
@@ -333,6 +406,7 @@ fn load_config() -> FullConfig {
                     app: AppConfig::default(),
                     screener: ScreenerSection::default(),
                     watchlist: WatchlistConfig::default(),
+                    llm: LlmSection::default(),
                 }
             }
         },
@@ -342,6 +416,7 @@ fn load_config() -> FullConfig {
                 app: AppConfig::default(),
                 screener: ScreenerSection::default(),
                 watchlist: WatchlistConfig::default(),
+                llm: LlmSection::default(),
             }
         }
     }
@@ -718,6 +793,7 @@ struct CompassApp {
     run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
     sepa_signal: egui_mobius::signals::Signal<messages::RunSepaRequest>,
     index_signal: egui_mobius::signals::Signal<messages::RunIndexSnapshotRequest>,
+    llm_signal: egui_mobius::signals::Signal<messages::RunLlmRequest>,
     screener_industries: Vec<String>,
     screener_boards: Vec<String>,
     shared_state: Arc<state::SharedState>,
@@ -821,6 +897,7 @@ impl eframe::App for CompassApp {
                         run_screener_signal: &self.run_screener_signal,
                         sepa_signal: &self.sepa_signal,
                         index_signal: &self.index_signal,
+                        llm_signal: &self.llm_signal,
                         work_signal: &self.work_signal,
                         screener_industries: &self.screener_industries,
                         screener_boards: &self.screener_boards,
@@ -1449,7 +1526,9 @@ fn timeframe_value(idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use crate::FullConfig;
+    use crate::LlmSection;
     use crate::ScreenerSection;
+    use crate::messages::RunLlmRequest;
     use compass_core::model::StockBasic;
     use compass_types::{Filter, ScreenerQuery};
 
@@ -1476,6 +1555,57 @@ mod tests {
         assert!(!state.loading.get());
         assert_eq!(state.error.get(), None);
         assert_eq!(state.log.get().log_count(), 0);
+    }
+
+    #[test]
+    fn llm_section_defaults_to_openai_endpoint() {
+        let s = LlmSection::default();
+        assert_eq!(s.base_url, "https://api.openai.com/v1");
+        assert_eq!(s.model, "gpt-4o-mini");
+        assert!(!s.is_configured(), "no api_key by default");
+    }
+
+    #[test]
+    fn llm_section_without_api_key_is_unconfigured() {
+        let s = LlmSection::default();
+        assert!(!s.is_configured());
+        assert!(s.to_client_config().is_none());
+    }
+
+    #[test]
+    fn llm_section_with_api_key_produces_client_config() {
+        let s = LlmSection {
+            base_url: String::new(),
+            api_key: "sk-test".to_string(),
+            model: String::new(),
+        };
+        assert!(s.is_configured());
+        let cfg = s
+            .to_client_config()
+            .expect("configured key yields a config");
+        assert_eq!(cfg.api_key, "sk-test");
+        assert_eq!(
+            cfg.base_url, "https://api.openai.com/v1",
+            "empty base_url falls back to the default"
+        );
+        assert_eq!(
+            cfg.model, "gpt-4o-mini",
+            "empty model falls back to the default"
+        );
+    }
+
+    #[test]
+    fn llm_section_keeps_explicit_url_and_model() {
+        let s = LlmSection {
+            base_url: "http://127.0.0.1:8080/v1".to_string(),
+            api_key: "sk-test".to_string(),
+            model: "custom-model".to_string(),
+        };
+        let cfg = s
+            .to_client_config()
+            .expect("configured key yields a config");
+        assert_eq!(cfg.base_url, "http://127.0.0.1:8080/v1");
+        assert_eq!(cfg.model, "custom-model");
     }
 
     #[test]
@@ -2093,6 +2223,7 @@ default_timeframe = "1w"
             None,
             Box::new(|_| {}),
             &tokens,
+            false,
         );
         let mut sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
         let mut market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &tokens);
@@ -2100,6 +2231,7 @@ default_timeframe = "1w"
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
         let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
+        let (llm_signal, _llm_slot) = factory::create_signal_slot::<RunLlmRequest>();
         let shared = SharedState::new("SZ000001", "1d");
         let theme = CompassTheme::compass_dark();
 
@@ -2115,6 +2247,7 @@ default_timeframe = "1w"
             market: &mut market,
             run_screener_signal: &run_signal,
             sepa_signal: &sepa_signal,
+            llm_signal: &llm_signal,
             index_signal: &index_signal,
             work_signal: &work_signal,
             screener_industries: &[],
@@ -3614,6 +3747,7 @@ default_timeframe = "1w"
             watchlist: WatchlistConfig {
                 symbols: vec!["000001".to_string()],
             },
+            llm: LlmSection::default(),
         };
         // The parent of the config path is a regular file → create_dir_all /
         // write must fail.

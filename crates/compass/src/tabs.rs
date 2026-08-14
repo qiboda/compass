@@ -29,7 +29,9 @@ use crate::citizens::logger::LoggerPanel;
 use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
-use crate::messages::{FetchRequest, RunIndexSnapshotRequest, RunScreenerRequest, RunSepaRequest};
+use crate::messages::{
+    FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
+};
 use crate::state::SharedState;
 use compass_i18n::t;
 
@@ -147,6 +149,7 @@ pub struct TabViewer<'a> {
     pub run_screener_signal: &'a Signal<RunScreenerRequest>,
     pub sepa_signal: &'a Signal<RunSepaRequest>,
     pub index_signal: &'a Signal<RunIndexSnapshotRequest>,
+    pub llm_signal: &'a Signal<RunLlmRequest>,
     pub work_signal: &'a Signal<FetchRequest>,
     pub screener_industries: &'a [String],
     pub screener_boards: &'a [String],
@@ -177,6 +180,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                 self.work_signal,
                 self.screener_industries,
                 self.screener_boards,
+                self.llm_signal,
             ),
             TabKind::Sepa => {
                 self.sepa
@@ -400,6 +404,7 @@ mod tests {
             None,
             Box::new(|_| {}),
             &compass_ui::tokens::ThemeTokens::dark(),
+            false,
         );
         let mut sepa = SepaPanel::new(
             CitizenId::new(SEPA_ID),
@@ -415,6 +420,7 @@ mod tests {
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
         let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
+        let (llm_signal, _llm_slot) = factory::create_signal_slot::<RunLlmRequest>();
         let shared = SharedState::new("000001", "1d");
         let theme = CompassTheme::compass_dark();
 
@@ -429,6 +435,7 @@ mod tests {
             run_screener_signal: &run_signal,
             sepa_signal: &sepa_signal,
             index_signal: &index_signal,
+            llm_signal: &llm_signal,
             work_signal: &work_signal,
             screener_industries: &[],
             screener_boards: &[],
