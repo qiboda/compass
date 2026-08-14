@@ -1084,4 +1084,48 @@ mod tests {
         assert!(state.llm_result.get().is_none());
         assert!(state.llm_error.get().is_some(), "5xx must set llm_error");
     }
+
+    #[test]
+    fn llm_path_stale_response_is_dropped_after_cancel() {
+        // Design §5/§7: after an Esc cancel bumps `llm_seq`, the in-flight
+        // response carrying the old seq must be dropped — the cancelled
+        // filter must never land in `llm_result`.
+        let server = httpmock::MockServer::start();
+        let _mock = mock_chat_content(
+            &server,
+            "{\"Series\":{\"UpDays\":{\"n\":5,\"min_pct\":3.0}}}",
+        );
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
+            config,
+            state.clone(),
+            egui_ctx,
+            Some(llm_config_at(&server)),
+        );
+
+        // Submit with seq 1, then cancel (Esc): seq bumps to 2, loading false.
+        state.llm_seq.set(1);
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "x".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        state.llm_seq.set(2);
+        state.llm_loading.set(false);
+
+        // Give the in-flight response time to arrive and be filtered by the
+        // seq guard.
+        std::thread::sleep(Duration::from_millis(300));
+
+        assert!(
+            state.llm_result.get().is_none(),
+            "cancelled response must be dropped by the seq guard"
+        );
+        assert!(!state.llm_loading.get());
+    }
 }

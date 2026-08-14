@@ -2637,4 +2637,98 @@ mod tests {
             "llm_error must render as an inline message"
         );
     }
+
+    // --- llm_merge_into_root pure-function tests (design §7 anchors) --------
+
+    #[test]
+    fn llm_merge_flattens_and_group_into_and_root() {
+        let mut root = Vec::new();
+        llm_merge_into_root(
+            &mut root,
+            BoolOp::And,
+            Filter::And(vec![
+                Filter::Meta(MetaCond::Industry(vec!["白酒".to_string()])),
+                Filter::Series(SeriesCond::UpDays { n: 5, min_pct: 3.0 }),
+            ]),
+        );
+        assert_eq!(
+            root.len(),
+            2,
+            "And[2] under an And root flattens into two root cards"
+        );
+    }
+
+    #[test]
+    fn llm_merge_appends_bare_leaf_directly() {
+        let mut root = Vec::new();
+        llm_merge_into_root(
+            &mut root,
+            BoolOp::And,
+            Filter::Meta(MetaCond::Industry(vec!["银行".to_string()])),
+        );
+        assert_eq!(root.len(), 1, "a bare leaf lands directly in the root");
+    }
+
+    #[test]
+    fn llm_merge_keeps_or_group_nested() {
+        let mut root = Vec::new();
+        llm_merge_into_root(
+            &mut root,
+            BoolOp::And,
+            Filter::Or(vec![
+                Filter::Meta(MetaCond::Industry(vec!["白酒".to_string()])),
+                Filter::Meta(MetaCond::Exchange(vec!["SH".to_string()])),
+            ]),
+        );
+        assert_eq!(root.len(), 1);
+        assert!(
+            matches!(&root[0], CondItem::Group(g) if g.operator == BoolOp::Or),
+            "Or generated shape stays a nested Or subgroup"
+        );
+    }
+
+    #[test]
+    fn llm_merge_keeps_and_group_nested_under_or_root() {
+        let mut root = Vec::new();
+        llm_merge_into_root(
+            &mut root,
+            BoolOp::Or,
+            Filter::And(vec![
+                Filter::Meta(MetaCond::Industry(vec!["白酒".to_string()])),
+                Filter::Meta(MetaCond::Exchange(vec!["SH".to_string()])),
+            ]),
+        );
+        assert_eq!(root.len(), 1);
+        assert!(
+            matches!(&root[0], CondItem::Group(g) if g.operator == BoolOp::And),
+            "no And-flattening when the root operator is Or"
+        );
+    }
+
+    #[test]
+    fn llm_merge_keeps_not_leaf_negated() {
+        let mut root = Vec::new();
+        llm_merge_into_root(
+            &mut root,
+            BoolOp::And,
+            Filter::Not(Box::new(Filter::Meta(MetaCond::Industry(vec![
+                "白酒".to_string(),
+            ])))),
+        );
+        assert_eq!(root.len(), 1);
+        assert!(
+            matches!(&root[0], CondItem::Leaf(l) if l.negated),
+            "Not-wrapped template becomes a negated leaf card"
+        );
+    }
+
+    #[test]
+    fn llm_merge_empty_and_is_a_noop() {
+        let mut root = Vec::new();
+        llm_merge_into_root(&mut root, BoolOp::And, Filter::And(vec![]));
+        assert!(
+            root.is_empty(),
+            "empty And merges to nothing without panicking"
+        );
+    }
 }
