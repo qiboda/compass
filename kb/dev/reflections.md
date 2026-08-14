@@ -444,3 +444,29 @@
 ### Trends (last 10)
 - Batch 2/3/4（#245/#246/#247）均为"plan 声明的验收标准 → 实现 → review 验证"模式，仅本批出现契约缺口返工——前两批的 review 未抓出同类问题，本批 4 个 blocking 集中在"设计承诺 vs 实现行为"差异（Unknown 卡丢弃/toast 缺失），提示实现后自查应比对设计文件的用户可见承诺（gui.md"与手动卡片完全同构"等措辞）。
 - 无其他显著重复模式。
+
+## 2026-08-15 — ref #263 迁移 .opencode/.omo 内容到项目 .dsh 目录
+
+**What was done**: OpenCode→DSH 工具链切换——161 个文件迁入 `.dsh/`（plans/designs/evidence/drafts/notepads/skills/handoff-compress.md），删除旧目录 `.opencode/`、`.omo/` 与两个 opencode.json，弃机器生成内容（run-continuation/node_modules/boulder.json）；AGENTS.md + kb/ + 代码注释 + locales + CI 模板的 `.omo`/`.opencode` 路径引用机械替换为 `.dsh` 对应路径；`.gitignore` 移除 `.omo/*` 排除+放行规则（`.dsh/` 全部跟踪）。1 实现 commit（3f6679a）+ 本反思 commit。
+
+**User corrections**:
+1. "方案B" —— 目标结构否决我推荐的方案 A（保留 .opencode/.omo 命名空间），选定扁平重组
+2. "3 留着， 1 2 删除" —— 散件处理反转我的推荐（我建议 1 留档、2 删除、3 迁移；用户决定两个 opencode.json 全删、handoff-compress.md 保留）
+3. "忽略规则，这里应该是忽略文件和目录，不是全部忽略并放行" —— gitignore 规则写法纠正：明确列出忽略对象，不用"全忽略+放行"模式
+4. "这次你先自行push" —— 本次特批自动 push（默认 Never auto-push 不变）
+
+**What went wrong**:
+1. **引用范围侦察不完整**：grill 阶段只 grep `*.md`（77 处），执行时才发现代码注释（Rust 20+ 处）、locales yml、Python 测试注释、`.github/ISSUE_TEMPLATE` 还有 21 处引用，被迫临时扩展替换范围。与 ref #117 同类教训（archive L456："命令/术语引用全仓搜索"），该教训载体（`.opencode/skills/docs/SKILL.md`）已随本次迁移删除，教训失效后第二次再现。
+2. **半替换产生失效表述**：批量 sed 后未逐处审查命中上下文，`kb/dev/process.md` L233 出现"排除 `.omo/*` 但放行 `!.dsh/plans/`"的矛盾表述——靠最终 grep 残留清单发现后修正（改用"不忽略 .dsh 下任何内容"现状描述）。
+
+**Lessons learned**:
+1. 引用替换/删除前全仓 grep 全部文件类型（*.rs/*.py/*.yml/*.md/模板/hook），不只 *.md——已落实为 process.md「知识库同步」章节规则（ref #263）。
+2. 批量 sed 替换后必须逐处审查命中行上下文，不能只查残留计数——半替换的矛盾表述比残留引用更隐蔽。
+3. 迁移类任务的 grill 阶段就应逐类问清"档案 vs 死配置"去向——用户连续两次在散件与规则细节上纠正推荐方向。
+
+**Process improvements**:
+- kb/dev/process.md「知识库同步」新增"引用替换/删除前全仓 grep 所有文件类型"规则（ref #263 落实；补记 ref #117 教训载体失效历史）
+
+### Trends (last 10)
+- **引用搜索范围教训第二次出现**（ref #117 docs skill"命令/术语引用全仓搜索" → ref #263 只搜 md 漏 21 处）：前次教训载体（.opencode/skills/docs/SKILL.md）随工具链迁移失效，教训未固化到 kb/ 导致再现——本次已写入 kb/dev/process.md（项目书核心文件，不随工具链消失）
+- **用户对"过程归档 vs 活跃配置"边界持续敏感**（本次"3 留着，1 2 删除"+ gitignore 写法纠正）：用户倾向明确区分历史档案（不篡改）与活跃配置（清理死物），迁移类任务应在 grill 阶段就逐类问清去向
