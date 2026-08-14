@@ -17,4 +17,5 @@
 
 pub mod data;
 pub mod indicators;
+pub mod llm;
 pub mod model;
