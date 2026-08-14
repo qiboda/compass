@@ -1,0 +1,7 @@
+# F4: Scope fidelity (ref #247)
+- 无 OpenAI/anthropic SDK: grep 全仓仅注释提及; reqwest 直调 (compass-core::llm)
+- 无自由文本解析: LLM 结构化输出 + serde 校验; 无缓存/重试/流式/多轮
+- #245 构建器模型未改: screener_builder.rs 不在本批 diff (filter_to_items/leaf_to_filter/CondItem/CondLeaf 原样)
+- #153 未实现 (仅预留通用 LlmClient)
+- API key 明文 config.toml (D5 决策); 未出现在 UI/日志
+- 无第三方运行时依赖新增 (仅 compass 加 httpmock dev-dep)

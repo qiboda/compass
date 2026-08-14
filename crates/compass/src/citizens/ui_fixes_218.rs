@@ -131,6 +131,7 @@ pub(crate) fn build_compass_app_with_timeframe(
         last_error: None,
         last_loading: false,
         last_screener_error: None,
+        last_llm_error: None,
         last_sepa_error: None,
         last_sepa_loading: false,
         last_index_error: None,

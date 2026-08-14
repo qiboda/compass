@@ -505,7 +505,9 @@ mod tests {
     use crate::messages::FetchRequest;
     use crate::state::SharedState;
     use chrono::DateTime;
+    use compass_core::llm::LlmConfig;
     use compass_core::model::AppConfig;
+    use compass_types::{Filter, SeriesCond};
     use duckdb::Connection;
     use std::sync::Arc;
     use std::time::Duration;
@@ -945,5 +947,141 @@ mod tests {
             "result slot must write a display log entry"
         );
         rust_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // LLM channel (epic #243 Batch 4, ref #247) — 5th dispatcher
+    // ------------------------------------------------------------------
+
+    /// Poll `state.llm_loading` until it flips false (or timeout).
+    fn wait_for_llm_response(state: &SharedState) {
+        for _ in 0..100 {
+            if !state.llm_loading.get() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("timeout waiting for llm backend response");
+    }
+
+    fn llm_config_at(server: &httpmock::MockServer) -> LlmConfig {
+        LlmConfig {
+            base_url: format!("{}/v1", server.base_url()),
+            api_key: "sk-test".to_string(),
+            model: "gpt-test".to_string(),
+        }
+    }
+
+    /// Mock one OpenAI-compatible chat completion whose content is the given
+    /// Filter JSON (what the LLM client parses into a `Value`).
+    fn mock_chat_content<'a>(
+        server: &'a httpmock::MockServer,
+        content: &str,
+    ) -> httpmock::Mock<'a> {
+        use httpmock::Method::POST;
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(200).json_body(serde_json::json!({
+                "choices": [{"message": {"content": content}}]
+            }));
+        })
+    }
+
+    #[test]
+    fn llm_path_success_roundtrip() {
+        let server = httpmock::MockServer::start();
+        let _mock = mock_chat_content(
+            &server,
+            "{\"Series\":{\"UpDays\":{\"n\":5,\"min_pct\":3.0}}}",
+        );
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
+            config,
+            state.clone(),
+            egui_ctx,
+            Some(llm_config_at(&server)),
+        );
+        state.llm_seq.set(1);
+
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "最近5天每天涨超3%".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        wait_for_llm_response(&state);
+
+        assert!(!state.llm_loading.get());
+        assert!(state.llm_error.get().is_none());
+        assert_eq!(
+            state.llm_result.get(),
+            Some(Filter::Series(SeriesCond::UpDays { n: 5, min_pct: 3.0 }))
+        );
+    }
+
+    #[test]
+    fn llm_path_not_configured_returns_error_without_panic() {
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
+        state.llm_seq.set(1);
+
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "x".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        wait_for_llm_response(&state);
+
+        assert!(!state.llm_loading.get());
+        assert!(state.llm_result.get().is_none());
+        let err = state.llm_error.get().expect("llm_error must be set");
+        assert!(
+            err.contains("LLM"),
+            "unconfigured message must mention LLM, got: {err}"
+        );
+    }
+
+    #[test]
+    fn llm_path_server_5xx_sets_error() {
+        use httpmock::Method::POST;
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(500).body("boom");
+        });
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
+            config,
+            state.clone(),
+            egui_ctx,
+            Some(llm_config_at(&server)),
+        );
+        state.llm_seq.set(1);
+
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "x".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        wait_for_llm_response(&state);
+
+        assert!(!state.llm_loading.get());
+        assert!(state.llm_result.get().is_none());
+        assert!(state.llm_error.get().is_some(), "5xx must set llm_error");
     }
 }

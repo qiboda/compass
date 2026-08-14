@@ -626,7 +626,9 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 
 > 注：设计文件 `.omo/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
-> 空 And/Or 是构建器空状态的合法 AST，深度 32 在 serde recursion limit（128）内
-> 有防栈溢出余量；LLM 输出空条件由解析层的语义校验拒绝。
+> 空 And/Or 是构建器空状态的合法 AST（LLM 返回空 And 时合并为无操作，不报错），
+> 深度 32 在 serde recursion limit（128）内有防栈溢出余量；构建器模板外形状
+> （如 `Count`、单边 `Cmp`）由 `llm_screener::ensure_builder_roundtrip` 在解析层
+> 拒绝并提示换一种描述——避免 Unknown 只读卡在运行/持久化时被静默丢弃（ref #247）。
 
 符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。

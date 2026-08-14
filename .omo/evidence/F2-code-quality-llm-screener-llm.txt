@@ -1,0 +1,6 @@
+# F2: Code quality audit (ref #247)
+- cargo clippy --workspace: 0 警告 (5-agent review round 1: PASS, 0 CRITICAL/MAJOR)
+- cargo fmt --check: 通过
+- 新增 pub 项带 /// 文档 (missing_docs 规范): validate_filter/LlmConfig/LlmError/LlmClient/chat_json/build_screener_prompt/parse_filter_response/RunLlmRequest/RunLlmResponse
+- 生产代码无 unwrap/panic: validate_filter/strip_code_fence/ensure_builder_roundtrip 全函数; LlmClient 用 unwrap_or_default
+- API key 不出现在日志/错误消息 (security review: 仅 bearer_auth + 配置管线)

@@ -328,12 +328,15 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
   （`ScreenerPanel::new(llm_enabled)` 构造参数，静态标志）；未配置 = 整行不
   出现（无占位/禁用态，干净回退）。
 - **成功合并**：LLM 返回 Filter AST → serde 解析 + `validate_filter` 语义校验
-  → `filter_to_items` 反向识别 → **append + AND 展平**入根组（`llm_merge_into_root`
-  纯函数：根组 AND 且产物为 AND 组时按结合律展平为同级卡；Or/Not/嵌套保持
-  子组）。非破坏（不替换/删除已有卡）、不去重、无「AI 产物」特殊标记——结果
-  卡片与手动卡片完全同构（可编辑/删除/取反/持久化）。
+  + **形状 roundtrip 检查**（`filter_to_items` 必须可识别，无 `Unknown` 兜底卡）
+  → `filter_to_items` 反向识别 → **append + AND 展平**入根组
+  （`llm_merge_into_root` 纯函数：根组 AND 且产物为 AND 组时按结合律展平为同级卡；
+  Or/Not/嵌套保持子组）。非破坏（不替换/删除已有卡）、不去重、无「AI 产物」
+  特殊标记——结果卡片与手动卡片完全同构（可编辑/删除/取反/持久化）。
 - **失败回退**：输入区下方 `colored_label(error_fg_color)` 内联错误 + Error
-  toast（None→Some 迁移）；输入文本保留可直接改后重试。
+  toast（None→Some 迁移，ref #247）；输入文本保留可直接改后重试。构建器模板
+  外的形状（如 `Count`、单边 `Cmp`）在解析层被拒绝并提示换一种描述——避免
+  生成"只读 Unknown 卡"在运行/持久化时被静默丢弃。
 - **状态**：`SharedState` 五信号（`llm_input/llm_loading/llm_error/llm_result/
   llm_seq`）+ 第五 `AsyncDispatcher` 通道；`seq` 守卫保证 Esc 取消后在途响应
   不混入根组。

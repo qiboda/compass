@@ -205,6 +205,7 @@ fn main() -> eframe::Result {
                 last_error: None,
                 last_loading: false,
                 last_screener_error: None,
+                last_llm_error: None,
                 last_sepa_error: None,
                 last_sepa_loading: false,
                 last_index_error: None,
@@ -814,6 +815,7 @@ struct CompassApp {
     last_error: Option<String>,
     last_loading: bool,
     last_screener_error: Option<String>,
+    last_llm_error: Option<String>,
     last_sepa_error: Option<String>,
     last_sepa_loading: bool,
     last_index_error: Option<String>,
@@ -954,6 +956,16 @@ impl eframe::App for CompassApp {
                     self.toast.push(ToastLevel::Error, err.clone());
                 }
                 self.last_sepa_error = current_sepa_err;
+            }
+
+            // LLM generation error toast on None→Some transition (design §5,
+            // ref #247) — same dual channel as the screener/sepa errors.
+            let current_llm_err = self.shared_state.llm_error.get();
+            if current_llm_err != self.last_llm_error {
+                if let Some(ref err) = current_llm_err {
+                    self.toast.push(ToastLevel::Error, err.clone());
+                }
+                self.last_llm_error = current_llm_err;
             }
 
             // SEPA success toast on loading true→false with no error; the

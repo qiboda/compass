@@ -9,6 +9,8 @@
 
 use compass_types::{Filter, validate_filter};
 
+use crate::citizens::screener_builder::{CondItem, LeafKind, filter_to_items};
+
 /// Build the system prompt for the screener LLM.
 ///
 /// The prompt declares the strict single-JSON-object output contract, documents
@@ -79,7 +81,32 @@ pub fn parse_filter_response(content: &str) -> Result<Filter, String> {
     let filter: Filter =
         serde_json::from_str(body).map_err(|e| format!("invalid filter JSON: {e}"))?;
     validate_filter(&filter)?;
+    ensure_builder_roundtrip(&filter)?;
     Ok(filter)
+}
+
+/// Reject generated shapes the visual builder cannot represent.
+///
+/// The builder (Batch 2) recognizes a fixed template set; anything else
+/// degrades to a read-only `Unknown` card that `leaf_to_filter` maps to an
+/// empty `And` — silently dropping the condition on run/persist. Rejecting
+/// here turns that silent loss into an actionable error instead.
+fn ensure_builder_roundtrip(filter: &Filter) -> Result<(), String> {
+    if contains_unknown(&filter_to_items(filter)) {
+        return Err(
+            "generated condition is not supported by the builder — rephrase your request"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Whether any card (recursively) is the read-only `Unknown` fallback.
+fn contains_unknown(items: &[CondItem]) -> bool {
+    items.iter().any(|item| match item {
+        CondItem::Leaf(leaf) => leaf.kind == LeafKind::Unknown,
+        CondItem::Group(group) => contains_unknown(&group.items),
+    })
 }
 
 /// Strip a surrounding markdown code fence from a model response.
@@ -225,6 +252,25 @@ mod tests {
         let src = r#"{"Series":{"UpDays":{"n":5}}}"#;
         let err = parse_filter_response(src).expect_err("missing field must error");
         assert!(err.contains("invalid filter JSON"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_unsupported_count_shape() {
+        let src = r#"{"Series":{"Count":{"factor":"DayPct","op":"gt","value":{"Const":0.0},"window":10,"at_least":5}}}"#;
+        let err = parse_filter_response(src)
+            .expect_err("builder-unsupported shapes must error, not degrade");
+        assert!(err.contains("not supported"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_unsupported_single_cmp_shape() {
+        // A single "20日涨幅>5%" comparison — valid AST, but not one of the
+        // builder's template cards, so it must be rejected at parse time.
+        let src =
+            r#"{"Series":{"Cmp":{"factor":{"ChangePct":20},"op":"gt","value":{"Const":5.0}}}}"#;
+        let err =
+            parse_filter_response(src).expect_err("non-template Cmp must error, not silently drop");
+        assert!(err.contains("not supported"), "got: {err}");
     }
 
     #[test]
