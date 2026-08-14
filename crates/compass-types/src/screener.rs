@@ -230,7 +230,7 @@ const MAX_NESTING_DEPTH: u32 = 32;
 /// 4. Every `f64` field is finite (no NaN/Inf): `FactorRef::Const` (including
 ///    `Count.value`), `UpDays.min_pct`, `VolumeSurge.times`, `MarketCap.min`,
 ///    `MarketCap.max`.
-/// 5. Nesting depth ≤ [`MAX_NESTING_DEPTH`]: each `And`/`Or` child and each
+/// 5. Nesting depth ≤ `MAX_NESTING_DEPTH` (32): each `And`/`Or` child and each
 ///    `Not` body adds one level.
 ///
 /// Empty `And(vec![])`/`Or(vec![])` are legal (the builder's empty state).
