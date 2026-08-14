@@ -209,6 +209,188 @@ pub enum SeriesCond {
     },
 }
 
+/// Maximum nesting depth of the filter AST.
+///
+/// Deeper trees are rejected by [`validate_filter`] to keep recursive walks
+/// (validation, engine evaluation) safe against pathological LLM output.
+const MAX_NESTING_DEPTH: u32 = 32;
+
+/// Validate a screener `Filter` for structural soundness.
+///
+/// Pure function — never panics. Returns `Err(message)` on the first rule
+/// violation; every message names the offending field (or the "nesting too
+/// deep" phrase for depth violations). Rules:
+///
+/// 1. Every window/count parameter is `> 0`: `Sma`/`ChangePct`/`AvgVolume`/
+///    `NDayHigh` windows, `UpDays.n`, `VolumeSurge.days`, `Count.window` and
+///    `Count.at_least`.
+/// 2. `Count.at_least <= Count.window`.
+/// 3. `MarketCap.min <= MarketCap.max` when both bounds are `Some`; a single
+///    bound (one side `None`) and `min == max` are legal.
+/// 4. Every `f64` field is finite (no NaN/Inf): `FactorRef::Const` (including
+///    `Count.value`), `UpDays.min_pct`, `VolumeSurge.times`, `MarketCap.min`,
+///    `MarketCap.max`.
+/// 5. Nesting depth ≤ `MAX_NESTING_DEPTH` (32): each `And`/`Or` child and each
+///    `Not` body adds one level.
+///
+/// Empty `And(vec![])`/`Or(vec![])` are legal (the builder's empty state).
+pub fn validate_filter(filter: &Filter) -> Result<(), String> {
+    validate_node(filter, 1)
+}
+
+/// Recursive validation walk. `depth` is the current node's nesting level
+/// (root = 1); the cap is enforced only when descending into a composite
+/// node, so a legal depth-32 `Not` chain (whose leaf sits at depth 33) passes.
+fn validate_node(filter: &Filter, depth: u32) -> Result<(), String> {
+    match filter {
+        Filter::Meta(cond) => validate_meta(cond),
+        Filter::Series(cond) => validate_series(cond),
+        Filter::And(children) | Filter::Or(children) => {
+            if depth > MAX_NESTING_DEPTH {
+                return Err(nesting_error(depth));
+            }
+            children
+                .iter()
+                .try_for_each(|child| validate_node(child, depth + 1))
+        }
+        Filter::Not(inner) => {
+            if depth > MAX_NESTING_DEPTH {
+                return Err(nesting_error(depth));
+            }
+            validate_node(inner, depth + 1)
+        }
+    }
+}
+
+fn nesting_error(depth: u32) -> String {
+    format!("nesting too deep (depth {depth} exceeds {MAX_NESTING_DEPTH})")
+}
+
+/// Validate a metadata constraint.
+fn validate_meta(cond: &MetaCond) -> Result<(), String> {
+    match cond {
+        MetaCond::MarketCap { min, max } => {
+            if let Some(v) = min
+                && !v.is_finite()
+            {
+                return Err(format!("MarketCap min must be finite, got {v}"));
+            }
+            if let Some(v) = max
+                && !v.is_finite()
+            {
+                return Err(format!("MarketCap max must be finite, got {v}"));
+            }
+            match (min, max) {
+                (Some(lo), Some(hi)) if lo > hi => {
+                    Err(format!("MarketCap min ({lo}) must be <= max ({hi})"))
+                }
+                _ => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Validate a series condition and its embedded factor/reference values.
+fn validate_series(cond: &SeriesCond) -> Result<(), String> {
+    match cond {
+        SeriesCond::Cmp { factor, value, .. } => {
+            validate_series_factor(factor)?;
+            validate_factor_ref(value)
+        }
+        SeriesCond::UpDays { n, min_pct } => {
+            if *n == 0 {
+                return Err(format!("UpDays n must be > 0, got {n}"));
+            }
+            if !min_pct.is_finite() {
+                return Err(format!("UpDays min_pct must be finite, got {min_pct}"));
+            }
+            Ok(())
+        }
+        SeriesCond::Count {
+            factor,
+            value,
+            window,
+            at_least,
+            ..
+        } => {
+            validate_series_factor(factor)?;
+            validate_factor_ref(value)?;
+            if *window == 0 {
+                return Err(format!("Count window must be > 0, got {window}"));
+            }
+            if *at_least == 0 {
+                return Err(format!("Count at_least must be > 0, got {at_least}"));
+            }
+            if at_least > window {
+                return Err(format!(
+                    "Count at_least ({at_least}) must be <= window ({window})"
+                ));
+            }
+            Ok(())
+        }
+        SeriesCond::VolumeSurge { days, times } => {
+            if *days == 0 {
+                return Err(format!("VolumeSurge days must be > 0, got {days}"));
+            }
+            if !times.is_finite() {
+                return Err(format!("VolumeSurge times must be finite, got {times}"));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Validate a series factor's window parameter.
+fn validate_series_factor(factor: &SeriesFactor) -> Result<(), String> {
+    match factor {
+        SeriesFactor::Close | SeriesFactor::DayPct => Ok(()),
+        SeriesFactor::Sma(n) => {
+            if *n == 0 {
+                Err(format!("Sma window must be > 0, got {n}"))
+            } else {
+                Ok(())
+            }
+        }
+        SeriesFactor::ChangePct(n) => {
+            if *n == 0 {
+                Err(format!("ChangePct window must be > 0, got {n}"))
+            } else {
+                Ok(())
+            }
+        }
+        SeriesFactor::AvgVolume(n) => {
+            if *n == 0 {
+                Err(format!("AvgVolume window must be > 0, got {n}"))
+            } else {
+                Ok(())
+            }
+        }
+        SeriesFactor::NDayHigh(n) => {
+            if *n == 0 {
+                Err(format!("NDayHigh window must be > 0, got {n}"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Validate a comparison reference: a constant must be finite; a factor
+/// reference must have a legal window.
+fn validate_factor_ref(value: &FactorRef) -> Result<(), String> {
+    match value {
+        FactorRef::Const(v) => {
+            if !v.is_finite() {
+                Err(format!("Const value must be finite, got {v}"))
+            } else {
+                Ok(())
+            }
+        }
+        FactorRef::Factor(f) => validate_series_factor(f),
+    }
+}
+
 /// Compile the legacy 11-field `ScreenerQuery` into the expression AST.
 ///
 /// One-way conversion (the reverse is a restricted accept-grammar inside

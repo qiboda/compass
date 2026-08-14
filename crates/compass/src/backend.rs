@@ -18,14 +18,16 @@ use egui_mobius::factory;
 use egui_mobius::signals::Signal;
 
 use compass_core::data::{duckdb::DuckDbProvider, provider::DataError, provider::DataProvider};
+use compass_core::llm::{LlmClient, LlmConfig, LlmError};
 use compass_core::model::AppConfig;
 use compass_strategy::run_screener;
 use compass_strategy::sepa::run_sepa;
 use compass_types::SepaQuery;
 
+use crate::llm_screener::{build_screener_prompt, parse_filter_response};
 use crate::messages::{
-    FetchRequest, FetchResponse, RunIndexSnapshotRequest, RunIndexSnapshotResponse,
-    RunScreenerRequest, RunScreenerResponse, RunSepaRequest, RunSepaResponse,
+    FetchRequest, FetchResponse, RunIndexSnapshotRequest, RunIndexSnapshotResponse, RunLlmRequest,
+    RunLlmResponse, RunScreenerRequest, RunScreenerResponse, RunSepaRequest, RunSepaResponse,
 };
 use crate::state::SharedState;
 use compass_i18n::t;
@@ -41,6 +43,7 @@ pub struct BackendHandle {
     _screener_dispatcher: AsyncDispatcher<RunScreenerRequest, RunScreenerResponse>,
     _sepa_dispatcher: AsyncDispatcher<RunSepaRequest, RunSepaResponse>,
     _index_dispatcher: AsyncDispatcher<RunIndexSnapshotRequest, RunIndexSnapshotResponse>,
+    _llm_dispatcher: AsyncDispatcher<RunLlmRequest, RunLlmResponse>,
 }
 
 /// Build the async work pipeline. Returns:
@@ -52,15 +55,18 @@ pub struct BackendHandle {
 ///
 /// The result slots are started internally — they write response values
 /// into the reactive `SharedState` and request a UI repaint.
+#[allow(clippy::type_complexity)]
 pub fn wire_backend(
     config: AppConfig,
     state: Arc<SharedState>,
     egui_ctx: egui::Context,
+    llm_config: Option<LlmConfig>,
 ) -> (
     Signal<FetchRequest>,
     Signal<RunScreenerRequest>,
     Signal<RunSepaRequest>,
     Signal<RunIndexSnapshotRequest>,
+    Signal<RunLlmRequest>,
     BackendHandle,
 ) {
     let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
@@ -325,16 +331,106 @@ pub fn wire_backend(
         index_repaint_ctx.request_repaint();
     });
 
+    // Fifth channel (epic #243 Batch 4, ref #247): natural-language → Filter
+    // AST generation. `llm_config` is `None` when no API key is configured —
+    // the handler then answers with a translated error and never touches the
+    // network. Success writes the filter into `SharedState.llm_result` for
+    // the screener panel to consume on the loading → idle transition.
+    let llm_dispatcher = AsyncDispatcher::<RunLlmRequest, RunLlmResponse>::new();
+    let (llm_signal, llm_slot) = factory::create_signal_slot::<RunLlmRequest>();
+    let (llm_result_signal, mut llm_result_slot) = factory::create_signal_slot::<RunLlmResponse>();
+    llm_dispatcher.attach_async(llm_slot, llm_result_signal, move |req: RunLlmRequest| {
+        let llm_config = llm_config.clone();
+        async move {
+            let seq = req.seq;
+            let cfg = match llm_config {
+                Some(c) => c,
+                None => {
+                    return RunLlmResponse {
+                        filter: None,
+                        error: Some(t!("error.llm_not_configured").to_string()),
+                        seq,
+                    };
+                }
+            };
+            let client = match LlmClient::new(cfg) {
+                Ok(c) => c,
+                Err(e) => {
+                    return RunLlmResponse {
+                        filter: None,
+                        error: Some(format!("{e}")),
+                        seq,
+                    };
+                }
+            };
+            match client
+                .chat_json(&build_screener_prompt(&req.prompt), &req.prompt)
+                .await
+            {
+                Ok(value) => match parse_filter_response(&value.to_string()) {
+                    Ok(filter) => RunLlmResponse {
+                        filter: Some(filter),
+                        error: None,
+                        seq,
+                    },
+                    Err(e) => RunLlmResponse {
+                        filter: None,
+                        error: Some(
+                            t!("screener.llm.error_parse").to_string() + &format!(" ({e})"),
+                        ),
+                        seq,
+                    },
+                },
+                Err(LlmError::NoContent) => RunLlmResponse {
+                    filter: None,
+                    error: Some(t!("screener.llm.error_empty").to_string()),
+                    seq,
+                },
+                Err(LlmError::InvalidJson(raw)) => RunLlmResponse {
+                    filter: None,
+                    error: Some(t!("screener.llm.error_parse").to_string() + &format!(" ({raw})")),
+                    seq,
+                },
+                Err(e) => RunLlmResponse {
+                    filter: None,
+                    error: Some(t!("screener.llm.error_network", e = e).to_string()),
+                    seq,
+                },
+            }
+        }
+    });
+
+    let llm_loading = state.llm_loading.clone();
+    let llm_error = state.llm_error.clone();
+    let llm_result = state.llm_result.clone();
+    let llm_seq = state.llm_seq.clone();
+    let llm_repaint_ctx = egui_ctx.clone();
+    llm_result_slot.start(move |resp: RunLlmResponse| {
+        if resp.seq != llm_seq.get() {
+            return;
+        }
+        llm_loading.set(false);
+        llm_result.set(resp.filter);
+        if let Some(ref err) = resp.error {
+            llm_error.set(Some(err.clone()));
+        } else {
+            llm_error.set(None);
+        }
+        llm_repaint_ctx.request_repaint();
+    });
+
     (
         work_signal,
         screener_signal,
         sepa_signal,
         index_signal,
+        llm_signal,
         BackendHandle {
             _dispatcher: dispatcher,
             _screener_dispatcher: screener_dispatcher,
             _sepa_dispatcher: sepa_dispatcher,
             _index_dispatcher: index_dispatcher,
+            _llm_dispatcher: llm_dispatcher,
         },
     )
 }
@@ -409,7 +505,9 @@ mod tests {
     use crate::messages::FetchRequest;
     use crate::state::SharedState;
     use chrono::DateTime;
+    use compass_core::llm::LlmConfig;
     use compass_core::model::AppConfig;
+    use compass_types::{Filter, SeriesCond};
     use duckdb::Connection;
     use std::sync::Arc;
     use std::time::Duration;
@@ -505,8 +603,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         // Signal that work is in flight so wait_for_response can detect
         // the handler's loading.set(false).
@@ -555,8 +653,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
         state.loading.set(true);
         work_signal
             .send(fetch_request("000001"))
@@ -597,8 +695,8 @@ mod tests {
         let state = Arc::new(SharedState::new("999999", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
         state.loading.set(true);
         work_signal
             .send(fetch_request("999999"))
@@ -720,8 +818,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         state.screener_loading.set(true);
         let query = compass_types::ScreenerQuery::default();
@@ -769,8 +867,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         state.screener_loading.set(true);
         let query = compass_types::ScreenerQuery {
@@ -823,8 +921,8 @@ mod tests {
         let state = Arc::new(SharedState::new("000001", "1d"));
         let egui_ctx = egui::Context::default();
 
-        let (_work_signal, _screener_signal, sepa_signal, _index_signal, _backend) =
-            wire_backend(config, state.clone(), egui_ctx);
+        let (_work_signal, _screener_signal, sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
 
         state.sepa_loading.set(true);
         sepa_signal
@@ -849,5 +947,185 @@ mod tests {
             "result slot must write a display log entry"
         );
         rust_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // LLM channel (epic #243 Batch 4, ref #247) — 5th dispatcher
+    // ------------------------------------------------------------------
+
+    /// Poll `state.llm_loading` until it flips false (or timeout).
+    fn wait_for_llm_response(state: &SharedState) {
+        for _ in 0..100 {
+            if !state.llm_loading.get() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("timeout waiting for llm backend response");
+    }
+
+    fn llm_config_at(server: &httpmock::MockServer) -> LlmConfig {
+        LlmConfig {
+            base_url: format!("{}/v1", server.base_url()),
+            api_key: "sk-test".to_string(),
+            model: "gpt-test".to_string(),
+        }
+    }
+
+    /// Mock one OpenAI-compatible chat completion whose content is the given
+    /// Filter JSON (what the LLM client parses into a `Value`).
+    fn mock_chat_content<'a>(
+        server: &'a httpmock::MockServer,
+        content: &str,
+    ) -> httpmock::Mock<'a> {
+        use httpmock::Method::POST;
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(200).json_body(serde_json::json!({
+                "choices": [{"message": {"content": content}}]
+            }));
+        })
+    }
+
+    #[test]
+    fn llm_path_success_roundtrip() {
+        let server = httpmock::MockServer::start();
+        let _mock = mock_chat_content(
+            &server,
+            "{\"Series\":{\"UpDays\":{\"n\":5,\"min_pct\":3.0}}}",
+        );
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
+            config,
+            state.clone(),
+            egui_ctx,
+            Some(llm_config_at(&server)),
+        );
+        state.llm_seq.set(1);
+
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "最近5天每天涨超3%".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        wait_for_llm_response(&state);
+
+        assert!(!state.llm_loading.get());
+        assert!(state.llm_error.get().is_none());
+        assert_eq!(
+            state.llm_result.get(),
+            Some(Filter::Series(SeriesCond::UpDays { n: 5, min_pct: 3.0 }))
+        );
+    }
+
+    #[test]
+    fn llm_path_not_configured_returns_error_without_panic() {
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
+        state.llm_seq.set(1);
+
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "x".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        wait_for_llm_response(&state);
+
+        assert!(!state.llm_loading.get());
+        assert!(state.llm_result.get().is_none());
+        let err = state.llm_error.get().expect("llm_error must be set");
+        assert!(
+            err.contains("LLM"),
+            "unconfigured message must mention LLM, got: {err}"
+        );
+    }
+
+    #[test]
+    fn llm_path_server_5xx_sets_error() {
+        use httpmock::Method::POST;
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(500).body("boom");
+        });
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
+            config,
+            state.clone(),
+            egui_ctx,
+            Some(llm_config_at(&server)),
+        );
+        state.llm_seq.set(1);
+
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "x".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        wait_for_llm_response(&state);
+
+        assert!(!state.llm_loading.get());
+        assert!(state.llm_result.get().is_none());
+        assert!(state.llm_error.get().is_some(), "5xx must set llm_error");
+    }
+
+    #[test]
+    fn llm_path_stale_response_is_dropped_after_cancel() {
+        // Design §5/§7: after an Esc cancel bumps `llm_seq`, the in-flight
+        // response carrying the old seq must be dropped — the cancelled
+        // filter must never land in `llm_result`.
+        let server = httpmock::MockServer::start();
+        let _mock = mock_chat_content(
+            &server,
+            "{\"Series\":{\"UpDays\":{\"n\":5,\"min_pct\":3.0}}}",
+        );
+        let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
+            config,
+            state.clone(),
+            egui_ctx,
+            Some(llm_config_at(&server)),
+        );
+
+        // Submit with seq 1, then cancel (Esc): seq bumps to 2, loading false.
+        state.llm_seq.set(1);
+        state.llm_loading.set(true);
+        llm_signal
+            .send(RunLlmRequest {
+                prompt: "x".to_string(),
+                seq: 1,
+            })
+            .expect("failed to send llm request");
+        state.llm_seq.set(2);
+        state.llm_loading.set(false);
+
+        // Give the in-flight response time to arrive and be filtered by the
+        // seq guard.
+        std::thread::sleep(Duration::from_millis(300));
+
+        assert!(
+            state.llm_result.get().is_none(),
+            "cancelled response must be dropped by the seq guard"
+        );
+        assert!(!state.llm_loading.get());
     }
 }

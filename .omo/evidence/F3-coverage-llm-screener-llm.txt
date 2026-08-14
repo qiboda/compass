@@ -1,0 +1,5 @@
+# F3: Coverage (ref #247)
+- cargo llvm-cov nextest --workspace --json --summary-only + scripts/check-coverage.sh:
+  workspace 95.01% (≥93), compass-core 96.45% (≥95), compass-types 99.44% (≥95),
+  compass 90.47% (≥90), compass-strategy 97.45%, compass-ui 97.49%, compass-data 96.37%, compass-i18n 99.12%
+- 全部 per-crate 门槛 OK

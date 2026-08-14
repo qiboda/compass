@@ -89,6 +89,8 @@ error:
   screener_run: "Screener run failed: %{e}"
   sepa_run: "SEPA run failed: %{e}"
   index_run: "Index snapshot run failed: %{e}"
+  llm_not_configured: "LLM API key not configured — AI generation unavailable"
+  llm_request: "LLM request failed: %{e}"
 
 screener:
   filter: Filter
@@ -116,6 +118,14 @@ screener:
   min_pct: "min%:"
   max_pct: "max%:"
   times: "×:"
+  llm:
+    placeholder: Describe screener conditions in plain language…
+    generate: AI Generate
+    generating: Generating…
+    error_network: "Generation failed: cannot reach the AI service (%{e})"
+    error_parse: "Generation failed: could not understand the description — rephrase or add conditions manually"
+    error_empty: "Generation failed: no valid conditions recognized"
+    not_configured: "LLM API key not configured — AI generation unavailable"
   builder:
     card_title: Filter Conditions
     add_condition: Add Condition

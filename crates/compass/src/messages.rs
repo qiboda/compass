@@ -73,3 +73,26 @@ pub struct RunIndexSnapshotResponse {
     pub data: compass_types::IndexSnapshot,
     pub error: Option<String>,
 }
+
+/// Sent from the screener panel to the backend when the user asks the LLM
+/// to generate conditions from a natural-language description (epic #243
+/// Batch 4, issue #247).
+#[derive(Clone)]
+pub struct RunLlmRequest {
+    /// The user's natural-language screener description.
+    pub prompt: String,
+    /// Request sequence — the backend echoes it back so the result handler
+    /// can drop stale (cancelled/superseded) responses (design §3).
+    pub seq: u64,
+}
+
+/// Sent from the backend worker back to the UI after an LLM generation.
+#[derive(Clone)]
+pub struct RunLlmResponse {
+    /// Generated filter — `None` when generation or validation failed.
+    pub filter: Option<Filter>,
+    /// Translated error message when generation failed.
+    pub error: Option<String>,
+    /// Echoed request sequence for the stale-response guard.
+    pub seq: u64,
+}

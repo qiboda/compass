@@ -138,6 +138,31 @@ Option 字段缺省 `None`），并实现 `and`/`or`/`not` 方法与 `&`/`|`/`~`
 NDayHigh/DayPct/AvgVolume 作为 factor 在 `screener_eval::factor_at` 内联求值
 （按索引滑窗，窗口不足 → 该日不计入），不单独 pub。
 
+### LLM 基础设施（epic #243 Batch 4，ref #247）
+
+自然语言 → Filter AST 链路（供未来 #153 行业新闻分析复用客户端）：
+
+- **通用 LLM 客户端 → `compass-core::llm`**（`LlmConfig{base_url, api_key,
+  model}` + `LlmClient::chat_json(system, user) -> Result<Value, LlmError>`）：
+  OpenAI 兼容 `POST {base_url}/chat/completions`，reqwest 直调（无 SDK），
+  60s 超时，`response_format: json_object`。`LlmError` 五变体
+  （EmptyConfig/Network/Http{status,body}/NoContent/InvalidJson）。crate 归属
+  理由：跨 GUI/未来 CLI 复用，reqwest/serde_json/httpmock 依赖已就位。
+- **业务层 → `compass`**（`llm_screener.rs`）：`build_screener_prompt`（system
+  prompt 内嵌 Filter AST serde schema + 枚举 + 示例 + 严格 JSON 约束）与
+  `parse_filter_response`（strip 围栏 → serde 反序列化 → 语义校验）。纯函数，
+  可单测。
+- **语义校验 → `compass-types::validate_filter`**：窗口/计数参数 > 0、
+  `Count.at_least ≤ window`、`MarketCap.min ≤ max`、f64 有限性（NaN/Inf 拒绝）、
+  递归深度上限 32（防栈溢出）。空 `And/Or` 合法（构建器空状态）。
+- **通道 → `compass::backend` 第五 `AsyncDispatcher`**（`RunLlmRequest{prompt,
+  seq}` / `RunLlmResponse{filter, error, seq}`）：handler 串起
+  prompt → chat_json → parse_filter_response；`seq` 守卫丢弃被取消/过期的
+  在途响应（Esc 取消安全）。响应写 `SharedState.llm_result`，GUI 在
+  loading→idle 迁移时消费并入构建器。
+- **配置 → `[llm]` 节**（`kb/user/config.md`）：api_key 缺省 = 入口隐藏、
+  零网络请求；base_url/model 缺省回退默认。
+
 ## Citizen 模式架构
 
 核心架构挑战：**egui 在主线程上同步运行，但所有数据 I/O（HTTP、DuckDB）都需要
@@ -592,5 +617,18 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 > 注：M4（#244）的"受限私有反向转换"执行路径已被 B1（#246）取代——通用求值器
 > 落地后 `filter_to_query`/`ScreenerError::UnsupportedFilter` 全部删除，M4 仅为
 > Batch 1 阶段决策的历史记录。
+
+| D1（#247）：LLM 客户端 crate 归属 | compass-core / compass（GUI）/ compass-strategy | compass-core `llm` 模块（`LlmClient::chat_json`） | 跨 GUI 与未来 #153（行业新闻分析）复用；reqwest/serde_json/httpmock 依赖已就位；无 SDK 依赖 | GUI 内建则 CLI/其他消费者无法复用；strategy 与网络 I/O 无关 |
+| D2（#247）：语义校验函数归属 | compass-types `validate_filter` / compass 内私有 | compass-types 纯函数 | AST 同域类型（GUI/后端/测试三方共用）；serde 反序列化后校验自然衔接 | compass 内私有则测试与复用受限 |
+| D3（#247）：prompt 构建/响应解析归属 | compass `llm_screener` / compass-core | compass（业务层） | prompt 依赖 Filter AST schema（compass-types）+ 业务语义（单位/示例），属应用层；compass-core 保持通用客户端职责 | compass-core 混入业务 prompt 破坏"通用客户端"复用定位 |
+| D4（#247）：LLM 请求通道 | 第五 `AsyncDispatcher` 通道 / 复用 run_screener 通道 | 第五通道（`RunLlmRequest/Response`，含 seq 守卫） | 与 sepa/index 通道模式完全同构；LLM 是独立后端职责（网络 I/O + 解析校验）；seq 守卫保证 Esc 取消后在途响应不混入 | 复用 screener 通道破坏单一职责、错误语义混杂 |
+| D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
+
+> 注：设计文件 `.omo/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
+> 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
+> 空 And/Or 是构建器空状态的合法 AST（LLM 返回空 And 时合并为无操作，不报错），
+> 深度 32 在 serde recursion limit（128）内有防栈溢出余量；构建器模板外形状
+> （如 `Count`、单边 `Cmp`）由 `llm_screener::ensure_builder_roundtrip` 在解析层
+> 拒绝并提示换一种描述——避免 Unknown 只读卡在运行/持久化时被静默丢弃（ref #247）。
 
 符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。

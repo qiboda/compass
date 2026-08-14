@@ -1,0 +1,4 @@
+# Todo 3: llm_screener prompt/parse (compass)
+- 实现: crates/compass/src/llm_screener.rs (build_screener_prompt + parse_filter_response)
+- 测试: 文件内 mod tests 16 个 (12 契约 + 4 自增) — 隔离 harness 验证全过
+- 契约: prompt 含 Filter/Meta/Series/And/Or/Not/UpDays/MarketCap 关键词 + 示例 JSON; parse 走 strip fence → serde → validate_filter

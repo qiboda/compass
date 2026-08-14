@@ -1,0 +1,4 @@
+# Todo 5: backend 5th channel (compass)
+- 实现: messages.rs RunLlmRequest{prompt,seq}/RunLlmResponse{filter,error,seq}; state.rs llm_loading/llm_error/llm_result/llm_input/llm_seq; backend.rs AsyncDispatcher 第 5 通道 (seq 守卫 + 错误翻译); main.rs/tabs.rs 接线; Cargo.toml httpmock dev-dep
+- 测试 (review round 2 补齐): backend.rs mod tests 3 个通道测试 — llm_path_success_roundtrip (httpmock → filter Some)/llm_path_not_configured (error.llm_not_configured)/llm_path_server_5xx (llm_error Some) 全绿
+- 验证: cargo test -p compass 全绿

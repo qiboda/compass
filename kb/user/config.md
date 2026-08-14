@@ -49,6 +49,14 @@ language = "zh"
 # momentum = { days = 20, min_pct = 0.0, max_pct = 100.0 }  # 动量区间
 # volume = { days = 20, times = 2.0 }   # 量能：近 N 日均量 ≥ 倍数 × 近 3N 日均量
 
+[llm]
+# 选股器 AI 自然语言生成（epic #243 Batch 4，ref #247）。
+# OpenAI 兼容 chat completions 端点配置。api_key 缺省时选股器隐藏 LLM 入口
+# （GUI 不做任何网络请求）。base_url/model 缺省回退默认值。
+# base_url = "https://api.openai.com/v1"   # API 根（直接拼接 /chat/completions）
+# api_key = "sk-..."                        # 留空 = 隐藏 LLM 入口
+# model = "gpt-4o-mini"                     # 模型名
+
 [parquet]
 # 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
 # 默认值："/data/compass-data/parquet_data"
@@ -87,6 +95,9 @@ default_timeframe = "1d"
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
 | `app` | `default_symbol` | `SZ000001` |
 | `app` | `default_timeframe` | `1d` |
+| `llm` | `base_url` | `https://api.openai.com/v1` |
+| `llm` | `api_key` | `""`（空 = LLM 入口隐藏） |
+| `llm` | `model` | `gpt-4o-mini` |
 
 ## 配置示例
 

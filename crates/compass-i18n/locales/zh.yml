@@ -87,6 +87,8 @@ error:
   screener_run: "选股运行失败: %{e}"
   sepa_run: "SEPA 计算失败: %{e}"
   index_run: "指数快照运行失败: %{e}"
+  llm_not_configured: "未配置 LLM API key，无法使用 AI 生成"
+  llm_request: "LLM 请求失败: %{e}"
 
 screener:
   filter: 筛选
@@ -114,6 +116,14 @@ screener:
   min_pct: "min%:"
   max_pct: "max%:"
   times: "倍数:"
+  llm:
+    placeholder: 用自然语言描述选股条件…
+    generate: AI 生成
+    generating: 生成中…
+    error_network: "生成失败：无法连接 AI 服务，请稍后重试（%{e}）"
+    error_parse: 生成失败：未能理解描述，请换一种说法或手动添加条件
+    error_empty: 生成失败：未能识别出有效的选股条件
+    not_configured: 未配置 LLM API key，无法使用 AI 生成
   builder:
     card_title: 筛选条件
     add_condition: 添加条件

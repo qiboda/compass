@@ -202,7 +202,7 @@ impl Default for ScreenerQuery {
 
 mod screener;
 
-pub use screener::{CmpOp, FactorRef, Filter, MetaCond, SeriesCond, SeriesFactor};
+pub use screener::{CmpOp, FactorRef, Filter, MetaCond, SeriesCond, SeriesFactor, validate_filter};
 
 /// One result row of a screener run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

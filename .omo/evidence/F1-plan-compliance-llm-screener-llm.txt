@@ -1,0 +1,5 @@
+# F1: Plan compliance audit (ref #247)
+- Todo 1-8 acceptance criteria 逐条核对: validate_filter (22 tests)、LlmClient (11)、prompt/parse (18, review round 2 加形状检查 2)、config (4)、backend 通道 (3, review round 2 补)、UI kittest (5)、i18n、docs
+- 每 commit 含独立成行 ref #247: c394575/4a29d47/45bb02c/882a181 + fix commit
+- cargo test --workspace 全绿 (36 套件 0 失败)
+- evidence 落盘: .omo/evidence/task-{1..8}-llm-screener-llm.txt + 本文件

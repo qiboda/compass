@@ -1,0 +1,4 @@
+# Todo 6: ScreenerPanel LLM entry UI (compass)
+- 实现: citizens/screener.rs — ScreenerPanel::new(llm_enabled) + show(llm_signal) + render_llm_entry + consume_llm_result + llm_merge_into_root
+- 测试: mod tests 5 个 kittest (显隐/点击发送/loading 禁用/错误渲染) — 25 passed (llm 过滤)
+- 修正: 按钮去 icon 前缀 (label 精确匹配); accesskit disabled 经 add_enabled_ui
