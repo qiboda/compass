@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from conftest import StubResponse  # noqa: E402
 
 # 203-field header for RPT_F10_FINANCE_GINCOME (F10 full income statement,
-# generated from .omo/evidence/financial-f10/f10_columns.json GINCOME.fields)
+# generated from .dsh/evidence/financial-f10/f10_columns.json GINCOME.fields)
 _HEADER = [
     "SECUCODE", "SECURITY_CODE", "SECURITY_NAME_ABBR", "ORG_CODE", "ORG_TYPE", "REPORT_DATE",
     "REPORT_TYPE", "REPORT_DATE_NAME", "SECURITY_TYPE_CODE", "NOTICE_DATE", "UPDATE_DATE",

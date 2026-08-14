@@ -1,6 +1,6 @@
 # Compass GUI — 中文字典（zh）
 #
-# 键树契约来源：.omo/designs/gui-i18n.md §1 + 门禁测试 KEY_TREE。
+# 键树契约来源：.dsh/designs/gui-i18n.md §1 + 门禁测试 KEY_TREE。
 # 键 = 点分小写 snake_case；占位符 %{name}；数据（股票/行业/题材名）不翻译。
 # 本文件与 en.yml 键集必须完全对称（键完整性测试强制）。
 

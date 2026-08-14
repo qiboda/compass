@@ -120,7 +120,7 @@
 4. **on_* token 语义**：Material `on-*`（彩色实底上的对比前景）与 `text_primary`（普通浅底主文字）语义分离，是解决「同色值两场景对比度不同」的正确分层——ref #217 统一 text_primary 决策在 light 主题的边界条件被 #230 暴露。
 
 **Process improvements**:
-- None（一次性/已落实：设计文档 `.omo/designs/button-theme-and-width-fix.md` 已提交；kb/design/ui.md L261 决策记录已修订为 ref #230 版本；ui-widgets.md Button 条目已同步。测试 helper 重复 → proposed 提取 `tests/common/mod.rs`）。
+- None（一次性/已落实：设计文档 `.dsh/designs/button-theme-and-width-fix.md` 已提交；kb/design/ui.md L261 决策记录已修订为 ref #230 版本；ui-widgets.md Button 条目已同步。测试 helper 重复 → proposed 提取 `tests/common/mod.rs`）。
 
 ### Trends (last 10)
 - **「先猜根因再验证」返工模式持续出现**（#139/#217 布局诊断、本次 #230 宽度观感）：本次因用户明确要求「查根本原因」而走了 kittest 断言先行，直接锁定根因（宽度真实跟随、遮罩观感）——验证「先复现拿证据再二分」有效，建议在 kb/dev/process.md 调试章节固化该排查框架（proposed）。
@@ -163,7 +163,7 @@
 
 **User corrections**（逐字引用对话记录）:
 1. "236 234 239 处理。  240 237 不是很清楚是做什么的，详细介绍下。" —— 用户先锁定 3 个 issue，要求我详细解释另外 2 个再决定（范围澄清）。
-2. "全部处理。然后问一下，evidence是什么" —— 用户扩展范围为全部 5 个，并追问 evidence 概念（我以 `.omo/evidence/` 实际文件佐证回答）。
+2. "全部处理。然后问一下，evidence是什么" —— 用户扩展范围为全部 5 个，并追问 evidence 概念（我以 `.dsh/evidence/` 实际文件佐证回答）。
 3. "236 外部  237 agents.md" —— **关键落点纠正**：我推荐 #236/#237 全部落本地 AGENTS.md，用户纠正 #236 落外部（skwy-requirement-test skill）、#237 落本地 AGENTS.md。
 4. "hao" / "push" —— 确认 Q5 批次分工、确认 push。
 
@@ -315,7 +315,7 @@
 1. **plan 首版方案方向偏差**：v1 方案是 `--revision-window N` 窗口重抓 + UPDATE_DATE 对比——用户一句话点破"按更新日期自动增量"后才实测 API filter 能力，方案从"窗口重抓"简化为"锚点过滤"。探索阶段应更早实测 API filter 能力，而非先设计重抓窗口。
 2. **双审 5 轮 CHANGES_REQUESTED**：plan 经历 momus+Oracle 5 轮审查才通过——先后发现 T5 过滤表达式漏类、T6 0 行推进歧义、F3 五粮液断言行空转、UPSERT 限定引用不可行、wave 摘要残留旧描述、T1/T2 标题行粘连等。plan 初版质量不足，多轮返工。
 3. **UPSERT 写法反复实测**：最初信 Metis 的"限定源列引用可用"，实测后才发现 Dolt 2.2.3 只支持 SELECT 别名写法（限定引用对 TRIM 文本列报错、VALUES() 报 __new_ins）。"subagent 输出需独立验证"原则执行正确但耗费多轮。
-4. **测试 agent 权限受限**：skwy-adversarial-test / skwy-requirement-test 无法写 `.omo/evidence/`（edit 白名单仅 tests/**），RED 证据需主 agent 代落盘（ref #250 同教训再犯）。
+4. **测试 agent 权限受限**：skwy-adversarial-test / skwy-requirement-test 无法写 `.dsh/evidence/`（edit 白名单仅 tests/**），RED 证据需主 agent 代落盘（ref #250 同教训再犯）。
 5. **覆盖率差 0.69pp**：首轮全量 cov 94.31% < 95% 门槛，补 11 个覆盖测试（fetch_fin_indicators.py 91%→100%）才达标——T9 应在实现时就规划覆盖补测而非验证阶段才补。
 6. **security review 发现 429 陈旧 data 复用**：fetch_by_update_date 的 `data` 在页循环外初始化，某页 429 耗尽后残留上一页响应导致重复追加。修复为每页重置（一个 commit）。
 7. **review 后 rebase master**：master 在开发期间前进 8 commits，rebase 无冲突但需重跑核心测试确认。
@@ -328,7 +328,7 @@
 
 **Process improvements**:
 - 已落实（docs）：无 AGENTS.md 变更。
-- 建议（可检测）：委派测试 agent 的 prompt 模板增加"evidence 落盘权限说明"——测试 agent 只能写 tests/** 时，prompt 明确"RED 证据以完整记录输出，主 agent 代写入 .omo/evidence/"（proposed，ref #250 已提类似项，本次再犯需固化）。
+- 建议（可检测）：委派测试 agent 的 prompt 模板增加"evidence 落盘权限说明"——测试 agent 只能写 tests/** 时，prompt 明确"RED 证据以完整记录输出，主 agent 代写入 .dsh/evidence/"（proposed，ref #250 已提类似项，本次再犯需固化）。
 - 建议（可检测）：探索阶段先验证数据源能力——涉及外部 API 的 feature，plan 探索 checklist 增加"实测 API filter/sort 支持能力"项（proposed）。
 
 ### Trends (last 10)
@@ -429,13 +429,13 @@
 **User corrections**: 无（用户仅"开始"+"完成后自动 push 并合并 PR 关闭 worktree，有问题自行解决"——全程自主推进）。
 
 **What went wrong**:
-1. **设计偏离后中途改判**：实现前裁决"消息无 seq、不做 Esc 取消（轻量原则）"，与用户确认的设计文件 `.omo/designs/llm-screener-llm.md` §3/§5（seq 守卫 + Esc 取消）冲突——直到实现 Todo 5 才细读设计文件发现，改判为按设计实现。根因：plan 摘要未含 seq 细节，实现前未完整读设计文件契约。
+1. **设计偏离后中途改判**：实现前裁决"消息无 seq、不做 Esc 取消（轻量原则）"，与用户确认的设计文件 `.dsh/designs/llm-screener-llm.md` §3/§5（seq 守卫 + Esc 取消）冲突——直到实现 Todo 5 才细读设计文件发现，改判为按设计实现。根因：plan 摘要未含 seq 细节，实现前未完整读设计文件契约。
 2. **review 抓出 4 个 blocking（契约落实缺口）**：① AC3 模板外形状（Count/单边 Cmp）静默丢失——Unknown 卡在 `leaf_to_filter` 被转 `And(vec![])`，与设计"可随筛选发送"承诺矛盾；② llm_error→Error toast 未实现（设计 §5 双通道，只做了内联）；③ 后端 LLM 通道零测试（plan Todo 5 验收"backend 测试新增 roundtrip/未配置/5xx"未落实）；④ llm_merge_into_root 与 seq 守卫 drop 路径零测试（设计 §7 测试锚点）。全部是"plan/设计声明的验收标准在实现阶段未逐条核对"，靠 5-agent review 才暴露，返工 2 轮。
 3. **测试契约冲突**：requirement-test agent 按 plan（无 seq）写测试并明确标注 plan vs 设计文件冲突待裁决；我裁决"以设计为准（带 seq）"后，其代落盘的 backend 测试需调整——契约冲突未在实现前统一裁决。
 4. **sed 按行号批量修改多次失效**：edit 插入行后行号 +1 偏移，后续 sed 用旧行号未命中；多次 grep 重定位重跑（效率摩擦）。
 
 **Lessons learned**:
-1. 实现前必须完整读用户确认的设计文件（`.omo/designs/*.md`）的契约细节（消息字段/交互/测试锚点），不能只看 plan 摘要——设计文件是权威，plan 是执行摘要，两者冲突时以设计为准且需记录裁决。
+1. 实现前必须完整读用户确认的设计文件（`.dsh/designs/*.md`）的契约细节（消息字段/交互/测试锚点），不能只看 plan 摘要——设计文件是权威，plan 是执行摘要，两者冲突时以设计为准且需记录裁决。
 2. 宣称"plan 完成"前逐条核对 plan 的 Todo acceptance criteria 与设计 §7 测试锚点（本项目 review 是门禁，但自查在先可省 2 轮返工）——特别是"测试新增"类验收（如 Todo 5 的 backend roundtrip 测试）必须在实现 commit 中落地，不能只靠 review 抓。
 3. sed 按行号修改后必须 grep 重验命中（行号偏移是常态）；批量调用点修改优先用模式匹配（replaceAll）而非行号。
 

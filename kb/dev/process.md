@@ -42,7 +42,7 @@ User raises requirement
 `~/.config/opencode/skills/skwy-github-workflow/SKILL.md`。要点：
 
 - Epic + sub-issues 在规划时一次性创建（`/ulw-plan` 识别、`/skwy-github-workflow` 批量创建）
-- `.omo/plans/<epic>.md` 以 `pending | in_progress | done` 表跟踪状态
+- `.dsh/plans/<epic>.md` 以 `pending | in_progress | done` 表跟踪状态
 - 子任务按依赖 DAG 分批次，批次切换需**人工确认**
 - 一个 epic 一个 PR，每个 sub-issue 一个 commit（`ref #<sub-N>`），regular merge
 - 每个 sub-issue 独立走 GATE；合并后先关 sub-issues 再关 epic
@@ -191,7 +191,7 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 分支命名：`feat/<short-description>` 或 `fix/<short-description>`。
 
 **创建时机（强制，ref #138）**：需求经 grill-me 确认需要 worktree 时（feature/epic、
-2+ 模块、将产出 `.omo/plans/*.md` 或 `.omo/designs/*.md`），**grill 共识达成后立即
+2+ 模块、将产出 `.dsh/plans/*.md` 或 `.dsh/designs/*.md`），**grill 共识达成后立即
 创建并切换**——plan/design 等 .omo 产出文件直接在 worktree 内创建，随实现 PR 提交。
 **禁止**在 master 工作区先产出 plan/design 再迁移：git worktree 是独立 checkout，
 master 工作区的 untracked 文件不会出现在 worktree 中（SEPA 教训：全程在 master 规划
@@ -228,10 +228,11 @@ git commit                    # uses .gitmessage template
 git push origin main          # triggers CI
 ```
 
-### `.omo/plans/` 必须提交（git 跟踪规则）
+### `.dsh/plans/` 必须提交（git 跟踪规则）
 
-`.gitignore` 排除 `.omo/*` 但**例外保留 `!.omo/plans/`**——计划文件目录由 git
-跟踪。每个 epic/feature 的计划文件（`.omo/plans/<name>.md`）**必须随实现
+`.gitignore` 不忽略 `.dsh/` 下任何内容——OpenCode 时代的 `.omo/*` 排除+放行规则
+已随迁移移除（ref #263），plans/designs/evidence/drafts/notepads/skills 等全部由
+git 跟踪。每个 epic/feature 的计划文件（`.dsh/plans/<name>.md`）**必须随实现
 提交**（docs 类 commit），作为计划-执行-交付的权威跟踪记录。不要因 `??`
 状态误判为"gitignored 工作产物"——`??` 仅表示未 add，需查 `.gitignore`
 规则区分"待提交"与"被忽略"。

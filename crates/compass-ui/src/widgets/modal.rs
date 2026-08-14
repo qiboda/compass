@@ -1,4 +1,4 @@
-//! Modal dialog widget (design doc `.omo/designs/gui-upgrade.md` §5.2 / §7).
+//! Modal dialog widget (design doc `.dsh/designs/gui-upgrade.md` §5.2 / §7).
 //!
 //! Migrated from the binary crate (epic #119 S5) and enhanced with a closing
 //! state machine (100 ms fade before `is_open` flips to false), an open

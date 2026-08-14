@@ -3832,7 +3832,7 @@ default_timeframe = "1w"
         compass_i18n::t!(key).to_string()
     }
 
-    /// Full key tree from .omo/designs/gui-i18n.md §1 (compass-side
+    /// Full key tree from .dsh/designs/gui-i18n.md §1 (compass-side
     /// domains only — the fork `chart.tooltip.*`/`chart.date.*`/
     /// `chart.realtime`/`chart.legend.*` keys live in the fork's own
     /// locales and are covered by the fork-side contract tests). Plain keys

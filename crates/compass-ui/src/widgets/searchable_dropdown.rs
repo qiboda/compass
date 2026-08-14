@@ -1,4 +1,4 @@
-//! SearchableDropdown composite widget (design doc `.omo/designs/gui-upgrade.md` §5.2).
+//! SearchableDropdown composite widget (design doc `.dsh/designs/gui-upgrade.md` §5.2).
 //!
 //! Migrated from the binary crate's `StockPicker` (epic #119 S5) and enhanced
 //! with ↑↓/Enter keyboard navigation and the「无匹配结果」empty state. The

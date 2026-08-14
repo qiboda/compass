@@ -1,6 +1,6 @@
 # Compass GUI — English dictionary (en)
 #
-# Key tree contract source: .omo/designs/gui-i18n.md §1 + gate-test KEY_TREE.
+# Key tree contract source: .dsh/designs/gui-i18n.md §1 + gate-test KEY_TREE.
 # Keys are dotted lowercase snake_case; placeholders %{name}; data (stock/
 # industry/theme names) is NOT translated.
 # Must be exactly key-symmetric with zh.yml (enforced by key-completeness test).

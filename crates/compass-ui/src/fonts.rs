@@ -3,7 +3,7 @@
 //! Implemented by sub-issue #124 (S2).
 //!
 //! All three fonts are embedded into the binary via [`include_bytes!`] (design
-//! doc `.omo/designs/gui-upgrade.md` §3.4): no runtime path probing, so the
+//! doc `.dsh/designs/gui-upgrade.md` §3.4): no runtime path probing, so the
 //! fonts work on any machine without the system fonts installed.
 
 use std::sync::Arc;

@@ -363,17 +363,17 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 **What was done**: 删除 duckdb.rs 旧 StockBasic 路径（SCHEMA_SQL 中 stock_basic 表 DDL、本地 StockBasic struct、upsert_stock_basic/get_stock_basic、3 个测试）+ import_dolt.rs 的 stock_basic 导出段（5 列占位文件覆盖风险）+ export.rs TABLES 条目 + integration_test 表清单 + 4 处 kb 文档同步 + review 修复（cli.md 输出树标注来源、data-providers.md 决策记录）。RED→GREEN 测试锁定「import 不再生成 stock_basic.parquet」，2 commits（f9f897a + 8b17b77）`ref #80`，5-agent review 全 PASS。
 
 **User corrections**: 
-1. 「这些是不是handoff已经问过了」——session 开始时我未读 `.omo/handoff.md`，把已在 handoff 锁定的 7 项 grill-me 决策（Q1 范围、Q2 duckdb 删除方式）当成新问题重新访谈，被用户提醒后才去读 handoff 确认决策已存在。
+1. 「这些是不是handoff已经问过了」——session 开始时我未读 `.dsh/handoff.md`，把已在 handoff 锁定的 7 项 grill-me 决策（Q1 范围、Q2 duckdb 删除方式）当成新问题重新访谈，被用户提醒后才去读 handoff 确认决策已存在。
 2. 「有rebase master吗？」「加约束，push前 rebase base 分支」——push 后用户追问是否已 rebase master，随后明确指示将「push 前必须 rebase base 分支」固化为流程约束。我已按指示更新 AGENTS.md（Commit & Push 章节）+ kb/dev/process.md（Pre-push 检查 step 0 + 手动 checklist）。
 
 **What went wrong**:
-1. **重复访谈已锁定决策**：新 session 只读了 `stock-basic-official.md`（#78 的旧 plan，属另一 worktree），未读本 worktree 的 `.omo/handoff.md`——handoff 完整记录 7 项决策 + C1-C5 清单，读它可跳过 Q1/Q2 直接确认
+1. **重复访谈已锁定决策**：新 session 只读了 `stock-basic-official.md`（#78 的旧 plan，属另一 worktree），未读本 worktree 的 `.dsh/handoff.md`——handoff 完整记录 7 项决策 + C1-C5 清单，读它可跳过 Q1/Q2 直接确认
 2. **handoff 删除清单遗漏 2 处**：① duckdb.rs 第 3 个测试 `upsert_stock_basic_skips_existing_when_overwrite_false`（引用被删 API，编译失败才暴露）；② `integration_test.rs` 的必需表清单含 stock_basic（cargo test 失败才暴露）——handoff 只列了 2 个测试，未 grep 全仓引用
 3. **review 发现 cli.md 输出结构树失实**：4 处文档清单（gui/architecture/testing/data-providers）漏了 cli.md——它同样暗示 `import` 产出 stock_basic.parquet，与 #80 宗旨（消除「docs 暗示 import 写 stock_basic」）同类
 4. **push 前未 rebase base 分支**：分支落后 master 5 个 commits（含 reflections.md 新条目）时直接 push，用户追问后才 fetch + rebase——rebase 产生 reflections.md 冲突（master 的 #96 Updated/#97/#98 vs 我的 #80 条目），解决后 3 个 commits 哈希全部改变，需 force-push 修正远端分支
 
 **Lessons learned**:
-1. **worktree session 第一步必读 `.omo/handoff.md`**——它含已锁定的 grill-me 决策 + 完整待办 + 已知坑；先读 handoff 再访谈，决策已在的直接引用而非重问
+1. **worktree session 第一步必读 `.dsh/handoff.md`**——它含已锁定的 grill-me 决策 + 完整待办 + 已知坑；先读 handoff 再访谈，决策已在的直接引用而非重问
 2. **删除类改动不能只信 handoff 的测试清单**——必须 `grep -rn` 全仓（含 integration_test.rs、tests/ 目录）反查被删符号的所有引用，编译失败是最后的防线而不是第一道
 3. **文档同步清单要覆盖"描述该命令输出"的所有 kb 文件**——cli.md 的「输出结构」树与 gui.md 是同类失实点，列文档清单时应 grep 关键词（如 `stock_basic`）反查所有 kb 引用而非依赖 issue/plan 列举
 4. **push 前先 fetch + rebase base 分支**（已固化为 AGENTS.md 硬约束）：`git fetch origin <base>` → `git log HEAD..origin/<base>` 非空时 `git rebase origin/<base>` 再 push——rebase 冲突在本地好收拾，push 后只能 force-push 且远端已带过期 base 的 commit
@@ -453,7 +453,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 3. 帮助文本不要用硬编码行号提取（sed 2,11p），用语义标记（awk 定位 `# Usage:` 块）——头部改动不会静默截断帮助
 4. `cargo run --help` 是 cargo 的帮助，验证 binary 选择必须用实际启动（冒烟测试看启动日志）
 
-**Process improvements**: 已更新 `.opencode/skills/docs/SKILL.md` 第 2 步——新增"命令/术语引用全仓搜索（强制）"步骤：变更涉及命令/CLI flag/配置 key/API 名称时，必须全仓 grep 该标识符的所有引用逐一核对（ref #117 案例已写入作为范例）。awk 帮助提取与验证纪律为一次性教训，写入本条目。
+**Process improvements**: 已更新 `.dsh/skills/docs/SKILL.md` 第 2 步——新增"命令/术语引用全仓搜索（强制）"步骤：变更涉及命令/CLI flag/配置 key/API 名称时，必须全仓 grep 该标识符的所有引用逐一核对（ref #117 案例已写入作为范例）。awk 帮助提取与验证纪律为一次性教训，写入本条目。
 
 ### Trends (last 10)
 - **"文档已固化但未遵守"模式继续出现**（ref #104、ref #105、本次）：doc-sync 规则存在于 gate 中但执行时只更新"明显"位置——本次已把全仓 grep 步骤直接写进 docs skill，把原则变成可执行动作
@@ -524,12 +524,12 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. 「review 全过，但有两个 MINOR 建议。如何处理？」→ 用户答「修两个 MINOR（推荐）」——review 发现的 doc 前提 + push 打戳断言两个 MINOR 需修复再交付，不跳过。
 
 **What went wrong**:
-1. **grill-me 未先读 worktree 内既有 handoff 契约**：进入 gate 第 0.5 步才发现 handoff.md 已锁定 test-only 方案（用户先前要求），与本会话 grill 结论冲突。虽然最终用户裁决方案 C 生效，但流程上应先读 handoff 再 grill——handoff 是 worktree 交接的上下文契约（AGENTS.md 明确"worktree 会话启动后第一步读取 .omo/handoff.md"），主 session grill 前也应检查。
+1. **grill-me 未先读 worktree 内既有 handoff 契约**：进入 gate 第 0.5 步才发现 handoff.md 已锁定 test-only 方案（用户先前要求），与本会话 grill 结论冲突。虽然最终用户裁决方案 C 生效，但流程上应先读 handoff 再 grill——handoff 是 worktree 交接的上下文契约（AGENTS.md 明确"worktree 会话启动后第一步读取 .dsh/handoff.md"），主 session grill 前也应检查。
 2. **kb/ 文档编辑误落 master 工作区**：Step 5b/5c 更新三份 kb/ 文件时，在 master 工作区（/data/codes/compass/kb/）编辑而非 worktree 内，违反"实现工作必须在 worktree 内"规则（doc-sync 属于实现 PR 一部分）。幸而通过 `git status` 对比发现，`cp` + `git restore` 迁移回 worktree 后 master 恢复干净——未造成 commit 污染，但属流程违规，应在 reflections 记录。
 3. **review agent 输出截断**：5-agent review 中 code quality 输出超长被截断，需 grep 工具输出文件提取 verdict——非流程问题，记录以备后续 review 上下文管理。
 
 **Lessons learned**:
-1. **grill 前先读 worktree 内 handoff.md**：主 session 对已存在 worktree 的 issue 开始 grill 前，第一步 `cat .worktrees/<name>/.omo/handoff.md`——handoff 可能已锁定用户先前决策（test-only 契约即前例）。有冲突先向用户澄清，不带着矛盾契约推进。
+1. **grill 前先读 worktree 内 handoff.md**：主 session 对已存在 worktree 的 issue 开始 grill 前，第一步 `cat .worktrees/<name>/.dsh/handoff.md`——handoff 可能已锁定用户先前决策（test-only 契约即前例）。有冲突先向用户澄清，不带着矛盾契约推进。
 2. **doc-sync 的 kb/ 编辑必须落在 worktree 内**：Step 5b/5c 与代码变更同属实现 PR，kb/ 文件修改要在 worktree 路径操作；编辑后用 `git status --short` 对比 master 与 worktree 是否各归其位。
 3. **egui_kittest 动画测试的时间源规则**：断言跨帧动画状态时绝不用 `Instant::now()`/`elapsed()`（慢 CI 必 flaky）；用 egui 虚拟时间 `ctx.input(|i| i.time)`（kittest 下按 predicted_dt 确定累积）+ `with_step_dt` 细粒度推进。已沉淀 toolchain.md 排查卡。
 
@@ -680,7 +680,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **User corrections**（逐字引用对话记录）:
 1. "增量获取数据，过往的历史数据从哪里来呢？csv怎么处理，有没有测试csv是否会被覆盖的问题" —— 追问 merge 架构下历史来源与 CSV 覆盖测试缺口，促使补 run() 级 `test_run_incremental_overwrites_stale_csv`（B9）
-2. "测试agent 单独plan一下，编写测试用例的规划。" —— 要求测试用例规划由独立 agent 产出（已执行：测试规划 agent → `.omo/plans/fin-incremental-tests.md`）
+2. "测试agent 单独plan一下，编写测试用例的规划。" —— 要求测试用例规划由独立 agent 产出（已执行：测试规划 agent → `.dsh/plans/fin-incremental-tests.md`）
 3. "接受修复，然后python没有支持logger吗？支持一下。此外，是不是返回其他值更好，返回值也应该反应内部状况。" —— review MAJOR（merge 失败静默吞错）修复决策：接受 + 用 logger 替代裸 print + 返回值应反映内部状况（最终：保持 int 契约 + logger 输出 inserted 计数）
 
 **What went wrong**:
@@ -699,7 +699,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - `collectors/common.py` merge 失败路径 `logger.error("  SQL error: %s", ...)` + 成功 `logger.info("  Done: %s rows (inserted N this run)")`（本 commit c5800c8 落实，含模块级 logger + stderr fallback）
 - `collectors/tests/test_common.py` 新增 2 个 caplog 测试：`test_merge_insert_failure_logs_sql_error` / `test_merge_success_logs_inserted_row_count`（RED→GREEN，防静默回归）
 - `kb/design/data-providers.md` 决策记录新增 ref #160 行 + 修正 ref #139 行的错误排除原因；`kb/user/cli.md` 增量机制更新（data_updates 锚点 + 财务四表 merge）
-- `.omo/plans/fin-incremental-merge.md` + `fin-incremental-tests.md` 归档（plan/测试规划随实现提交）
+- `.dsh/plans/fin-incremental-merge.md` + `fin-incremental-tests.md` 归档（plan/测试规划随实现提交）
 
 ### Trends (last 10)
 - **"review 抓出本可前置验证的问题"模式第三次出现**（ref #139 声称端到端已验证但数据路径未打通、ref #159 破坏性命令未读源码、本次 Wave 4 未执行 + 重构丢诊断）：review 的价值密度高但前置验证不足是反复模式——plan 波次顺序严格执行 + 重构前后行为对照（尤其失败路径）应成为习惯；本次已用 caplog 失败路径测试固化
@@ -725,8 +725,8 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **Process improvements**:
 - `kb/dev/toolchain.md` 新增「编辑器工具链」类别排查卡：edit 工具按 oldString 匹配误伤文件内重复片段（含症状/根因/排查路径/修复/验证，覆盖本 session 两次真实事故）
-- `.omo/plans/data-coverage-95.md` + `data-coverage-95-tests.md` 归档（随实现 commit 956ca26 提交）
-- 覆盖率证据存 `.omo/evidence/task-*.txt`（RED 基线、最终 gate 95.41%、各 todo GREEN）
+- `.dsh/plans/data-coverage-95.md` + `data-coverage-95-tests.md` 归档（随实现 commit 956ca26 提交）
+- 覆盖率证据存 `.dsh/evidence/task-*.txt`（RED 基线、最终 gate 95.41%、各 todo GREEN）
 
 ### Trends (last 10)
 - **"review 阶段才暴露可前置验证的问题"模式持续**（ref #139 声称已验证但数据路径未通、ref #160 Wave 4 未执行、本次 Rust 门槛基线未在 plan 实测）：plan 阶段"实测而非信任文档"应成为硬习惯——本次已因 review 的 llvm-cov 实测闭环，未造成返工
@@ -739,7 +739,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **User corrections**:
 1. "plan完成了？？看看handoff里有没有还没有完成的部分？" —— 我在 Todo 5 提交后即宣布"Plan 执行完毕"，用户质疑后核查发现 evidence 未落盘、台账 F1-F4/success criteria 未勾选、epic 两层审查第二层（PR 级完整 diff）未跑——"plan 完成"声明过早，未对照 plan Final verification wave 逐条核验。
-2. "evidence 文件 这个是谁要求的？" —— 质疑证据出处，促使核查 plan Verification strategy（`证据：.omo/evidence/task-<N>-*.txt`）——要求确实存在，是我执行遗漏而非多余要求。
+2. "evidence 文件 这个是谁要求的？" —— 质疑证据出处，促使核查 plan Verification strategy（`证据：.dsh/evidence/task-<N>-*.txt`）——要求确实存在，是我执行遗漏而非多余要求。
 
 **What went wrong**:
 1. **过早宣布 plan 完成**（核心偏差）：Todo 5 commit 后直接报告"执行完毕"，未做 plan 级完成核验——evidence 目录根本不存在（plan Verification strategy 明确要求 task-1..5 落盘）、台账 F1-F4 仍为未勾选、PR 级完整 diff 审查未跑。用户两次质疑才暴露。
@@ -756,7 +756,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 5. **fetch 层全局语义变更需审计全部 DataProvider 消费者**（GUI/export/CLI/backtest），不只直接调用者——export 经 fetch_bars 间接受影响是典型盲点。
 
 **Process improvements**:
-- 已落实：`.gitignore` 放行 `.omo/evidence/`（609d668，与 plans/designs 同类过程归档）；`kb/user/cli.md` export 章节注明前复权输出（56eb3ac）
+- 已落实：`.gitignore` 放行 `.dsh/evidence/`（609d668，与 plans/designs 同类过程归档）；`kb/user/cli.md` export 章节注明前复权输出（56eb3ac）
 - 建议固化（文档类可直接改，本次先记录）：AGENTS.md「收尾前必须核实实现存在」规则扩展至 plan/批次完成声明——宣布"plan 执行完毕"前必须核对 evidence 落盘、台账回写、epic 两层审查，未核即声明即过度声称（ref #119 同类教训的 epic 级重演）
 
 ### Trends (last 10)
@@ -1112,7 +1112,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-09 — ref #217 GUI 四问题修复 epic：实现 + 用户验收 6 项修复
 
-**What was done**: 完成 epic #217（4 个子 issue：#218 K线切换立即重载、#219 图表中文日期（fork a1531ac）、#220 选股器原子组、#221 SEPA 表格渲染）+ 用户验收发现的 6 项修复（列对齐、涨跌幅重复、SEPA 详情面板溢出、Tag 空格、Button 文字主题色/loading 色、Tag 换行）。16 commits（15 实现+1 F1-F4 evidence），全部在 feat/ui-fixes-217 worktree。review-work 5-agent 门禁通过（1 MAJOR 已修）。F1-F4 证据落盘 `.omo/evidence/ui-fixes/`。
+**What was done**: 完成 epic #217（4 个子 issue：#218 K线切换立即重载、#219 图表中文日期（fork a1531ac）、#220 选股器原子组、#221 SEPA 表格渲染）+ 用户验收发现的 6 项修复（列对齐、涨跌幅重复、SEPA 详情面板溢出、Tag 空格、Button 文字主题色/loading 色、Tag 换行）。16 commits（15 实现+1 F1-F4 evidence），全部在 feat/ui-fixes-217 worktree。review-work 5-agent 门禁通过（1 MAJOR 已修）。F1-F4 证据落盘 `.dsh/evidence/ui-fixes/`。
 
 **User corrections**（逐字引用对话记录）:
 1. "sepa表格的列和表头没有严格对齐，是不是内部cell的文字align没有一致？，而且涨跌幅，为什么显示了两次，一次还没有%和正负号"——验收发现列对齐与涨跌幅重复两个问题；用户正确预判了 cell align 根因。
@@ -1136,7 +1136,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **Process improvements**: 
 - kb/dev/testing.md 待补：kittest Node API 限制（value()/shapes 扫描）+ egui wrapped 布局 Frame 撑宽陷阱 + `allocate_exact_size` pill 模式（本次直接改进，后续按门禁建 issue 落档）。
-- 已直接落实：.omo/evidence/ui-fixes/F1-F4 落盘（ref #174 要求）、kb/design/ui.md 8 条决策记录（9d24b57）、kb/user/gui.md/cli.md 同步。
+- 已直接落实：.dsh/evidence/ui-fixes/F1-F4 落盘（ref #174 要求）、kb/design/ui.md 8 条决策记录（9d24b57）、kb/user/gui.md/cli.md 同步。
 
 ### Trends (last 10)
 - **UI 布局诊断路径改进**（#139 SEPA、#221、本次 #217 多次）：多次出现"先猜渲染机制再验证"导致返工（Tag 空格先查渲染后查数据、detail 溢出经 probe 才定位 Frame 撑宽）。教训 #2/#3 建议改为"先复现现场拿证据再二分"——若后续再出现同类返工，在 kb/dev/process.md 调试章节固化排查框架。
@@ -1179,11 +1179,11 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 **User corrections**（逐字引用对话记录）:
 1. "流程结束，自动push，并关闭worktree"（重复两次）——用户预授权收尾：push 与关闭 worktree 无需再逐次询问。
 
-**What went wrong**: ①**RED 测试委派两次失败**——skwy-requirement-test agent 两次陷入「如何从公开接口制造 faithful write 行数不一致」的分析循环（0 产出、共 8+ 分钟），第三次改用 unspecified-high + 完整测试模板（含 TestWriter 捕获模式）才落地；根因是「faithful write 下 parquet 必然等于源查询结果，从 run() 外部无法自然制造 mismatch」这一事实未在委派 prompt 中预先说明，agent 反复推导不可行路径。②**对抗性测试 agent 无法写 evidence**——权限仅放行 `**/tests/**`，`.omo/evidence/` 写入被拒，agent 回复中输出完整记录、主 agent 代落盘（todo 7/8 两次）。③**pre-commit fmt 卡顿**——对抗性测试文件未 cargo fmt 直接 commit，pre-commit 报 unformatted 拒绝，需手动 fmt 后重提（一次返工）。④**F3 真实 import 超时**——对 18M+ 行 investment_data 跑 import（即使 --limit 5 也先全量枚举 symbols）超 300s，改临时小 Dolt 库验证同一二进制路径；暴露「真实大库 QA 需小样本策略」的摩擦。⑤**F3 fixture schema 过简**——import-compass fin_indicators 初建 2 列表，dolt 报 SELECT 37 列缺失，换完整 FIN_SCHEMA 后通过。
+**What went wrong**: ①**RED 测试委派两次失败**——skwy-requirement-test agent 两次陷入「如何从公开接口制造 faithful write 行数不一致」的分析循环（0 产出、共 8+ 分钟），第三次改用 unspecified-high + 完整测试模板（含 TestWriter 捕获模式）才落地；根因是「faithful write 下 parquet 必然等于源查询结果，从 run() 外部无法自然制造 mismatch」这一事实未在委派 prompt 中预先说明，agent 反复推导不可行路径。②**对抗性测试 agent 无法写 evidence**——权限仅放行 `**/tests/**`，`.dsh/evidence/` 写入被拒，agent 回复中输出完整记录、主 agent 代落盘（todo 7/8 两次）。③**pre-commit fmt 卡顿**——对抗性测试文件未 cargo fmt 直接 commit，pre-commit 报 unformatted 拒绝，需手动 fmt 后重提（一次返工）。④**F3 真实 import 超时**——对 18M+ 行 investment_data 跑 import（即使 --limit 5 也先全量枚举 symbols）超 300s，改临时小 Dolt 库验证同一二进制路径；暴露「真实大库 QA 需小样本策略」的摩擦。⑤**F3 fixture schema 过简**——import-compass fin_indicators 初建 2 列表，dolt 报 SELECT 37 列缺失，换完整 FIN_SCHEMA 后通过。
 
 **Lessons learned**:
 1. 委派测试 agent 前，先在自己脑中跑一遍「能否从公开接口制造目标场景」——若不可行（faithful write 语义），直接在 prompt 中声明"此场景不可制造，改用 X 构造"并给完整测试模板，杜绝 agent 空转分析。
-2. 测试 agent 写 evidence 到 `.omo/evidence/` 会遇权限拒绝——委派时明确"回复中输出完整记录，主 agent 代落盘"（本次两次踩坑）。
+2. 测试 agent 写 evidence 到 `.dsh/evidence/` 会遇权限拒绝——委派时明确"回复中输出完整记录，主 agent 代落盘"（本次两次踩坑）。
 3. 新文件（尤其测试文件）commit 前必须 `cargo fmt`——pre-commit 的 fmt --check 会拒绝，避免 commit 返工。
 4. 真实大库（18M+ 行）的 CLI 手动 QA 必须用小样本策略（临时 Dolt 库 + 完整 schema fixture），不要直接跑生产数据仓库。
 

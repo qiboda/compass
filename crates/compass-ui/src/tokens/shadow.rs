@@ -1,4 +1,4 @@
-//! Shadow tokens (design doc `.omo/designs/gui-upgrade.md` §4.5).
+//! Shadow tokens (design doc `.dsh/designs/gui-upgrade.md` §4.5).
 
 use egui::{Color32, Shadow};
 

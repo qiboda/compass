@@ -2,7 +2,7 @@
 //! re-exports (issue #222).
 //!
 //! This crate owns the single `locales/` directory (zh.yml + en.yml, the
-//! full key tree from `.omo/designs/gui-i18n.md` §1). It is the
+//! full key tree from `.dsh/designs/gui-i18n.md` §1). It is the
 //! share-in-workspace hub: `compass` and `compass-ui` both declare
 //! `i18n!("../compass-i18n/locales")` pointing here, so every `t!()` call in
 //! the workspace resolves against the same embedded data.

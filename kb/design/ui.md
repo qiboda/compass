@@ -6,8 +6,8 @@
 > **组件使用规范**：逐组件的使用规范（何时用、用哪个变体、怎么组合、反模式）
 > 见 `kb/design/ui-widgets.md`（权威文档）——24 个组件 × 8 字段统一模板。
 
-> **归档与权威的区别**：`.omo/designs/<feature>.md` 是 ui-designer 产出的
-> **过程归档**（原始方案）；`.omo/plans/<feature>.md` 是计划归档。
+> **归档与权威的区别**：`.dsh/designs/<feature>.md` 是 ui-designer 产出的
+> **过程归档**（原始方案）；`.dsh/plans/<feature>.md` 是计划归档。
 > 本文件才是 UI 设计的**最终版本**，与代码保持同步。归档文件不删不改，
 > 但一切 UI 设计决策以本文件为准。
 
@@ -16,7 +16,7 @@
 ### 设计 token（compass-ui）
 
 GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
-（`.omo/designs/gui-upgrade.md` §4，ref #123）——六类 token 逐项：
+（`.dsh/designs/gui-upgrade.md` §4，ref #123）——六类 token 逐项：
 **颜色**（`ColorTokens`，暗/亮两套）/ **间距**（`SpacingTokens`）/
 **字号**（`TypeTokens`）/ **圆角**（`RadiusTokens`）/ **阴影**（`ShadowTokens`）/
 **动效**（`MotionTokens`）。UI 代码不硬编码颜色值（ref #123）。
@@ -27,7 +27,7 @@ GUI 全部视觉值来自独立 crate `compass-ui` 的 **design token 系统**
 |---|---|---|
 | `compass_dark` | 默认暗色主题（TradingView 风格） | 已实现 |
 | `compass_light` | 亮色主题，适合白天使用 | 已实现 |
-| `compass_blue` | 深蓝主题 | 计划中（未实现；独立 issue 跟踪，见 `.omo/plans/gui-upgrade.md`） |
+| `compass_blue` | 深蓝主题 | 计划中（未实现；独立 issue 跟踪，见 `.dsh/plans/gui-upgrade.md`） |
 
 **Theme 自主化**（ref #126）：`CompassTheme` 不再封装 egui-charts 的 `Theme`
 系统——`apply_theme` 由 `ColorTokens` **直接构造 `egui::Visuals`** 并映射到
@@ -351,25 +351,25 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 日期 | 变更 | 来源归档 | 实现状态 |
 |---|---|---|---|
 | 2026-08-02 | 初始骨架：基于现有 GUI 提炼设计系统/布局/交互（ref #129） | — | 已实现（与代码同步） |
-| 2026-08-14 | LLM 自然语言入口（条件构建器 Card 内 + 第五通道 + seq 守卫） | `.omo/designs/llm-screener-llm.md` | 已实现（ref #247） |
-| 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.omo/designs/gui-upgrade.md` | 已实现（与代码同步） |
-| 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.omo/designs/chart-ma-boll.md` | 已实现（与代码同步） |
-| 2026-08-09 | 新增组件使用规范权威文档 `kb/design/ui-widgets.md`（24 组件 × 8 字段模板，与本文分工：本文管 token/布局/交互，组件文档管组件粒度用法） | `.omo/designs/ui-widgets.md` | 已同步（与代码同步） |
-| 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.omo/designs/ui-fixes-chinese-date.md` + `.omo/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
-| 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.omo/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
-| 2026-08-10 | GUI 全面中文化 + 多语言 i18n（rust-i18n 键表 + 工具栏语言下拉 + config language 键 + fork 图表日期/tooltip 键化）（ref #222） | `.omo/designs/gui-i18n.md` | 已实现（与代码同步） |
-| 2026-08-13 | 选股器条件构建器（Epic #243 Batch 2）：Metabase 范式条件卡片组（AND/OR 嵌套）操作 Filter AST，替换固定表单（ref #245） | `.omo/designs/llm-screener-ui.md` | 已实现（与代码同步） |
-| 2026-08-14 | 大盘 tab（epic #255）：核心指数 Card（6 白名单）+ 板块/指数排序表 + Segmented 行业/概念/官方 + 手动刷新 + 行点击联动不切 tab + BK 前缀搜索 + 前复权 Tag 按类型隐藏 | `.omo/designs/index-data.md` | 已实现（与代码同步） |
+| 2026-08-14 | LLM 自然语言入口（条件构建器 Card 内 + 第五通道 + seq 守卫） | `.dsh/designs/llm-screener-llm.md` | 已实现（ref #247） |
+| 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.dsh/designs/gui-upgrade.md` | 已实现（与代码同步） |
+| 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.dsh/designs/chart-ma-boll.md` | 已实现（与代码同步） |
+| 2026-08-09 | 新增组件使用规范权威文档 `kb/design/ui-widgets.md`（24 组件 × 8 字段模板，与本文分工：本文管 token/布局/交互，组件文档管组件粒度用法） | `.dsh/designs/ui-widgets.md` | 已同步（与代码同步） |
+| 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.dsh/designs/ui-fixes-chinese-date.md` + `.dsh/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
+| 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.dsh/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |
+| 2026-08-10 | GUI 全面中文化 + 多语言 i18n（rust-i18n 键表 + 工具栏语言下拉 + config language 键 + fork 图表日期/tooltip 键化）（ref #222） | `.dsh/designs/gui-i18n.md` | 已实现（与代码同步） |
+| 2026-08-13 | 选股器条件构建器（Epic #243 Batch 2）：Metabase 范式条件卡片组（AND/OR 嵌套）操作 Filter AST，替换固定表单（ref #245） | `.dsh/designs/llm-screener-ui.md` | 已实现（与代码同步） |
+| 2026-08-14 | 大盘 tab（epic #255）：核心指数 Card（6 白名单）+ 板块/指数排序表 + Segmented 行业/概念/官方 + 手动刷新 + 行点击联动不切 tab + BK 前缀搜索 + 前复权 Tag 按类型隐藏 | `.dsh/designs/index-data.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
-> `.omo/designs/<feature>.md` 归档文件、实现状态。
+> `.dsh/designs/<feature>.md` 归档文件、实现状态。
 
 ## 决策记录
 
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |
 |---|---|---|---|---|
 | UI 设计权威文档位置 | `kb/design/ui.md`（独立文件） / 并入 `kb/user/gui.md` / 每 feature 独立文档 | 新建 `kb/design/ui.md` | 与 kb/user/gui.md（用户手册）职责分离；单一累积式文档满足"一份最终文档"诉求；与 architecture/data-providers/symbols 并列于 kb/design/ | 并入用户手册会混淆设计规范与使用说明；多份独立文档无法形成单一权威版本（ref #129，用户确认） |
-| `.omo/designs/` 的定位 | 过程归档 / 权威文档 | 过程归档 | 项目书（kb/）是知识的唯一数据源；设计经用户确认后最终版必须同步到 kb/ | 让归档文件承载权威信息会导致 kb/ 与归档内容漂移（ref #129） |
+| `.dsh/designs/` 的定位 | 过程归档 / 权威文档 | 过程归档 | 项目书（kb/）是知识的唯一数据源；设计经用户确认后最终版必须同步到 kb/ | 让归档文件承载权威信息会导致 kb/ 与归档内容漂移（ref #129） |
 | 组件库组织 | 独立 crate `compass-ui` / `crates/compass/src/widgets/` 扩展 | 独立 crate `compass-ui` | 用户核心需求即「通用可复用组件库」；workspace 多 crate 模式成熟；依赖方向单向（bin→ui，ui 零业务依赖）；独立 kittest 测试面 | widgets/ 扩展使组件与业务耦合，无法 bin 外复用（ref #119 D3） |
 | Theme 架构 | 自建 token→直接构造 egui::Visuals / 保留封装 egui-charts Theme / 全自建含 chart 渲染 | 自建 token→Visuals 直构 + chart 薄封装 | `egui::Visuals` pub 字段可直接构造（egui-0.35 已验证）——UI 主题完全自主，消除「UI 由图表库决定」反向依赖；chart 渲染内部深度依赖 egui-charts Theme，薄封装成本边界最优 | 全自建 chart 渲染需重写 K 线/十字准线绘制成本极高；保留现状则 UI token 无法独立演进（ref #119 D2） |
 | Dock 方案 | 深度定制 egui_dock 0.20 / 换 egui_tiles / 自建 | 深度定制 egui_dock 0.20 | egui_dock 0.20.1 `Style` 字段全 pub 可深度定制（TabBarStyle/TabStyle 7 交互态/分隔线/边框）；现有 tabs.rs/dock_state/kittest 全复用；需求固定三面板无需网格 | egui_tiles 自述"开发早期、功能不全"；重写 TabViewer+测试成本高；自建拖拽/重排/浮动成本极高（ref #119 D1） |

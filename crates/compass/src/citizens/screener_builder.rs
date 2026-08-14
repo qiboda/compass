@@ -670,7 +670,7 @@ mod tests {
 
     // --- 2. Forward mapping: leaf_to_filter builds the template AST ----------
     // Each LeafKind + params must build the exact AST shape from the template
-    // table (.omo/designs/llm-screener-ui.md §2), matching the shapes produced
+    // table (.dsh/designs/llm-screener-ui.md §2), matching the shapes produced
     // by From<ScreenerQuery> (screener.rs L221-307).
 
     #[test]

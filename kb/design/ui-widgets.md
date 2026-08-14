@@ -3,7 +3,7 @@
 **本文件是 compass GUI 组件使用规范的最终权威文档**，累积式维护——每次组件
 规范变更（ui-designer 产出 + 主 agent 审阅 + 用户确认）后，将最终要点同步至此。
 
-> **归档与权威的区别**：`.omo/designs/ui-widgets.md` 是 ui-designer 产出的
+> **归档与权威的区别**：`.dsh/designs/ui-widgets.md` 是 ui-designer 产出的
 > **过程归档**（原始方案）；本文件才是组件使用规范的**最终版本**，与代码保持
 > 同步。归档文件不删不改，但一切组件使用规范决策以本文件为准。
 
@@ -63,7 +63,7 @@ DockArea 布局均保持原样）。
   组件以 `ThemeTokens` 为首参（builder 风格），compass-ui 零业务依赖。
 - **权威设计文档**：`kb/design/ui.md` 覆盖 token、布局结构（工具栏 / Sidebar /
   DockArea / StatusBar / 浮层）、交互规范（快捷键 / toast / modal）、21 条决策记录。
-- **设计归档**：`.omo/designs/gui-upgrade.md` §5 定义了三级组件分类
+- **设计归档**：`.dsh/designs/gui-upgrade.md` §5 定义了三级组件分类
   （原子 16 + 复合 8 + 业务 citizen），§5.4 划定了与 egui 原生 widget 的边界。
 
 ### 24 个组件清单（widgets.rs 全量）
@@ -874,7 +874,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |
 |---|---|---|---|---|
-| 文档位置 | `kb/design/ui-widgets.md`（直接写权威版）/ `.omo/designs/ui-widgets.md`（过程归档） | `.omo/designs/ui-widgets.md` 过程归档，确认后主 agent 同步 kb/ | 遵循项目「kb/ 是知识唯一数据源、.omo/designs 仅归档」既有约定（ui.md 决策记录第 2 条）；ui-designer 只写 `.omo/designs/` | 直接写 kb/ 违反 ui-designer 写限与归档/权威分离约定 |
+| 文档位置 | `kb/design/ui-widgets.md`（直接写权威版）/ `.dsh/designs/ui-widgets.md`（过程归档） | `.dsh/designs/ui-widgets.md` 过程归档，确认后主 agent 同步 kb/ | 遵循项目「kb/ 是知识唯一数据源、.omo/designs 仅归档」既有约定（ui.md 决策记录第 2 条）；ui-designer 只写 `.dsh/designs/` | 直接写 kb/ 违反 ui-designer 写限与归档/权威分离约定 |
 | 组件模板 | 统一 8 字段模板 / 按组件类型灵活模板 / 表格化精简模板 | 统一 8 字段（用途/适用场景/变体/API 要点/示例/反模式/相关组件/测试锚点） | 任务已锁定；8 字段恰好覆盖「选型（2/7）+ 变体与用法（3/4/5）+ 约束（6）+ 验证（8）」完整闭环；统一模板保证 24 个组件可并排对比 | 灵活模板制造对比噪音；精简模板丢失反模式/测试锚点这两个最重要的校验字段 |
 | 分层方式 | 原子(16)/复合(8)/业务(4 citizen) 三层 / 平铺 24 个 | 三层 | 沿袭 gui-upgrade.md §5 + D11 既有决策；三层与依赖方向（compass-ui 零业务依赖）天然对齐；业务层独立小节保持组件库纯 UI | 平铺会让业务面板混入通用组件库，复用边界模糊（D11 排除理由） |
 | 反模式依据 | 仅代码注释/测试/设计决策有据条目 / 允许「未见约束」占位 | 有据条目为主，「未见约束」显式标注 | 反模式是本文最高价值字段，但 24 组件中部分组件（Badge/Label/Tooltip 等）确实缺少既有约束记录；显式标注避免「看起来像规范」实则编造 | 只写有据条目会留下空白组件；不标注的编造违反「从代码出发」原则 |

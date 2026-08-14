@@ -32,7 +32,7 @@ use crate::messages::{FetchRequest, RunLlmRequest, RunScreenerRequest};
 use crate::state::SharedState;
 
 /// Results table column specs (design §6.6). Headers hold **i18n keys**
-/// (design `.omo/designs/gui-i18n.md` §1); `DataTable::show` resolves them
+/// (design `.dsh/designs/gui-i18n.md` §1); `DataTable::show` resolves them
 /// via `compass_i18n::t!()` every frame.
 const COLUMNS: [ColumnSpec; 6] = [
     ColumnSpec {
@@ -265,7 +265,7 @@ impl ScreenerPanel {
         ]
     }
 
-    /// Condition card builder (design `.omo/designs/llm-screener-ui.md` §3-5):
+    /// Condition card builder (design `.dsh/designs/llm-screener-ui.md` §3-5):
     /// one root `Card` whose header carries the AND/OR segmented + condition
     /// count + clear button, followed by the card list (leaf rows /
     /// recursively nested group frames) and the bottom add menu.
@@ -2464,7 +2464,7 @@ mod tests {
     // RED phase: these tests compile only after the Todo 6 signatures land —
     // `ScreenerPanel::new(..., llm_enabled: bool)` and
     // `show(..., llm_signal: &Signal<RunLlmRequest>)` (design
-    // .omo/designs/llm-screener-llm.md §8). i18n labels below follow the
+    // .dsh/designs/llm-screener-llm.md §8). i18n labels below follow the
     // design §6 zh values (screener.llm.placeholder / generate / generating).
 
     /// Panel with the LLM entry enabled/disabled per the constructor flag.

@@ -17,7 +17,7 @@ rust_i18n::i18n!("../compass-i18n/locales", fallback = "zh");
 
 /// Design tokens: colors, spacing, typography, radii, shadows and motion durations.
 ///
-/// See design doc `.omo/designs/gui-upgrade.md` §4 for the full value spec.
+/// See design doc `.dsh/designs/gui-upgrade.md` §4 for the full value spec.
 pub mod tokens;
 
 /// Font registration: SourceHanSansCN (Chinese) + JetBrains Mono (numeric).

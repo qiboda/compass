@@ -624,7 +624,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | D4（#247）：LLM 请求通道 | 第五 `AsyncDispatcher` 通道 / 复用 run_screener 通道 | 第五通道（`RunLlmRequest/Response`，含 seq 守卫） | 与 sepa/index 通道模式完全同构；LLM 是独立后端职责（网络 I/O + 解析校验）；seq 守卫保证 Esc 取消后在途响应不混入 | 复用 screener 通道破坏单一职责、错误语义混杂 |
 | D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
 
-> 注：设计文件 `.omo/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
+> 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
 > 空 And/Or 是构建器空状态的合法 AST（LLM 返回空 And 时合并为无操作，不报错），
 > 深度 32 在 serde recursion limit（128）内有防栈溢出余量；构建器模板外形状

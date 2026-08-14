@@ -1,4 +1,4 @@
-//! Design token system for the Compass GUI (design doc `.omo/designs/gui-upgrade.md` §4).
+//! Design token system for the Compass GUI (design doc `.dsh/designs/gui-upgrade.md` §4).
 //!
 //! Six token categories are defined here — color ([`crate::tokens::ColorTokens`]),
 //! spacing ([`crate::tokens::SpacingTokens`]), typography ([`crate::tokens::TypeTokens`]),

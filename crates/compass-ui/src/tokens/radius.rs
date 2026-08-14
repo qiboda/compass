@@ -1,4 +1,4 @@
-//! Corner radius tokens (design doc `.omo/designs/gui-upgrade.md` §4.4).
+//! Corner radius tokens (design doc `.dsh/designs/gui-upgrade.md` §4.4).
 
 /// Corner radius scale, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]

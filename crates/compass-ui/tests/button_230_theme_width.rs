@@ -2,7 +2,7 @@
 //! (`on_accent` / `on_error`) and the `min_width` loading-width fix.
 //!
 //! These target the interface contract declared in the approved plan
-//! (`.omo/designs/button-theme-and-width-fix.md`): the `on_accent` /
+//! (`.dsh/designs/button-theme-and-width-fix.md`): the `on_accent` /
 //! `on_error` fields on `ColorTokens` and the `Button::min_width` builder.
 //! They do not compile until the implementation lands — that compile failure
 //! is the test-first RED. Once the fix is in, the same suite must compile and

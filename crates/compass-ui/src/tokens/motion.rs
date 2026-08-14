@@ -1,4 +1,4 @@
-//! Motion duration tokens (design doc `.omo/designs/gui-upgrade.md` §4.6).
+//! Motion duration tokens (design doc `.dsh/designs/gui-upgrade.md` §4.6).
 
 use std::time::Duration;
 

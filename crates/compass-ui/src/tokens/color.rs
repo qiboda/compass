@@ -1,4 +1,4 @@
-//! Color palette tokens (design doc `.omo/designs/gui-upgrade.md` §4.1).
+//! Color palette tokens (design doc `.dsh/designs/gui-upgrade.md` §4.1).
 
 use egui::Color32;
 

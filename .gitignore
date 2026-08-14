@@ -1,8 +1,4 @@
 /target
-.omo/*
-!.omo/plans/
-!.omo/designs/
-!.omo/evidence/
 compass.db
 compass.duckdb
 logs/
@@ -22,8 +18,6 @@ collectors/.venv/
 collectors/__pycache__/
 collectors/*.csv
 collectors/*.state.json
-.opencode/package.json
-.opencode/package-lock.json
 __pycache__/
 collectors/.coverage
 

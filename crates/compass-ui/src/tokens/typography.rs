@@ -1,4 +1,4 @@
-//! Typography tokens — font size scale (design doc `.omo/designs/gui-upgrade.md` §4.3).
+//! Typography tokens — font size scale (design doc `.dsh/designs/gui-upgrade.md` §4.3).
 
 /// Font size scale, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]

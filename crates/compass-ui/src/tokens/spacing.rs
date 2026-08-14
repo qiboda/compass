@@ -1,4 +1,4 @@
-//! Spacing / dimension tokens (design doc `.omo/designs/gui-upgrade.md` §4.2).
+//! Spacing / dimension tokens (design doc `.dsh/designs/gui-upgrade.md` §4.2).
 
 /// Spacing and control dimension scale, in points (px at 100% scale).
 #[derive(Clone, Copy, Debug, PartialEq)]

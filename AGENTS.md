@@ -60,10 +60,10 @@ Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成�
 
 | Step | 动作 | 所需证据 |
 |---|---|---|
-| **0.5. Worktree** | 需求是否需要 worktree？（feature/epic、2+ 模块、将产出 `.omo/plans/*.md` 或 `.omo/designs/*.md`）→ 需要则**立即创建并切换**（`/skwy-worktree`），plan/design 直接在 worktree 内创建；不需要则跳过 | worktree 名称 + `.omo/handoff.md` 已写入 |
-| **1. Design** | 涉及界面设计时：委派 `ui-designer` 产出 `.omo/designs/<feature>.md` 方案并经用户确认；纯逻辑/数据变更可跳过 | 展示方案要点 + 用户确认 |
+| **0.5. Worktree** | 需求是否需要 worktree？（feature/epic、2+ 模块、将产出 `.dsh/plans/*.md` 或 `.dsh/designs/*.md`）→ 需要则**立即创建并切换**（`/skwy-worktree`），plan/design 直接在 worktree 内创建；不需要则跳过 | worktree 名称 + `.dsh/handoff.md` 已写入 |
+| **1. Design** | 涉及界面设计时：委派 `ui-designer` 产出 `.dsh/designs/<feature>.md` 方案并经用户确认；纯逻辑/数据变更可跳过 | 展示方案要点 + 用户确认 |
 | **2. Issue** | 调用 `/skwy-github-workflow` 创建/管理 issue | 向用户展示 issue URL |
-| **3. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.omo/plans/*.md` 文件创建 + 用户批准 |
+| **3. Plan** | 涉及 2+ 模块时运行 `/ulw-plan` agent 直到批准 | `.dsh/plans/*.md` 文件创建 + 用户批准 |
 | **3.5. Adversarial Tests** | 委派 `skwy-adversarial-test` 写对抗性测试（RED；plan 无接口契约时返回 DEFERRED，首个可编译接口 commit 后携带 SHA 重新委派） | 测试失败输出 / DEFERRED 记录 |
 | **4. Tests** | 委派 `skwy-requirement-test` 写失败测试（需求验收 RED） | 测试失败输出 |
 | **5b. Docs** | 按 `skwy-workflow` 技能内嵌「文档同步」章节确定哪些 `kb/` 文件需更新 | 向用户列出文件清单 |
@@ -134,7 +134,7 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 | `subagent-compile` | `/subagent-compile` | 委派 subagent 时的编译权限分级——subagent 允许 `cargo check`，禁止重型编译（test/clippy/build） |
 
 所有 skill 位于 `~/.config/opencode/skills/<name>/SKILL.md`（全局技能组，可被
-OpenCode 自动发现）；项目本地技能位于 `.opencode/skills/`。无需注册。
+OpenCode 自动发现）；项目本地技能位于 `.dsh/skills/`。无需注册。
 
 **强制加载（MANDATORY）**：上表所有全局 skills 在其对应场景触发时**必须加载**
 （`/skwy-workflow` 等斜杠命令或 `skill` 工具），无例外——grill-me 每次用户
@@ -145,7 +145,7 @@ OpenCode 自动发现）；项目本地技能位于 `.opencode/skills/`。无需
 
 `~/.config/opencode/agent/ui-designer.md` 定义了界面设计 agent **`ui-designer`**
 （只读，全局技能组，OpenCode 自动发现），负责 GUI 布局、视觉风格与交互效果
-设计，输出设计方案到 `.omo/designs/<feature>.md`。
+设计，输出设计方案到 `.dsh/designs/<feature>.md`。
 
 **路由规则（强制）**：任何涉及界面设计的工作 —— 布局、视觉风格、交互效果、
 动画、hover/快捷键/反馈状态 —— 主 agent 必须先委派 `ui-designer` 产出
@@ -153,12 +153,12 @@ OpenCode 自动发现）；项目本地技能位于 `.opencode/skills/`。无需
 该环节即 skwy-workflow 预实现门禁的 **第 1 步 DESIGN**：方案产出后须向
 用户展示要点并获确认，方可进入后续步骤。纯逻辑/数据变更可跳过此步。
 
-**设计方案留档**：`.omo/designs/` 下的设计方案文件必须随实现一并提交（
+**设计方案留档**：`.dsh/designs/` 下的设计方案文件必须随实现一并提交（
 `.gitignore` 已放行该目录），作为**过程归档**。
 
 **最终版沉淀 kb/（强制）**：设计经用户确认后，最终设计要点必须同步到
 `kb/design/ui.md` —— 这是 UI 设计的**权威文档**，与代码同步维护。
-`.omo/designs/` 仅归档原始方案；一切 UI 设计决策以 `kb/design/ui.md` 为准。
+`.dsh/designs/` 仅归档原始方案；一切 UI 设计决策以 `kb/design/ui.md` 为准。
 
 **agent 模型配置（ref #200）**：`.opencode/agent/*.md` 的 frontmatter 不写
 `model:` 字段——模型属于运行时配置，写死在 agent 职责定义中会在全局 provider
@@ -205,7 +205,7 @@ git 写操作；③ 无提交权，改动经主 agent 审查后提交。
 跨多模块的大型需求分解为 **epic**（父 issue）+ **sub-issues**（子 issue）
 （GitHub 原生 sub-issue）。关键规则：一个 epic = 一个 PR（每个 sub-issue 一个
 commit，`ref #<sub-N>`）、一个 worktree、按依赖 DAG 分批处理（手动切换批次）、
-合并后批量关闭。计划文件（`.omo/plans/<epic>.md`）跟踪状态。
+合并后批量关闭。计划文件（`.dsh/plans/<epic>.md`）跟踪状态。
 
 完整子 issue 生命周期见 `~/.config/opencode/skills/skwy-github-workflow/SKILL.md`。
 
@@ -277,7 +277,7 @@ OPEN 并注明依赖就绪，绝不随 epic 一并关闭（ref #119 曾过度声
 
 **Plan/批次完成声明同理（ref #174 教训）**：宣布"plan 执行完毕"前必须逐条核对
 plan 的 Final verification wave（F1 合规审计 / F2 审查 / F3 测试+覆盖率 / F4 scope
-fidelity）并回写台账——evidence 落盘（`.omo/evidence/`）、台账勾选、epic 两层
+fidelity）并回写台账——evidence 落盘（`.dsh/evidence/`）、台账勾选、epic 两层
 审查（子 issue 级 + PR 级完整 diff）是完成定义的一部分，不是可选项。"实现 commit
 全部提交" ≠ "plan 完成"；未核即声明即过度声称。
 
@@ -340,7 +340,7 @@ grill-me 决策和已批准的 plan 构成契约。任何偏离 —— 即使是
 
 PR 开发使用 git worktrees，位于 `.worktrees/<name>/`（gitignored），每个 worktree 对应
 一个 PR/epic，合并后清理。**创建时机（强制）**：需求经 grill-me 确认是需要 worktree 的
-工作（feature/epic、2+ 模块、将产出 `.omo/plans/*.md` 或 `.omo/designs/*.md`）时，
+工作（feature/epic、2+ 模块、将产出 `.dsh/plans/*.md` 或 `.dsh/designs/*.md`）时，
 **grill 共识达成后立即创建并切换**——后续的 design/issue/plan/review/实现全部在
 worktree 内进行，**plan/design 等 .omo 产出文件直接在 worktree 内创建**，随实现 PR
 一并提交。**禁止**在 master 工作区先产出 plan/design 再等开 worktree 迁移——git
@@ -348,11 +348,11 @@ worktree 是独立 checkout，master 工作区的 untracked 文件不会出现�
 （ref #138 教训：SEPA 曾全程在 master 规划、plan/design 成 untracked，最后需手动迁移）。
 
 **主 session 的职责仅为确定用途 + 命名**：将用途简述、
-对应 issue URL 与已锁定决策写入 `.worktrees/<name>/.omo/handoff.md`，然后运行
+对应 issue URL 与已锁定决策写入 `.worktrees/<name>/.dsh/handoff.md`，然后运行
 `~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh <name>` 自动启动工作树区域（探测默认终端 + setsid
 脱离进程组，无需手动解绑当前 session）。剩余工作（设计/计划/实现/commit/PR）
 全部由 worktree 内的 agent 自主完成——worktree 会话启动后**第一步读取
-`.omo/handoff.md`** 获取上下文契约。worktree 创建后其原始分支（master）可能继续
+`.dsh/handoff.md`** 获取上下文契约。worktree 创建后其原始分支（master）可能继续
 推进，**worktree 会话启动后先同步原始分支**（`git fetch origin master && git rebase origin/master`，
 冲突解决后再开始），避免基于过期基点开发。opencode 仍占用目录无法删除时用
 `~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh --close <name>` 终止并清理
@@ -378,7 +378,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `kb/design/data-providers.md` | Provider trait 体系、DuckDbProvider/ParquetReader、错误处理、DDL |
 | `kb/design/backtest.md` | SEPA 历史回测 — 架构、组合模拟/基准代理口径、绩效指标、决策记录 |
 | `kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
-| `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.omo/designs/` 仅归档） |
+| `kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.dsh/designs/` 仅归档） |
 | `kb/design/ui-widgets.md` | UI 组件使用规范权威文档 — 24 个组件 × 8 字段模板（用途/适用场景/变体/API/示例/反模式/相关组件/测试锚点）、三层组织、状态所有权、偏差跟踪 |
 | `kb/design/workflow-skills.md` | skwy- 技能组设计决策（issue #210）— 全局技能迁移范围、门禁 3.5 步、脚本自包含等 |
 | `kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |

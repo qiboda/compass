@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from conftest import StubResponse  # noqa: E402
 
 # 254-field header for RPT_F10_FINANCE_GCASHFLOW — generated from
-# .omo/evidence/financial-f10/f10_columns.json GCASHFLOW.fields (JSON order).
+# .dsh/evidence/financial-f10/f10_columns.json GCASHFLOW.fields (JSON order).
 _HEADER = [
     "SECUCODE",
     "SECURITY_CODE",

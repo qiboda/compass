@@ -1,4 +1,4 @@
-//! Toast notification widget (design doc `.omo/designs/gui-upgrade.md` §5.2 / §7).
+//! Toast notification widget (design doc `.dsh/designs/gui-upgrade.md` §5.2 / §7).
 //!
 //! Migrated from the binary crate (epic #119 S5) and enhanced with token-based
 //! level colors, an entry animation (right slide +16 px → 0, alpha 0 → 1,

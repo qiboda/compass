@@ -30,6 +30,6 @@ assignees: qiboda
 <!-- Leave empty for standalone issues. -->
 
 > **Parent**: #<epic-N>
-> **Plan**: .omo/plans/<epic-name>.md
+> **Plan**: .dsh/plans/<epic-name>.md
 > **Batch**: <N>
 > **Depends on**: #<sub-X> (or "—" if none)
