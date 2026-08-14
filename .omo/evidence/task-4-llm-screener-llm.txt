@@ -1,0 +1,4 @@
+# Todo 4: [llm] config section (compass main.rs)
+- 实现: LlmSection (base_url/api_key/model) + FullConfig.llm + is_configured/to_client_config
+- 测试: main.rs mod tests 4 个 (默认值/未配置/回退/显式) — cargo test -p compass 全绿
+- 默认: base_url=https://api.openai.com/v1, model=gpt-4o-mini; api_key 空 → to_client_config None

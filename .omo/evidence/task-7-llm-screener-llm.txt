@@ -1,0 +1,3 @@
+# Todo 7: i18n zh/en
+- 实现: compass-i18n/locales/{zh,en}.yml — screener.llm.{placeholder,generate,generating,error_network,error_parse,error_empty,not_configured} + error.llm_{not_configured,request}
+- 验证: zh/en 键集对称; t!("screener.llm.generate") zh→"AI 生成" 在 kittest 中解析正确

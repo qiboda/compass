@@ -1,0 +1,6 @@
+# Todo 1: validate_filter (compass-types)
+- 实现: crates/compass-types/src/screener.rs `pub fn validate_filter(&Filter) -> Result<(), String>`
+- 测试: crates/compass-types/tests/validate_filter.rs 22 个 (RED → GREEN)
+- 验收: cargo test -p compass-types --test validate_filter → 22 passed
+- 回归: cargo test -p compass-types → 52+10+14+22 = 98 passed, 0 failed
+- clippy: 0 warnings (compass-types)

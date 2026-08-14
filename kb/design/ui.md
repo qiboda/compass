@@ -319,11 +319,36 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
   原子组宽度扫描（zh/en 双套）；label 多匹配一律 `query_all_*`（「排除退市」
   出现两次、「全部」三次）。
 
+### LLM 自然语言入口（ref #247，Epic #243 Batch 4）
+
+条件构建器根组 Card 内、组头之下新增**一行紧凑入口**（辅助功能，零新容器）：
+
+- **组成**：`Input`（placeholder「用自然语言描述选股条件…」+ LIGHTNING 前缀
+  图标）+「AI 生成」Primary 按钮。整行仅在 `[llm]` API key 已配置时渲染
+  （`ScreenerPanel::new(llm_enabled)` 构造参数，静态标志）；未配置 = 整行不
+  出现（无占位/禁用态，干净回退）。
+- **成功合并**：LLM 返回 Filter AST → serde 解析 + `validate_filter` 语义校验
+  → `filter_to_items` 反向识别 → **append + AND 展平**入根组（`llm_merge_into_root`
+  纯函数：根组 AND 且产物为 AND 组时按结合律展平为同级卡；Or/Not/嵌套保持
+  子组）。非破坏（不替换/删除已有卡）、不去重、无「AI 产物」特殊标记——结果
+  卡片与手动卡片完全同构（可编辑/删除/取反/持久化）。
+- **失败回退**：输入区下方 `colored_label(error_fg_color)` 内联错误 + Error
+  toast（None→Some 迁移）；输入文本保留可直接改后重试。
+- **状态**：`SharedState` 五信号（`llm_input/llm_loading/llm_error/llm_result/
+  llm_seq`）+ 第五 `AsyncDispatcher` 通道；`seq` 守卫保证 Esc 取消后在途响应
+  不混入根组。
+- **交互**：生成中按钮 loading（「生成中…」）+ Input 禁用；Enter 提交；空输入
+  按钮禁用；生成中 Esc 取消（seq 自增作废在途请求）；成功无 toast（卡片出现
+  即反馈）。
+- **可访问性**：按钮 label 纯文本（无 icon 前缀——`get_by_label` 精确匹配）；
+  禁用态经 `ui.add_enabled_ui` 设置 accesskit disabled。
+
 ## 设计变更记录
 
 | 日期 | 变更 | 来源归档 | 实现状态 |
 |---|---|---|---|
 | 2026-08-02 | 初始骨架：基于现有 GUI 提炼设计系统/布局/交互（ref #129） | — | 已实现（与代码同步） |
+| 2026-08-14 | LLM 自然语言入口（条件构建器 Card 内 + 第五通道 + seq 守卫） | `.omo/designs/llm-screener-llm.md` | 已实现（ref #247） |
 | 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.omo/designs/gui-upgrade.md` | 已实现（与代码同步） |
 | 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.omo/designs/chart-ma-boll.md` | 已实现（与代码同步） |
 | 2026-08-09 | 新增组件使用规范权威文档 `kb/design/ui-widgets.md`（24 组件 × 8 字段模板，与本文分工：本文管 token/布局/交互，组件文档管组件粒度用法） | `.omo/designs/ui-widgets.md` | 已同步（与代码同步） |

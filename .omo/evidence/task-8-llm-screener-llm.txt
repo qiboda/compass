@@ -1,0 +1,7 @@
+# Todo 8: doc-sync + 决策记录
+- kb/user/config.md: [llm] 节 (base_url/api_key/model + 默认值表)
+- kb/user/gui.md: 选股器 LLM 自然语言生成小节
+- kb/design/architecture.md: LLM 基础设施章节 (crate 归属/链路/通道) + 决策记录 D1-D5
+- kb/design/ui.md: LLM 自然语言入口小节 + 设计变更记录
+- 决策冲突注记: 设计文件深度>8/拒绝空 And/Or vs 实现 32/合法 — 以后者为准 (记录在 architecture.md)
+- .omo/designs/llm-screener-llm.md 设计归档随 commit 提交

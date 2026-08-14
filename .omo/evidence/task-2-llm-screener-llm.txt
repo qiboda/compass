@@ -1,0 +1,5 @@
+# Todo 2: compass-core llm module
+- 实现: crates/compass-core/src/llm.rs (LlmConfig/LlmError/LlmClient::chat_json) + lib.rs pub mod llm
+- 测试: crates/compass-core/tests/llm.rs 11 个 (httpmock) → 11 passed
+- 回归: cargo test -p compass-core → 173 passed, 0 failed
+- clippy: 0 warnings (compass-core lib)
