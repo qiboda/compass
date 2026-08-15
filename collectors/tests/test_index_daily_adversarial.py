@@ -151,19 +151,15 @@ class TestEmptyKlineBoundary:
                 CLIST_URL: {"json_data": _clist_payload([{"f12": "BK0475", "f14": "x"}])},
             }
         )
-        with patch("fetch_index_daily.AsyncSession", return_value=stub):
-            daily_path = await mod.run()
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), pytest.raises(RuntimeError, match="连续"):
+            await mod.run()
 
-        if daily_path.exists():
-            with open(daily_path, newline="", encoding="utf-8-sig") as f:
-                data = f.read()
-            assert set(_read_header(daily_path)) == EXPECTED_COLS, (
-                "any existing daily CSV must carry the full contract header"
-            )
-            # header-only allowed, but never data rows for empty klines.
-            assert data.count("\r\n") + data.count("\n") == 1, (
-                "header-only allowed; no data-body rows may exist for empty klines"
-            )
+        # Fast-fail (issue #277) aborts after 5 consecutive empty targets; it
+        # must not leave a half-written/header-only daily CSV behind.
+        daily_path = tmp_path / "index_daily.csv"
+        assert not daily_path.exists() or daily_path.stat().st_size == 0, (
+            "all-empty fast-fail must not leave a broken daily CSV"
+        )
 
     async def test_mixed_full_keeps_full_columns(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

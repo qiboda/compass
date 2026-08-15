@@ -528,3 +528,38 @@
 - **验证**: 451 passed / cov 95%；真实数据导入成功（2759 行，update_date 无 NULL）。
 - **教训**: 采集器测试必须覆盖 `run() → write_csv() → import_to_dolt()` 真实链路，手工构造 CSV
   的 import 测试会掩蔽列契约断裂——与 stock_daily 混源教训同理：数据级 bug 只能靠真实链路暴露。
+
+### [数据] 东财反爬封禁导致采集器空转数小时（快速失败机制）
+
+- **症状**: 2026-08-15 首次真实采集指数数据时东财 push2his 反爬封禁（45 请求/2 分钟触发，
+  IP 级 HTTP 000 全镜像封锁）；`fetch_index_daily.py::run()` 对失败标的仅打印 FAILED/empty 后
+  `continue`，955 板块 + 30 官方指数 × 6 次尝试 ≈ 3.5 小时空转后才结束。
+- **根因**: `run()` 没有连续失败计数器——封禁后所有标的必然连续失败，但采集器仍逐个重试全部标的。
+- **排查路径**: 真实采集日志显示大量 `FAILED`/`empty (skipped)` 后仍继续请求；对照
+  `.dsh/evidence/index-fetch-resume-2026-08-15.md` 确认封禁阈值与影响范围。
+- **修复**: issue #277 —— `run()` 维护跨 board/official 循环共享的连续失败计数器：
+  - 失败定义 = `_get_json` 返回 None（所有 host×attempt 用尽）或 empty klines；
+  - 连续 **5 个**标的失败立即终止，不再请求剩余标的；
+  - 终止前把已抓 daily/basic 记录写入 CSV（保留可续采），再抛 `RuntimeError` 提示
+    “连续 N 个标的失败（疑似反爬或接口故障）”；
+  - 成功即清零；official code-mismatch skip 既不计数也不清零；
+  - `common.py::EM_MIN_INTERVAL` 0.5s → **2.0s**（全局限流调大）。
+- **验证**: `test_fast_fail_requirement.py` + `test_fast_fail_adversarial.py` 16 用例覆盖
+  连续终止、CSV 保留、交错不误杀、4/5 边界、跨循环计数、skip 语义、Progress failed 状态；
+  全套件 `pytest collectors/tests/ --cov=. --cov-fail-under=95 -q` 全绿。
+- **教训**: 采集器对“连续失败”必须有止损机制；反爬场景下空转比失败本身更昂贵。
+
+### [测试] Dolt 遥测/更新检查导致 pytest 在无网络环境挂起
+
+- **症状**: 在 worktree 里跑完整 `pytest collectors/tests/` 时随机卡死（无输出推进），
+  `ps` 可见 `dolt send-metrics` 后台进程和一个 `dolt --data-dir ... sql` 子进程长期 `Sl`；
+  单独跑单个测试文件正常。
+- **根因**: Dolt CLI 会触发遥测/更新检查，在无外网或网络受限环境可能阻塞子进程，
+  导致 `subprocess.run(...)` 不返回；测试顺序/次数不同表现为随机挂起。
+- **排查路径**: `timeout 60 pytest ... -v` 定位最后一个未完成测试；`ps` 看到
+  `dolt send-metrics` + 卡住的 `dolt sql`；用 `DOLT_DISABLE_TELEMETRY=1
+  DOLT_DISABLE_UPDATE_CHECK=1` 重跑即通过。
+- **修复**: 测试/CI 环境设置 `DOLT_DISABLE_TELEMETRY=1 DOLT_DISABLE_UPDATE_CHECK=1`
+  再跑 Dolt 相关测试。
+- **验证**: 禁用后完整前缀 140 用例 60.9s 通过，全套件 + coverage 全绿。
+- **教训**: 本地/CI 无外网时，Dolt 遥测是隐藏的挂起源；涉及 Dolt 的测试命令应显式禁用遥测。
