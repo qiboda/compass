@@ -894,15 +894,29 @@ fn render_multi_select_localized(
     let entry = ms_map
         .entry(key.clone())
         .or_insert_with(|| MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt(&key));
+    // An English label shared by several zh keys (e.g. Mining ← {B 采矿业,
+    // 采矿业}, review P1-1) cannot round-trip uniquely — such labels fall
+    // back to their zh form so the stored filter keys stay exact.
+    let shared_en: std::collections::HashSet<&str> = {
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for en in en_map.values() {
+            *counts.entry(en.as_str()).or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .filter(|(_, c)| *c > 1)
+            .map(|(en, _)| en)
+            .collect()
+    };
+    let label_of = |zh: &str| -> String {
+        match en_map.get(zh) {
+            Some(en) if !shared_en.contains(en.as_str()) => en.clone(),
+            _ => zh.to_string(),
+        }
+    };
     if locale == "en" {
-        entry.options = options
-            .iter()
-            .map(|zh| en_map.get(zh).cloned().unwrap_or_else(|| zh.clone()))
-            .collect();
-        entry.selected = values
-            .iter()
-            .map(|zh| en_map.get(zh).cloned().unwrap_or_else(|| zh.clone()))
-            .collect();
+        entry.options = options.iter().map(|zh| label_of(zh)).collect();
+        entry.selected = values.iter().map(|zh| label_of(zh)).collect();
     } else {
         entry.options = options.to_vec();
         entry.selected = values.clone();
@@ -910,8 +924,11 @@ fn render_multi_select_localized(
     let changed = entry.show(ui);
     if changed {
         if locale == "en" {
+            // Only non-conflicting labels appear as English — the reverse
+            // map is therefore one-to-one for everything the user can see.
             let reverse: std::collections::HashMap<&str, &str> = en_map
                 .iter()
+                .filter(|(_, en)| !shared_en.contains(en.as_str()))
                 .map(|(k, v)| (v.as_str(), k.as_str()))
                 .collect();
             *values = entry
@@ -2837,5 +2854,202 @@ mod tests {
             root.is_empty(),
             "empty And merges to nothing without panicking"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // epic #266 B3f — adversarial (subagent): industry multi-select locale
+    // display + zh-key storage stability (SC1/SC2), and the results-table
+    // industry column (SC3/SC4). The multi-select lifecycle is asserted at
+    // the frame level: en locale maps option/selected labels to English while
+    // the ZH KEY stored in `values` must survive a locale frame untouched
+    // (egui_kittest cannot click inside the popup Area, per compass-ui
+    // multi_select.rs, so only the no-changed frame — the selection anchor —
+    // is verifiable here).
+    // ------------------------------------------------------------------
+
+    fn render_industry_ms(
+        ui: &mut egui::Ui,
+        values: &mut Vec<String>,
+        ms_map: &mut HashMap<String, MultiSelect>,
+        options: &[String],
+        en_map: &std::collections::HashMap<String, String>,
+    ) {
+        let tokens = ThemeTokens::dark();
+        let _ = render_multi_select_localized(
+            ui,
+            &tokens,
+            "cond_root",
+            "industry",
+            values,
+            ms_map,
+            options,
+            en_map,
+        );
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_maps_zh_to_en_labels_and_keeps_zh_key() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec!["白酒".to_string(), "银行".to_string()];
+        let en_map = std::collections::HashMap::from([
+            ("白酒".to_string(), "Alcohol".to_string()),
+            ("银行".to_string(), "Banks".to_string()),
+        ]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["白酒".to_string()];
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS must be created");
+        assert_eq!(
+            entry.options,
+            vec!["Alcohol".to_string(), "Banks".to_string()],
+            "SC1: en locale must render an en label for every mapped industry key"
+        );
+        assert_eq!(
+            entry.selected,
+            vec!["Alcohol".to_string()],
+            "SC2: the stored zh key must display as its en label in en locale"
+        );
+        assert_eq!(
+            values,
+            vec!["白酒".to_string()],
+            "SC2: a no-change en frame must leave the stored zh key untouched"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_anchor_survives_locale_flip() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec!["白酒".to_string(), "银行".to_string()];
+        let en_map = std::collections::HashMap::from([("白酒".to_string(), "Alcohol".to_string())]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["白酒".to_string()];
+
+        // Frame 1: en locale — values shown as en labels, zh key retained.
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+        assert_eq!(values, vec!["白酒".to_string()]);
+
+        // Frame 2: flip to zh and render again — the selection anchor "白酒"
+        // must survive; the zh branch re-seeds options/selected from zh keys.
+        compass_i18n::set_locale("zh");
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+        assert_eq!(
+            values,
+            vec!["白酒".to_string()],
+            "SC2: the zh-key selection anchor must survive a locale flip"
+        );
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS persists");
+        assert_eq!(
+            entry.options,
+            vec!["白酒".to_string(), "银行".to_string()],
+            "SC2/zh: non-en renders the raw zh option labels"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_unmapped_stays_zh_in_en_locale() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec!["白酒".to_string(), "未收录行业".to_string()];
+        let en_map = std::collections::HashMap::from([("白酒".to_string(), "Alcohol".to_string())]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["未收录行业".to_string()];
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS must be created");
+        assert_eq!(
+            entry.options,
+            vec!["Alcohol".to_string(), "未收录行业".to_string()],
+            "SC1/SC4: an unmapped industry keeps its Chinese label in en locale"
+        );
+        assert_eq!(
+            entry.selected,
+            vec!["未收录行业".to_string()],
+            "SC4: an unmapped selected value stays Chinese (label == key, reverse map passes through)"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_table_industry_column_resolves_locale() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+
+        // SC3: en locale + mapped industry → English column text.
+        let mapped = compass_types::ScreenerRow {
+            industry_en: Some("Banks".to_string()),
+            symbol: "SH600000".to_string(),
+            name: "浦发银行".to_string(),
+            latest_price: 10.0,
+            change_20d: 5.0,
+            market_cap: 100.0,
+            industry: "银行".to_string(),
+        };
+        assert_eq!(
+            ScreenerPanel::row_cells(&mapped)[5],
+            DataCell::Text("Banks".to_string()),
+            "SC3: en locale must render the mapped English industry in the table column"
+        );
+
+        // SC4: unmapped industry (None) → Chinese, never blank/panic.
+        let unmapped = compass_types::ScreenerRow {
+            industry_en: None,
+            symbol: "SH600000".to_string(),
+            name: "浦发银行".to_string(),
+            latest_price: 10.0,
+            change_20d: 5.0,
+            market_cap: 100.0,
+            industry: "银行".to_string(),
+        };
+        assert_eq!(
+            ScreenerPanel::row_cells(&unmapped)[5],
+            DataCell::Text("银行".to_string()),
+            "SC4: an unmapped industry stays Chinese in the table column"
+        );
+        compass_i18n::set_locale("zh");
     }
 }

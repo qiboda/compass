@@ -1375,4 +1375,111 @@ mod tests {
         let _ = harness.get_by_label("80%-100%");
         compass_i18n::set_locale("zh");
     }
+
+    // ------------------------------------------------------------------
+    // epic #266 B3e — adversarial (subagent): theme concept-map resolution
+    // and empty-industry separator. S2 hit/miss/partial per-theme
+    // independence; S3 take(2) truncation + mapping (the dropped third must
+    // never leak in); S4 empty industry must not yield a leading " · ";
+    // S5 an absent concept row must stay Chinese, never panic.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn adversarial_270_sepa_theme_concept_map_hit_miss_partial() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let map = std::collections::HashMap::from([
+            ("茅指数".to_string(), "Mao Index".to_string()),
+            ("核心资产".to_string(), "Core Assets".to_string()),
+        ]);
+        // [hit] — theme maps to its English concept.
+        let hit = row_with_industry("白酒", Some("Bai Jiu"), &["茅指数"]);
+        assert_eq!(
+            SepaPanel::row_cells(&hit, &map)[9],
+            DataCell::Text("Bai Jiu · Mao Index".to_string()),
+            "S2/hit: a mapped theme renders its English concept"
+        );
+        // [miss] — no concept row for this theme (D1-A legacy) → Chinese.
+        let miss = row_with_industry("白酒", Some("Bai Jiu"), &["白酒指数"]);
+        assert_eq!(
+            SepaPanel::row_cells(&miss, &map)[9],
+            DataCell::Text("Bai Jiu · 白酒指数".to_string()),
+            "S2/miss: an unmapped theme must fall back to Chinese, not blank/panic"
+        );
+        // [partial] — hit then miss: each theme resolves independently.
+        let partial = row_with_industry("白酒", Some("Bai Jiu"), &["茅指数", "白酒指数"]);
+        assert_eq!(
+            SepaPanel::row_cells(&partial, &map)[9],
+            DataCell::Text("Bai Jiu · Mao Index · 白酒指数".to_string()),
+            "S2/partial: per-theme independence — first mapped, second Chinese"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_sepa_take_two_truncation_ignores_mapped_third() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let map =
+            std::collections::HashMap::from([("核心资产".to_string(), "Core Assets".to_string())]);
+        // Only the first two of three themes are rendered. The third — even
+        // though it is the ONLY mapped one — must be dropped: mapping happens
+        // on the truncated slice, never on the discarded member.
+        let row = row_with_industry("白酒", Some("Bai Jiu"), &["未映射A", "未映射B", "核心资产"]);
+        assert_eq!(
+            SepaPanel::row_cells(&row, &map)[9],
+            DataCell::Text("Bai Jiu · 未映射A · 未映射B".to_string()),
+            "S3: only themes[0..2] influence the cell; a mapped third is truncated away"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_sepa_empty_industry_has_no_leading_separator() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        // Empty industry (a legacy/unmapped row) must not render a bare
+        // " · " leading separator before its themes.
+        let row = row_with_industry("", None, &["茅指数"]);
+        let cell = SepaPanel::row_cells(
+            &row,
+            &std::collections::HashMap::from([("茅指数".to_string(), "Mao Index".to_string())]),
+        )[9]
+        .clone();
+        assert_eq!(
+            cell,
+            DataCell::Text("Mao Index".to_string()),
+            "S4: empty industry must produce no leading separator"
+        );
+        assert!(
+            !matches!(cell, DataCell::Text(ref s) if s.starts_with('·') || s.starts_with(' ')),
+            "S4: the industry cell must not start with a separator or whitespace"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_sepa_concept_row_absence_stays_chinese() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        // Concept map built from index_basic concept rows has no entry for the
+        // theme's zh name → the theme renders Chinese, without panicking and
+        // without a blank.
+        let empty_map = std::collections::HashMap::new();
+        let row = row_with_industry("白酒", None, &["未收录概念"]);
+        assert_eq!(
+            SepaPanel::row_cells(&row, &empty_map)[9],
+            DataCell::Text("白酒 · 未收录概念".to_string()),
+            "S5: absent concept row stays Chinese end-to-end"
+        );
+        compass_i18n::set_locale("zh");
+    }
 }

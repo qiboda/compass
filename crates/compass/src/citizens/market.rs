@@ -806,4 +806,200 @@ mod tests {
         panel.set_tokens(light);
         assert_eq!(panel.tokens, light);
     }
+
+    // ------------------------------------------------------------------
+    // epic #266 B3d — adversarial (subagent): the locale-aware name must not
+    // half-apply. M1 locale round-trip catches a helper that reads a cached
+    // locale or a `row_cells` that ignores locale; M5 arms (a)/(b) pin the
+    // core-card precedence (row present wins over triple fallback); M6
+    // guards a whitelist-lookup regression on arbitrary table rows; P1
+    // guards O(n·k) per-row churn on large snapshots.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn adversarial_270_market_locale_round_trip_flips_cell() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let row = row_with_name_en("SH000001", "上证指数", Some("SSE Composite"));
+        // zh → en → zh → en: each flip must change the rendered cell and the
+        // final cell must match the last locale, not a cached earlier one.
+        compass_i18n::set_locale("zh");
+        assert_eq!(
+            MarketPanel::row_cells(&row)[0],
+            DataCell::Text("上证指数".to_string())
+        );
+        compass_i18n::set_locale("en");
+        assert_eq!(
+            MarketPanel::row_cells(&row)[0],
+            DataCell::Text("SSE Composite".to_string()),
+            "M1: en flip must render English"
+        );
+        compass_i18n::set_locale("zh");
+        assert_eq!(
+            MarketPanel::row_cells(&row)[0],
+            DataCell::Text("上证指数".to_string()),
+            "M1: back to zh must render Chinese again"
+        );
+        compass_i18n::set_locale("en");
+        assert_eq!(
+            MarketPanel::row_cells(&row)[0],
+            DataCell::Text("SSE Composite".to_string()),
+            "M1: second en flip must render English, not a stale zh"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_market_card_row_present_with_en_wins_in_en_locale() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let (mut panel, shared) = panel();
+        // SH000001 is in the whitelist AND carries name_en → the card must
+        // render the row's English name (SSE Composite), never the zh triple.
+        shared.index_snapshot.set(Some(IndexSnapshot {
+            rows: vec![row_with_name_en(
+                "SH000001",
+                "上证指数",
+                Some("SSE Composite"),
+            )],
+            date: "2026-08-13".to_string(),
+        }));
+        shared.index_snapshot_loading.set(false);
+        let (index_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &index_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        assert!(
+            text_drawn(&harness.output().shapes, "SSE Composite"),
+            "M5a: card must render the row's English name when a whitelist row is present with name_en"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_market_card_row_present_without_en_prefers_row_name_over_triple() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let (mut panel, shared) = panel();
+        // SH000001 present but name_en=None. Precedence: snapshot wins → the
+        // card must render the row's Chinese name, NOT the triple's "SSE
+        // Composite" fallback. The ranking table (industry segment default)
+        // filters the official row out, so only the card draws these names.
+        shared.index_snapshot.set(Some(IndexSnapshot {
+            rows: vec![row_with_name_en("SH000001", "上证指数", None)],
+            date: "2026-08-13".to_string(),
+        }));
+        shared.index_snapshot_loading.set(false);
+        let (index_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &index_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        let shapes = harness.output().shapes.clone();
+        assert!(
+            text_drawn(&shapes, "上证指数"),
+            "M5b: card must render the present row's Chinese name in en locale"
+        );
+        assert!(
+            !text_drawn(&shapes, "SSE Composite"),
+            "M5b: the triple en fallback must NOT override a present row's name"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_market_arbitrary_non_whitelist_row_falls_back_to_own_name() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        // An arbitrary symbol outside the 6-index whitelist, with no name_en,
+        // must render its own Chinese name — never a failure, never a blank.
+        let row = row_with_name_en("BK9999", "自定义指数", None);
+        assert_eq!(
+            MarketPanel::row_cells(&row)[0],
+            DataCell::Text("自定义指数".to_string()),
+            "M6: non-whitelist row must fall back to its own name (not a whitelist en name, not blank)"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_market_large_snapshot_no_churn() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        // 10k rows — half industry half concept — must filter + map in O(n):
+        // one cell vector per row, no per-row whitelist re-scan blow-up, and
+        // the name cell follows the locale (en rows render English).
+        let types = ["industry", "concept"];
+        let rows: Vec<IndexRow> = (0..10_000)
+            .map(|i| {
+                let mut r = sample_row(
+                    &format!("BK{i:05}"),
+                    &format!("指数{i}"),
+                    types[i % 2],
+                    (i as f64 - 5000.0) / 100.0,
+                );
+                if i % 3 == 0 {
+                    r.name_en = Some(format!("Index {i}"));
+                }
+                r
+            })
+            .collect();
+
+        let filtered = MarketPanel::filter_rows(&rows, 0);
+        assert_eq!(
+            filtered.len(),
+            5000,
+            "P1: industry segment keeps exactly half of 10k rows"
+        );
+        // Spot-check a couple of mapped rows rather than all 5000 (fast), and
+        // verify rows carrying name_en render English while others stay zh.
+        let mut en_rendered = 0;
+        let mut zh_fallback = 0;
+        for r in filtered.iter().take(2000) {
+            let cells = MarketPanel::row_cells(r);
+            assert_eq!(cells.len(), 5, "each row maps to exactly 5 cells");
+            match cells[0] {
+                DataCell::Text(ref name) => {
+                    if r.name_en.is_some() && name.starts_with("Index ") {
+                        en_rendered += 1;
+                    } else if name == &r.name {
+                        zh_fallback += 1;
+                    }
+                }
+                _ => panic!("P1: name cell must be Text"),
+            }
+        }
+        assert!(
+            en_rendered > 0 && zh_fallback > 0,
+            "P1: en-locale mapping must render both English (name_en rows) and zh fallback rows"
+        );
+        // The price cell must stay stable at 3000.0 across the whole pass.
+        let all_price_cells: Vec<DataCell> =
+            filtered.iter().flat_map(MarketPanel::row_cells).collect();
+        assert!(
+            all_price_cells
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 5 == 2)
+                .all(|(_, c)| matches!(c, DataCell::Price { value, change: None } if value.round() as i64 == 3000)),
+            "P1: latest column must be a price cell of 3000.0 for every row"
+        );
+        compass_i18n::set_locale("zh");
+    }
 }

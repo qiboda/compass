@@ -1,10 +1,13 @@
 # compass adversarial tests for epic #266 sub-issue #270 (B3 GUI rendering) — DEFERRED
 
-Status: **DEFERRED** — adversarial tests for the B3 GUI name-i18n behavior
-cannot be landed as compilable RED tests under the current state. This file
-is the complete hand-off: interface list + the full adversarial test matrix,
-every case RED against the current implementation, drop-in ready once the
-B3 helper/behavior lands and the current baseline compiles.
+Status: **RE-DELEGATED and LANDED** — the B3 implementer landed the interface
+(`i18n_name.rs display_name` + market/sepa/screener locale resolution) at commit
+**`8afe221`** (branch `feat/data-name-i18n`, worktree `.worktrees/data-name-i18n`),
+then re-delegated this subagent to land the adversarial matrix against the real
+interface. The matrix below is now implemented as in-source `#[cfg(test)]`
+additions (see "Landed adversarial tests" within this file). This header section
+retains the original DEFERRED rationale + interface list for the record; the
+matrix rows are now RED→GREEN-reframed as landed coverage.
 
 ## Why DEFERRED (three independent blockers)
 
@@ -196,3 +199,55 @@ failure against any incomplete implementation, then passes once correct.
    crate, `adversarial_245_screener_builder.rs` precedent) where the target is
    public-ish — the pure-function cases (M2/M3/M6/P1, S1-S5, SC2/SC4) are all
    expressible against `row_cells`/helper directly, so they need only the helper.
+
+---
+
+## Landed adversarial tests (re-delegation @ 8afe221)
+
+Landed as in-source `#[cfg(test)]` additions to the three citizen modules,
+per the `subagent-compile` delegation (write tests only; `cargo check --tests`
+allowed; `cargo test` prohibited — behavior verification is the main agent's).
+
+### Coverage vs matrix
+
+| # | Landed test (`#[test] fn`) | Module |
+|---|---------------------------|--------|
+| M1 | `adversarial_270_market_locale_round_trip_flips_cell` | market |
+| M2 | covered by implementer `row_cells_name_ignores_empty_string_name_en` | market |
+| M3 | covered by implementer `row_cells_name_*` (en-present/zh-locale) | market |
+| M4 | covered by implementer `row_cells_name_falls_back_to_chinese_without_name_en` | market |
+| M5a | `adversarial_270_market_card_row_present_with_en_wins_in_en_locale` | market |
+| M5b | `adversarial_270_market_card_row_present_without_en_prefers_row_name_over_triple` | market |
+| M5c/d | covered by implementer `core_index_card_fallback_renders_{en,zh}` (row absent) | market |
+| M6 | `adversarial_270_market_arbitrary_non_whitelist_row_falls_back_to_own_name` | market |
+| P1 | `adversarial_270_market_large_snapshot_no_churn` | market |
+| S1 | covered by implementer `row_cells_industry_*` (en/None/zh/empty) | sepa |
+| S2 | `adversarial_270_sepa_theme_concept_map_hit_miss_partial` | sepa |
+| S3 | `adversarial_270_sepa_take_two_truncation_ignores_mapped_third` | sepa |
+| S4 | `adversarial_270_sepa_empty_industry_has_no_leading_separator` | sepa |
+| S5 | `adversarial_270_sepa_concept_row_absence_stays_chinese` | sepa |
+| SC1 | `adversarial_270_screener_dropdown_maps_zh_to_en_labels_and_keeps_zh_key` | screener |
+| SC2 | `adversarial_270_screener_dropdown_anchor_survives_locale_flip` | screener |
+| SC3 | `adversarial_270_screener_table_industry_column_resolves_locale` | screener |
+| SC4 | `adversarial_270_screener_dropdown_unmapped_stays_zh_in_en_locale` + table SC4 arm | screener |
+
+### Interface gaps the implementer resolved since the DEFERRAL
+
+- `ScreenerRow` now carries `industry_en: Option<String>` (compass-types lib.rs,
+  wired through compass-strategy `assemble_row`) — the former gap #7a table
+  column data source exists, so SC3 became writable.
+- `state.rs` provides `industry_names` / `concept_names` maps; `sepa::row_cells`
+  takes `concept_names: &HashMap<String,String>` (the former gap #6 injection).
+- Multi-select en display + zh-key reverse-map round-trip live in
+  `render_multi_select_localized`.
+
+### Compile status at hand-off
+
+`cargo check --tests -p compass` reports **my three test files have zero type
+errors / warnings**. The crate's test build is currently BLOCKED (not by my
+tests) by the main agent's **uncommitted epic #266 B4 working tree**: `B4`
+added `name_en` to `compass_core::model::StockBasic` (model.rs) but the three
+`StockBasic` fixtures in `src/main.rs` (L2531 / L2570 / L3225) were not updated
+→ `missing field name_en`. This is the B4 changeset's test-fixture gap, outside
+this subagent's scope (no production-code edits allowed). **Fix**: add
+`name_en: None,` (or the appropriate value) to those 3 fixtures.
