@@ -10,7 +10,6 @@ Usage:
     uv run python main.py fetch dragon
     uv run python main.py fetch block_trade
     uv run python main.py fetch institution_survey
-    uv run python main.py fetch concept_member
     uv run python main.py fetch main_flow
     uv run python main.py import stock_basic
     uv run python main.py import fin_indicators
@@ -20,7 +19,6 @@ Usage:
     uv run python main.py import dragon
     uv run python main.py import block_trade
     uv run python main.py import institution_survey
-    uv run python main.py import concept_member
     uv run python main.py import main_flow
     uv run python main.py progress         # show live fetch progress
     uv run python main.py progress block_trade --json
@@ -360,7 +358,7 @@ def dispatch_fetch(
     Args:
         target: One of stock_basic, fin_indicators, balance_sheet, income,
             cash_flow, main_flow, dragon, block_trade, institution_survey,
-            concept_member, index_daily.
+            index_daily.
         years: Years to fetch (financial tables only; defaults to sub-module default).
     """
     if target == "stock_basic":
@@ -406,11 +404,6 @@ def dispatch_fetch(
         import fetch_institution_survey
 
         asyncio.run(fetch_institution_survey.run())
-
-    elif target == "concept_member":
-        import fetch_concept_member
-
-        asyncio.run(fetch_concept_member.run())
 
     elif target == "main_flow":
         import fetch_main_flow
@@ -496,7 +489,7 @@ def dispatch_import(target: str) -> None:
     Args:
         target: One of stock_basic, fin_indicators, balance_sheet, income,
             cash_flow, main_flow, dragon, block_trade, institution_survey,
-            concept_member, index_daily.
+            index_daily.
     """
     if target == "stock_basic":
         _import_stock_basic()
@@ -526,10 +519,6 @@ def dispatch_import(target: str) -> None:
         import fetch_institution_survey
 
         fetch_institution_survey.import_to_dolt()
-    elif target == "concept_member":
-        import fetch_concept_member
-
-        fetch_concept_member.import_to_dolt()
     elif target == "main_flow":
         import fetch_main_flow
 
@@ -609,13 +598,6 @@ def do_sync(restart: bool = False) -> None:
     asyncio.run(fetch_institution_survey.run())
     fetch_institution_survey.import_to_dolt()
 
-    # 9. concept_member (概念板块成分)
-    print("\n[sync] Fetching concept_member...", file=sys.stderr)
-    import fetch_concept_member
-
-    asyncio.run(fetch_concept_member.run())
-    fetch_concept_member.import_to_dolt()
-
     # 10. main_flow (主力资金流)
     print("\n[sync] Fetching main_flow...", file=sys.stderr)
     import fetch_main_flow
@@ -668,7 +650,6 @@ def main() -> None:
             "dragon",
             "block_trade",
             "institution_survey",
-            "concept_member",
             "main_flow",
             "index_daily",
         ],
@@ -687,7 +668,6 @@ def main() -> None:
             "dragon",
             "block_trade",
             "institution_survey",
-            "concept_member",
             "main_flow",
             "index_daily",
         ],
@@ -702,7 +682,6 @@ def main() -> None:
             "block_trade",
             "index_daily",
             "institution_survey",
-            "concept_member",
             "dragon",
         ],
         default=None,

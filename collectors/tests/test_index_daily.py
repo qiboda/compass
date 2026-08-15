@@ -1,31 +1,25 @@
-"""Adversarial tests for the C1 EastMoney index collector (epic #255, plan T1).
+"""Tests for the index daily collector (epic #255 plan T1 + issue #283).
 
 Plan contract under attack (fetch_index_daily.py):
-- ``run()`` fetches official indices (hardcoded ~30, secid ``{1|0}.{code}``),
-  concept boards (clist ``fs=m:90 t:3 f:!50``) and industry boards (``t:2``),
-  writing CSV(s) for ``index_daily`` + ``index_basic``; ``import_to_dolt()``
-  loads them into Dolt tables with the plan DDL:
+- ``run()`` fetches official indices (hardcoded ~30, secid ``{1|0}.{code}``,
+  EastMoney push2his + Tencent fallback) and THS industry boards (90 x 881xxx,
+  list from ``q.10jqka.com.cn/thshy/``, per-year BK klines), writing CSV(s)
+  for ``index_daily`` + ``index_basic``; ``import_to_dolt()`` loads them into
+  Dolt tables with the plan DDL:
   ``index_daily (symbol PK, trade_date PK, index_type, OHLCV, update_date)`` +
   ``index_basic (symbol PK, name, index_type)``.
 - Incremental ``last_report_date`` short-circuit (common.py:172-186) and
   auto full-history backfill for new boards (handoff decision 8).
-- Rate limiting: host rotation + retry must not loop forever on 429
-  (handoff调研 + plan T1 "限流：host 轮换 + 秒级间隔").
+- Rate limiting: host rotation + retry must not loop forever on 429.
 
-STATUS: these tests are **ready and waiting** — ``fetch_index_daily.py`` does
-not exist yet, so this module fails to import (collection error) until the
-first compilable interface commit lands. Every assertion below targets a plan
--declared behavior; the GREEN implementation must make them all pass.
-
-API assumptions (mirror fetch_main_flow / fetch_concept_member, the plan's
-stated templates): module exposes ``run()`` and ``import_to_dolt(csv_path)``;
-URLs are the handoff-verified EastMoney endpoints.
+URLs: EastMoney push2his kline / Tencent fqkline / THS list + per-year BK.
 """
 
 import asyncio
 import contextlib
 import csv
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -38,9 +32,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from conftest import StubResponse  # noqa: E402
 
-# Handoff-verified endpoints (调研结论: push2his kline / push2 clist).
+# Handoff-verified endpoints (调研结论: push2his kline / THS list + BK kline).
 KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
+THS_LIST_URL = "https://q.10jqka.com.cn/thshy/"
+THS_KLINE_TPL = "https://d.10jqka.com.cn/v4/line/bk_{code}/01/{year}.js"
 
 # 东财 kline 11 字段: 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
 def _kline_row(
@@ -59,11 +54,63 @@ def _kline_payload(code: str, klines: list[str]) -> dict[str, object]:
     return {"rc": 0, "data": {"code": code, "name": "stub", "klines": klines}}
 
 
-def _clist_payload(diff: list[dict[str, object]], total: int | None = None) -> dict[str, object]:
-    return {
-        "rc": 0,
-        "data": {"total": total if total is not None else len(diff), "diff": diff},
-    }
+def _ths_list_response(codes_names: list[tuple[str, str]]) -> StubResponse:
+    """GBK-encoded THS list page: one anchor per (881xxx code, display name)."""
+    anchors = "\n".join(
+        f'<a href="http://q.10jqka.com.cn/thshy/{code}/">{name}</a>'
+        for code, name in codes_names
+    )
+    resp = StubResponse(status_code=200)
+    resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
+    return resp
+
+
+def _ths_kline_response(code: str, year: int, rows: list[str]) -> StubResponse:
+    """JSONP per-year THS kline body (rows in THS order: date,o,h,l,c,v,amt)."""
+    resp = StubResponse(status_code=200)
+    data = ";".join(rows)
+    resp._text = f'quotebridge_v4_line_bk_{code}_01_{year}({{"data":"{data}"}})'
+    return resp
+
+
+def _ths_kline_row(day: str, close: float = 3000.0) -> str:
+    """One 7-field THS row: date,open,high,low,close,volume,amount."""
+    return f"{day},{close - 1},{close + 1},{close - 2},{close},120000000,52000000000"
+
+
+def _ths_list_getter(codes_names: list[tuple[str, str]]):
+    """Return an async ``get`` answering THS_LIST_URL with the given boards."""
+    canned = _ths_list_response(codes_names)
+
+    async def _get(url, params=None, headers=None):
+        if "thshy" in url:
+            return canned
+        return StubResponse(status_code=200, json_data={})
+
+    return _get
+
+
+def _ths_kline_getter(stub, codes: list[str], years: list[str]):
+    """Wrap a stub so THS per-year kline URLs answer with one row per year.
+
+    ``years`` selects which years return data (any other year answers an
+    empty body → the run's year loop stops there). Rows are re-used across
+    years so pagination tests can assert date coverage without 20 stubs.
+    """
+    original = stub.get
+
+    async def _get(url, params=None, headers=None):
+        m = re.match(r"https://d\.10jqka\.com\.cn/v4/line/bk_(\d+)/01/(\d+)\.js$", url)
+        if m:
+            code, year = m.group(1), m.group(2)
+            if code in codes and year in years:
+                return _ths_kline_response(
+                    code, int(year), [_ths_kline_row(f"{year}-07-31")]
+                )
+            return _ths_kline_response(code, int(year), [])
+        return await original(url, params=params, headers=headers)
+
+    return _get
 
 
 # ── boundary values ──────────────────────────────────────────────
@@ -72,11 +119,11 @@ def _clist_payload(diff: list[dict[str, object]], total: int | None = None) -> d
 class TestBoundaries:
     """index_type tagging + code/date/OHLCV boundaries."""
 
-    async def test_official_and_board_index_type_tags(
+    async def test_official_and_industry_index_type_tags(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: official (SH000001) rows must be tagged official, board
-        (BK0475) rows concept/industry — the plan DDL requires index_type."""
+        """official (SH000001) rows tagged official, THS industry (BK881101)
+        rows tagged industry — the plan DDL requires index_type."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -96,19 +143,18 @@ class TestBoundaries:
                 KLINE_URL: {
                     "json_data": _kline_payload("000001", [_kline_row("2026-07-31")])
                 },
-                CLIST_URL: {
-                    "json_data": _clist_payload([{"f12": "BK0475", "f14": "半导体"}])
-                },
+                THS_LIST_URL: _ths_list_response([("881101", "半导体")]),
             }
         )
+        stub.get = _ths_kline_getter(stub, ["881101"], ["2026"])
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
         rows = [r for batch in captured for r in batch]
         official = next(r for r in rows if r["symbol"] == "SH000001")
-        board = next(r for r in rows if r["symbol"] == "BK0475")
+        industry = next(r for r in rows if r["symbol"] == "BK881101")
         assert official["index_type"] == "official"
-        assert board["index_type"] in {"concept", "industry"}
+        assert industry["index_type"] == "industry"
 
         progress_path = tmp_path / "index_daily.progress.json"
         assert progress_path.exists()
@@ -116,45 +162,27 @@ class TestBoundaries:
         assert progress["status"] == "completed"
         assert progress["percent"] == 100.0
 
-    async def test_bk_boundary_codes_0000_and_9999(
+
+    async def test_ths_boundary_codes_881000_and_881999(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: BK0000 and BK9999 (4-digit extremes) must be accepted."""
-        from fetch_index_daily import run  # noqa: E402
+        """881000 and 881999 (6-digit extremes of the THS range) must be
+        accepted by the list parser."""
+        import fetch_index_daily as fid  # noqa: E402
 
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
-        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+        stub = make_stub_session()
+        stub.get = _ths_list_getter([("881000", "边界最低"), ("881999", "边界最高")])
+        boards = await fid.fetch_ths_industry_list(stub, fid.Throttle())
+        codes = {c for c, _ in boards}
+        assert "881000" in codes
+        assert "881999" in codes
 
-        captured: list[list[dict[str, object]]] = []
-        monkeypatch.setattr(
-            "fetch_index_daily.write_csv",
-            lambda records, _path: captured.append(records),
-        )
-        stub = make_stub_session(
-            canned_responses={
-                KLINE_URL: {
-                    "json_data": _kline_payload("BK0000", [_kline_row("2026-07-31")])
-                },
-                CLIST_URL: {
-                    "json_data": _clist_payload(
-                        [{"f12": "BK0000", "f14": "边界最低"}, {"f12": "BK9999", "f14": "边界最高"}]
-                    )
-                },
-            }
-        )
-        with patch("fetch_index_daily.AsyncSession", return_value=stub):
-            await run()
-
-        symbols = {r["symbol"] for batch in captured for r in batch}
-        assert "BK0000" in symbols
-        assert "BK9999" in symbols
 
     async def test_early_history_date_preserved(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: 上证指数 history starts 1990-12-19 (handoff实测 8703 条);
-        an early 1900-01-01 row must survive the date parse, not be dropped."""
+        """上证指数 history starts 1990-12-19 (handoff实测 8703 条); an early
+        1900-01-01 row must survive the date parse, not be dropped."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -174,22 +202,22 @@ class TestBoundaries:
                         [_kline_row("1900-01-01"), _kline_row("2026-07-31")],
                     )
                 },
-                CLIST_URL: {"json_data": _clist_payload([])},
+                THS_LIST_URL: _ths_list_response([]),
             }
         )
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
-        rows = [r for batch in captured for r in batch]
+        rows = [r for batch in captured for r in batch if "trade_date" in r]
         dates = {r["trade_date"] for r in rows}
         assert "1900-01-01" in dates, "early history row must be preserved"
+
 
     async def test_future_dated_kline_row_not_silently_imported(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: a kline row dated after today (EastMoney glitch / bad
-        data) must be rejected or flagged — never silently published as a
-        normal bar."""
+        """a kline row dated after today (API glitch / bad data) must be
+        rejected — never silently published as a normal bar."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -212,21 +240,22 @@ class TestBoundaries:
                         [_kline_row("2026-07-31"), _kline_row("2099-01-01")],
                     )
                 },
-                CLIST_URL: {"json_data": _clist_payload([])},
+                THS_LIST_URL: _ths_list_response([]),
             }
         )
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
-        rows = [r for batch in captured for r in batch]
+        rows = [r for batch in captured for r in batch if "trade_date" in r]
         dates = {r["trade_date"] for r in rows}
         assert "2099-01-01" not in dates, "future-dated row must not be imported"
+
 
     async def test_zero_and_negative_volume_amount_preserved(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: halted days (volume 0) and glitchy negative values must
-        not crash the row build or drop the row."""
+        """halted days (volume 0) and glitchy negative values must not crash
+        the row build or drop the row."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -249,13 +278,13 @@ class TestBoundaries:
                         ],
                     )
                 },
-                CLIST_URL: {"json_data": _clist_payload([])},
+                THS_LIST_URL: _ths_list_response([]),
             }
         )
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
-        rows = [r for batch in captured for r in batch]
+        rows = [r for batch in captured for r in batch if "trade_date" in r]
         assert len(rows) == 2, "both rows must survive"
         zero = next(r for r in rows if r["trade_date"] == "2026-07-31")
         assert str(zero["volume"]) == "0", "zero volume must stay numeric 0"
@@ -267,116 +296,70 @@ class TestBoundaries:
 class TestMalformedInput:
     """Malformed board codes, missing fields, CSV-injection names."""
 
-    async def test_malformed_bk_codes_filtered(
+    async def test_malformed_ths_codes_filtered(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: clist entries with BK12 (3-digit), BK12345 (5-digit) and
-        BKAB12 (non-digit) must be rejected — never written to index_basic."""
-        from fetch_index_daily import run  # noqa: E402
+        """THS list anchors with malformed codes (88112 / 88112345 / 881AB12)
+        must be rejected — never written to index_basic."""
+        import fetch_index_daily as fid  # noqa: E402
 
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
-        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
-
-        captured: list[list[dict[str, object]]] = []
-        monkeypatch.setattr(
-            "fetch_index_daily.write_csv",
-            lambda records, _path: captured.append(records),
+        # Malformed anchors cannot round-trip through _ths_list_response
+        # (it only formats valid codes), so build the raw page manually.
+        anchors = (
+            '<a href="http://q.10jqka.com.cn/thshy/881101/">半导体</a>'
+            '<a href="http://q.10jqka.com.cn/thshy/88112/">畸形五位</a>'
+            '<a href="http://q.10jqka.com.cn/thshy/88112345/">畸形七位</a>'
+            '<a href="http://q.10jqka.com.cn/thshy/881AB12/">畸形字母</a>'
         )
-        stub = make_stub_session(
-            canned_responses={
-                KLINE_URL: {"json_data": _kline_payload("BK0475", [_kline_row("2026-07-31")])},
-                CLIST_URL: {
-                    "json_data": _clist_payload(
-                        [
-                            {"f12": "BK0475", "f14": "半导体"},
-                            {"f12": "BK12", "f14": "畸形三位"},
-                            {"f12": "BK12345", "f14": "畸形五位"},
-                            {"f12": "BKAB12", "f14": "畸形字母"},
-                        ]
-                    )
-                },
-            }
-        )
-        with patch("fetch_index_daily.AsyncSession", return_value=stub):
-            await run()
+        resp = StubResponse(status_code=200)
+        resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
 
-        rows = [r for batch in captured for r in batch]
-        symbols = {r["symbol"] for r in rows}
-        assert "BK12" not in symbols
-        assert "BK12345" not in symbols
-        assert "BKAB12" not in symbols
+        stub = make_stub_session()
+        async def _get(url, params=None, headers=None):
+            return resp
+        stub.get = _get  # type: ignore[method-assign]
 
-    async def test_missing_f12_f14_entries_skipped(
+        boards = await fid.fetch_ths_industry_list(stub, fid.Throttle())
+        codes = {c for c, _ in boards}
+        assert codes == {"881101"}, f"only the valid code survives, got {codes}"
+
+
+    async def test_anchor_without_code_skipped(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: clist entries without f12 (code) or f14 (name) must be
-        skipped, not crash the board discovery."""
-        from fetch_index_daily import run  # noqa: E402
+        """THS anchors whose href carries no 881xxx code must be skipped, not
+        crash the list parse."""
+        import fetch_index_daily as fid  # noqa: E402
 
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
-        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
-
-        captured: list[list[dict[str, object]]] = []
-        monkeypatch.setattr(
-            "fetch_index_daily.write_csv",
-            lambda records, _path: captured.append(records),
+        anchors = (
+            '<a href="http://q.10jqka.com.cn/other/881047/">无代码路径</a>'
+            '<a href="http://q.10jqka.com.cn/thshy/881047/">半导体</a>'
         )
-        stub = make_stub_session(
-            canned_responses={
-                KLINE_URL: {"json_data": _kline_payload("BK0475", [_kline_row("2026-07-31")])},
-                CLIST_URL: {
-                    "json_data": _clist_payload(
-                        [
-                            {"f12": "BK0475", "f14": "半导体"},
-                            {"f14": "缺代码"},
-                            {"f12": "BK0476"},
-                        ]
-                    )
-                },
-            }
-        )
-        with patch("fetch_index_daily.AsyncSession", return_value=stub):
-            await run()
+        resp = StubResponse(status_code=200)
+        resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
 
-        rows = [r for batch in captured for r in batch]
-        symbols = {r["symbol"] for r in rows}
-        assert "BK0476" in symbols, "missing f14 must not drop the board"
-        # 缺 f12 的条目不能产生空 symbol 行
-        assert all(r["symbol"] for r in rows), "no row may carry an empty symbol"
+        stub = make_stub_session()
+        async def _get(url, params=None, headers=None):
+            return resp
+        stub.get = _get  # type: ignore[method-assign]
+
+        boards = await fid.fetch_ths_industry_list(stub, fid.Throttle())
+        assert ("881047", "半导体") in boards
+        assert len(boards) == 1
+
 
     async def test_name_with_comma_and_quote_csv_escaped(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: a board name containing a comma (CSV injection vector)
-        must round-trip as ONE cell, not split the row."""
-        from fetch_index_daily import run  # noqa: E402
-
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
-        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+        """a board name containing a comma (CSV injection vector) must
+        round-trip as ONE cell, not split the row."""
+        import fetch_index_daily as fid  # noqa: E402
 
         evil_name = '半导体,芯片"; DROP TABLE index_basic; --'
-        captured: list[list[dict[str, object]]] = []
-        monkeypatch.setattr(
-            "fetch_index_daily.write_csv",
-            lambda records, _path: captured.append(records),
-        )
-        stub = make_stub_session(
-            canned_responses={
-                KLINE_URL: {"json_data": _kline_payload("BK0475", [_kline_row("2026-07-31")])},
-                CLIST_URL: {"json_data": _clist_payload([{"f12": "BK0475", "f14": evil_name}])},
-            }
-        )
-        with patch("fetch_index_daily.AsyncSession", return_value=stub):
-            await run()
-
-        # CSV round-trip through the same writer the collector uses: the evil
-        # name must stay intact in the index_basic record.
-        rows = [r for batch in captured for r in batch]
-        basic_rows = [r for r in rows if "name" in r]
-        assert basic_rows and basic_rows[0]["name"] == evil_name
+        stub = make_stub_session()
+        stub.get = _ths_list_getter([("881101", evil_name)])
+        boards = await fid.fetch_ths_industry_list(stub, fid.Throttle())
+        assert boards == [("881101", evil_name)], "name must survive the parse"
 
 
 # ── error paths / rate limiting ──────────────────────────────────
@@ -438,12 +421,12 @@ class TestRunFailureModes:
         leftovers = [p for p in tmp_path.glob("*.csv") if "index" in p.name]
         assert not leftovers, "failed run must not leave a half-written CSV"
 
-    async def test_empty_board_kline_keeps_index_basic_entry(
+    async def test_empty_ths_kline_keeps_index_basic_entry(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: a board whose kline fetch returns nothing (plan: 拉不到就
-        跳过) must still be discoverable via index_basic — only its daily rows
-        are absent."""
+        """an industry whose kline fetch returns nothing (plan: 拉不到就跳过)
+        must still be discoverable via index_basic — only its daily rows are
+        absent."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -455,33 +438,25 @@ class TestRunFailureModes:
             "fetch_index_daily.write_csv",
             lambda records, _path: captured.append(records),
         )
-        stub = make_stub_session()
-
-        async def _get(url, params=None, headers=None):
-            if "kline/get" in url:
-                secid = (params or {}).get("secid", "")
-                if secid == "90.BK0475":
-                    return StubResponse(json_data=_kline_payload("BK0475", []))
-                # Official indices succeed so a single empty board does not
-                # create a 5-failure streak (issue #277 fast-fail).
-                code = secid.rsplit(".", 1)[-1]
-                return StubResponse(
-                    json_data=_kline_payload(code, [_kline_row("2026-07-31")])
-                )
-            if "clist/get" in url:
-                return StubResponse(
-                    json_data=_clist_payload([{"f12": "BK0475", "f14": "半导体"}])
-                )
-            return StubResponse(status_code=200, json_data={})
-
-        stub.get = _get  # type: ignore[method-assign]
+        stub = make_stub_session(
+            canned_responses={
+                KLINE_URL: {
+                    "json_data": _kline_payload(
+                        "000001", [_kline_row("2026-07-31")]
+                    )
+                },
+                THS_LIST_URL: _ths_list_response([("881101", "半导体")]),
+            }
+        )
+        stub.get = _ths_kline_getter(stub, [], [])
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
         rows = [r for batch in captured for r in batch]
-        assert any(r["symbol"] == "BK0475" and "name" in r for r in rows), (
-            "index_basic must retain the board even when its kline is empty"
+        assert any(r["symbol"] == "BK881101" and "name" in r for r in rows), (
+            "index_basic must retain the industry even when its kline is empty"
         )
+
 
     async def test_last_report_date_short_circuits_fetch(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -506,12 +481,12 @@ class TestRunFailureModes:
 
         assert counter[0] == 0, "short-circuit must not fetch"
 
-    async def test_new_board_auto_backfills_full_history(
+    async def test_new_industry_auto_backfills_full_history(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: a board absent from the last run must be backfilled with
-        full history (plan: 新标的自动补全量) — not truncated to the increment
-        window."""
+        """an industry absent from the last run must be backfilled with full
+        history via the per-year pagination (plan: 新标的自动补全量) — not
+        truncated to the increment window."""
         import datetime
 
         from fetch_index_daily import run  # noqa: E402
@@ -531,25 +506,37 @@ class TestRunFailureModes:
             canned_responses={
                 KLINE_URL: {
                     "json_data": _kline_payload(
-                        "BK0475",
-                        [_kline_row("2020-01-02"), _kline_row("2026-07-31")],
+                        "000001", [_kline_row("2026-07-31")]
                     )
                 },
-                CLIST_URL: {"json_data": _clist_payload([{"f12": "BK0475", "f14": "半导体"}])},
+                THS_LIST_URL: _ths_list_response([("881101", "半导体")]),
             }
         )
+        # Every year in range answers with the same 2020-01-02 row so the
+        # per-year loop walks back to THS_FIRST_YEAR (full-history backfill).
+        original_get = stub.get
+        async def _get(url, params=None, headers=None):
+            m = re.match(r"https://d\.10jqka\.com\.cn/v4/line/bk_(\d+)/01/(\d+)\.js$", url)
+            if m:
+                return _ths_kline_response(
+                    m.group(1), int(m.group(2)),
+                    [_ths_kline_row("2020-01-02"), _ths_kline_row("2026-07-31")],
+                )
+            return await original_get(url, params=params, headers=headers)
+        stub.get = _get  # type: ignore[method-assign]
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
-        rows = [r for batch in captured for r in batch]
-        dates = {r["trade_date"] for r in rows if r["symbol"] == "BK0475"}
-        assert "2020-01-02" in dates, "new board must be backfilled to full history"
+        rows = [r for batch in captured for r in batch if "trade_date" in r]
+        dates = {r["trade_date"] for r in rows if r["symbol"] == "BK881101"}
+        assert "2020-01-02" in dates, "new industry must be backfilled to full history"
 
-    async def test_pagination_fetches_all_pages(
+
+    async def test_yearly_pagination_fetches_all_years(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED-ready: clist pagination must fetch pages until total is met —
-        a 3-board total split across pages must yield all 3."""
+        """per-year pagination must fetch every year until an empty one — a
+        board with data in 2026 and 2025 must yield rows for both."""
         import datetime
 
         from fetch_index_daily import run  # noqa: E402
@@ -567,24 +554,22 @@ class TestRunFailureModes:
         stub = make_stub_session(
             canned_responses={
                 KLINE_URL: {
-                    "json_data": _kline_payload("BK0475", [_kline_row("2026-07-31")])
-                },
-                CLIST_URL: {
-                    "json_data": _clist_payload(
-                        [{"f12": "BK0475", "f14": "一"}, {"f12": "BK0476", "f14": "二"}],
-                        total=3,
+                    "json_data": _kline_payload(
+                        "000001", [_kline_row("2026-07-31")]
                     )
                 },
+                THS_LIST_URL: _ths_list_response([("881101", "半导体")]),
             }
         )
+        stub.get = _ths_kline_getter(stub, ["881101"], ["2026", "2025"])
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
-        rows = [r for batch in captured for r in batch]
-        basic_symbols = {r["symbol"] for r in rows if "name" in r}
-        assert basic_symbols == {"BK0475", "BK0476"}, (
-            f"pagination must honor total (page 2 may be empty in the stub, "
-            f"but page-1 boards must appear); got {basic_symbols}"
+        rows = [r for batch in captured for r in batch if "trade_date" in r]
+        industry_rows = [r for r in rows if r["symbol"] == "BK881101"]
+        dates = {r["trade_date"] for r in industry_rows}
+        assert "2026-07-31" in dates and "2025-07-31" in dates, (
+            f"yearly pagination must cover both years; got {dates}"
         )
 
 

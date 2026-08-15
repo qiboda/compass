@@ -55,7 +55,6 @@ class TestDoSyncStep11Routing:
         import fetch_balance_sheet as fbs
         import fetch_block_trade as fbt
         import fetch_cash_flow as fcf
-        import fetch_concept_member as fcm
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
@@ -74,11 +73,10 @@ class TestDoSyncStep11Routing:
         monkeypatch.setattr(fdr, "run", Mock())
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
-        monkeypatch.setattr(fcm, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
-        for mod in (fbs, fi, fcf, fdr, fbt, fis, fcm, fmf):
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf):
             monkeypatch.setattr(mod, "import_to_dolt", Mock())
         return mock_run
 

@@ -227,21 +227,6 @@ class TestDispatchFetch:
 
         mock_run.assert_called_once()
 
-    def test_concept_member_calls_run_via_asyncio(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import fetch_concept_member as fcm
-        import main as main_mod
-
-        mock_run = Mock()
-        monkeypatch.setattr(main_mod.asyncio, "run", mock_run)
-        mock_fcm_run = Mock()
-        monkeypatch.setattr(fcm, "run", mock_fcm_run)
-
-        main_mod.dispatch_fetch("concept_member")
-
-        mock_run.assert_called_once()
 
     def test_main_flow_calls_run_via_asyncio(
         self,
@@ -368,18 +353,6 @@ class TestDispatchImport:
         main_mod.dispatch_import("institution_survey")
         mock_import.assert_called_once()
 
-    def test_concept_member_calls_import_to_dolt(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import fetch_concept_member as fcm
-        import main as main_mod
-
-        mock_import = Mock()
-        monkeypatch.setattr(fcm, "import_to_dolt", mock_import)
-
-        main_mod.dispatch_import("concept_member")
-        mock_import.assert_called_once()
 
     def test_main_flow_calls_import_to_dolt(
         self,
@@ -410,7 +383,6 @@ class TestDoSync:
         import fetch_balance_sheet as fbs
         import fetch_block_trade as fbt
         import fetch_cash_flow as fcf
-        import fetch_concept_member as fcm
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
@@ -430,7 +402,6 @@ class TestDoSync:
         monkeypatch.setattr(fdr, "run", Mock())
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
-        monkeypatch.setattr(fcm, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
 
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
@@ -441,7 +412,6 @@ class TestDoSync:
         monkeypatch.setattr(fdr, "import_to_dolt", Mock())
         monkeypatch.setattr(fbt, "import_to_dolt", Mock())
         monkeypatch.setattr(fis, "import_to_dolt", Mock())
-        monkeypatch.setattr(fcm, "import_to_dolt", Mock())
         monkeypatch.setattr(fmf, "import_to_dolt", Mock())
 
         mock_dolt = Mock()
@@ -450,8 +420,8 @@ class TestDoSync:
         main_mod.do_sync()
 
         # stock_basic is sync (official source); 10 tables via asyncio.run
-        # (9 legacy + index_daily step 11, epic #255)
-        assert mock_run.call_count == 10
+        # (8 legacy + index_daily step 11, epic #255)
+        assert mock_run.call_count == 9
         # data_updates loop for the 5 legacy tables (new tables upsert inside import_to_dolt)
         assert mock_dolt.call_count >= 5
 
@@ -464,7 +434,6 @@ class TestDoSync:
         import fetch_balance_sheet as fbs
         import fetch_block_trade as fbt
         import fetch_cash_flow as fcf
-        import fetch_concept_member as fcm
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
@@ -484,11 +453,10 @@ class TestDoSync:
         monkeypatch.setattr(fdr, "run", Mock())
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
-        monkeypatch.setattr(fcm, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
-        for mod in (fbs, fi, fcf, fdr, fbt, fis, fcm, fmf):
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf):
             monkeypatch.setattr(mod, "import_to_dolt", Mock())
 
         mock_dolt = Mock()
@@ -497,7 +465,7 @@ class TestDoSync:
         main_mod.do_sync(restart=True)
 
         # 10 asyncio steps: 9 legacy + index_daily step 11 (epic #255)
-        assert mock_run.call_count == 10
+        assert mock_run.call_count == 9
 
 
 # ═══════════════════════════════════════════════════════════════════
