@@ -349,3 +349,30 @@
 - **子代理交付/输出异常系列再次出现**（#244 零交付 → #245 只分析未落盘 → #255 截断零落盘 → #235/#265 自验失真 → 本次对抗子代理首轮未落盘）：委派后核验产物（git status/文件存在）仍未固化为 skill/hook，主 agent 每次手动补救——建议正式写入 skwy-workflow 委派协议（连续多批未落实）
 - **“全局”/跨模块配置只改公共点漏局部实现**（本次 #277）：改公共常量前应 grep 全仓同名定义，避免 review 才抓出——与 #264 引用范围侦察不完整同族
 - **测试环境隐式网络依赖导致挂起/失败**（#255 真实采集网络不可达 → 本次 Dolt 遥测挂起）：涉及外部服务/遥测的命令应先探测或显式禁用，避免盲等
+
+## 2026-08-15 — ref #278 官方指数接入腾讯源（东财封禁替代）
+
+**What was done**: 在 `fetch_index_daily.py` 为官方指数 30 个新增腾讯 `fqkline/get` 回退：东财失败/empty 自动切腾讯，end-date 反向分页（count=2000）拉全历史，amount 填 0，并接入 #277 快速失败计数；新增 32 个 RED→GREEN 测试（requirement 9 + adversarial 23 参数化），全套件 583+ passed，coverage ≥95%。
+
+**User corrections** (if any): 无显式纠正；用户指令为“#278 通知（用户已确认）…继续实施”。
+
+**What went wrong**:
+1. 需求测试子代理第一次又只返回设计过程未落盘，重新委派才创建文件——与 #277 同类子代理交付异常再次出现。
+2. 测试 stub 的 URL 匹配顺序错误：腾讯 URL 含子串 `kline/get`，被东财分支提前截获，导致多个 fallback 测试假失败；修正为先匹配 `ifzq.gtimg.cn`。
+3. 初始分页实现按 start_date 推进，live API 实测证明腾讯返回的是“窗口内最新 count 条”，必须用 **end 日期反向推进**；已改为 `,,<end>,<count>,qfq` 并加 trade_date 去重，实测 sh000001 8531 根（1990-12-19～2026-08-14）无重复升序。
+4. QA 发现 `data` 为真值非 dict 时 `_fetch_tencent_kline` 会 AttributeError 崩溃；已加类型防御并补测。
+
+**Lessons learned**:
+1. 外部 API 分页/参数语义必须先用 live 请求实证再定实现与测试（本次 start→end 修正就是 live probe 驱动的）。
+2. stub URL 匹配用子串时要注意端点间包含关系（`fqkline/get` 包含 `kline/get`），先匹配更特定域名。
+3. 畸形响应防御要覆盖“真值非 dict”形态，不能只测缺 key/None。
+4. 子代理交付异常仍反复出现，主 agent 每次都要核验文件存在并准备重委派。
+
+**Process improvements**:
+- data-providers.md / architecture.md 已补充腾讯回退数据源说明——已随本 PR commit 落地
+- 腾讯分页 live 验证结果（8531 根/无重复/升序）记录在本反思；后续可沉淀到 `.dsh/evidence/`（proposed）
+
+### Trends (last 10)
+- **子代理交付/输出异常系列第 N 次**（#244/#245/#255/#235/#265/#273/#277 → 本次 #278 需求子代理首轮未落盘）：委派后核验产物仍未固化为 skill/hook，建议正式写入 skwy-workflow 委派协议
+- **外部 API 语义假设需 live 实证**（#255 真实采集网络不可达 → 本次腾讯分页方向 start/end 修正）：先探测再实现，避免测试桩与真实行为脱节
+- **URL 子串匹配/引用范围侦察类摩擦**（#264 引用范围漏目录 → 本次 stub 子串误匹配）：匹配条件应使用更精确的标识（完整域名/URL），避免包含关系误伤
