@@ -21,6 +21,7 @@ from pathlib import Path
 
 from common import (
     AsyncSession,
+    Progress,
     Throttle,
     csv_dir,
     fetch_paginated,
@@ -173,51 +174,70 @@ async def run(
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
     print(file=sys.stderr)
 
-    throttle = Throttle()
-    all_records: list[dict[str, str | int | float]] = []
-    day = start_date
-    failure: str | None = None
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    total_days = max((end_dt - start_dt).days + 1, 0)
 
-    async with AsyncSession(impersonate="chrome142") as session:
-        while day <= end_date:
-            print(f"[{day}] ...", file=sys.stderr, end=" ", flush=True)
-            try:
-                buy = await fetch_paginated(
-                    session,
-                    throttle,
-                    BUY_REPORT_NAME,
-                    FILTER_COLUMN,
-                    day,
-                    page_size,
+    with Progress(
+        "dragon", total_items=total_days, output_csv=output_path
+    ) as progress:
+        throttle = Throttle()
+        all_records: list[dict[str, str | int | float]] = []
+        day = start_date
+        failure: str | None = None
+        completed = 0
+
+        async with AsyncSession(impersonate="chrome142") as session:
+            while day <= end_date:
+                print(f"[{day}] ...", file=sys.stderr, end=" ", flush=True)
+                try:
+                    buy = await fetch_paginated(
+                        session,
+                        throttle,
+                        BUY_REPORT_NAME,
+                        FILTER_COLUMN,
+                        day,
+                        page_size,
+                    )
+                    sell = await fetch_paginated(
+                        session,
+                        throttle,
+                        SELL_REPORT_NAME,
+                        FILTER_COLUMN,
+                        day,
+                        page_size,
+                    )
+                    records = _merge_seats(buy + sell)
+                except Exception as e:
+                    failure = f"{day}: {e}"
+                    print(f"FAILED: {e}", file=sys.stderr)
+                    break
+
+                all_records.extend(records)
+                completed += 1
+                progress.update(
+                    completed=completed,
+                    fetched_rows=len(all_records),
+                    current_item=day,
+                    message=f"Fetched {day}",
                 )
-                sell = await fetch_paginated(
-                    session,
-                    throttle,
-                    SELL_REPORT_NAME,
-                    FILTER_COLUMN,
-                    day,
-                    page_size,
-                )
-                records = _merge_seats(buy + sell)
-            except Exception as e:
-                failure = f"{day}: {e}"
-                print(f"FAILED: {e}", file=sys.stderr)
-                break
+                print(f"{len(records)} records" if records else "empty", file=sys.stderr)
+                day = _next_day(day)
 
-            all_records.extend(records)
-            print(f"{len(records)} records" if records else "empty", file=sys.stderr)
-            day = _next_day(day)
+        if failure is not None:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
 
-    if failure is not None:
-        output_path.unlink(missing_ok=True)
-        raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
-
-    write_csv(all_records, output_path)
-    print(
-        f"\nDone: {len(all_records)} records → {output_path.resolve()}",
-        file=sys.stderr,
-    )
-    return output_path
+        write_csv(all_records, output_path)
+        progress.finish(
+            fetched_rows=len(all_records),
+            message=f"Done: {len(all_records)} records",
+        )
+        print(
+            f"\nDone: {len(all_records)} records → {output_path.resolve()}",
+            file=sys.stderr,
+        )
+        return output_path
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:

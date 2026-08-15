@@ -2,6 +2,7 @@
 
 import asyncio
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -343,6 +344,13 @@ class TestRun:
         assert first["large_net"] == "73.45"  # f72 (empirically the large-order flow)
         assert first["medium_net"] == "-10.0"  # f78
         assert first["small_net"] == "-113.45"
+
+        progress_path = tmp_path / "main_flow.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] is None
+        assert progress["fetched_rows"] == 3
 
     async def test_run_short_circuits_when_today_imported(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

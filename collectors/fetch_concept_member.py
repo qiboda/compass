@@ -28,6 +28,7 @@ from common import (
     EM_HEADERS,
     EM_MAX_RETRIES,
     AsyncSession,
+    Progress,
     Throttle,
     csv_dir,
     flatten_record,
@@ -212,52 +213,64 @@ async def run(page_size: int = 100) -> Path:
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
     print(file=sys.stderr)
 
-    throttle = Throttle()
-    all_records: list[dict] = []
-    failed_boards: list[str] = []
+    with Progress("concept_member", output_csv=output_path) as progress:
+        throttle = Throttle()
+        all_records: list[dict] = []
+        failed_boards: list[str] = []
 
-    async with AsyncSession(impersonate="chrome142") as session:
-        try:
-            boards = await fetch_board_list(session, throttle)
-        except Exception as e:
-            output_path.unlink(missing_ok=True)
-            raise RuntimeError(f"Board list fetch failed: {e} — no CSV written") from e
-
-        if not boards:
-            output_path.unlink(missing_ok=True)
-            raise RuntimeError("No concept boards returned — no version produced")
-
-        print(f"Boards: {len(boards)}", file=sys.stderr)
-
-        for i, (board_code, board_name) in enumerate(boards):
-            print(
-                f"[{i + 1}/{len(boards)}] {board_code} {board_name} ...",
-                file=sys.stderr, end=" ", flush=True,
-            )
+        async with AsyncSession(impersonate="chrome142") as session:
             try:
-                records = await fetch_board_members(session, throttle, board_code, page_size)
+                boards = await fetch_board_list(session, throttle)
             except Exception as e:
-                failed_boards.append(board_code)
-                print(f"FAILED: {e}", file=sys.stderr)
-                continue
+                output_path.unlink(missing_ok=True)
+                raise RuntimeError(f"Board list fetch failed: {e} — no CSV written") from e
 
-            if records:
-                all_records.extend(records)
-                print(f"{len(records)} records", file=sys.stderr)
-            else:
-                print("empty", file=sys.stderr)
+            if not boards:
+                output_path.unlink(missing_ok=True)
+                raise RuntimeError("No concept boards returned — no version produced")
 
-    if failed_boards:
-        output_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"{len(failed_boards)} board(s) failed ({', '.join(failed_boards)}) — "
-            "no CSV written, previous version kept"
+            print(f"Boards: {len(boards)}", file=sys.stderr)
+            progress.update(total_items=len(boards), message="Fetching board members")
+
+            for i, (board_code, board_name) in enumerate(boards):
+                print(
+                    f"[{i + 1}/{len(boards)}] {board_code} {board_name} ...",
+                    file=sys.stderr, end=" ", flush=True,
+                )
+                try:
+                    records = await fetch_board_members(session, throttle, board_code, page_size)
+                except Exception as e:
+                    failed_boards.append(board_code)
+                    print(f"FAILED: {e}", file=sys.stderr)
+                    continue
+
+                if records:
+                    all_records.extend(records)
+                    print(f"{len(records)} records", file=sys.stderr)
+                else:
+                    print("empty", file=sys.stderr)
+
+                progress.update(
+                    completed=i + 1,
+                    fetched_rows=len(all_records),
+                    current_item=board_code,
+                    message=f"Fetched {board_code} {board_name}",
+                )
+
+        if failed_boards:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"{len(failed_boards)} board(s) failed ({', '.join(failed_boards)}) — "
+                "no CSV written, previous version kept"
+            )
+
+        write_csv(all_records, output_path)
+        progress.finish(
+            fetched_rows=len(all_records),
+            message=f"Done: {len(all_records)} records",
         )
-
-    write_csv(all_records, output_path)
-
-    print(f"\nDone: {len(all_records)} records → {output_path.resolve()}", file=sys.stderr)
-    return output_path
+        print(f"\nDone: {len(all_records)} records → {output_path.resolve()}", file=sys.stderr)
+        return output_path
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:

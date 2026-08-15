@@ -211,6 +211,22 @@ uv run python main.py sync             # 获取 + 导入全部
 uv run python main.py sync-investment --restart
 ```
 
+**抓取进度查询（`progress` 子命令，issue #267）**：6 个一次性写 CSV 的 SEPA 采集器
+（main_flow/dragon/block_trade/institution_survey/concept_member/index_daily）抓取期间
+实时写 `csv_dir()/<name>.progress.json`（tmp+os.replace 原子写，可安全跨进程读取）。
+另一终端可随时查询，CSV 仍保持一次性写入语义：
+
+```sh
+uv run python main.py progress                  # 全部采集器进度（人类可读）
+uv run python main.py progress dragon           # 单个采集器
+uv run python main.py progress --json           # 全部（原始 JSON，供脚本消费）
+uv run python main.py progress block_trade --json
+```
+
+进度文件在抓取结束后保留（status = `completed` / `failed`，failed 含 error 信息），
+可复查上次运行结果。append 型采集器（income/balance_sheet/cash_flow/fin_indicators）
+与 stock_basic 不产生进度文件（`progress` 不接受这些 target）。
+
 关键概念：
 - **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt

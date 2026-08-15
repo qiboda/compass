@@ -2,6 +2,7 @@
 
 import asyncio
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -283,6 +284,13 @@ class TestRun:
         assert len(link) == 1
         assert link[0]["INSTITUTION_FLAG"] == "0"
 
+        progress_path = tmp_path / "dragon.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] == 100.0
+        assert progress["total_items"] == 1
+
     async def test_run_incremental_resumes_after_last_date(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -392,6 +400,14 @@ class TestRun:
             await run(start_date="2024-12-30", end_date="2024-12-31")
 
         assert not (tmp_path / "RPT_DAILYBILLBOARD_DETAILSNEW.csv").exists()
+        # End-to-end failure path: the exception raised inside ``with
+        # Progress(...)`` must mark the progress file failed (not leave it
+        # stuck in running / missing).
+        progress_path = tmp_path / "dragon.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "failed"
+        assert "simulated fetch error" in progress["error"]
 
     async def test_run_fetch_exception_deletes_stale_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -25,6 +25,7 @@ URLs are the handoff-verified EastMoney endpoints.
 import asyncio
 import contextlib
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -108,6 +109,12 @@ class TestBoundaries:
         board = next(r for r in rows if r["symbol"] == "BK0475")
         assert official["index_type"] == "official"
         assert board["index_type"] in {"concept", "industry"}
+
+        progress_path = tmp_path / "index_daily.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] == 100.0
 
     async def test_bk_boundary_codes_0000_and_9999(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

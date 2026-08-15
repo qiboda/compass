@@ -2,6 +2,7 @@
 
 import asyncio
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -373,6 +374,12 @@ class TestRun:
         assert row["SECUCODE"] == "000001.SZ"
         assert row["SECURITY_CODE"] == "000001"
         assert row["RECEIVE_START_DATE"].startswith("2025-08-28")
+
+        progress_path = tmp_path / "institution_survey.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] == 100.0
 
     async def test_run_default_start_date(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

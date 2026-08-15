@@ -19,14 +19,66 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from conftest import StubResponse  # noqa: E402
 
 from common import (  # noqa: E402
+    Progress,
     Throttle,
     build_dates,
     dolt_dir,
     fetch_paginated,
     flatten_record,
     last_report_date,
+    progress_path,
+    read_progress,
     write_csv,
 )
+
+
+class TestProgress:
+    def test_writes_and_reads_running_state(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        progress = Progress("block_trade", total_items=10, output_csv=tmp_path / "out.csv")
+        progress.update(completed=3, fetched_rows=42, current_item="2024-01-03")
+        data = read_progress("block_trade")
+        assert data is not None
+        assert data["name"] == "block_trade"
+        assert data["status"] == "running"
+        assert data["total_items"] == 10
+        assert data["completed_items"] == 3
+        assert data["fetched_rows"] == 42
+        assert data["current_item"] == "2024-01-03"
+        assert data["percent"] == 30.0
+        assert progress.path == progress_path("block_trade")
+
+    def test_finish_sets_completed_and_full_percent(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        progress = Progress("dragon", total_items=5, output_csv=tmp_path / "d.csv")
+        progress.finish(fetched_rows=7, message="Done")
+        data = read_progress("dragon")
+        assert data is not None
+        assert data["status"] == "completed"
+        assert data["completed_items"] == 5
+        assert data["percent"] == 100.0
+        assert data["message"] == "Done"
+        assert data["error"] is None
+
+    def test_context_manager_marks_failed_on_exception(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        with pytest.raises(RuntimeError, match="boom"), Progress(
+            "concept_member", output_csv=tmp_path / "c.csv"
+        ):
+            raise RuntimeError("boom")
+        data = read_progress("concept_member")
+        assert data is not None
+        assert data["status"] == "failed"
+        assert data["error"] == "boom"
+
+    def test_read_progress_missing_returns_none(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        assert read_progress("nope") is None
+
+    def test_no_tmp_file_left_after_write(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        Progress("main_flow", output_csv=tmp_path / "m.csv").finish()
+        assert not list(tmp_path.glob("*.progress.json.tmp"))
 
 
 class TestBuildDates:

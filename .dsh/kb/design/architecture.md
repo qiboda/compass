@@ -409,7 +409,7 @@ API 获取数据并导入 Dolt：
 
 | 脚本 | 用途 | 数据 |
 |---|---|---|
-| `main.py` | 统一 CLI：fetch/import/sync/sync-investment | — |
+| `main.py` | 统一 CLI：fetch/import/progress/sync/sync-investment | — |
 | `fetch_stock_basic.py` | 公司基本信息 | 12,388 只股票，13 个字段 |
 | `fetch_fin_indicators.py` | 财务指标 | 126K 行，37 个字段，2020-2026 |
 | `fetch_balance_sheet.py` | 资产负债表 | 319 个字段，按季度，RPT_F10_FINANCE_GBALANCE |
@@ -623,6 +623,8 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | D3（#247）：prompt 构建/响应解析归属 | compass `llm_screener` / compass-core | compass（业务层） | prompt 依赖 Filter AST schema（compass-types）+ 业务语义（单位/示例），属应用层；compass-core 保持通用客户端职责 | compass-core 混入业务 prompt 破坏"通用客户端"复用定位 |
 | D4（#247）：LLM 请求通道 | 第五 `AsyncDispatcher` 通道 / 复用 run_screener 通道 | 第五通道（`RunLlmRequest/Response`，含 seq 守卫） | 与 sepa/index 通道模式完全同构；LLM 是独立后端职责（网络 I/O + 解析校验）；seq 守卫保证 Esc 取消后在途响应不混入 | 复用 screener 通道破坏单一职责、错误语义混杂 |
 | D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
+| C4（#267）：抓取进度存储形态 | JSON 进度文件 / SQLite / 日志行 | `csv_dir()/<name>.progress.json` 原子写（tmp+os.replace） | 轻量零依赖、跨进程可读、与 CSV 同目录便于排查；CSV 保持一次性写入语义 | SQLite 过重；日志行无结构化查询 |
+| C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
 
 > 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
