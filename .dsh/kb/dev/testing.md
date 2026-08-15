@@ -118,6 +118,20 @@ let range = db.get_stored_range("SZ000001").await?;
 5. **集成测试**：使用内存 DuckDB 运行完整管线
    （import → save stock_daily → fetch bars → verify counts）。
 
+### result-slot 时序回归（compass backend，ref #276）
+
+`wire_backend` 的 result slot 契约：`*_loading` 可观察为 `false` 时，显示日志必须已写入。
+测试用 `Dynamic::lock()` 持有 loading mutex，把 result slot 精确卡在 `*_loading.set(false)`
+之前，然后轮询 `log_count() > 0`：
+
+- 旧代码（先清 loading 再写日志）会永久卡在 `set(false)`，日志永不出现 → RED 超时
+- 修复后（先写日志再清 loading）日志先出现，测试通过
+- 注意：持有 loading guard 期间禁止对该 loading Dynamic 调用 `get()/set()`，避免自死锁；
+  只读 log / result-data 等其它 Dynamic
+
+覆盖 fetch / screener / SEPA / index 四个 result slot（`backend.rs` 内
+`*_result_slot_writes_log_before_clearing_loading`）。
+
 ### SEPA 引擎（compass-strategy `mod sepa`，ref #147-#149）
 
 - **纯函数指标**：`ma/atr20/momentum_return/volume_ratio/rs_score/vcp_score/

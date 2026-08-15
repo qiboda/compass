@@ -130,7 +130,6 @@ pub fn wire_backend(
         let logger = ReactiveEventLogger::new(&log_dyn);
         let bar_count = resp.bars.len();
         bars_dyn.set(resp.bars);
-        loading.set(false);
         if let Some(ref err) = resp.error {
             error.set(Some(err.clone()));
             logger.log_error(&t!("logger.log_fetch_failed", e = err));
@@ -138,6 +137,7 @@ pub fn wire_backend(
             error.set(None);
             logger.log_info(&t!("logger.log_fetch_completed", count = bar_count));
         }
+        loading.set(false);
         repaint_ctx.request_repaint();
     });
 
@@ -186,7 +186,6 @@ pub fn wire_backend(
         let logger = ReactiveEventLogger::new(&screener_log_dyn);
         screener_result_dyn.set(resp.rows);
         screener_total_dyn.set(resp.total);
-        screener_loading.set(false);
         if let Some(ref err) = resp.error {
             screener_error.set(Some(err.clone()));
             logger.log_error(&t!("logger.log_screener_failed", e = err));
@@ -194,6 +193,7 @@ pub fn wire_backend(
             screener_error.set(None);
             logger.log_info(&t!("logger.log_screener_completed", count = resp.total));
         }
+        screener_loading.set(false);
         screener_repaint_ctx.request_repaint();
     });
 
@@ -259,7 +259,6 @@ pub fn wire_backend(
         let logger = ReactiveEventLogger::new(&sepa_log_dyn);
         let row_count = resp.data.rows.len();
         sepa_data_dyn.set(Some(resp.data));
-        sepa_loading.set(false);
         if let Some(ref err) = resp.error {
             sepa_error.set(Some(err.clone()));
             logger.log_error(&t!("logger.log_sepa_failed", e = err));
@@ -267,6 +266,7 @@ pub fn wire_backend(
             sepa_error.set(None);
             logger.log_info(&t!("logger.log_sepa_completed", count = row_count));
         }
+        sepa_loading.set(false);
         sepa_repaint_ctx.request_repaint();
     });
 
@@ -320,7 +320,6 @@ pub fn wire_backend(
         let logger = ReactiveEventLogger::new(&index_log_dyn);
         let row_count = resp.data.rows.len();
         index_snapshot_dyn.set(Some(resp.data));
-        index_loading.set(false);
         if let Some(ref err) = resp.error {
             index_error.set(Some(err.clone()));
             logger.log_error(&t!("logger.log_index_failed", e = err));
@@ -328,6 +327,7 @@ pub fn wire_backend(
             index_error.set(None);
             logger.log_info(&t!("logger.log_index_completed", count = row_count));
         }
+        index_loading.set(false);
         index_repaint_ctx.request_repaint();
     });
 
@@ -530,6 +530,23 @@ mod tests {
         }
     }
 
+    /// Poll a result-data predicate until it holds (or timeout).
+    ///
+    /// Unlike the `wait_for_*_response` helpers, this must NOT touch any
+    /// `*_loading` `Dynamic` — callers of this helper are typically holding
+    /// that loading mutex (via `Dynamic::lock()`) to deterministically park
+    /// the result slot between "write result data" and "clear loading", so
+    /// calling `.get()` on the loading field here would self-deadlock.
+    fn wait_for_result_data(what: &'static str, mut cond: impl FnMut() -> bool) {
+        for _ in 0..500 {
+            if cond() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timeout waiting for {what}");
+    }
+
     /// Poll `state.loading` until it flips from `true` to `false` (or timeout).
     ///
     /// The caller must set `loading.set(true)` *before* sending work so that
@@ -670,6 +687,60 @@ mod tests {
         );
         assert!(!state.bars.get().is_empty(), "bars should not be empty");
         assert_eq!(state.bars.get().len(), 3, "expected 3 bars for 000001");
+        rust_i18n::set_locale("zh");
+    }
+
+    /// Fetch result-slot ordering regression (issue #276): by the time
+    /// `state.loading` is observable as `false`, the display log entry must
+    /// already exist. The buggy slot wrote `loading.set(false)` before
+    /// `logger.log_info(...)`; the fix writes the log first. We hold the
+    /// `loading` mutex so the result slot parks exactly between writing
+    /// result data and clearing loading — then the log must already be there.
+    #[test]
+    fn fetch_result_slot_writes_log_before_clearing_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
+        let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
+
+        write_test_parquet(
+            temp_dir.path(),
+            &["('000001', '2025-01-02', 10.0, 10.5, 9.8, 10.2, 100000.0, 10.2, 1020000.0)"],
+        );
+
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
+
+        // Mark work in flight, then hold the loading mutex so the result slot
+        // is blocked at `loading.set(false)` — never call `state.loading.get()`
+        // or `set()` while this guard is alive.
+        state.loading.set(true);
+        let _loading_guard = state.loading.lock();
+
+        work_signal
+            .send(fetch_request("000001"))
+            .expect("failed to send request");
+
+        // While holding the loading mutex, wait for the display log entry:
+        // in buggy code the slot is parked at `loading.set(false)` before
+        // logging, so this times out (RED); in fixed code the log is written
+        // before the slot blocks on `loading.set(false)`.
+        wait_for_result_data("fetch display log entry", || {
+            state.log.get().log_count() > 0
+        });
+
+        assert!(
+            state.log.get().log_count() > 0,
+            "display log entry must be written before loading is cleared"
+        );
+        drop(_loading_guard);
+
+        wait_for_result_data("loading=false after drop", || !state.loading.get());
         rust_i18n::set_locale("zh");
     }
 
@@ -854,6 +925,57 @@ mod tests {
         rust_i18n::set_locale("zh");
     }
 
+    /// Screener result-slot ordering regression (issue #276): by the time
+    /// `screener_loading` is observable as `false`, the display log entry must
+    /// already exist. Hold the `screener_loading` mutex so the result slot
+    /// parks between writing `screener_result`/`screener_total` and clearing
+    /// loading — then the log must already be present.
+    #[test]
+    fn screener_result_slot_writes_log_before_clearing_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
+        let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
+        write_screener_parquet(temp_dir.path());
+
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
+
+        state.screener_loading.set(true);
+        let _loading_guard = state.screener_loading.lock();
+
+        let query = compass_types::ScreenerQuery::default();
+        screener_signal
+            .send(RunScreenerRequest {
+                filter: compass_types::Filter::from(query),
+            })
+            .expect("failed to send screener request");
+
+        // While holding the loading mutex, wait for the display log entry:
+        // in buggy code the slot is parked at `screener_loading.set(false)`
+        // before logging, so this times out (RED); in fixed code the log is
+        // written before the slot blocks on `screener_loading.set(false)`.
+        wait_for_result_data("screener display log entry", || {
+            state.log.get().log_count() > 0
+        });
+
+        assert!(
+            state.log.get().log_count() > 0,
+            "screener display log entry must be written before loading is cleared"
+        );
+        drop(_loading_guard);
+
+        wait_for_result_data("screener loading=false after drop", || {
+            !state.screener_loading.get()
+        });
+        rust_i18n::set_locale("zh");
+    }
+
     /// Screener with an industry filter narrows the result set.
     #[test]
     fn screener_path_applies_industry_filter() {
@@ -947,6 +1069,102 @@ mod tests {
             state.log.get().log_count() > 0,
             "result slot must write a display log entry"
         );
+        rust_i18n::set_locale("zh");
+    }
+
+    /// SEPA result-slot ordering regression (issue #276): by the time
+    /// `sepa_loading` is observable as `false`, the display log entry must
+    /// already exist. Hold the `sepa_loading` mutex so the result slot parks
+    /// between writing `sepa_data` and clearing loading — the log must already
+    /// be present.
+    #[test]
+    fn sepa_result_slot_writes_log_before_clearing_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
+        let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
+        write_screener_parquet(temp_dir.path());
+
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work_signal, _screener_signal, sepa_signal, _index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
+
+        state.sepa_loading.set(true);
+        let _loading_guard = state.sepa_loading.lock();
+
+        sepa_signal
+            .send(RunSepaRequest {})
+            .expect("failed to send sepa request");
+
+        // While holding the loading mutex, wait for the display log entry:
+        // in buggy code the slot is parked at `sepa_loading.set(false)` before
+        // logging, so this times out (RED); in fixed code the log is written
+        // before the slot blocks on `sepa_loading.set(false)`.
+        wait_for_result_data("sepa display log entry", || state.log.get().log_count() > 0);
+
+        assert!(
+            state.log.get().log_count() > 0,
+            "sepa display log entry must be written before loading is cleared"
+        );
+        drop(_loading_guard);
+
+        wait_for_result_data("sepa loading=false after drop", || {
+            !state.sepa_loading.get()
+        });
+        rust_i18n::set_locale("zh");
+    }
+
+    /// Index snapshot result-slot ordering regression (issue #276): by the
+    /// time `index_snapshot_loading` is observable as `false`, the display log
+    /// entry must already exist. Hold the `index_snapshot_loading` mutex so the
+    /// result slot parks between writing `index_snapshot` and clearing loading.
+    /// An empty tempdir yields an empty snapshot, but the slot still writes
+    /// `Some(data)` before touching loading.
+    #[test]
+    fn index_result_slot_writes_log_before_clearing_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("en");
+        // Empty dir: no index parquet → builder returns an empty snapshot
+        // (empty/error response), yet the result slot still sets `Some(data)`.
+        let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
+
+        let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
+        let state = Arc::new(SharedState::new("000001", "1d"));
+        let egui_ctx = egui::Context::default();
+
+        let (_work_signal, _screener_signal, _sepa_signal, index_signal, _llm_signal, _backend) =
+            wire_backend(config, state.clone(), egui_ctx, None);
+
+        state.index_snapshot_loading.set(true);
+        let _loading_guard = state.index_snapshot_loading.lock();
+
+        index_signal
+            .send(RunIndexSnapshotRequest {})
+            .expect("failed to send index snapshot request");
+
+        // While holding the loading mutex, wait for the display log entry:
+        // in buggy code the slot is parked at `index_snapshot_loading.set(false)`
+        // before logging, so this times out (RED); in fixed code the log is
+        // written before the slot blocks on `index_snapshot_loading.set(false)`.
+        wait_for_result_data("index display log entry", || {
+            state.log.get().log_count() > 0
+        });
+
+        assert!(
+            state.log.get().log_count() > 0,
+            "index display log entry must be written before loading is cleared"
+        );
+        drop(_loading_guard);
+
+        wait_for_result_data("index loading=false after drop", || {
+            !state.index_snapshot_loading.get()
+        });
         rust_i18n::set_locale("zh");
     }
 
