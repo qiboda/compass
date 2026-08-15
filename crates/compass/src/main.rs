@@ -28,6 +28,7 @@ use compass_ui::widgets::toolbar::Toolbar;
 mod backend;
 mod citizens;
 mod dispatcher;
+mod i18n_name;
 mod llm_screener;
 mod messages;
 mod state;
@@ -85,6 +86,17 @@ fn main() -> eframe::Result {
             let index_list = load_index_list(&config.app);
             let mut picker_list = stock_list.clone();
             picker_list.extend(index_list.clone().into_iter().map(index_basic_to_stock));
+
+            // Data-name locale maps (epic #266 B3): concept zh→en from the
+            // index_basic concept rows (SEPA theme tags, D1-A); industry
+            // zh→en from stock_basic (screener dropdown labels). Filter keys
+            // stay Chinese — only the labels localize.
+            shared_state
+                .concept_names
+                .set(build_concept_names(&index_list));
+            shared_state
+                .industry_names
+                .set(build_industry_names(&stock_list));
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
             let (
@@ -744,6 +756,39 @@ fn index_basic_to_stock(index: IndexBasic) -> compass_core::model::StockBasic {
         list_date: None,
         delist_date: None,
     }
+}
+
+/// Build the concept zh→en name map (epic #266 B3e, D1-A) from the
+/// `index_basic` concept rows: `name` → `name_en`. Concept rows without an
+/// English name are omitted — the SEPA theme renderer falls back to Chinese
+/// for unmapped concepts.
+fn build_concept_names(index_list: &[IndexBasic]) -> std::collections::HashMap<String, String> {
+    index_list
+        .iter()
+        .filter(|b| b.index_type == "concept")
+        .filter_map(|b| {
+            b.name_en
+                .as_ref()
+                .filter(|en| !en.is_empty())
+                .map(|en| (b.name.clone(), en.clone()))
+        })
+        .collect()
+}
+
+/// Build the industry zh→en name map (epic #266 B3f) from `stock_basic`:
+/// `industry` → `industry_en`. Unmapped industries are omitted — the
+/// screener dropdown falls back to Chinese labels.
+fn build_industry_names(
+    stock_list: &[compass_core::model::StockBasic],
+) -> std::collections::HashMap<String, String> {
+    stock_list
+        .iter()
+        .filter_map(|s| {
+            let zh = s.industry.as_ref()?;
+            let en = s.industry_en.as_ref().filter(|en| !en.is_empty())?;
+            Some((zh.clone(), en.clone()))
+        })
+        .collect()
 }
 
 /// Write the shared log entries to `path` in a plain-text export format

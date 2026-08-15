@@ -219,6 +219,9 @@ pub struct ScreenerRow {
     pub market_cap: f64,
     /// Industry classification.
     pub industry: String,
+    /// English industry name (epic #266 B3; `None` when unmapped — the GUI
+    /// falls back to the Chinese `industry`).
+    pub industry_en: Option<String>,
 }
 
 // --- SEPA engine contract types (epic #139) ---------------------------------
@@ -298,6 +301,9 @@ pub struct SepaRow {
     pub risk: f64,
     /// Industry classification.
     pub industry: String,
+    /// English industry name (epic #266; `None` when unmapped — the GUI
+    /// falls back to the Chinese `industry`).
+    pub industry_en: Option<String>,
     /// Concept themes; may be empty.
     pub themes: Vec<String>,
     /// Latest raw close price.
@@ -365,6 +371,9 @@ pub struct IndexRow {
     pub symbol: String,
     /// Chinese display name (from index_basic.parquet).
     pub name: String,
+    /// English display name (epic #266; `None` when unmapped — the GUI
+    /// falls back to the Chinese `name`).
+    pub name_en: Option<String>,
     /// `"official"` | `"concept"` | `"industry"`.
     pub index_type: String,
     /// Latest close (点位).

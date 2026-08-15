@@ -57,12 +57,10 @@ fn escape_sql_path(path: &str) -> String {
 /// True when a DuckDB error is a binder "column not found" failure — the
 /// signal that a legacy parquet file predates a schema column (epic #266).
 /// Only this failure class triggers the legacy fallback; genuine errors
-/// (corrupt file, IO) propagate.
+/// (corrupt file, IO, misspelled column in future edits) propagate.
 fn is_missing_column(e: &duckdb::Error) -> bool {
     let msg = e.to_string();
-    msg.contains("not found in FROM clause")
-        || msg.contains("does not have a column")
-        || msg.contains("Binder Error")
+    msg.contains("not found in FROM clause") || msg.contains("does not have a column")
 }
 
 /// Read A-share OHLCV data from a single Parquet file with a `symbol` column.

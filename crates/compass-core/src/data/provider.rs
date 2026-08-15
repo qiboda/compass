@@ -138,7 +138,7 @@ mod tests {
         ] {
             let s = e.to_string();
             assert!(
-                s.chars().all(|c| c.is_ascii()),
+                s.is_ascii(),
                 "DataError Display must stay ASCII English, got: {s}"
             );
         }

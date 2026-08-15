@@ -24,16 +24,17 @@ use crate::messages::{FetchRequest, RunIndexSnapshotRequest};
 use crate::state::SharedState;
 
 /// Core-index whitelist (plan T6): the six official indexes pinned in the
-/// overview card. Names are data — the i18n contract never translates
-/// stock/index names, so they live here as fallbacks (the snapshot's own
-/// `name` from index_basic.parquet wins when present).
-const CORE_INDEX_WHITELIST: [(&str, &str); 6] = [
-    ("SH000001", "上证指数"),
-    ("SZ399001", "深证成指"),
-    ("SZ399006", "创业板指"),
-    ("SH000300", "沪深300"),
-    ("SH000905", "中证500"),
-    ("SH000852", "中证1000"),
+/// overview card. Names are data — the snapshot's own `name`/`name_en` from
+/// index_basic.parquet win when present; the triple `(symbol, zh, en)`
+/// fallback covers a missing row (epic #266 B3: English fallback joins the
+/// card so the name follows the locale).
+const CORE_INDEX_WHITELIST: [(&str, &str, &str); 6] = [
+    ("SH000001", "上证指数", "SSE Composite"),
+    ("SZ399001", "深证成指", "SZSE Component"),
+    ("SZ399006", "创业板指", "ChiNext"),
+    ("SH000300", "沪深300", "CSI 300"),
+    ("SH000905", "中证500", "CSI 500"),
+    ("SH000852", "中证1000", "CSI 1000"),
 ];
 
 /// Ranking-table columns (design 大盘 tab §③): name / code / latest /
@@ -172,9 +173,18 @@ impl MarketPanel {
             );
             ui.add_space(tokens.spacing.sm);
             ui.horizontal_wrapped(|ui| {
-                for (symbol, fallback_name) in CORE_INDEX_WHITELIST {
+                let locale = &*compass_i18n::locale();
+                for (symbol, zh, en) in CORE_INDEX_WHITELIST {
                     let row = snapshot.and_then(|s| s.rows.iter().find(|r| r.symbol == symbol));
-                    let name = row.map(|r| r.name.as_str()).unwrap_or(fallback_name);
+                    // Precedence (epic #266 B3): present row → its locale name
+                    // (snapshot beats the hardcoded fallback); absent row →
+                    // the triple's zh/en fallback per locale.
+                    let name = match row {
+                        Some(r) => {
+                            crate::i18n_name::display_name(locale, &r.name, r.name_en.as_deref())
+                        }
+                        None => crate::i18n_name::display_name(locale, zh, Some(en)),
+                    };
                     let point = row
                         .map(|r| format_price(r.latest))
                         .unwrap_or_else(|| "--".to_string());
@@ -370,10 +380,16 @@ impl MarketPanel {
     }
 
     /// Map one `IndexRow` into the table's cell model (design §③): name /
-    /// code / latest / change / turnover (亿元, integer).
+    /// code / latest / change / turnover (亿元, integer). The name cell
+    /// resolves the locale display name (epic #266 B3d).
     fn row_cells(row: &IndexRow) -> Vec<DataCell> {
+        let locale = &*compass_i18n::locale();
         vec![
-            DataCell::Text(row.name.clone()),
+            DataCell::Text(crate::i18n_name::display_name(
+                locale,
+                &row.name,
+                row.name_en.as_deref(),
+            )),
             DataCell::Text(row.symbol.clone()),
             DataCell::Price {
                 value: row.latest as f32,
@@ -430,9 +446,24 @@ mod tests {
         IndexRow {
             symbol: symbol.to_string(),
             name: name.to_string(),
+            name_en: None,
             index_type: index_type.to_string(),
             latest: 3000.0,
             change_pct: change,
+            amount: 123_456_789.0,
+        }
+    }
+
+    /// `sample_row` with an explicit `name_en` (epic #266 B3d — the
+    /// Rank-table name column must honour the locale-aware helper).
+    fn row_with_name_en(symbol: &str, name: &str, name_en: Option<&str>) -> IndexRow {
+        IndexRow {
+            symbol: symbol.to_string(),
+            name: name.to_string(),
+            name_en: name_en.map(str::to_string),
+            index_type: "official".to_string(),
+            latest: 3000.0,
+            change_pct: 1.0,
             amount: 123_456_789.0,
         }
     }
@@ -582,9 +613,168 @@ mod tests {
     #[test]
     fn whitelist_embeds_six_core_indexes() {
         assert_eq!(CORE_INDEX_WHITELIST.len(), 6);
-        for (symbol, _) in CORE_INDEX_WHITELIST {
+        // epic #266 decision #6: the whitelist expands to (symbol, zh, en)
+        // triples — the core-index card falls back to the locale-correct
+        // name when the snapshot has no row for the symbol.
+        // COMPILE-RED while the production CORE_INDEX_WHITELIST is still a
+        // (symbol, zh) pair; it becomes compile-clean once B3d promotes it to
+        // a triple.
+        for (symbol, zh, en) in CORE_INDEX_WHITELIST {
             assert!(symbol.starts_with("SH") || symbol.starts_with("SZ"));
+            assert!(!zh.is_empty(), "zh fallback must never be empty");
+            assert!(!en.is_empty(), "en fallback must never be empty");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // epic #266 B3d — rank-table name column locale-aware (name_en).
+    // English locale shows the English name when a row carries `name_en`;
+    // a missing `name_en` falls back to the Chinese `name`; the Chinese
+    // locale always renders the Chinese name (name_en never leaks).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn row_cells_name_uses_name_en_in_english_locale() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let row = row_with_name_en("SH000001", "上证指数", Some("SSE Composite"));
+        let cells = MarketPanel::row_cells(&row);
+        assert_eq!(
+            cells[0],
+            DataCell::Text("SSE Composite".to_string()),
+            "en locale + name_en=Some must render the English name"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn row_cells_name_falls_back_to_chinese_without_name_en() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let row = row_with_name_en("SH000001", "上证指数", None);
+        let cells = MarketPanel::row_cells(&row);
+        assert_eq!(
+            cells[0],
+            DataCell::Text("上证指数".to_string()),
+            "en locale + name_en=None must fall back to the Chinese name"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn row_cells_name_stays_chinese_in_zh_locale_even_with_name_en() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        let row = row_with_name_en("SH000001", "上证指数", Some("SSE Composite"));
+        let cells = MarketPanel::row_cells(&row);
+        assert_eq!(
+            cells[0],
+            DataCell::Text("上证指数".to_string()),
+            "zh locale must always render the Chinese name, name_en must not leak"
+        );
+    }
+
+    #[test]
+    fn row_cells_name_ignores_empty_string_name_en() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let row = row_with_name_en("SH000001", "上证指数", Some(""));
+        let cells = MarketPanel::row_cells(&row);
+        assert_eq!(
+            cells[0],
+            DataCell::Text("上证指数".to_string()),
+            "an empty-string name_en must be treated as unmapped and fall back to Chinese"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    // ------------------------------------------------------------------
+    // epic #266 B3d — core-index card triplet fallback by locale: when the
+    // snapshot has no row for a whitelist symbol, the card must render the
+    // locale-correct fallback name (zh → 上证指数, en → SSE Composite).
+    // Rendered text is asserted at the shape level (testing.md ref #217:
+    // selectable_label with a LayoutJob has no AccessKit label).
+    // ------------------------------------------------------------------
+
+    /// True when any text shape in the rendered output contains `needle`.
+    /// `harness.output().shapes` is a `Vec<ClippedShape>`; each clip carries
+    /// a `Shape` in its `.shape` field (main.rs tessellate-decompose pattern).
+    fn text_drawn(shapes: &[egui::epaint::ClippedShape], needle: &str) -> bool {
+        fn walk(shapes: &[egui::Shape], needle: &str) -> bool {
+            shapes.iter().any(|shape| match shape {
+                egui::Shape::Vec(inner) => walk(inner, needle),
+                egui::Shape::Text(text) => text.galley.text().contains(needle),
+                _ => false,
+            })
+        }
+        shapes
+            .iter()
+            .any(|clipped| walk(std::slice::from_ref(&clipped.shape), needle))
+    }
+
+    #[test]
+    fn core_index_card_fallback_renders_chinese_in_zh_locale() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        let (mut panel, shared) = panel();
+        // Snapshot without any whitelist symbol → all six core cards fall back.
+        shared.index_snapshot.set(Some(IndexSnapshot {
+            rows: vec![sample_row("BK0475", "半导体", "industry", -1.25)],
+            date: "2026-08-13".to_string(),
+        }));
+        shared.index_snapshot_loading.set(false);
+        let (index_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &index_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        assert!(
+            text_drawn(&harness.output().shapes, "上证指数"),
+            "zh locale core-card fallback must render the Chinese name"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn core_index_card_fallback_renders_english_in_en_locale() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let (mut panel, shared) = panel();
+        // No whitelist symbol in the snapshot → the card uses the en triplet
+        // fallback (SSE Composite for SH000001).
+        shared.index_snapshot.set(Some(IndexSnapshot {
+            rows: vec![sample_row("BK0475", "半导体", "industry", -1.25)],
+            date: "2026-08-13".to_string(),
+        }));
+        shared.index_snapshot_loading.set(false);
+        let (index_signal, work_signal) = signals();
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &index_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+
+        assert!(
+            text_drawn(&harness.output().shapes, "SSE Composite"),
+            "en locale core-card fallback must render the English name"
+        );
+        compass_i18n::set_locale("zh");
     }
 
     #[test]

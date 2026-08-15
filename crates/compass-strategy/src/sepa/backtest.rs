@@ -507,6 +507,7 @@ mod tests {
             pattern: 0.0,
             risk: 0.0,
             industry: "测试".to_string(),
+            industry_en: None,
             themes: Vec::new(),
             latest_price: 1.0,
             change_pct: 0.0,

@@ -447,9 +447,9 @@ fn build_index_snapshot(reader: &ParquetReader) -> Result<compass_types::IndexSn
 
     let daily = reader.load_index_daily_rows()?;
     let basics = reader.load_all_index_basics()?;
-    let name_map: HashMap<String, (String, String)> = basics
+    let name_map: HashMap<String, (String, Option<String>, String)> = basics
         .into_iter()
-        .map(|b| (b.symbol, (b.name, b.index_type)))
+        .map(|b| (b.symbol, (b.name, b.name_en, b.index_type)))
         .collect();
 
     let mut rows: Vec<IndexRow> = Vec::with_capacity(daily.len());
@@ -470,10 +470,10 @@ fn build_index_snapshot(reader: &ParquetReader) -> Result<compass_types::IndexSn
             Some(p) if p.close > 0.0 => (last.close - p.close) / p.close * 100.0,
             _ => 0.0,
         };
-        let (name, index_type) = name_map
+        let (name, name_en, index_type) = name_map
             .get(&symbol)
             .cloned()
-            .unwrap_or_else(|| (symbol.clone(), last.index_type.clone()));
+            .unwrap_or_else(|| (symbol.clone(), None, last.index_type.clone()));
         let date_str = last.trade_date.to_string();
         if date_str > snapshot_date {
             snapshot_date = date_str;
@@ -481,6 +481,7 @@ fn build_index_snapshot(reader: &ParquetReader) -> Result<compass_types::IndexSn
         rows.push(IndexRow {
             symbol,
             name,
+            name_en,
             index_type,
             latest: last.close,
             change_pct,

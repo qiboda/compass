@@ -25,11 +25,13 @@ const BARS_PER_SYMBOL: usize = 400;
 
 /// Deterministic daily bars for `symbols` symbols ending `now`, with a mild
 /// rising trend per symbol (seeded so every run is identical).
-fn synthetic_market() -> (tempfile::TempDir, Vec<(String, String, f64, f64, String)>) {
+type StockTuple = (String, String, f64, f64, String);
+
+fn synthetic_market() -> (tempfile::TempDir, Vec<StockTuple>) {
     let mut rng = StdRng::seed_from_u64(42);
     let now = NaiveDate::from_ymd_opt(2026, 7, 28).expect("date");
 
-    let mut stocks = Vec::new();
+    let mut stocks: Vec<StockTuple> = Vec::new();
     for s in 0..SYMBOLS {
         let exchange = if s % 3 == 0 { "SH" } else { "SZ" };
         let symbol = format!("{exchange}{:06}", 1 + s);
@@ -53,8 +55,8 @@ fn synthetic_market() -> (tempfile::TempDir, Vec<(String, String, f64, f64, Stri
     .expect("create basic");
 
     let day = now;
-    for s in 0..SYMBOLS {
-        let (symbol, name, total_share, _, industry) = &stocks[s];
+    for (s, stock) in stocks.iter().enumerate() {
+        let (symbol, name, total_share, _, industry) = stock;
         // Deterministic per-symbol walk: trend + noise.
         let trend = 10.0 + (s % 7) as f64 * 0.5;
         let mut price = trend;

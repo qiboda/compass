@@ -261,7 +261,12 @@ impl ScreenerPanel {
                 change: Some(row.change_20d as f32),
             },
             DataCell::Count(row.market_cap.round() as usize),
-            DataCell::Text(row.industry.clone()),
+            // Industry text resolves the locale display name (epic #266 B3f).
+            DataCell::Text(crate::i18n_name::display_name(
+                &compass_i18n::locale(),
+                &row.industry,
+                row.industry_en.as_deref(),
+            )),
         ]
     }
 
@@ -305,6 +310,7 @@ impl ScreenerPanel {
                         .description(&compass_i18n::t!("screener.builder.empty_desc"))
                         .show(ui);
                     } else {
+                        let industry_names = shared_state.industry_names.get();
                         render_group_items(
                             ui,
                             &tokens,
@@ -313,6 +319,7 @@ impl ScreenerPanel {
                             &mut self.builder_multi_selects,
                             industries,
                             boards,
+                            &industry_names,
                         );
                     }
                     ui.add_space(tokens.spacing.sm);
@@ -489,6 +496,7 @@ fn render_root_header(
 /// pattern (ref #220 — label+control never split across rows), nested group
 /// frames occupy full-width rows and recurse. Removals are collected and
 /// applied after the loop (borrow-safe with the `iter_mut` walk).
+#[allow(clippy::too_many_arguments)]
 fn render_group_items(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -497,6 +505,7 @@ fn render_group_items(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) {
     let mut to_remove: Vec<usize> = Vec::new();
     ui.horizontal_wrapped(|ui| {
@@ -504,9 +513,16 @@ fn render_group_items(
         for (index, item) in items.iter_mut().enumerate() {
             let item_path = format!("{path}_{index}");
             let remove = match item {
-                CondItem::Leaf(leaf) => {
-                    render_leaf_row(ui, tokens, &item_path, leaf, ms_map, industries, boards)
-                }
+                CondItem::Leaf(leaf) => render_leaf_row(
+                    ui,
+                    tokens,
+                    &item_path,
+                    leaf,
+                    ms_map,
+                    industries,
+                    boards,
+                    industry_names,
+                ),
                 CondItem::Group(group) => {
                     // Full-width nested container: start on a fresh row so the
                     // frame does not begin mid-row after preceding cards. The
@@ -526,7 +542,14 @@ fn render_group_items(
                         )),
                         |ui| {
                             render_sub_group(
-                                ui, tokens, &item_path, group, ms_map, industries, boards,
+                                ui,
+                                tokens,
+                                &item_path,
+                                group,
+                                ms_map,
+                                industries,
+                                boards,
+                                industry_names,
                             )
                         },
                     )
@@ -546,6 +569,7 @@ fn render_group_items(
 
 /// One leaf card row: type dropdown + kind parameters + negate + delete as a
 /// single atomic group (ref #220). Returns whether the card was deleted.
+#[allow(clippy::too_many_arguments)]
 fn render_leaf_row(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -554,6 +578,7 @@ fn render_leaf_row(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) -> bool {
     if leaf.kind == LeafKind::Unknown {
         return render_unknown_row(ui, tokens, leaf);
@@ -589,7 +614,16 @@ fn render_leaf_row(
                 leaf.negated = false;
                 prune_ms_prefix(ms_map, &format!("{path}_"));
             }
-            remove |= render_leaf_params(ui, tokens, path, leaf, ms_map, industries, boards);
+            remove |= render_leaf_params(
+                ui,
+                tokens,
+                path,
+                leaf,
+                ms_map,
+                industries,
+                boards,
+                industry_names,
+            );
             if IconButton::new(tokens, egui_phosphor::regular::EXCLUDE)
                 .tooltip(&compass_i18n::t!("screener.builder.negate_tooltip"))
                 .small()
@@ -652,6 +686,7 @@ fn render_unknown_row(ui: &mut egui::Ui, tokens: &ThemeTokens, leaf: &mut CondLe
 
 /// Kind parameter controls (design §3-5). Returns whether the card was
 /// deleted (only the Delisted checkbox can remove its card, by unchecking).
+#[allow(clippy::too_many_arguments)]
 fn render_leaf_params(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -660,13 +695,21 @@ fn render_leaf_params(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) -> bool {
     let mut remove = false;
     match &mut leaf.params {
         LeafParams::MultiSelect(v) => match leaf.kind {
-            LeafKind::Industry => {
-                render_multi_select(ui, tokens, path, "industry", v, ms_map, industries)
-            }
+            LeafKind::Industry => render_multi_select_localized(
+                ui,
+                tokens,
+                path,
+                "industry",
+                v,
+                ms_map,
+                industries,
+                industry_names,
+            ),
             LeafKind::Exchange => {
                 let exchanges = ["SH", "SZ", "BJ"].map(String::from);
                 render_multi_select(ui, tokens, path, "exchange", v, ms_map, &exchanges)
@@ -828,9 +871,70 @@ fn render_multi_select(
     false
 }
 
+/// Locale-aware industry multi-select (epic #266 B3f, SC1/SC2): in the
+/// English locale the option *labels* resolve through the industry zh→en map
+/// while the *stored values* stay the Chinese keys the engine filter matches
+/// on. Selected labels are mapped back to their zh keys after a change, so
+/// the selection anchor survives locale flips. Unmapped industries keep
+/// their Chinese label end-to-end (label == key, reverse lookup passes
+/// through).
+#[allow(clippy::too_many_arguments)]
+fn render_multi_select_localized(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    path: &str,
+    slug: &str,
+    values: &mut Vec<String>,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    options: &[String],
+    en_map: &std::collections::HashMap<String, String>,
+) -> bool {
+    let locale: &str = &compass_i18n::locale();
+    let key = format!("{path}_{slug}");
+    let entry = ms_map
+        .entry(key.clone())
+        .or_insert_with(|| MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt(&key));
+    if locale == "en" {
+        entry.options = options
+            .iter()
+            .map(|zh| en_map.get(zh).cloned().unwrap_or_else(|| zh.clone()))
+            .collect();
+        entry.selected = values
+            .iter()
+            .map(|zh| en_map.get(zh).cloned().unwrap_or_else(|| zh.clone()))
+            .collect();
+    } else {
+        entry.options = options.to_vec();
+        entry.selected = values.clone();
+    }
+    let changed = entry.show(ui);
+    if changed {
+        if locale == "en" {
+            let reverse: std::collections::HashMap<&str, &str> = en_map
+                .iter()
+                .map(|(k, v)| (v.as_str(), k.as_str()))
+                .collect();
+            *values = entry
+                .selected
+                .iter()
+                .map(|label| {
+                    reverse
+                        .get(label.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| label.clone())
+                })
+                .collect();
+        } else {
+            *values = entry.selected.clone();
+        }
+    }
+    false
+}
+
 /// Nested AND/OR group container (design §3): lightweight `Frame` (never a
 /// Card-in-Card) with a header row (segmented + delete) and a recursive item
 /// list. Returns whether the group was deleted.
+#[allow(clippy::too_many_arguments)]
 fn render_sub_group(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -839,6 +943,7 @@ fn render_sub_group(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) -> bool {
     let c = &tokens.color;
     let mut remove = false;
@@ -886,6 +991,7 @@ fn render_sub_group(
                 ms_map,
                 industries,
                 boards,
+                industry_names,
             );
         }
         ui.add_space(tokens.spacing.xs);
@@ -1464,6 +1570,7 @@ mod tests {
 
     fn sample_row(symbol: &str, name: &str, cap: f64) -> compass_types::ScreenerRow {
         compass_types::ScreenerRow {
+            industry_en: None,
             symbol: symbol.to_string(),
             name: name.to_string(),
             latest_price: 10.0,

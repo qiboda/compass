@@ -55,6 +55,14 @@ pub struct SharedState {
     pub index_snapshot_loading: Dynamic<bool>,
     /// Last index snapshot error message, if any.
     pub index_snapshot_error: Dynamic<Option<String>>,
+    /// Concept zh→en name map (epic #266 B3e, D1-A): built from the
+    /// `index_basic` concept rows (`name` → `name_en`); SEPA theme tags
+    /// resolve through it, unmapped concepts fall back to Chinese.
+    pub concept_names: Dynamic<std::collections::HashMap<String, String>>,
+    /// Industry zh→en name map (epic #266 B3f): built from `stock_basic`
+    /// (`industry` → `industry_en`); the screener industry dropdown labels
+    /// resolve through it while the stored filter keys stay Chinese.
+    pub industry_names: Dynamic<std::collections::HashMap<String, String>>,
     /// Watchlist (自选股) — exchange-prefixed symbols in display order.
     pub watchlist: Dynamic<Vec<String>>,
 }
@@ -87,6 +95,8 @@ impl SharedState {
             index_snapshot: Dynamic::new(None),
             index_snapshot_loading: Dynamic::new(false),
             index_snapshot_error: Dynamic::new(None),
+            concept_names: Dynamic::new(std::collections::HashMap::new()),
+            industry_names: Dynamic::new(std::collections::HashMap::new()),
             watchlist: Dynamic::new(Vec::new()),
         }
     }
