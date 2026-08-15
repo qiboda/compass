@@ -111,9 +111,13 @@ def progress_path(name: str) -> Path:
     The file lives alongside the raw CSVs so a separate ``main.py progress``
     process can read it while the fetch is still running.
 
-    Defensive: only plain filename characters (``[A-Za-z0-9_.-]``) are kept —
-    anything else (path separators, ``..`` segments, spaces) is replaced with
-    ``_`` so a hostile or buggy name can never write outside ``csv_dir()``.
+    Defensive: characters outside ``[A-Za-z0-9_.-]`` (path separators, spaces,
+    etc.) are replaced with ``_``. Dots are kept, but since the name is always
+    joined as a single filename segment under ``csv_dir()`` they can never act
+    as directory separators — a hostile or buggy name cannot write outside
+    ``csv_dir()``. Two distinct names may sanitize to the same path (e.g.
+    ``a/b`` and ``a_b``); wired-in collectors use plain identifiers, so this
+    is not a collision risk in practice.
     """
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
     return csv_dir() / f"{safe}.progress.json"
@@ -165,9 +169,10 @@ class Progress:
 
     def _data(self) -> dict[str, object]:
         percent: float | None = None
-        if self.total_items:
+        if self.total_items and self.total_items > 0:
             # Clamp to [0, 100]: a negative completed count (buggy caller)
             # must never leak a negative percent into the live-query file.
+            # total_items <= 0 means no meaningful denominator → percent None.
             percent = round(min(max(self.completed_items, 0) / self.total_items * 100, 100.0), 2)
         return {
             "name": self.name,
@@ -186,12 +191,20 @@ class Progress:
 
     def _write(self) -> None:
         self.updated_at = datetime.now().isoformat(timespec="seconds")
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(self._data(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        os.replace(tmp, self.path)
+        # PID-suffixed tmp avoids two same-named collector processes racing
+        # on one tmp file; os.replace stays atomic for readers either way.
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(
+                json.dumps(self._data(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            # Progress is best-effort: a failing progress write (disk full,
+            # permissions) must never crash the collector nor mask the
+            # original fetch error via __exit__ → fail() re-write.
+            logger.warning("progress write failed for %s: %s", self.name, exc)
 
     def update(
         self,

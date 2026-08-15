@@ -427,7 +427,12 @@ def dispatch_progress(target: str | None = None, as_json: bool = False) -> None:
 
     files = sorted(csv_dir().glob("*.progress.json"))
     if not files:
-        print("No fetch progress files found.", file=sys.stderr)
+        if as_json:
+            # Machine consumers expect valid JSON; emit an empty array
+            # instead of an empty stdout that would fail json.loads("").
+            print("[]")
+        else:
+            print("No fetch progress files found.", file=sys.stderr)
         return
 
     entries: list[dict[str, object]] = []

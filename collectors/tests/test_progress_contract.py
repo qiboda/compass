@@ -12,10 +12,9 @@ BDD scenarios derive from the issue's declared acceptance criteria:
 4. Progress files are atomically updated so queries see no torn read.
 5. **``progress`` target choices must contain ONLY the 6 wired-in collectors**
    (must not accept un-wired names such as ``income`` / ``stock_basic`` /
-   ``fin_indicators`` / ``balance_sheet`` / ``cash_flow``). This is the known
-   gap in the current implementation — choices are hard-coded to 11 names
-   including 5 un-wired append-type collectors. The tests below that require
-   argparse rejection are RED until the choices list is trimmed.
+   ``fin_indicators`` / ``balance_sheet`` / ``cash_flow``). The choices list
+   in ``main.py`` was trimmed from the original 11 hard-coded names to the
+   6 wired-in collectors (commit 797198b); the tests below lock that in.
 6. ``.dsh/kb/user/cli.md`` documentation (handled by the main agent).
 
 Run:  uv run pytest tests/test_progress_contract.py -q
@@ -128,8 +127,13 @@ class TestProgressCli:
 
 
 class TestProgressDispatch:
-    """AC-1/2/4: dispatch_progress query behaviour (mirrors TestDispatchProgress
-    in test_main.py, re-stated here for issue #267 acceptance evidence)."""
+    """AC-1/2/4: dispatch_progress query behaviour — AC-specific assertions only.
+
+    General dispatch behaviour (per-target human/JSON output, missing-target
+    exit, corrupt-file skip, all-mode listing) is covered by
+    ``TestDispatchProgress`` in test_main.py; this class adds only the
+    assertions specific to the issue #267 acceptance contract.
+    """
 
     @staticmethod
     def _write(tmp_path: Path, name: str, status: str = "running") -> None:
@@ -150,49 +154,19 @@ class TestProgressDispatch:
         assert "[block_trade] completed" in out
         assert "50.0%" in out
 
-    def test_target_json_output(self, monkeypatch, tmp_path: Path, capsys) -> None:
-        """AC-2: ``--json`` per-target emits parseable raw JSON."""
+    def test_no_files_json_emits_empty_array(
+        self, monkeypatch, tmp_path: Path, capsys
+    ) -> None:
+        """AC-2: ``--json`` with no progress files emits a valid empty array.
+
+        A machine consumer must be able to json.loads the output — an empty
+        stdout (or a stderr-only hint) would break that contract.
+        """
         import main as main_mod
 
-        self._write(tmp_path, "dragon", "running")
-        main_mod.dispatch_progress("dragon", as_json=True)
-        data = json.loads(capsys.readouterr().out)
-        assert data["name"] == "dragon"
-        assert data["status"] == "running"
-
-    def test_all_lists_every_progress_file(self, monkeypatch, tmp_path: Path, capsys) -> None:
-        """AC-1: `progress` with no target lists every collector file."""
-        import main as main_mod
-
-        self._write(tmp_path, "block_trade", "completed")
-        self._write(tmp_path, "main_flow", "running")
-        main_mod.dispatch_progress()
+        main_mod.dispatch_progress(as_json=True)
         out = capsys.readouterr().out
-        assert "block_trade" in out
-        assert "main_flow" in out
-
-    def test_missing_target_exits(self, monkeypatch, tmp_path: Path, capsys) -> None:
-        """AC-2 error path: target with no progress file raises SystemExit."""
-        import main as main_mod
-
-        with pytest.raises(SystemExit):
-            main_mod.dispatch_progress("missing")
-
-    def test_no_files_prints_stderr(self, monkeypatch, tmp_path: Path, capsys) -> None:
-        """AC-1 empty path: no progress files prints a stderr hint."""
-        import main as main_mod
-
-        main_mod.dispatch_progress()
-        captured = capsys.readouterr()
-        assert "No fetch progress files found." in captured.err
-
-    def test_corrupt_progress_file_skipped(self, monkeypatch, tmp_path: Path, capsys) -> None:
-        """AC-4 (query side): a tear/corrupt file is skipped, not a crash."""
-        import main as main_mod
-
-        (tmp_path / "bad.progress.json").write_text("{not json", encoding="utf-8")
-        main_mod.dispatch_progress()
-        assert "bad" not in capsys.readouterr().out
+        assert json.loads(out) == []
 
 
 # ═══════════════════════════════════════════════════════════════════

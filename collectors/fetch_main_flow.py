@@ -248,8 +248,11 @@ async def run(page_size: int = 1000) -> Path:
 
         if last == trade_date.isoformat():
             print(f"Trade date {trade_date} already imported; skipping", file=sys.stderr)
+            # Snapshot was already fetched (len(diff) rows) — keep that count
+            # instead of zeroing it: fetched_rows describes what was fetched,
+            # not what was imported.
             progress.finish(
-                fetched_rows=0,
+                fetched_rows=len(diff),
                 message=f"Trade date {trade_date} already imported",
             )
             return output_path
