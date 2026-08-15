@@ -295,3 +295,29 @@
 - **exit_plan_mode 可用性教训第二次出现**（#267 → 本次）：#267 已记录"工具可用性先验证再依赖"但未固化——本次落实为 AGENTS.md Step 3 注记（趋势报警生效：第二次出现 = 上次未固化）
 - **命令输出解析类摩擦跨批再现**（#273 后台 tail 盲等 → 本次 grep 计数误判 + llvm-cov percent 单位）：对工具输出格式先验证再采信——toolchain.md 已追加解析卡
 - **GIT_EDITOR=true 卡（ref #189）执行侧再现**（本次 rebase --continue 先直接跑超时）：已有排查卡但未第一时间遵守——"文档已固化未遵守"模式再现，执行侧习惯待养成
+
+## 2026-08-15 — ref #276 result-slot log/loading race fix
+
+**What was done**: Fixed a CI race in `wire_backend` where fetch/screener/SEPA/index result slots cleared `*_loading` before writing the display log; moved log writes before `*_loading.set(false)` and added four deterministic regression tests that hold the loading `Dynamic::lock()` and wait for `log_count() > 0`. Docs updated in `testing.md` and `architecture.md`.
+
+**User corrections**: None. (User decisions: 修复 / 统一修 / 按推荐 / 好 / 开始 / push.)
+
+**What went wrong**:
+1. `cargo test -p compass --lib ...` failed with "no library targets found in package `compass`" — compass is a binary-only crate; used `--bin compass` instead.
+2. Initial four regression tests from the requirement-test subagent waited for intermediate result data (bars/screener_result/sepa_data/index_snapshot) before asserting `log_count > 0`; on fixed code the fetch test still flaked because data is written before the log. Refined the tests to poll the invariant itself (`log_count > 0`) while holding the loading lock.
+3. Multiple `edit` attempts failed with "file changed since it was read" after subagents/cargo fmt/commit modified the file; required re-read and retry.
+
+**Lessons learned**:
+1. Check crate targets (`Cargo.toml`) before running tests: binary-only crates need `cargo test -p <pkg> --bin <bin>`, not `--lib`.
+2. For ordering invariants tested by parking a worker on a mutex, poll the observable invariant itself (e.g. `log_count > 0`) rather than an intermediate state then asserting; the intermediate state can be visible before the invariant is established even in fixed code.
+3. Use `read` immediately before a batch of `edit` calls on files that subagents or formatters may have touched; on "file changed since it was read", re-read and retry instead of guessing.
+
+**Process improvements**:
+- `.dsh/kb/dev/testing.md` already documents the deterministic mutex-park pattern for result-slot ordering (committed with the fix).
+- `.dsh/kb/design/architecture.md` now shows log-before-loading in the result_slot diagram (committed with the fix).
+- No new hook/CI proposed for this batch.
+
+### Trends (last 10)
+- `edit` "file changed since it was read" friction recurs across #273/#266 and this #276; batch edits after subagent/cargo fmt should start with a fresh `read` of the target file.
+- Subagent-delivered tests requiring main-agent refinement recurred (this session's result-data wait → log-invariant wait); main agent should validate RED/GREEN determinism against both old and new code before accepting test delivery.
+- Binary-only crate test command confusion is a new small pattern; consider documenting `--bin` usage in `testing.md` if it recurs.
