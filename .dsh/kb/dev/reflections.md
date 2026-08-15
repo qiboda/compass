@@ -321,3 +321,31 @@
 - `edit` "file changed since it was read" friction recurs across #273/#266 and this #276; batch edits after subagent/cargo fmt should start with a fresh `read` of the target file.
 - Subagent-delivered tests requiring main-agent refinement recurred (this session's result-data wait → log-invariant wait); main agent should validate RED/GREEN determinism against both old and new code before accepting test delivery.
 - Binary-only crate test command confusion is a new small pattern; consider documenting `--bin` usage in `testing.md` if it recurs.
+## 2026-08-15 — ref #277 collectors: 连续失败快速终止 + 全局限流调大
+
+**What was done**: 实现 `fetch_index_daily.run()` 连续失败快速终止（连续 5 个标的失败/empty 即写已抓 CSV 后抛 RuntimeError），并将 `common.py` / `fetch_fin_indicators.py` / `fetch_stock_basic.py` 的 `EM_MIN_INTERVAL` 全部调至 2.0s；新增 17 个 RED→GREEN 测试，更新 3 个旧测试适配新语义；全套件 553 passed，coverage 98.57%。
+
+**User corrections** (if any): 无显式纠正；用户指令为环境检查 → worktree 启动 → push。
+
+**What went wrong**:
+1. **对抗性测试子代理首次委派只返回开场白、未产出文件**：需重新委派才完成（工具/子代理异常，浪费一轮；与历史“子代理交付验证”模式同类）。
+2. **完整 pytest 套件随机挂起**：`dolt send-metrics` 后台进程阻塞 `dolt sql`，先盲等 180s 超时；通过 `ps`/子集复现定位，用 `DOLT_DISABLE_TELEMETRY=1 DOLT_DISABLE_UPDATE_CHECK=1` 解决并记录 toolchain.md。
+3. **`git commit -m` 第二次提交被 commit-msg hook 拒绝**（消息文件手工测试通过），改用 `git commit -F` 成功——shell 多行传参与 hook 读取差异未完全定位。
+4. **Review 发现“全局限流调大”最初只改了 `common.py`**：`fetch_fin_indicators.py` / `fetch_stock_basic.py` 局部常量未同步，handoff“影响全部采集器”的决策最初未完全落实，review 后补改。
+5. **全套件第一次超时属预判不足**：未提前想到 Dolt 遥测会在无网络环境阻塞子进程，应先加环境变量或先探测。
+
+**Lessons learned**:
+1. 涉及 Dolt 的测试/CI 命令默认加 `DOLT_DISABLE_TELEMETRY=1 DOLT_DISABLE_UPDATE_CHECK=1`；遇到 pytest 无输出推进先查 `dolt send-metrics` 进程。
+2. “全局”类配置变更要先 grep 全仓同名常量/局部实现，确认所有调用点都覆盖，不能只改公共常量。
+3. 多行 commit message 若被 hook 拒绝，先用 `git commit -F <file>` 并手工跑 hook 验证，避免在 shell 传参上反复试。
+4. 子代理返回异常（只返回开场白/未落盘）时立即重新委派并确认产物存在，不把中间状态当完成。
+
+**Process improvements**:
+- toolchain.md 新增 2 张排查卡：东财反爬快速失败机制、Dolt 遥测/更新检查导致 pytest 挂起——已随本 PR commit 落地
+- evidence/index-fetch-resume-2026-08-15.md 更新限流建议为全局 2.0s——已随本 PR commit 落地
+- 建议后续将 `DOLT_DISABLE_TELEMETRY` / `DOLT_DISABLE_UPDATE_CHECK` 固化进项目测试命令/hook/CI 环境变量（proposed，待建 issue）
+
+### Trends (last 10)
+- **子代理交付/输出异常系列再次出现**（#244 零交付 → #245 只分析未落盘 → #255 截断零落盘 → #235/#265 自验失真 → 本次对抗子代理首轮未落盘）：委派后核验产物（git status/文件存在）仍未固化为 skill/hook，主 agent 每次手动补救——建议正式写入 skwy-workflow 委派协议（连续多批未落实）
+- **“全局”/跨模块配置只改公共点漏局部实现**（本次 #277）：改公共常量前应 grep 全仓同名定义，避免 review 才抓出——与 #264 引用范围侦察不完整同族
+- **测试环境隐式网络依赖导致挂起/失败**（#255 真实采集网络不可达 → 本次 Dolt 遥测挂起）：涉及外部服务/遥测的命令应先探测或显式禁用，避免盲等
