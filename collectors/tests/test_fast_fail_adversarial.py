@@ -358,7 +358,7 @@ class TestPartialSuccessCsv:
         assert daily.exists(), "daily CSV must exist despite the abort (keep-resumable)"
         symbols = {r["symbol"] for r in _read_rows(daily)}
         assert "BK2601" in symbols, (
-            "rows fetched before the streak must be persisted on disk; got symbols {symbols}"
+            f"rows fetched before the streak must be persisted on disk; got symbols {symbols}"
         )
         # The 5 failed boards contributed no rows.
         for i in range(2, 7):

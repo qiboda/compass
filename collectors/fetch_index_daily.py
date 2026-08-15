@@ -471,10 +471,14 @@ async def _fetch_tencent_kline(
             break  # last page
 
         # Advance backwards: next page's end date is the day before the
-        # earliest bar seen in this page. Stop if no backward progress.
+        # earliest bar seen in this page. Stop if no backward progress or the
+        # date is malformed (degrade instead of crashing).
         if min_date is None:
             break
-        next_end = (date.fromisoformat(min_date) - timedelta(days=1)).isoformat()
+        try:
+            next_end = (date.fromisoformat(min_date) - timedelta(days=1)).isoformat()
+        except ValueError:
+            break
         if previous_min is not None and min_date >= previous_min:
             break
         previous_min = min_date

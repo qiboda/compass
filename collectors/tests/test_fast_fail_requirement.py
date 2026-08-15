@@ -215,7 +215,7 @@ class TestCsvPreservedOnTerminate:
         rows = _read_rows(daily_path)
         symbols = {r["symbol"] for r in rows}
         assert "BK1201" in symbols, (
-            "records fetched before termination must be written to CSV; got symbols {symbols}"
+            f"records fetched before termination must be written to CSV; got symbols {symbols}"
         )
         # index_basic keeps the discovered boards (including the failed streak).
         basic_path = tmp_path / "index_basic.csv"
