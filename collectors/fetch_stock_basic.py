@@ -55,8 +55,8 @@ EM_FIELDS = (
     "f124,f221"  # timestamps
 )
 
-# Rate limiting: ~1 req/s + random jitter
-EM_MIN_INTERVAL = 0.8
+# Rate limiting: 2.0s + random jitter (issue #277 global widening)
+EM_MIN_INTERVAL = 2.0
 EM_JITTER = (0.1, 0.5)
 EM_MAX_RETRIES = 4
 

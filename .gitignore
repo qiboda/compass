@@ -23,6 +23,7 @@ collectors/*.csv
 collectors/*.state.json
 __pycache__/
 collectors/.coverage
+/.coverage
 
 # Saved output files (backtest results, exports) — not tracked
 saved/

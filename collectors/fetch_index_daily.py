@@ -89,6 +89,49 @@ _MAX_ATTEMPTS = 3
 # on an anti-bot block. A success resets the counter.
 _MAX_CONSECUTIVE_FAILURES = 5
 
+
+def _abort_reason(count: int) -> str:
+    """Build the fast-fail RuntimeError message for ``count`` consecutive failures."""
+    return f"连续 {count} 个标的失败（疑似反爬或接口故障），终止采集"
+
+
+def _bump_failure(consecutive_failures: int) -> tuple[int, str | None]:
+    """Increment the consecutive-failure counter and return the abort reason.
+
+    Returns ``(new_count, None)`` below the threshold, or ``(new_count,
+    reason)`` when the run must abort after this failure.
+    """
+    count = consecutive_failures + 1
+    if count >= _MAX_CONSECUTIVE_FAILURES:
+        return count, _abort_reason(count)
+    return count, None
+
+
+def _persist_outputs(
+    daily_records: list[dict[str, object]],
+    basic_records: list[dict[str, object]],
+    boards: list[tuple[str, str, str]],
+    last: str,
+    daily_path: Path,
+    basic_path: Path,
+) -> None:
+    """Write the CSV outputs produced so far (shared by normal and abort paths).
+
+    index_basic is (re)built on full runs only (``last`` empty) and only when
+    the board universe was actually discovered — an empty clist means the API
+    glitched, and a boards-less basic table would silently drop every board's
+    name entry on the merge import. Incremental runs publish the daily CSV
+    alone; official names ride along on full runs. When no records exist at
+    all, any stale CSV files are removed.
+    """
+    if daily_records:
+        write_csv(daily_records, daily_path)
+    if not last and boards and basic_records:
+        write_csv(basic_records, basic_path)
+    if not daily_records and not basic_records:
+        daily_path.unlink(missing_ok=True)
+        basic_path.unlink(missing_ok=True)
+
 # kline 11 fields: 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
 _KLINE_FIELDS = (
     "trade_date",
@@ -395,10 +438,10 @@ async def run() -> Path:
                 print(f"  [board] {code} {name} ...", file=sys.stderr, end=" ", flush=True)
                 result = await fetch_kline(session, throttle, f"90.{code}")
                 if result is None:
-                    consecutive_failures += 1
+                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
                     print("FAILED", file=sys.stderr)
                 elif not result[0]:
-                    consecutive_failures += 1
+                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
                     print("empty (skipped)", file=sys.stderr)
                 else:
                     klines, _code = result
@@ -413,11 +456,7 @@ async def run() -> Path:
                     current_item=code,
                     message=f"Fetched board {code} {name}",
                 )
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    abort_reason = (
-                        f"连续 {consecutive_failures} 个标的失败"
-                        "（疑似反爬或接口故障），终止采集"
-                    )
+                if abort_reason is not None:
                     break
 
             # Official indices: response data.code must echo the whitelisted code,
@@ -434,10 +473,10 @@ async def run() -> Path:
                 )
                 result = await fetch_kline(session, throttle, target["secid"])
                 if result is None:
-                    consecutive_failures += 1
+                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
                     print("FAILED", file=sys.stderr)
                 elif not result[0]:
-                    consecutive_failures += 1
+                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
                     print("empty (skipped)", file=sys.stderr)
                 else:
                     klines, code = result
@@ -463,45 +502,27 @@ async def run() -> Path:
                     current_item=target["name"],
                     message=f"Fetched official {target['name']}",
                 )
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    abort_reason = (
-                        f"连续 {consecutive_failures} 个标的失败"
-                        "（疑似反爬或接口故障），终止采集"
-                    )
+                if abort_reason is not None:
                     break
 
         if abort_reason is not None:
-            if daily_records:
-                write_csv(daily_records, daily_path)
-            # index_basic is (re)built on full runs only (data_updates.last_report_date
-            # empty) and only when the board universe was actually discovered — an
-            # empty clist means the API glitched, and a boards-less basic table would
-            # silently drop every board's name entry on the merge import. Incremental
-            # runs publish the daily CSV alone; official names ride along on full runs.
-            if not last and boards and basic_records:
-                write_csv(basic_records, basic_path)
-            if not daily_records and not basic_records:
-                daily_path.unlink(missing_ok=True)
-                basic_path.unlink(missing_ok=True)
+            _persist_outputs(
+                daily_records, basic_records, boards, last, daily_path, basic_path
+            )
             raise RuntimeError(abort_reason)
 
         if not daily_records and not basic_records:
-            daily_path.unlink(missing_ok=True)
-            basic_path.unlink(missing_ok=True)
+            _persist_outputs(
+                daily_records, basic_records, boards, last, daily_path, basic_path
+            )
             raise RuntimeError(
                 "No index data from push2his/clist (rate-limited or empty) — "
                 "aborting, no CSV written"
             )
 
-        if daily_records:
-            write_csv(daily_records, daily_path)
-        # index_basic is (re)built on full runs only (data_updates.last_report_date
-        # empty) and only when the board universe was actually discovered — an
-        # empty clist means the API glitched, and a boards-less basic table would
-        # silently drop every board's name entry on the merge import. Incremental
-        # runs publish the daily CSV alone; official names ride along on full runs.
-        if not last and boards and basic_records:
-            write_csv(basic_records, basic_path)
+        _persist_outputs(
+            daily_records, basic_records, boards, last, daily_path, basic_path
+        )
         progress.finish(
             fetched_rows=len(daily_records),
             message=f"Done: {len(daily_records)} daily rows",

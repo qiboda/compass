@@ -543,7 +543,9 @@
   - 终止前把已抓 daily/basic 记录写入 CSV（保留可续采），再抛 `RuntimeError` 提示
     “连续 N 个标的失败（疑似反爬或接口故障）”；
   - 成功即清零；official code-mismatch skip 既不计数也不清零；
-  - `common.py::EM_MIN_INTERVAL` 0.5s → **2.0s**（全局限流调大）。
+  - `common.py::EM_MIN_INTERVAL` 0.5s → **2.0s**，并同步
+    `fetch_fin_indicators.py` / `fetch_stock_basic.py` 的局部限流常量 → **2.0s**
+    （全局限流调大，覆盖全部 EastMoney 采集器）。
 - **验证**: `test_fast_fail_requirement.py` + `test_fast_fail_adversarial.py` 16 用例覆盖
   连续终止、CSV 保留、交错不误杀、4/5 边界、跨循环计数、skip 语义、Progress failed 状态；
   全套件 `pytest collectors/tests/ --cov=. --cov-fail-under=95 -q` 全绿。

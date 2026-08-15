@@ -410,9 +410,17 @@ class TestZeroSuccessNoHalfCsv:
 class TestRateLimitConstant:
     def test_em_min_interval_is_two_seconds(self) -> None:
         import common  # noqa: E402
+        import fetch_fin_indicators  # noqa: E402
+        import fetch_stock_basic  # noqa: E402
 
         assert common.EM_MIN_INTERVAL == 2.0, (
             f"common.EM_MIN_INTERVAL must be 2.0 per issue #277, got {common.EM_MIN_INTERVAL!r}"
+        )
+        assert fetch_fin_indicators.EM_MIN_INTERVAL == 2.0, (
+            "fetch_fin_indicators local EM_MIN_INTERVAL must also be 2.0"
+        )
+        assert fetch_stock_basic.EM_MIN_INTERVAL == 2.0, (
+            "fetch_stock_basic local EM_MIN_INTERVAL must also be 2.0"
         )
 
     def test_throttle_default_binds_to_the_constant(self) -> None:

@@ -225,6 +225,42 @@ class TestCsvPreservedOnTerminate:
             "index_basic must retain discovered boards past the abort point"
         )
 
+    async def test_incremental_abort_writes_daily_but_not_basic(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Incremental run (last_report_date non-empty) + 5 consecutive failures:
+        abort still writes the fetched daily CSV, but does NOT rebuild
+        index_basic (same gate as the normal incremental path)."""
+        from fetch_index_daily import run  # noqa: E402
+
+        _env(monkeypatch, tmp_path)
+        _pin_today(monkeypatch)
+        monkeypatch.setattr(
+            "fetch_index_daily.last_report_date", lambda _tbl: "2026-07-31"
+        )
+
+        ok = _board("BK1201", "赢家板")
+        fail_boards = [_board(f"BK{i:04d}", f"F{i}") for i in range(1202, 1207)]
+        boards = [ok, *fail_boards]
+        kline = {
+            "90.BK1201": _OK,
+            **{f"90.BK{i:04d}": _FAIL for i in range(1202, 1207)},
+        }
+        stub, tracked = _make_stub(make_stub_session, boards, kline)
+
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), pytest.raises(RuntimeError) as e:
+            await run()
+
+        assert "连续" in str(e.value), "incremental abort must still raise 连续... RuntimeError"
+        daily_path = tmp_path / "index_daily.csv"
+        assert daily_path.exists(), "incremental abort must keep the fetched daily CSV"
+        symbols = {r["symbol"] for r in _read_rows(daily_path)}
+        assert "BK1201" in symbols, "daily rows fetched before the streak must be persisted"
+        basic_path = tmp_path / "index_basic.csv"
+        assert not basic_path.exists(), (
+            "incremental abort must not rebuild index_basic (same gate as normal incremental path)"
+        )
+
 
 # ── C3/C4/C6: interleave-resets + boundary (4 no / 5 yes) ────────────────────
 
@@ -318,7 +354,17 @@ class TestRateLimitWidened:
     def test_em_min_interval_is_two_seconds(self) -> None:
         """RED: the global EastMoney throttle interval must be widened to 2.0s."""
         import common  # noqa: E402
+        import fetch_fin_indicators  # noqa: E402
+        import fetch_stock_basic  # noqa: E402
 
         assert common.EM_MIN_INTERVAL == 2.0, (
             f"EM_MIN_INTERVAL must be 2.0 per issue #277, got {common.EM_MIN_INTERVAL!r}"
+        )
+        assert fetch_fin_indicators.EM_MIN_INTERVAL == 2.0, (
+            "fetch_fin_indicators local EM_MIN_INTERVAL must also be 2.0 "
+            "(global rate-limit decision)"
+        )
+        assert fetch_stock_basic.EM_MIN_INTERVAL == 2.0, (
+            "fetch_stock_basic local EM_MIN_INTERVAL must also be 2.0 "
+            "(global rate-limit decision)"
         )
