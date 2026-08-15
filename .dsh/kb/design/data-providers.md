@@ -435,7 +435,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 - `--input`、`--format`、`--output`：导出选项
 - `--since`：增量导入截止日期
 
-完整配置参考见 `kb/user/config.md`。
+完整配置参考见 `.dsh/kb/user/config.md`。
 
 ## 决策记录
 

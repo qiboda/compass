@@ -87,7 +87,7 @@ def _today() -> date:
 
 
 def _exchange_prefix(code: str) -> str:
-    """Infer exchange prefix from a bare code (kb/design/symbols.md rules)."""
+    """Infer exchange prefix from a bare code (.dsh/kb/design/symbols.md rules)."""
     if code.startswith("6"):
         return "SH"
     if code.startswith("8"):

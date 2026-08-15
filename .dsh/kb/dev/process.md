@@ -119,7 +119,7 @@ push 前按顺序执行：
 > 只限制 merge，不拦 master 直推（docs/lint/typo/反思类直推照常，未启用
 > enforce_admins）。
 
-> **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥93% + per-crate 阈值——纯逻辑/serde crate 95%、GUI 主程序 compass 90%；Python ≥95%），太慢不适合 pre-push 本地检查。见 `kb/dev/testing.md` 覆盖率章节。
+> **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥93% + per-crate 阈值——纯逻辑/serde crate 95%、GUI 主程序 compass 90%；Python ≥95%），太慢不适合 pre-push 本地检查。见 `.dsh/kb/dev/testing.md` 覆盖率章节。
 
 手动 pre-push checklist（与 hook 相同）：`git fetch origin <base>` + rebase 落后 commits + `cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
@@ -248,11 +248,11 @@ RUST_LOG=debug scripts/run.sh   # verbose logging
 
 ### CLI（compass-data）
 
-完整子命令参考见 `kb/user/cli.md`。速查：
+完整子命令参考见 `.dsh/kb/user/cli.md`。速查：
 
 ```sh
 cargo run --bin compass-data -- import                    # Dolt investment_data → Parquet（全量直写）
-cargo run --bin compass-data -- import --since 20260725   # ⚠️ 日期过滤直写：覆盖全文件，非追加（慎用，见 kb/dev/toolchain.md）
+cargo run --bin compass-data -- import --since 20260725   # ⚠️ 日期过滤直写：覆盖全文件，非追加（慎用，见 .dsh/kb/dev/toolchain.md）
 cargo run --bin compass-data -- import-compass --table stock_basic  # Dolt compass_data → Parquet
 cargo run --bin compass-data -- export                    # Parquet → DuckDB
 cargo run --bin compass-data -- backup                    # Parquet → 百度云
@@ -262,7 +262,7 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 
 如果不使用 OpenCode：
 
-1. **探索**相关源文件（布局见 `kb/design/architecture.md`）。
+1. **探索**相关源文件（布局见 `.dsh/kb/design/architecture.md`）。
 2. **测试先行**：在 `#[cfg(test)] mod tests` 中编写失败的测试。
 3. **实现**在源文件中。
 4. **验证**：`cargo nextest run` + `lsp_diagnostics`。
@@ -271,10 +271,10 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 ### 知识库同步
 
 每个影响行为、API、数据结构、配置、工作流或惯例的代码变更，必须在同一
-commit 中更新相关 `kb/` 文件。如果架构概览发生变化，必须更新 AGENTS.md。
+commit 中更新相关 `.dsh/kb/` 文件。如果架构概览发生变化，必须更新 AGENTS.md。
 
-权威的「变更类型 → kb/ 文件」映射表见
-`~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → kb/ 映射表由项目自身定义）。
+权威的「变更类型 → .dsh/kb/ 文件」映射表见
+`~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → .dsh/kb/ 映射表由项目自身定义）。
 
 **路径/标识符引用替换或删除前，必须全仓 grep 所有文件类型。**
 目录迁移、路径替换或标识符删除时，搜索范围必须覆盖全部文件类型
@@ -282,25 +282,25 @@ commit 中更新相关 `kb/` 文件。如果架构概览发生变化，必须更
 `*.md`——代码注释、i18n 键表、测试注释、issue 模板都可能承载路径引用
 （ref #263 教训：迁移只 grep md 漏掉 21 处代码注释/locales/模板引用；
 同类教训 ref #117 曾记录在 `.opencode/skills/docs/SKILL.md`，该载体随
-OpenCode 迁移删除后教训失效再现——规则必须沉淀在 kb/，不能放在会被
+OpenCode 迁移删除后教训失效再现——规则必须沉淀在 .dsh/kb/，不能放在会被
 工具链变更波及的文件里）。
 
 ### 文档惯例
 
-**kb/design/ 文件必须使用叙事性的、面向开发者入门风格。**
+**.dsh/kb/design/ 文件必须使用叙事性的、面向开发者入门风格。**
 新接触项目的读者应该不仅理解 _是什么_，还要理解 _为什么_。
 每个设计决策必须附有其理由：它解决的问题、考虑过的替代方案、接受的权衡取舍。
 
-**API 参考属于 `cargo doc`，而非 kb/。**
+**API 参考属于 `cargo doc`，而非 .dsh/kb/。**
 在公开类型、trait 和函数上使用 `///` 文档注释。
-`kb/design/` 解释设计意图和架构；`cargo doc` 处理精确的 API 界面。
-两者互补 — kb/ 讲述故事，rustdoc 提供参考。
+`.dsh/kb/design/` 解释设计意图和架构；`cargo doc` 处理精确的 API 界面。
+两者互补 — .dsh/kb/ 讲述故事，rustdoc 提供参考。
 
-**绝不在 kb/ 中硬编码版本号。** `Cargo.toml` 是依赖版本号的唯一可信来源。
-kb/ 文档可以提及 crate 名称及其用途，但不能出现 `= "0.25"`。
+**绝不在 .dsh/kb/ 中硬编码版本号。** `Cargo.toml` 是依赖版本号的唯一可信来源。
+.dsh/kb/ 文档可以提及 crate 名称及其用途，但不能出现 `= "0.25"`。
 
-**AGENTS.md 是索引，不是重复。** 它以一行摘要指向 kb/ 文件。
-完整解释位于 kb/ 中，绝不在 AGENTS.md 中重复。
+**AGENTS.md 是索引，不是重复。** 它以一行摘要指向 .dsh/kb/ 文件。
+完整解释位于 .dsh/kb/ 中，绝不在 AGENTS.md 中重复。
 
 ## TDD 工作流
 
@@ -337,7 +337,7 @@ DESIGN TESTS → RED → GREEN → REFACTOR
 
 ## 运行测试与代码质量
 
-测试运行、benchmark、Tracy profiling 见 `kb/dev/testing.md`。速查：
+测试运行、benchmark、Tracy profiling 见 `.dsh/kb/dev/testing.md`。速查：
 
 ```sh
 cargo nextest run                       # 推荐
@@ -405,7 +405,7 @@ CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save + 分组缓存**策略�
 ## Config
 
 Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回退到
-`crates/compass-core/src/model.rs` 中的默认值。完整选项见 `kb/user/config.md`。
+`crates/compass-core/src/model.rs` 中的默认值。完整选项见 `.dsh/kb/user/config.md`。
 
 ## 日志
 
@@ -467,7 +467,7 @@ curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0
 ### collectors（Python 数据管线）
 
 从东方财富 API 抓取数据到 CSV，然后导入 `compass_data` Dolt。
-命令与工作流见 `kb/user/cli.md` § Python collectors 与 `kb/design/architecture.md` § collectors。
+命令与工作流见 `.dsh/kb/user/cli.md` § Python collectors 与 `.dsh/kb/design/architecture.md` § collectors。
 
 核心概念：
 - **curl_cffi** 实现 TLS 伪造（东方财富反爬虫）
@@ -487,7 +487,7 @@ curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0
 ### Dolt 数据库查询与维护
 
 Dolt 查询示例、investment_data 同步流程（pull → push skwy → import）、
-compass_data 提交推送与数据库布局见 **`kb/dev/database.md`**（ref #157）。
+compass_data 提交推送与数据库布局见 **`.dsh/kb/dev/database.md`**（ref #157）。
 
 ### 重置一切
 

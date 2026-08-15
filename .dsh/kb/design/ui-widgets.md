@@ -7,13 +7,13 @@
 > **过程归档**（原始方案）；本文件才是组件使用规范的**最终版本**，与代码保持
 > 同步。归档文件不删不改，但一切组件使用规范决策以本文件为准。
 
-> **与 `kb/design/ui.md` 的分工**：`kb/design/ui.md` 覆盖设计 token、布局结构
+> **与 `.dsh/kb/design/ui.md` 的分工**：`.dsh/kb/design/ui.md` 覆盖设计 token、布局结构
 > 与交互规范；本文件在**组件粒度**上补充使用规范（何时用、用哪个变体、怎么
 > 组合、千万别怎么用），不改变任何既有设计系统决策。
 
 > **同步记录（2026-08-09）**：仓库 pull 引入 ui-fixes PR（ref #217-#221），实质
 > 修改 Button / PriceText / Tag / DataTable / MultiSelect 五个组件；本文已基于
-> **pull 后代码**与 `kb/design/ui.md` 新增决策记录（ref #217-#221，含用户验收
+> **pull 后代码**与 `.dsh/kb/design/ui.md` 新增决策记录（ref #217-#221，含用户验收
 > 6 项）同步更新受影响条目：Button 文字色统一 `text_primary` + loading 保留变体色、
 > PriceText `percent_only()`、Tag 换行渲染 + `Sense::hover()`、DataTable numeric
 > 右对齐 + 横向滚动 + percent_only 识别、MultiSelect id_salt（screener 三实例）。
@@ -38,7 +38,7 @@ compass 需要一个**逐组件的使用规范**：24 个 compass-ui 组件各�
 3. **边界**：明确原子 → 复合 → 业务三层的依赖方向与状态所有权，新增组件
    时有清晰的落位规则（compass-ui 零业务依赖是硬边界）。
 
-与 `kb/design/ui.md`（设计 token + 布局 + 交互权威文档）的关系：本文在其
+与 `.dsh/kb/design/ui.md`（设计 token + 布局 + 交互权威文档）的关系：本文在其
 之上补充**组件粒度**的使用规范，不改变任何既有设计系统决策（token 六类、
 compass_dark/compass_light 预设、egui-phosphor 图标、内置 toast/modal、
 DockArea 布局均保持原样）。
@@ -61,7 +61,7 @@ DockArea 布局均保持原样）。
   Regular 图标字体，全内嵌（`crates/compass-ui/src/fonts.rs`）。
 - **组件库**：`crates/compass-ui/src/widgets.rs` 声明 24 个组件模块，每个
   组件以 `ThemeTokens` 为首参（builder 风格），compass-ui 零业务依赖。
-- **权威设计文档**：`kb/design/ui.md` 覆盖 token、布局结构（工具栏 / Sidebar /
+- **权威设计文档**：`.dsh/kb/design/ui.md` 覆盖 token、布局结构（工具栏 / Sidebar /
   DockArea / StatusBar / 浮层）、交互规范（快捷键 / toast / modal）、21 条决策记录。
 - **设计归档**：`.dsh/designs/gui-upgrade.md` §5 定义了三级组件分类
   （原子 16 + 复合 8 + 业务 citizen），§5.4 划定了与 egui 原生 widget 的边界。
@@ -272,7 +272,7 @@ EmptyState::new(&tokens, egui_phosphor::regular::CHART_LINE, "暂无图表数据
 
 **反模式**：
 - 在非空数据上渲染 EmptyState（它是「无数据」专用）；
-- 用 EmptyState 代替 toast 表达错误（错误反馈走 StatusBar/Toast，见 kb/design/ui.md 反馈状态表）；
+- 用 EmptyState 代替 toast 表达错误（错误反馈走 StatusBar/Toast，见 .dsh/kb/design/ui.md 反馈状态表）；
 - 给 EmptyState 传交互复杂的内容（action 只接收 Button，不是任意 UI）。
 
 **相关组件**：DataTable（空行内部用 EmptyState）；SearchableDropdown/Dropdown 的「无匹配结果」是**轻量 hint 不是 EmptyState**（过滤场景不需要 48px 图标）；Sidebar 空自选复用 EmptyState。
@@ -283,7 +283,7 @@ EmptyState::new(&tokens, egui_phosphor::regular::CHART_LINE, "暂无图表数据
 
 **用途**：方形纯图标按钮——默认 32×32（`small()` 24×24），hover bg_hover / press bg_active，可挂 tooltip。返回 `bool` 点击信号。
 
-**适用场景**：空间受限、图标语义自明的操作（工具栏侧栏开关、Sidebar 添加/删除 ×、Logger 导出）。kb/design/ui.md 图标约定：**图标 + 文字并用，除非空间受限**——IconButton 正是「空间受限」场景，因此**必须带 tooltip**。
+**适用场景**：空间受限、图标语义自明的操作（工具栏侧栏开关、Sidebar 添加/删除 ×、Logger 导出）。.dsh/kb/design/ui.md 图标约定：**图标 + 文字并用，除非空间受限**——IconButton 正是「空间受限」场景，因此**必须带 tooltip**。
 
 **变体**：尺寸——默认 32px / `small()` 24px / `size(f32)` 自定义；`tooltip(Option<&str>)` 开关。
 
@@ -300,7 +300,7 @@ if IconButton::new(&tokens, egui_phosphor::regular::SIDEBAR_SIMPLE)
 ```
 
 **反模式**：
-- 纯图标按钮不带 tooltip（图标语义不可靠，kb/design/ui.md 约定）；
+- 纯图标按钮不带 tooltip（图标语义不可靠，.dsh/kb/design/ui.md 约定）；
 - 用 IconButton 承载带文字的操作（那是 Button 的职责）；
 - 用 `.size()` 做非标准尺寸（优先默认或 `small()`——默认尺寸须对齐 `control_md` token、`small()` 对齐 `control_sm` token，不得硬编码尺寸字面量）。
 
@@ -365,7 +365,7 @@ Label::new(&tokens, "说明文字").level(LabelLevel::Secondary).size(LabelSize:
 
 **用途**：等宽价格 + 可选涨跌幅 + A 股红涨绿跌着色——`12.34 +1.23%` 格式（`percent_only()` 模式仅渲染 `+1.23%`，供涨跌幅列使用），全应用价格展示统一口径。
 
-**适用场景**：任何价格/涨跌幅展示（StatusBar 摘要、DataTable 的 Price 单元格内部、SEPA 最新价列）。**A 股惯例：正涨红 `up`、负跌绿 `down`、0/flat 用主文本色**（kb/design/ui.md 涨跌色节）。
+**适用场景**：任何价格/涨跌幅展示（StatusBar 摘要、DataTable 的 Price 单元格内部、SEPA 最新价列）。**A 股惯例：正涨红 `up`、负跌绿 `down`、0/flat 用主文本色**（.dsh/kb/design/ui.md 涨跌色节）。
 
 **变体**：`Tone` — `Auto`（默认，依 change 正负推导）/ `Up` / `Down` / `Flat`（强制指定，如无 change 数据需强制平色时）。
 
@@ -554,7 +554,7 @@ if let Some(orig_idx) = table.show(ui) { /* 行点击联动详情 */ }
 
 **用途**：阻塞对话框——全屏半透明 backdrop（黑 60%，吞点击）+ 居中面板（min_width 360、radius_lg、shadow_modal），标题 + 正文 + 右对齐 Cancel(Ghost) / Confirm(Primary|Danger) 按钮，Esc 关闭。
 
-**适用场景**：需要用户阻断确认/引导的场景（kb/design/ui.md 已锁定三个真实绑定：启动数据缺失引导、日志导出、移除自选确认）。**一次只允许一个 Modal 实例**（main.rs 单实例复用）。
+**适用场景**：需要用户阻断确认/引导的场景（.dsh/kb/design/ui.md 已锁定三个真实绑定：启动数据缺失引导、日志导出、移除自选确认）。**一次只允许一个 Modal 实例**（main.rs 单实例复用）。
 
 **变体**：无 enum 变体；开关——`set_danger(bool)`（Confirm 变 Danger）、`set_confirm_text`/`set_cancel_text` 文案覆盖。**默认 Confirm/Cancel 文案经 `t!()` 键化**（`common.confirm`/`common.cancel`，zh 确认/取消、en Confirm/Cancel，ref #222）——调用方未覆盖时随当前语言环境。
 
@@ -874,7 +874,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |
 |---|---|---|---|---|
-| 文档位置 | `kb/design/ui-widgets.md`（直接写权威版）/ `.dsh/designs/ui-widgets.md`（过程归档） | `.dsh/designs/ui-widgets.md` 过程归档，确认后主 agent 同步 kb/ | 遵循项目「kb/ 是知识唯一数据源、.omo/designs 仅归档」既有约定（ui.md 决策记录第 2 条）；ui-designer 只写 `.dsh/designs/` | 直接写 kb/ 违反 ui-designer 写限与归档/权威分离约定 |
+| 文档位置 | `.dsh/kb/design/ui-widgets.md`（直接写权威版）/ `.dsh/designs/ui-widgets.md`（过程归档） | `.dsh/designs/ui-widgets.md` 过程归档，确认后主 agent 同步 .dsh/kb/ | 遵循项目「.dsh/kb/ 是知识唯一数据源、.omo/designs 仅归档」既有约定（ui.md 决策记录第 2 条）；ui-designer 只写 `.dsh/designs/` | 直接写 .dsh/kb/ 违反 ui-designer 写限与归档/权威分离约定 |
 | 组件模板 | 统一 8 字段模板 / 按组件类型灵活模板 / 表格化精简模板 | 统一 8 字段（用途/适用场景/变体/API 要点/示例/反模式/相关组件/测试锚点） | 任务已锁定；8 字段恰好覆盖「选型（2/7）+ 变体与用法（3/4/5）+ 约束（6）+ 验证（8）」完整闭环；统一模板保证 24 个组件可并排对比 | 灵活模板制造对比噪音；精简模板丢失反模式/测试锚点这两个最重要的校验字段 |
 | 分层方式 | 原子(16)/复合(8)/业务(4 citizen) 三层 / 平铺 24 个 | 三层 | 沿袭 gui-upgrade.md §5 + D11 既有决策；三层与依赖方向（compass-ui 零业务依赖）天然对齐；业务层独立小节保持组件库纯 UI | 平铺会让业务面板混入通用组件库，复用边界模糊（D11 排除理由） |
 | 反模式依据 | 仅代码注释/测试/设计决策有据条目 / 允许「未见约束」占位 | 有据条目为主，「未见约束」显式标注 | 反模式是本文最高价值字段，但 24 组件中部分组件（Badge/Label/Tooltip 等）确实缺少既有约束记录；显式标注避免「看起来像规范」实则编造 | 只写有据条目会留下空白组件；不标注的编造违反「从代码出发」原则 |

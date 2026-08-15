@@ -4,7 +4,7 @@
 //! Repro path (plan §7): `build_compass_app_with_stocks` + `sized_harness`
 //! 1440x900, 50 `sepa_data` rows injected via the pub `shared_state`, SEPA
 //! tab activated programmatically (`DockState::set_active_tab` — egui_dock
-//! tab buttons carry no accesskit label, see kb/dev/testing.md), then the
+//! tab buttons carry no accesskit label, see .dsh/kb/dev/testing.md), then the
 //! table body row labels are asserted.
 //!
 //! Mounted under `crate::citizens` like `ui_fixes_218.rs` (sandbox locks

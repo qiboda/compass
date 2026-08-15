@@ -34,15 +34,15 @@
 - `lsp_diagnostics` 对修改的文件干净
 
 ### 4. 文档
-- 如果行为、API 或配置变更：更新相关 `kb/` 文件
-- 根据 `~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → kb/ 映射表由项目自身定义）确定对应的 kb 文件
+- 如果行为、API 或配置变更：更新相关 `.dsh/kb/` 文件
+- 根据 `~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → .dsh/kb/ 映射表由项目自身定义）确定对应的 kb 文件
 
 ### 5. 创建 PR
 
 - 创建功能分支：`git checkout -b feat/impl-<issue_number>`
 - 提交信息格式：`feat: <description>\n\nref #<issue_number>`
 - 原子性：每次提交一个逻辑单元
-- 将 kb/ 更新包含在同一提交中
+- 将 .dsh/kb/ 更新包含在同一提交中
 - 创建 PR：`gh pr create --title "feat: <description>" --body "Implements #<issue_number>" --label "C-Feature,<A-label>"`
 - 在 issue 中评论附上 PR 链接 —— 由人工审核并合并
 

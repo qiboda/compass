@@ -8,12 +8,12 @@
 # 5. Python lint + tests (if collectors/pyproject.toml exists)
 #
 # CI gating for PRs is enforced by branch protection on master
-# (9 required status checks, strict) — see kb/dev/process.md.
+# (9 required status checks, strict) — see .dsh/kb/dev/process.md.
 # This hook intentionally does NOT check master CI status: that check
 # deadlocked fix-PR pushes (a failing master CI blocked the very PR that
 # would fix it, ref #172).
 #
-# Matches the pre-push checklist in kb/dev/process.md.
+# Matches the pre-push checklist in .dsh/kb/dev/process.md.
 
 has_error=0
 

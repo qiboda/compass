@@ -34,7 +34,7 @@ pub fn parquet_row_count(path: &Path) -> Result<usize, Box<dyn std::error::Error
 /// Return the `[min, max]` date range of `col` in a Parquet file.
 ///
 /// The column is cast to DATE so TIMESTAMP columns (e.g. `tradedate` in
-/// stock_daily, see kb/design/data-providers.md) are normalized to
+/// stock_daily, see .dsh/kb/design/data-providers.md) are normalized to
 /// `YYYY-MM-DD`; MIN/MAX are then cast to VARCHAR. The outer cast is
 /// required: without the duckdb `chrono` feature, DATE results come back as
 /// `Date32` values that duckdb-rs refuses to decode as `String` — VARCHAR

@@ -26,7 +26,7 @@ const CLOSE_DURATION: Duration = Duration::from_millis(100);
 ///
 /// `started` and `now` are egui virtual-time seconds (`ctx.input(|i| i.time)`),
 /// so animations advance deterministically under kittest regardless of the
-/// machine's wall clock (see `kb/dev/testing.md` §时间敏感陷阱).
+/// machine's wall clock (see `.dsh/kb/dev/testing.md` §时间敏感陷阱).
 fn progress_since(started: f64, now: f64, duration: Duration) -> f32 {
     ((now - started) / duration.as_secs_f64().max(0.001)).clamp(0.0, 1.0) as f32
 }

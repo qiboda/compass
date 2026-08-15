@@ -58,7 +58,7 @@ compass-data sepa backtest [--start YYYY-MM-DD] [--end YYYY-MM-DD]
 
 默认 `--start 2025-01-01`、`--end` 最新交易日、`--top 50`、`--days 5`、
 `--cost 0.001`。stdout 打印摘要指标表；`--csv` 写权益曲线 CSV；Dolt
-`backtest_result` 表存每日净值曲线。用法见 `kb/user/cli.md`。
+`backtest_result` 表存每日净值曲线。用法见 `.dsh/kb/user/cli.md`。
 
 ## Dolt 写回
 

@@ -4,7 +4,7 @@
 查询、布局。覆盖本地 `/data/compass-data/` 下的两个 Dolt 仓库（
 `investment_data` 与 `compass_data`）、Parquet 与 DuckDB 产物。
 
-> 跨库查询示例与表结构说明原位于 `kb/dev/process.md`，已迁移至此
+> 跨库查询示例与表结构说明原位于 `.dsh/kb/dev/process.md`，已迁移至此
 > （ref #157）。process.md 仅保留索引。
 
 ## 数据库布局总览
@@ -76,7 +76,7 @@ dolt sql -q "SELECT MAX(tradedate) AS latest FROM final_a_stock_eod_price"
 
 同步后必须重新生成 Parquet，否则 GUI 仍读旧数据。**注意：`import` 总是
 全量直写**——`--since` 只做日期过滤并**覆盖整个文件**（非追加），
-用 `--since` 同步会导致历史数据丢失（见 `kb/dev/toolchain.md` 排查卡）：
+用 `--since` 同步会导致历史数据丢失（见 `.dsh/kb/dev/toolchain.md` 排查卡）：
 
 ```sh
 cd /data/codes/compass
@@ -136,7 +136,7 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 - `import` 总是全量直写
 - SEPA 采集表（`block_trade` 等）通过 `import-compass` 生成对应 Parquet
 
-完整选项见 `kb/user/cli.md`。
+完整选项见 `.dsh/kb/user/cli.md`。
 
 ## 常用维护查询
 

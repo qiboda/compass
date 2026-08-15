@@ -54,4 +54,4 @@ scripts/run.sh
 | [CLI](cli.md) | 数据管线 — 导入、导出、备份 |
 | [配置](config.md) | `config.toml` — 全部选项与默认值 |
 
-面向开发者：[kb/design/](../design/architecture.md) 涵盖系统设计与架构。
+面向开发者：[.dsh/kb/design/](../design/architecture.md) 涵盖系统设计与架构。

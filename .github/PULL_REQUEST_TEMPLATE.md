@@ -1,6 +1,6 @@
 <!--
   Attach at least one A- and one C- label.
-  See kb/github/labels.md for the full taxonomy.
+  See .dsh/kb/github/labels.md for the full taxonomy.
   Labels: A-GUI / A-Data / A-CLI / A-CI / A-Docs
            C-Bug / C-Feature / C-Code-Quality / C-Performance / C-Docs / C-Question / C-Chore
 -->
@@ -15,4 +15,4 @@ ref #
 - [ ] `cargo test` passes
 - [ ] `cargo clippy -- -D warnings` clean
 - [ ] `cargo fmt --check` clean
-- [ ] kb/ files updated if behavior changed
+- [ ] .dsh/kb/ files updated if behavior changed

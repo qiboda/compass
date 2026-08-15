@@ -160,7 +160,7 @@ NDayHigh/DayPct/AvgVolume 作为 factor 在 `screener_eval::factor_at` 内联求
   prompt → chat_json → parse_filter_response；`seq` 守卫丢弃被取消/过期的
   在途响应（Esc 取消安全）。响应写 `SharedState.llm_result`，GUI 在
   loading→idle 迁移时消费并入构建器。
-- **配置 → `[llm]` 节**（`kb/user/config.md`）：api_key 缺省 = 入口隐藏、
+- **配置 → `[llm]` 节**（`.dsh/kb/user/config.md`）：api_key 缺省 = 入口隐藏、
   零网络请求；base_url/model 缺省回退默认。
 
 ## Citizen 模式架构
@@ -396,7 +396,7 @@ parquet_data/ ────────backup──────────► Ba
 项目还维护自己的 Dolt 仓库 `compass_data/`，用于自定义可变数据（公司信息、
 财务指标、自选股列表），与只读的 `investment_data` 并存。查询可跨两个数据库
 联结：`compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`。
-使用示例见 `kb/dev/database.md`。
+使用示例见 `.dsh/kb/dev/database.md`。
 
 ### collectors：Python 数据管线
 
@@ -517,7 +517,7 @@ GUI 搜索框接受自由文本（D11），但选中/提交值规范化为前缀
 交易所已经可以从代码区间推断，后缀是冗余的。
 
 完整的市场分段、交易所推断规则、显式前缀和时间周期映射见
-`kb/design/symbols.md`。
+`.dsh/kb/design/symbols.md`。
 
 ## 配置系统
 
@@ -538,7 +538,7 @@ default_timeframe = "1d"
 ```
 
 配置路径为 `$HOME/.config/compass/config.toml`。如果文件不存在或无法解析，
-应用以所有默认值启动——无需手动设置。完整参考见 `kb/user/config.md`。
+应用以所有默认值启动——无需手动设置。完整参考见 `.dsh/kb/user/config.md`。
 
 ## 日志
 
@@ -587,9 +587,9 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 
 ## 延伸阅读
 
-- **数据提供者**：`kb/design/data-providers.md` —— trait 体系及各 provider
+- **数据提供者**：`.dsh/kb/design/data-providers.md` —— trait 体系及各 provider
   实现的深入说明
-- **符号约定**：`kb/design/symbols.md` —— 市场分段、代码转换、时间周期映射
+- **符号约定**：`.dsh/kb/design/symbols.md` —— 市场分段、代码转换、时间周期映射
 - **API 参考**：`cargo doc --open` —— 所有公开 API 的完整类型级文档
 
 ## 决策记录
@@ -604,7 +604,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | C2（#244）：BullishAlign 的 AST 映射 | handoff 表原文 `Close>Sma(20) && Sma(20)>Sma(60)` / 引擎语义 `Sma(5)>Sma(20) && Sma(20)>Sma(60)` | 引擎语义（ma5>ma20 && ma20>ma60，strategy lib.rs:233-238） | 与 `screen_symbol` 引擎实现一致，行为保持（编译不改变筛选结果） | handoff 表原文与引擎不符，按它编译会改变筛选语义 |
 | C3（#244）：序列函数范围 | 3 个（UpDays/Count/VolumeSurge）/ 6 个（+Sma/ChangePct/NDayHigh） | 3 个 | 其余 3 个已有私有 helper（strategy lib.rs:221-259）可复用，避免 Batch 3 前的死代码；偏差已在 PR/issue 说明 | 6 个独立函数在 Batch 1 无调用方，纯冗余 |
 | M4（#244）：`run_screener(&Filter)` 的 Batch 1 执行路径 | 通用 Filter 求值器（Batch 3）/ 受限私有反向转换 / 保持旧签名 | 受限私有反向转换（`filter_to_query` accept-grammar）+ `ScreenerError::UnsupportedFilter` | 不改引擎逻辑、GUI 语义不变、Batch 1 零风险；Batch 3 再实现真求值器 | 通用求值器属 Batch 3 范围，提前实现违背批次边界；保持旧签名则 AST 无消费者 |
-| 覆盖率门槛（#244）：compass-types | 维持 80% / 提升至 95% | 95% | issue #244 验收标准，用户已确认（2026-08-12）；改动 check-coverage.sh / ci.yml / AGENTS.md / kb/dev/testing.md | 维持 80% 达不到 #244 验收要求 |
+| 覆盖率门槛（#244）：compass-types | 维持 80% / 提升至 95% | 95% | issue #244 验收标准，用户已确认（2026-08-12）；改动 check-coverage.sh / ci.yml / AGENTS.md / .dsh/kb/dev/testing.md | 维持 80% 达不到 #244 验收要求 |
 | exclude_delisted 缺失语义（#244） | 布尔直接编码（`Delisted(true/false)`）/ 存在性编码（仅 `Delisted(false)` 产出，缺失即不排除） | `exclude_delisted: true` → `Meta(Delisted(false))`；`false` → 不产出节点；反向按"存在 → true、缺失 → false"还原 | 存在性编码对 bool 无损，且与 `ScreenerQuery::default()`（exclude_delisted=true）匹配——默认查询产出裸 `Delisted(false)` 节点而非空 `And` | 布尔直接编码无法区分"false 与未设置"；`Delisted(true)`（仅退市）在 ScreenerQuery 中不可表达，反向只能拒绝 |
 | B1（#246）：Filter 求值入口 | 通用递归求值器 / 保留受限反向转换 / 扩展 accept-grammar | 通用递归求值器（`screener_eval.rs`，`evaluate() -> bool`），删除 `filter_to_query` 全套机制 | issue #246 验收要求 UpDays/Count/Or/Not 真实过滤——受限文法无法表达；通用求值器消灭"两套类型 + 受限文法"中间层，与 GUI/LLM 共享同一 AST | 保留/扩展受限文法违背 Batch 3 目标；ScreenerQuery 仅保留为 config 迁移面 |
 | B2（#246）：求值语义基准 | 逐条对照新实现 / 复刻既有 `screen_symbol` 语义 | 复刻 `screen_symbol`（ma 含最新 N 根、breakout 前 N 根不含最新、momentum 含 base、volume 3N 嵌套基线、missing total_share + cap 条件剔除、delisted 默认排除） | 21 个既有语义集成测试是回归基线，断言不允许改 | 新语义会破坏既有测试契约与用户预期 |
@@ -631,4 +631,4 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 > （如 `Count`、单边 `Cmp`）由 `llm_screener::ensure_builder_roundtrip` 在解析层
 > 拒绝并提示换一种描述——避免 Unknown 只读卡在运行/持久化时被静默丢弃（ref #247）。
 
-符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `kb/design/symbols.md`。
+符号约定（Dolt-native 前缀格式 vs ts_code）的决策记录见 `.dsh/kb/design/symbols.md`。

@@ -178,7 +178,7 @@ fn holdings_return(
 /// day's return is the mean of their adjclose day-over-day returns
 /// (non-finite skipped). Membership is decided by that day's close market
 /// cap — a documented mild look-ahead inherent to index proxies (locked
-/// convention, recorded in `kb/design/backtest.md`). Days with no
+/// convention, recorded in `.dsh/kb/design/backtest.md`). Days with no
 /// constituents yield return 0.
 pub fn compute_benchmark_returns(
     bars_by_symbol: &HashMap<String, Vec<&CrossSectionBar>>,

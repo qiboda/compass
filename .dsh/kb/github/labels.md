@@ -20,7 +20,7 @@ Issue 和 PR 标签遵循 [Bevy](https://github.com/bevyengine/bevy) 分类法�
 | `A-Data` | 数据管线、提供者、存储（`crates/compass-data`、`compass-core`） |
 | `A-CLI` | CLI 工具（`compass-data` 二进制文件） |
 | `A-CI` | CI 工作流、钩子、构建系统 |
-| `A-Docs` | 项目书（`kb/`）、`AGENTS.md`、README |
+| `A-Docs` | 项目书（`.dsh/kb/`）、`AGENTS.md`、README |
 
 ## C- 类别
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Tests for the pre-push hook's removal of the master-CI check (ref #172).
 # The hook lives in .githooks/pre-push; this test asserts the CI-status block
-# is GONE (it deadlocked fix-PR pushes — see kb/dev/toolchain.md) while the
+# is GONE (it deadlocked fix-PR pushes — see .dsh/kb/dev/toolchain.md) while the
 # fmt/clippy/doc/ref quality gates are PRESERVED (no accidental over-deletion).
 # Follows the pre-push-ref-regex-test.sh precedent: a bash-only behavior test
 # that mirrors the hook file instead of invoking it (which would run cargo).

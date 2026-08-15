@@ -1,11 +1,11 @@
 # 反思日志归档
 
-教训已融入流程或已被取代的反思条目归档于此（历史可查），与 `kb/dev/reflections.md`
+教训已融入流程或已被取代的反思条目归档于此（历史可查），与 `.dsh/kb/dev/reflections.md`
 （活性条目）分开维护。归档标准：教训已固化为 AGENTS.md 规则 / skill 步骤 / pre-push
 hook / 回归测试 / CI 门禁，或已被后续条目推翻取代（如 #76 被 #96 取代）。
 
 **注意**：归档条目可能包含已被推翻的历史结论（如 #76 的解绑语义），引用时以当前
-项目书（AGENTS.md + kb/ + skills）为准。
+项目书（AGENTS.md + .dsh/kb/ + skills）为准。
 
 
 ## 2026-07-28 — ref #62 rewrite: ParquetReader 改为单文件 stock_daily.parquet
@@ -27,7 +27,7 @@ hook / 回归测试 / CI 门禁，或已被后续条目推翻取代（如 #76 �
 
 **What was done**: 将 export.rs 测试、parquet_bench.rs、integration_test.rs 从 per-symbol
 文件布局迁移到单一 `stock_daily.parquet`（带 `symbol` 列）。同步更新 AGENTS.md 和
-`kb/design/symbols.md` 中的文件树描述和文件名引用。
+`.dsh/kb/design/symbols.md` 中的文件树描述和文件名引用。
 
 **What went wrong**: （无）— 测试修改简单直接，无意外。
 
@@ -153,12 +153,12 @@ chronological OHLC within each time bucket.
 EastMoneyProvider/to_secid 整章删除）；Pass 2 去重收敛（AGENTS.md 442→310 行瘦身为索引
 +硬规则，DDL/doc-sync/CLI/config 各归单一事实源）；Pass 3 程序性内容提取到已有 skill
 （worktree/issue/TDD/gate 全部指向 skill，修复 fix.md/impl.md 对已删除 doc-sync 表的断链）；
-Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、friction/reflections 模板
+Pass 4a 全部 .dsh/kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、friction/reflections 模板
 统一、docs skill 清单 17→19 同步。
 
 **What went wrong**: ① 修正 pass 发现 `import --overwrite`、`to_secid()`、`CachedProvider`
 等文档大量记载已删除的功能，说明项目书长期未随重构同步（#31/#32/#46 之后均未清理）。
-② Pass 4a 翻译首次派发漏了 kb/dev/ 两个文件，且首个 architecture.md 翻译子代理对纯翻译
+② Pass 4a 翻译首次派发漏了 .dsh/kb/dev/ 两个文件，且首个 architecture.md 翻译子代理对纯翻译
 任务也套 grill-me 流程导致停滞，重派后才完成。③ Pass 4b 的 roadmap.md 删除混入了 Pass 4a
 的翻译 commit（git rm 暂存区未分离）。
 
@@ -168,7 +168,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. 文档引用是重组中的主要断链风险 — 去重/改名后必须全仓 grep 交叉引用（fix.md/impl.md
    引用的 doc-sync table 在 AGENTS.md 移除后失效，product skill 8 处 roadmap 引用需批量更新）。
 3. 纯机械任务（翻译）的子代理 prompt 必须显式声明"不要 grill-me、不要提问、直接执行"，
-   且翻译范围清单要在派发前一次列全（本次漏了 kb/dev 导致补派）。
+   且翻译范围清单要在派发前一次列全（本次漏了 .dsh/kb/dev 导致补派）。
 4. docs 类工作可跳过 GATE，但 commit 仍须 ref #N；本次按用户"分别多次 review"要求拆 6 个
    commit，每个 pass 独立 review 确认，方向偏差在早期被纠正。
 
@@ -364,7 +364,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **User corrections**: 
 1. 「这些是不是handoff已经问过了」——session 开始时我未读 `.dsh/handoff.md`，把已在 handoff 锁定的 7 项 grill-me 决策（Q1 范围、Q2 duckdb 删除方式）当成新问题重新访谈，被用户提醒后才去读 handoff 确认决策已存在。
-2. 「有rebase master吗？」「加约束，push前 rebase base 分支」——push 后用户追问是否已 rebase master，随后明确指示将「push 前必须 rebase base 分支」固化为流程约束。我已按指示更新 AGENTS.md（Commit & Push 章节）+ kb/dev/process.md（Pre-push 检查 step 0 + 手动 checklist）。
+2. 「有rebase master吗？」「加约束，push前 rebase base 分支」——push 后用户追问是否已 rebase master，随后明确指示将「push 前必须 rebase base 分支」固化为流程约束。我已按指示更新 AGENTS.md（Commit & Push 章节）+ .dsh/kb/dev/process.md（Pre-push 检查 step 0 + 手动 checklist）。
 
 **What went wrong**:
 1. **重复访谈已锁定决策**：新 session 只读了 `stock-basic-official.md`（#78 的旧 plan，属另一 worktree），未读本 worktree 的 `.dsh/handoff.md`——handoff 完整记录 7 项决策 + C1-C5 清单，读它可跳过 Q1/Q2 直接确认
@@ -406,7 +406,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 3. 终端守护进程知识：gnome-terminal-server 与 xfce4-terminal（单实例 daemon 进程名即 client 名）必须排除在 close 白名单外，只匹配每窗口终端（kitty/konsole/xterm）。
 4. 模拟"调用者进程"验证 self-hold：需 `& wait` 保持调用者存活（防 bash exec 优化），且调用者与脚本须为父子进程关系。
 
-**Process improvements**: kb/dev/process.md「调试技巧」新增「验证 kill/pgrep 类脚本的安全纪律」小节（ref #104 事故教训：`[x]` 技巧防自指、持久 shell cwd 污染、子代理只读/隔离委托）。
+**Process improvements**: .dsh/kb/dev/process.md「调试技巧」新增「验证 kill/pgrep 类脚本的安全纪律」小节（ref #104 事故教训：`[x]` 技巧防自指、持久 shell cwd 污染、子代理只读/隔离委托）。
 
 ### Trends (last 10)
 - **破坏性脚本验证事故**（ref #104 ×2：bash 工具会话自杀、QA agent 误杀用户会话）：验证 kill 类逻辑缺强制隔离纪律——本次已固化为 process.md 调试纪律，下次同型验证须先读
@@ -421,7 +421,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **What went wrong**:
 1. 计划制定阶段：手算测试期望值错误 3 处（市值 18840 vs 实际 18842.97、动量 92% vs 实际 34.5%、volume 窗口方向反了）——测试数学没对照真实公式推导就写断言
-2. egui_kittest 0.4 的 AccessKit 限制浪费约 8 轮调试：Grid 内 `selectable_label` 的 label 不可查询、`harness.run()` 遇 ScrollArea 无限 repaint——kb/dev/testing.md 只记录了 egui_dock tab 按钮的同类限制，未覆盖 Grid 场景
+2. egui_kittest 0.4 的 AccessKit 限制浪费约 8 轮调试：Grid 内 `selectable_label` 的 label 不可查询、`harness.run()` 遇 ScrollArea 无限 repaint——.dsh/kb/dev/testing.md 只记录了 egui_dock tab 按钮的同类限制，未覆盖 Grid 场景
 3. python 批量 replace 误伤 `config.app.parquet.dir`（AppConfig 结构是 `app: AppSection, parquet: ParquetConfig`，sed 替换把不相关的测试也改了）——正则批量替换缺乏上下文校验
 
 **Lessons learned**:
@@ -429,7 +429,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. egui_kittest 中 UI 断言优先用纯逻辑测试（提取可测函数），避免依赖 Grid/ScrollArea 内的 AccessKit label；`harness.run()` 遇无限 repaint 时改用 `step()`
 3. 批量文本替换（sed/python）前先确认匹配串的唯一性，替换后跑一次 `git diff` 检查非目标文件是否被误改
 
-**Process improvements**: 已更新 `kb/dev/testing.md`（egui_kittest 章节补充 Grid 内 label 不可查询限制 + ScrollArea 无限 repaint 的 step() 规避）。3 条教训中的 kittest 限制已固化；数值推导与批量替换纪律为一次性教训，写入本条目。
+**Process improvements**: 已更新 `.dsh/kb/dev/testing.md`（egui_kittest 章节补充 Grid 内 label 不可查询限制 + ScrollArea 无限 repaint 的 step() 规避）。3 条教训中的 kittest 限制已固化；数值推导与批量替换纪律为一次性教训，写入本条目。
 
 ### Trends (last 10)
 - **测试环境与真实环境的差异盲区**（ref #104 隔离纪律、本次 kittest AccessKit/repaint 限制）：验证环境的行为假设（隔离、无障碍树、渲染循环）与实际不符时反复踩坑——先读目标环境的已知限制文档再写验证
@@ -438,13 +438,13 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-01 — ref #117 一键启动脚本 scripts/run.sh
 
-**What was done**: 新增 `scripts/run.sh`（前台运行 `cargo run --bin compass`，Ctrl+C 退出，支持 `-h/--help` 与 `--release` 透传），同步 AGENTS.md 及 6 个 kb/ 文件的启动命令引用。3 commits（746ed40 feat / bcddb78 fix 注释 / 3a81cc9 fix doc-sync + 帮助截断）。
+**What was done**: 新增 `scripts/run.sh`（前台运行 `cargo run --bin compass`，Ctrl+C 退出，支持 `-h/--help` 与 `--release` 透传），同步 AGENTS.md 及 6 个 .dsh/kb/ 文件的启动命令引用。3 commits（746ed40 feat / bcddb78 fix 注释 / 3a81cc9 fix doc-sync + 帮助截断）。
 
 **User corrections**: 「不要这个了。」——grill 阶段推荐"脚本 + Cargo.toml 加 default-run 修根因"，实现时发现根 `Cargo.toml` 是 virtual workspace（无 `[package]` 段），`default-run` 是 package 级 key 无处安放；`.cargo/config.toml` alias 方案也被 cargo 拒绝（`run` 是内置命令不可覆盖）。向用户如实报告方案偏离后，用户拍板放弃根因修复、只保留脚本。
 
 **What went wrong**:
 1. **技术假设未在 grill 阶段验证**：推荐"default-run 修根因"时未先确认该 key 对 virtual workspace 的有效性，导致实现期发现方案不可行、需返工询问用户。验证时用 `cargo run --help` 判断，被 cargo 自身的 help 输出误导，误报"default-run 生效"——`--help` 短路了 binary 解析，不能作为验证手段。
-2. **doc-sync 不完整**（review 抓出，FAIL lane）：gate 第 4b 步只更新了 kb/user/gui.md 和 kb/dev/process.md 两处"明显"位置，漏掉 AGENTS.md、kb/user/{index,config,cli}.md、kb/design/architecture.md、kb/dev/testing.md 共 7 处裸 `cargo run` 引用——这些文档本身就在教用户执行一条会报错的命令。
+2. **doc-sync 不完整**（review 抓出，FAIL lane）：gate 第 4b 步只更新了 .dsh/kb/user/gui.md 和 .dsh/kb/dev/process.md 两处"明显"位置，漏掉 AGENTS.md、.dsh/kb/user/{index,config,cli}.md、.dsh/kb/design/architecture.md、.dsh/kb/dev/testing.md 共 7 处裸 `cargo run` 引用——这些文档本身就在教用户执行一条会报错的命令。
 3. **帮助输出截断**（两个 Oracle 独立发现）：`show_help` 用 `sed -n '2,11p'` 硬编码行号，头部注释扩写后 sed 范围未同步，`-h|--help` 用法行被截掉。
 
 **Lessons learned**:
@@ -462,7 +462,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-02 — ref #155 flaky toast 测试修复（kittest 构造帧时序竞态）
 
-**What was done**: 修复 `test_render_expired_toast_closes_then_is_removed` 的 CI 偶发失败（run 30729581256）。根因：`Harness::new_ui` 构造时立即跑初始帧，toast 动画用真实墙钟 `Instant::now()` 且 CLOSE_DURATION 仅 100ms——慢 CI 上构造帧→run() 帧间隔超过动画时长，toast 在断言前已被移除。修复：run() 前重置 `close_started = Some(Instant::now())`（产品代码零改动），`kb/dev/testing.md` 追加 kittest 时间敏感陷阱说明。
+**What was done**: 修复 `test_render_expired_toast_closes_then_is_removed` 的 CI 偶发失败（run 30729581256）。根因：`Harness::new_ui` 构造时立即跑初始帧，toast 动画用真实墙钟 `Instant::now()` 且 CLOSE_DURATION 仅 100ms——慢 CI 上构造帧→run() 帧间隔超过动画时长，toast 在断言前已被移除。修复：run() 前重置 `close_started = Some(Instant::now())`（产品代码零改动），`.dsh/kb/dev/testing.md` 追加 kittest 时间敏感陷阱说明。
 
 **User corrections**: 无纠正型消息——用户消息均为任务报告、方案选择（"A"）、门禁确认（"好。"）、push 指令（"push"）。
 
@@ -475,7 +475,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. 本地 N 次通过 ≠ 非 flaky——诊断 CI 偶发失败必须读依赖源码确认时序语义（run()/step()/构造帧），并用慢 CI 模拟（sleep 后断言）确定性复现后再修
 3. 文档/代码引用库 API 名称前先 grep vendored 源码确认存在性与拼写，不要凭记忆
 
-**Process improvements**: `kb/dev/testing.md` GUI 无头集成测试章节已新增「时间敏感陷阱」条目（本 commit 内直接落实，含 ref #155 引用与修复模式）。
+**Process improvements**: `.dsh/kb/dev/testing.md` GUI 无头集成测试章节已新增「时间敏感陷阱」条目（本 commit 内直接落实，含 ref #155 引用与修复模式）。
 
 ### Trends (last 10)
 - **kittest 时序/动画测试坑第二次出现**（ref #131 动画命中测试、本次构造帧时序竞态）：kittest 帧推进与真实墙钟的交互是反复踩坑区——本次已把「时间敏感陷阱」写入 testing.md 固化，与 ref #131 的动画命中纪律同章节
@@ -484,7 +484,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-03 — ref #159 MCP 401 根因 + 问题处理闭环机制 + import --since 数据覆盖事故
 
-**What was done**: 修复 MCP github server 401（根因：server-github v0.6.2 只读 `GITHUB_PERSONAL_ACCESS_TOKEN`，配置用了 `GITHUB_TOKEN`，Authorization header 从未注入）；新增「问题处理闭环」机制（AGENTS.md 品质准则 + compass-workflow skill 规则 #1 + 新建 `kb/dev/toolchain.md` 问题排查卡）；执行 investment_data 同步时 `import --since` 覆盖了 stock_daily.parquet（18M 行→5534 行），已全量重建恢复 + 修正 4 处误导文档。
+**What was done**: 修复 MCP github server 401（根因：server-github v0.6.2 只读 `GITHUB_PERSONAL_ACCESS_TOKEN`，配置用了 `GITHUB_TOKEN`，Authorization header 从未注入）；新增「问题处理闭环」机制（AGENTS.md 品质准则 + compass-workflow skill 规则 #1 + 新建 `.dsh/kb/dev/toolchain.md` 问题排查卡）；执行 investment_data 同步时 `import --since` 覆盖了 stock_daily.parquet（18M 行→5534 行），已全量重建恢复 + 修正 4 处误导文档。
 
 **User corrections**（逐字引用对话记录）:
 1. "MCP 工具未认证，改用 gh CLI：这个还是没有解决mcp的问题。导致工作流程不丝滑啊。" —— 我把 gh CLI fallback 当作解决，用户指出 MCP 根因未除
@@ -506,8 +506,8 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 **Process improvements**:
 - AGENTS.md 品质准则新增「问题处理闭环（强制）」规则——禁止静默绕过/降级，必须感知→诊断→处理→记录（本 commit 落实）
 - compass-workflow skill 新增最高优先级规则 #1（同一闭环），原规则顺延 2-12（本 commit 落实）
-- `kb/dev/toolchain.md` 新建——问题排查卡格式（症状/根因/排查路径/修复/验证），首条 MCP 案例（本 commit 落实）
-- 修正 4 处误导文档：AGENTS.md、kb/dev/database.md、kb/user/cli.md、kb/dev/process.md 中 `import --since` 描述改为"过滤子集直写覆盖全文件，非增量追加"（commit 3165630）
+- `.dsh/kb/dev/toolchain.md` 新建——问题排查卡格式（症状/根因/排查路径/修复/验证），首条 MCP 案例（本 commit 落实）
+- 修正 4 处误导文档：AGENTS.md、.dsh/kb/dev/database.md、.dsh/kb/user/cli.md、.dsh/kb/dev/process.md 中 `import --since` 描述改为"过滤子集直写覆盖全文件，非增量追加"（commit 3165630）
 - toolchain.md 新增第二条排查卡：`import --since` 覆盖陷阱（含诊断路径与教训）
 
 ### Trends (last 10)
@@ -525,18 +525,18 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **What went wrong**:
 1. **grill-me 未先读 worktree 内既有 handoff 契约**：进入 gate 第 0.5 步才发现 handoff.md 已锁定 test-only 方案（用户先前要求），与本会话 grill 结论冲突。虽然最终用户裁决方案 C 生效，但流程上应先读 handoff 再 grill——handoff 是 worktree 交接的上下文契约（AGENTS.md 明确"worktree 会话启动后第一步读取 .dsh/handoff.md"），主 session grill 前也应检查。
-2. **kb/ 文档编辑误落 master 工作区**：Step 5b/5c 更新三份 kb/ 文件时，在 master 工作区（/data/codes/compass/kb/）编辑而非 worktree 内，违反"实现工作必须在 worktree 内"规则（doc-sync 属于实现 PR 一部分）。幸而通过 `git status` 对比发现，`cp` + `git restore` 迁移回 worktree 后 master 恢复干净——未造成 commit 污染，但属流程违规，应在 reflections 记录。
+2. **.dsh/kb/ 文档编辑误落 master 工作区**：Step 5b/5c 更新三份 .dsh/kb/ 文件时，在 master 工作区（/data/codes/compass/kb/）编辑而非 worktree 内，违反"实现工作必须在 worktree 内"规则（doc-sync 属于实现 PR 一部分）。幸而通过 `git status` 对比发现，`cp` + `git restore` 迁移回 worktree 后 master 恢复干净——未造成 commit 污染，但属流程违规，应在 reflections 记录。
 3. **review agent 输出截断**：5-agent review 中 code quality 输出超长被截断，需 grep 工具输出文件提取 verdict——非流程问题，记录以备后续 review 上下文管理。
 
 **Lessons learned**:
 1. **grill 前先读 worktree 内 handoff.md**：主 session 对已存在 worktree 的 issue 开始 grill 前，第一步 `cat .worktrees/<name>/.dsh/handoff.md`——handoff 可能已锁定用户先前决策（test-only 契约即前例）。有冲突先向用户澄清，不带着矛盾契约推进。
-2. **doc-sync 的 kb/ 编辑必须落在 worktree 内**：Step 5b/5c 与代码变更同属实现 PR，kb/ 文件修改要在 worktree 路径操作；编辑后用 `git status --short` 对比 master 与 worktree 是否各归其位。
+2. **doc-sync 的 .dsh/kb/ 编辑必须落在 worktree 内**：Step 5b/5c 与代码变更同属实现 PR，.dsh/kb/ 文件修改要在 worktree 路径操作；编辑后用 `git status --short` 对比 master 与 worktree 是否各归其位。
 3. **egui_kittest 动画测试的时间源规则**：断言跨帧动画状态时绝不用 `Instant::now()`/`elapsed()`（慢 CI 必 flaky）；用 egui 虚拟时间 `ctx.input(|i| i.time)`（kittest 下按 predicted_dt 确定累积）+ `with_step_dt` 细粒度推进。已沉淀 toolchain.md 排查卡。
 
 **Process improvements**:
-- `kb/dev/toolchain.md` 新增「测试」类别排查卡：egui_kittest 动画测试 wall-clock 依赖 → 用 egui 虚拟时间（症状/根因/排查路径/修复/验证，覆盖 #155→#168 两次事故链）
-- `kb/dev/testing.md` §274 时间敏感陷阱段重写：明确"产品动画用 egui 虚拟时间 + 细粒度 step_dt"为正确模式，标注旧"重置时间戳"workaround 有残留竞态
-- `kb/design/ui.md` 决策记录追加「Toast 动画时间源」决策行（egui 虚拟时间 vs 墙钟 vs Clock trait）
+- `.dsh/kb/dev/toolchain.md` 新增「测试」类别排查卡：egui_kittest 动画测试 wall-clock 依赖 → 用 egui 虚拟时间（症状/根因/排查路径/修复/验证，覆盖 #155→#168 两次事故链）
+- `.dsh/kb/dev/testing.md` §274 时间敏感陷阱段重写：明确"产品动画用 egui 虚拟时间 + 细粒度 step_dt"为正确模式，标注旧"重置时间戳"workaround 有残留竞态
+- `.dsh/kb/design/ui.md` 决策记录追加「Toast 动画时间源」决策行（egui 虚拟时间 vs 墙钟 vs Clock trait）
 - 后续建议：modal.rs 存在同类 wall-clock 动画模式（7 处"重置时间戳"workaround），同类 flaky 隐患——已由 review 标记，可建独立 issue 迁移
 
 ### Trends (last 10)
@@ -545,7 +545,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-04 — ref #172 pre-push 死锁修复：hook 删 CI 检查 + branch protection 强制 merge 门槛
 
-**What was done**: 删除 `.githooks/pre-push` 的 master CI 状态检查（死锁根源：master CI 失败时修复 PR 无法 push，曾需 --no-verify 绕行），CI 门槛移交 master branch protection（strict=true + 9 required status checks，enforce_admins=false 保留 docs 直推）。同步 kb/dev/process.md push gate 清单、toolchain.md 排查卡根治标记；新增 scripts/tests/pre-push-no-ci-check-test.sh 行为测试（RED→GREEN）。3 commits（39f10b0 实现 / b89921c review 修复 / 2f6b15c toolchain 根治标记），review-work 5 agent 全 PASS。
+**What was done**: 删除 `.githooks/pre-push` 的 master CI 状态检查（死锁根源：master CI 失败时修复 PR 无法 push，曾需 --no-verify 绕行），CI 门槛移交 master branch protection（strict=true + 9 required status checks，enforce_admins=false 保留 docs 直推）。同步 .dsh/kb/dev/process.md push gate 清单、toolchain.md 排查卡根治标记；新增 scripts/tests/pre-push-no-ci-check-test.sh 行为测试（RED→GREEN）。3 commits（39f10b0 实现 / b89921c review 修复 / 2f6b15c toolchain 根治标记），review-work 5 agent 全 PASS。
 
 **User corrections**: 无纠正型消息——用户消息为推进指令（"按 handoff 契约推进"）与两条 question 决策（toolchain.md 纳入 PR、确认 push）。
 
@@ -581,11 +581,11 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 3. **布局反复**：vertical → horizontal → wrapped 三轮调整，每轮都需重启 GUI 验证——GUI 无头测试（kittest）无法覆盖布局美观，只能靠用户目视。
 
 **Lessons learned**:
-1. 调试命令先查 `kb/dev/process.md` 调试章节再执行（pgrep -x / [x] 技巧 / 分步命令）；进程存在 ≠ 窗口可见（用 wmctrl/xdotool 验证窗口）
+1. 调试命令先查 `.dsh/kb/dev/process.md` 调试章节再执行（pgrep -x / [x] 技巧 / 分步命令）；进程存在 ≠ 窗口可见（用 wmctrl/xdotool 验证窗口）
 2. 多选项 vs 少选项的控件形态不同：行业（30-100+）用 popup+搜索+checkbox，交易所/板块（3-5 项）用直接 checkbox 更合理——先按选项数量定形态，不机械统一
 3. UI 布局类变更的验证成本高（需用户目视）：变更前先明确目标布局形态（向用户确认），减少反复
 
-**Process improvements**: 已更新 `kb/dev/process.md`（新增"检测/结束 GUI 进程的正确姿势"小节——pgrep -x / [t]arget 技巧、长链命令分步纪律、窗口可见性以 wmctrl 为准、GUI 启动用 tmux new-session -d）。UI 控件形态决策为一次性教训，写入本条目。
+**Process improvements**: 已更新 `.dsh/kb/dev/process.md`（新增"检测/结束 GUI 进程的正确姿势"小节——pgrep -x / [t]arget 技巧、长链命令分步纪律、窗口可见性以 wmctrl 为准、GUI 启动用 tmux new-session -d）。UI 控件形态决策为一次性教训，写入本条目。
 
 ### Trends (last 10)
 - **pgrep/pkill 自匹配复发**（ref #104 → 本次）：纪律已写入 process.md 但执行时未查阅——文档固化 ≠ 行为固化，涉及 kill/pgrep 的命令执行前必须先读调试章节；本次已把具体正确命令写进 process.md
@@ -604,11 +604,11 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **Lessons learned**:
 1. 组件带动画（缩放/位移）时，kittest 点击必须在动画完成后进行——测试里显式回拨 `open_started`/`close_started`（pub 字段）推进动画，或改用 `run()` 跑完动画帧；写测试前先确认组件动画对命中测试的影响
-   > ⚠️ **已过时（ref #168/#171 取代）**：回拨时间戳 workaround 有残留竞态（慢 CI flaky），已根治——动画改用 egui 虚拟时间 `ctx.input(|i| i.time)`（f64 秒），测试用 `with_step_dt` + `run_steps(n)` 确定性推进，库内再无显式回拨（见 `kb/dev/toolchain.md` 排查卡与 `kb/dev/testing.md` §时间敏感陷阱）。
+   > ⚠️ **已过时（ref #168/#171 取代）**：回拨时间戳 workaround 有残留竞态（慢 CI flaky），已根治——动画改用 egui 虚拟时间 `ctx.input(|i| i.time)`（f64 秒），测试用 `with_step_dt` + `run_steps(n)` 确定性推进，库内再无显式回拨（见 `.dsh/kb/dev/toolchain.md` 排查卡与 `.dsh/kb/dev/testing.md` §时间敏感陷阱）。
 2. 组件化重构中"状态归属"是隐藏的契约——排序状态从面板移到 DataTable 后，跨帧持久化要求组件不借用外部 token（值语义）；先检查组件构造参数的所有权再定面板结构
 3. 行为类测试的前置条件必须与实际渲染逻辑一致（侧边栏只渲染自选行、当前 symbol 是否在自选中）——写 kittest 前先在心里跑一遍 UI 数据流
 
-**Process improvements**: 已在本条目记录 kittest 动画命中测试纪律（`kb/dev/testing.md` egui_kittest 章节的补充候选）。DataTable token 所有权改为值拷贝，为一次性架构决策，写入本条目。
+**Process improvements**: 已在本条目记录 kittest 动画命中测试纪律（`.dsh/kb/dev/testing.md` egui_kittest 章节的补充候选）。DataTable token 所有权改为值拷贝，为一次性架构决策，写入本条目。
 
 
 ## 2026-08-02 — ref #119 GUI 全局升级收尾：epic 合并与 issue 收尾
@@ -639,7 +639,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ### Trends (last 10)
 - **"收尾声明与事实不符"模式**（ref #117 agent 遗漏收尾、本次过度声称 #121/#122）：issue 收尾是 agent 流程薄弱点——本轮已把"核实后收尾"直接写入 AGENTS.md 强制规则
-- **hook/工具边界反复踩坑**（本次 pre-push ref 误判 + gh merge --delete-branch、ref #104 pgrep 自匹配）：工具链边界知识（hook 正则语义、gh 在 worktree 的行为）应沉淀到 kb/dev/process.md 而非靠试错
+- **hook/工具边界反复踩坑**（本次 pre-push ref 误判 + gh merge --delete-branch、ref #104 pgrep 自匹配）：工具链边界知识（hook 正则语义、gh 在 worktree 的行为）应沉淀到 .dsh/kb/dev/process.md 而非靠试错
 - **dock/UI 状态语义误解需源码级定位**（本次 focused vs active、ref #131 kittest 动画命中）：egui_dock 等库的状态语义必须读源码确认，测试断言到渲染输出层（shapes 颜色）才有客观性
 
 
@@ -662,8 +662,8 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 4. **增量导入语义必须与 fetch 窗口一致**：增量窗口 CSV + 整表替换 = 数据丢失；4 个时间序列表必须 merge（INSERT IGNORE on PK），concept_member 全量重写例外。
 
 **Process improvements**:
-- `kb/user/cli.md`：增量机制更新为 merge 语义 + 宽临时表导入说明（本 commit 直接落实）
-- `kb/design/data-providers.md`：追加 3 条决策记录（merge 导入、宽临时表、复合分组键，含 F3 实证）
+- `.dsh/kb/user/cli.md`：增量机制更新为 merge 语义 + 宽临时表导入说明（本 commit 直接落实）
+- `.dsh/kb/design/data-providers.md`：追加 3 条决策记录（merge 导入、宽临时表、复合分组键，含 F3 实证）
 - `scripts/tests/test-sepa-daily.sh`：step 2 断言 fetch AND import（10 grep），防未来删 import 环节
 - `collectors/tests/test_institution_survey.py`：判别性测试 `test_same_org_different_events_not_collapsed` + `test_long_utf8_org_name_round_trips_full_length`（RED first，防分组坍缩/截断回归）
 - `collectors/common.py`：`dolt_table_import(create_sql=...)` + `import_replace_table(merge=...)` 参数化（可复用）
@@ -698,7 +698,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 **Process improvements**:
 - `collectors/common.py` merge 失败路径 `logger.error("  SQL error: %s", ...)` + 成功 `logger.info("  Done: %s rows (inserted N this run)")`（本 commit c5800c8 落实，含模块级 logger + stderr fallback）
 - `collectors/tests/test_common.py` 新增 2 个 caplog 测试：`test_merge_insert_failure_logs_sql_error` / `test_merge_success_logs_inserted_row_count`（RED→GREEN，防静默回归）
-- `kb/design/data-providers.md` 决策记录新增 ref #160 行 + 修正 ref #139 行的错误排除原因；`kb/user/cli.md` 增量机制更新（data_updates 锚点 + 财务四表 merge）
+- `.dsh/kb/design/data-providers.md` 决策记录新增 ref #160 行 + 修正 ref #139 行的错误排除原因；`.dsh/kb/user/cli.md` 增量机制更新（data_updates 锚点 + 财务四表 merge）
 - `.dsh/plans/fin-incremental-merge.md` + `fin-incremental-tests.md` 归档（plan/测试规划随实现提交）
 
 ### Trends (last 10)
@@ -709,7 +709,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-04 — ref #163 数据层测试覆盖率提升至 95% 并提高 CI 强制门槛
 
-**What was done**: Python collectors 测试覆盖率从 83.0%（256 tests / 1583 stmts）提升至 95.41%（308 tests，5 目标文件 100%），新增 52 测试 + conftest SyncStubSession；`scripts/check-coverage.sh` 从单一 80 阈值重构为 per-crate 阈值表（compass-data/core 95、其余 80、workspace 80）；ci.yml Python `--cov-fail-under` 80→95；AGENTS.md 与 kb/dev/testing.md 覆盖率门槛段落同步。7 个实现 commit 全部 `ref #163`。
+**What was done**: Python collectors 测试覆盖率从 83.0%（256 tests / 1583 stmts）提升至 95.41%（308 tests，5 目标文件 100%），新增 52 测试 + conftest SyncStubSession；`scripts/check-coverage.sh` 从单一 80 阈值重构为 per-crate 阈值表（compass-data/core 95、其余 80、workspace 80）；ci.yml Python `--cov-fail-under` 80→95；AGENTS.md 与 .dsh/kb/dev/testing.md 覆盖率门槛段落同步。7 个实现 commit 全部 `ref #163`。
 
 **User corrections**: 无——本次用户消息仅 2 条（handoff 指引 + "这次自行 push，merge pr，关闭issue 和 关闭worktree" 全流程预授权），无纠正型反馈。
 
@@ -724,7 +724,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 3. **CI 门槛基线值在 plan 阶段实测**：涉及 Rust 覆盖率门槛的变更，plan 阶段就应在目标分支跑一次 llvm-cov 确认当前值高于新门槛，避免 review 阶段才发现数据不实。
 
 **Process improvements**:
-- `kb/dev/toolchain.md` 新增「编辑器工具链」类别排查卡：edit 工具按 oldString 匹配误伤文件内重复片段（含症状/根因/排查路径/修复/验证，覆盖本 session 两次真实事故）
+- `.dsh/kb/dev/toolchain.md` 新增「编辑器工具链」类别排查卡：edit 工具按 oldString 匹配误伤文件内重复片段（含症状/根因/排查路径/修复/验证，覆盖本 session 两次真实事故）
 - `.dsh/plans/data-coverage-95.md` + `data-coverage-95-tests.md` 归档（随实现 commit 956ca26 提交）
 - 覆盖率证据存 `.dsh/evidence/task-*.txt`（RED 基线、最终 gate 95.41%、各 todo GREEN）
 
@@ -756,7 +756,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 5. **fetch 层全局语义变更需审计全部 DataProvider 消费者**（GUI/export/CLI/backtest），不只直接调用者——export 经 fetch_bars 间接受影响是典型盲点。
 
 **Process improvements**:
-- 已落实：`.gitignore` 放行 `.dsh/evidence/`（609d668，与 plans/designs 同类过程归档）；`kb/user/cli.md` export 章节注明前复权输出（56eb3ac）
+- 已落实：`.gitignore` 放行 `.dsh/evidence/`（609d668，与 plans/designs 同类过程归档）；`.dsh/kb/user/cli.md` export 章节注明前复权输出（56eb3ac）
 - 建议固化（文档类可直接改，本次先记录）：AGENTS.md「收尾前必须核实实现存在」规则扩展至 plan/批次完成声明——宣布"plan 执行完毕"前必须核对 evidence 落盘、台账回写、epic 两层审查，未核即声明即过度声称（ref #119 同类教训的 epic 级重演）
 
 ### Trends (last 10)
@@ -767,7 +767,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-05 — ref #185 docs: import 过滤参数帮助文本标注覆盖警示
 
-**What was done**: `import` 的 5 个过滤参数（`--symbols`/`--limit`/`--start-date`/`--end-date`/`--since`）帮助文本全部标注"过滤 + 覆盖整个 stock_daily.parquet、非增量"（`--since` 移除误导的 "Incremental" 字样并指向 `import-compass`）；同步 kb/user/cli.md 参数表 + architecture.md 决策记录（修正"`import --since` 增量导入缓解"的错误表述）；新增回归测试 `import_filter_flags_help_warns_overwrite` 锁定 help 文本（RED→GREEN，禁止 "Incremental" 字样回归）。1 commit（c3b1b48）。
+**What was done**: `import` 的 5 个过滤参数（`--symbols`/`--limit`/`--start-date`/`--end-date`/`--since`）帮助文本全部标注"过滤 + 覆盖整个 stock_daily.parquet、非增量"（`--since` 移除误导的 "Incremental" 字样并指向 `import-compass`）；同步 .dsh/kb/user/cli.md 参数表 + architecture.md 决策记录（修正"`import --since` 增量导入缓解"的错误表述）；新增回归测试 `import_filter_flags_help_warns_overwrite` 锁定 help 文本（RED→GREEN，禁止 "Incremental" 字样回归）。1 commit（c3b1b48）。
 
 **User corrections**（逐字引用对话记录）:
 1. 「所以这个代码逻辑上，没有问题？」—— 我初判"只有帮助文本有问题"，用户质疑后才深挖出两个真实问题：① symbols.txt 与 --since 过滤后的数据不一致（空壳符号）；② 全部过滤参数共享"过滤 + 覆盖全文件"路径，ref #159 只修了文档没修代码
@@ -786,7 +786,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **Process improvements**:
 - 已落实：回归测试 `import_filter_flags_help_warns_overwrite`（本 commit 内，禁 "Incremental" 字样 + 强制 5 参数 help 含 overwrite 警示）
-- 已落实：`kb/design/architecture.md` 决策记录修正"`--since` 增量导入缓解"错误表述
+- 已落实：`.dsh/kb/design/architecture.md` 决策记录修正"`--since` 增量导入缓解"错误表述
 - 建议固化（一次性教训，写入本条目）：docs/修复类工作的"全路径审视"与"commit message 引用 OPEN issue 检查"——后者已存在 AGENTS.md 规则，本条为执行层复犯记录
 
 ### Trends (last 10)
@@ -797,12 +797,12 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-05 — ref #186 docs: 反思文件归档——已固化教训移入 reflections-archive.md
 
-**What was done**: `kb/dev/reflections.md` 789 行/37 条目 → 225 行/8 活性条目；新建 `kb/dev/reflections-archive.md`（570 行/29 条目）归档教训已融入流程或已被取代的历史条目（含 3 条历史摩擦记录 #69/三张报表/#76，其中 #76 为被 #96 推翻的错误经验）。同步 AGENTS.md 3 处引用（test-first 指引/历史摩擦指向/kb 表）+ reflect skill 归档机制（替代"追加 retired 标记"约定）。1 commit（34f1f5e）。
+**What was done**: `.dsh/kb/dev/reflections.md` 789 行/37 条目 → 225 行/8 活性条目；新建 `.dsh/kb/dev/reflections-archive.md`（570 行/29 条目）归档教训已融入流程或已被取代的历史条目（含 3 条历史摩擦记录 #69/三张报表/#76，其中 #76 为被 #96 推翻的错误经验）。同步 AGENTS.md 3 处引用（test-first 指引/历史摩擦指向/kb 表）+ reflect skill 归档机制（替代"追加 retired 标记"约定）。1 commit（34f1f5e）。
 
 **User corrections**（逐字引用对话记录）:
 1. 「反思文件太长了，没有用的归档。」—— 触发归档；此前 AGENTS.md"教训已融入流程则退役"规则存在但从未执行（grep 无任何 retired 标记），主文件膨胀到 789 行
 2. 「按推荐。历史摩擦记录的是不是也有已经处理了的，之后不会犯的也可以归档了。」—— 批准归档标准，并补充历史摩擦记录一并归档——3 条摩擦（#69 范围固化、三张报表 TDD 固化、#76 被 #96 取代）均已处理
-3. question 确认「kb/dev/reflections-archive.md（推荐）」「活性条目全部保留（推荐）」
+3. question 确认「.dsh/kb/dev/reflections-archive.md（推荐）」「活性条目全部保留（推荐）」
 
 **What went wrong**: No issues——归档用脚本按 `##` 标题切分（非手抄），切分后逐条校验"原始标题全部命中保留或归档 + 内容行缺失数 0"，内容无丢失。
 
@@ -812,7 +812,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 3. **归档标准 = 教训是否已固化为机制（可验证）**——"已融入流程"的判定依据：AGENTS.md 规则/skill 步骤/hook/回归测试/CI 门禁是否有对应条目；已被取代（#76→#96）也是归档理由，且归档文件头部需警示"可能含被推翻的历史结论"。
 
 **Process improvements**:
-- 已落实：`kb/dev/reflections-archive.md` 新建（归档标准 + 历史结论警示）；`kb/dev/reflections.md` 头部归档机制说明
+- 已落实：`.dsh/kb/dev/reflections-archive.md` 新建（归档标准 + 历史结论警示）；`.dsh/kb/dev/reflections.md` 头部归档机制说明
 - 已落实：reflect skill 归档机制（替代 retired 标记，含脚本切分 + 行级丢失校验要求 + 边界情况表新增归档行）
 - 已落实：AGENTS.md 3 处引用同步（test-first 教训指引、历史摩擦指向、kb 表新增 archive 行）
 
@@ -877,7 +877,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-06 — ref #190 Dolt compass_data 数据变更约束强化（backtest_result 写回未提交）
 
-**What was done**: 用户发现 `compass_data` Dolt 仓库 `backtest_result` 384 行 + `data_updates` 登记滞留工作区一天未提交（来源：2026-08-05 `sepa backtest` 运行）。手动提交并推送（Dolt `v3guc39`），并强化 AGENTS.md + kb/dev/database.md 约束：从"每次数据修改"扩为"任何路径修改该库（含 CLI/程序写回如 `sepa backtest`）必须及时 commit & push，写库后立即收尾，`dolt status` 非干净即流程违规"（GitHub `21bbfdf`）。
+**What was done**: 用户发现 `compass_data` Dolt 仓库 `backtest_result` 384 行 + `data_updates` 登记滞留工作区一天未提交（来源：2026-08-05 `sepa backtest` 运行）。手动提交并推送（Dolt `v3guc39`），并强化 AGENTS.md + .dsh/kb/dev/database.md 约束：从"每次数据修改"扩为"任何路径修改该库（含 CLI/程序写回如 `sepa backtest`）必须及时 commit & push，写库后立即收尾，`dolt status` 非干净即流程违规"（GitHub `21bbfdf`）。
 
 **User corrections**（逐字引用对话记录）:
 1. "选1，然后需要加一个项目书约束，修改compass_data数据库，需要及时提交和push。" —— 用户选手动提交的同时明确要求**固化项目书约束**，而非一次性清理了事——我的选项把"手动提交"与"修代码自动 commit"分开，用户要求至少先落到规则层。
@@ -891,7 +891,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. **规则的对象枚举要覆盖非人操作路径**：数据变更规则不能只列"import/采集/schema"等人执行命令，CLI/程序写回（`sepa backtest` → `backtest_result`）同样是数据修改——规则应写"任何路径修改该库"而非穷举。
 
 **Process improvements**:
-- 已落实：AGENTS.md「compass_data Dolt 仓库 — 每次数据变更后 commit & push（所有路径）」章节重写（含程序写回路径同 session 收尾 + `dolt status` 验证 + 违规记录 reflections）；`kb/dev/database.md`「compass_data 提交推送」同步（`21bbfdf`，ref #190）
+- 已落实：AGENTS.md「compass_data Dolt 仓库 — 每次数据变更后 commit & push（所有路径）」章节重写（含程序写回路径同 session 收尾 + `dolt status` 验证 + 违规记录 reflections）；`.dsh/kb/dev/database.md`「compass_data 提交推送」同步（`21bbfdf`，ref #190）
 - 建议（代码类，未排期）：`sepa backtest` CLI 的 `write_back_result()` 内置 Dolt commit 收尾（同 `sepa_daily.sh` 模式）——走 gate 建 issue 时评估
 
 ### Trends (last 10)
@@ -971,9 +971,9 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 **Process improvements**:
 - 已落实：本条目记录同构采集器一致性门禁教训（未来多采集器并行改造必查）
-- 已落实：`kb/dev/toolchain.md` 候选——宽表 create_sql 的判定路径（真实 CSV 实测 `-c` 上限）
-- 已落实：`kb/dev/process.md` 候选——长时后台任务 setsid 纪律
-- 数据管线磁盘预检建议写入 `kb/dev/process.md` 验证章节——proposed
+- 已落实：`.dsh/kb/dev/toolchain.md` 候选——宽表 create_sql 的判定路径（真实 CSV 实测 `-c` 上限）
+- 已落实：`.dsh/kb/dev/process.md` 候选——长时后台任务 setsid 纪律
+- 数据管线磁盘预检建议写入 `.dsh/kb/dev/process.md` 验证章节——proposed
 
 ### Trends (last 10)
 - **并行子任务的同构一致性是盲区**（ref #202 三采集器不同构、ref #139 多 agent 并行）：并行委派各自全绿但跨任务契约（同构字段/语义）无检查——主 agent 合并前必须做跨任务的模式一致性 diff
@@ -1064,7 +1064,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ## 2026-08-09 — ref #223 项目书与全局 opencode 配置配合修复（jsonc 遮蔽/gate 0.5 步/索引/版本漂移）
 
-**What was done**: 审查 AGENTS.md + kb/ 与全局 opencode 配置的配合度，发现并修复 4 项：①删除 `~/.config/opencode/opencode.jsonc`（旧文件仅含 plugin，与完整 opencode.json 并存存在 jsonc 遮蔽 json 的加载优先级风险，实测当前版本 json 生效但为隐式依赖）；②AGENTS.md gate 表格补 0.5 Worktree 步（对齐 skwy-workflow skill 门禁清单）；③知识库表格补 `kb/design/workflow-skills.md` 索引条目；④Rust 版本 1.96→1.97.1 + Worktrees 章节补「worktree 会话启动后同步原始分支」说明。commit `0c93ef9`（docs 直推 master，ref #223）。
+**What was done**: 审查 AGENTS.md + .dsh/kb/ 与全局 opencode 配置的配合度，发现并修复 4 项：①删除 `~/.config/opencode/opencode.jsonc`（旧文件仅含 plugin，与完整 opencode.json 并存存在 jsonc 遮蔽 json 的加载优先级风险，实测当前版本 json 生效但为隐式依赖）；②AGENTS.md gate 表格补 0.5 Worktree 步（对齐 skwy-workflow skill 门禁清单）；③知识库表格补 `.dsh/kb/design/workflow-skills.md` 索引条目；④Rust 版本 1.96→1.97.1 + Worktrees 章节补「worktree 会话启动后同步原始分支」说明。commit `0c93ef9`（docs 直推 master，ref #223）。
 
 **User corrections**: 用户纠正 master 直接改文件行为："你怎么直接修改了，没有切worktree"——我在 SEPA 问题诊断时直接在 master 工作区添加临时诊断测试文件（diag_sepa_real.rs + main.rs 注册），违反 worktree 规则。已立即恢复 master（删除临时文件、还原 main.rs）并在后续工作中先建 worktree。
 
@@ -1079,7 +1079,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 
 ### Trends (last 10)
 - **worktree 规则违反在近 10 条中属罕见但高危**（#210 子任务超时、#208 测试隔离均无此问题）：本次因"临时诊断文件"心理豁免触发，教训已固化——AGENTS.md gate 补 0.5 步 + 反思明确"临时 ≠ 豁免"，后续执行中写文件前先自检分支归属
-- **诊断路径效率模式**：多次排查（#139、#160、本次 SEPA）都出现"先验证引擎再找环境差异"的路径，本次教训建议改为"先复现现场"——若后续再次出现同类模式，考虑在 kb/dev/process.md 调试章节补充排查框架
+- **诊断路径效率模式**：多次排查（#139、#160、本次 SEPA）都出现"先验证引擎再找环境差异"的路径，本次教训建议改为"先复现现场"——若后续再次出现同类模式，考虑在 .dsh/kb/dev/process.md 调试章节补充排查框架
 
 
 ## 2026-08-09 — ref #224 补齐 AGENTS.md 全局 skills 引用并标注强制加载
@@ -1105,7 +1105,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 - worktree 启动规范已在 AGENTS.md Worktrees 章节（open-worktrees.sh 启动 + 主 session 不参与实现），本次违规为执行层面未遵守，无新机制缺口。
 
 ### Trends (last 10)
-- **worktree 规则违反连续两条反思出现**（#223「SEPA 诊断未切 worktree 直接改 master」→ 本次「恢复后未启动 worktree 区域即操作」）：同一模式第二次出现 = 上次教训未固化。已在本条 Lessons learned #1 明确恢复流程第一步动作，若第三次出现需在 kb/dev/process.md 固化「崩溃恢复 checklist」。
+- **worktree 规则违反连续两条反思出现**（#223「SEPA 诊断未切 worktree 直接改 master」→ 本次「恢复后未启动 worktree 区域即操作」）：同一模式第二次出现 = 上次教训未固化。已在本条 Lessons learned #1 明确恢复流程第一步动作，若第三次出现需在 .dsh/kb/dev/process.md 固化「崩溃恢复 checklist」。
 - **「未加载 skill 就执行」模式**（#210 迁移时技能加载不全、本次全局 skills 未按 AGENTS.md 强制加载）：AGENTS.md 已补「强制加载（MANDATORY）」段落成文约束，待验证后续执行是否遵守。
 - **提交对象误判**（本次把 home dotfiles 仓库 AGENTS.md 误当变更对象）：教训 #3 固化「AGENTS.md 相关变更默认指当前项目仓库，先用问题确认」，避免同类误判。
 
@@ -1135,18 +1135,18 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 5. kittest 查询：Node 无 `label()`/`color()` 方法，文本用 `value()`，颜色用 `harness.output().shapes` 扫描 galley job sections。
 
 **Process improvements**: 
-- kb/dev/testing.md 待补：kittest Node API 限制（value()/shapes 扫描）+ egui wrapped 布局 Frame 撑宽陷阱 + `allocate_exact_size` pill 模式（本次直接改进，后续按门禁建 issue 落档）。
-- 已直接落实：.dsh/evidence/ui-fixes/F1-F4 落盘（ref #174 要求）、kb/design/ui.md 8 条决策记录（9d24b57）、kb/user/gui.md/cli.md 同步。
+- .dsh/kb/dev/testing.md 待补：kittest Node API 限制（value()/shapes 扫描）+ egui wrapped 布局 Frame 撑宽陷阱 + `allocate_exact_size` pill 模式（本次直接改进，后续按门禁建 issue 落档）。
+- 已直接落实：.dsh/evidence/ui-fixes/F1-F4 落盘（ref #174 要求）、.dsh/kb/design/ui.md 8 条决策记录（9d24b57）、.dsh/kb/user/gui.md/cli.md 同步。
 
 ### Trends (last 10)
-- **UI 布局诊断路径改进**（#139 SEPA、#221、本次 #217 多次）：多次出现"先猜渲染机制再验证"导致返工（Tag 空格先查渲染后查数据、detail 溢出经 probe 才定位 Frame 撑宽）。教训 #2/#3 建议改为"先复现现场拿证据再二分"——若后续再出现同类返工，在 kb/dev/process.md 调试章节固化排查框架。
+- **UI 布局诊断路径改进**（#139 SEPA、#221、本次 #217 多次）：多次出现"先猜渲染机制再验证"导致返工（Tag 空格先查渲染后查数据、detail 溢出经 probe 才定位 Frame 撑宽）。教训 #2/#3 建议改为"先复现现场拿证据再二分"——若后续再出现同类返工，在 .dsh/kb/dev/process.md 调试章节固化排查框架。
 - **ui-designer 委派中断**（本次）：同步委派设计 agent 被 abort 一次。教训 #1 已固化"长任务一律后台"，观察后续是否遵守。
 - **数据层脏数据导致 GUI 渲染异常**（本次 Tag 空格）：教训 #3 固化"数据驱动渲染异常先查源头"——同类模式（上游未清洗 → GUI 异常）可能在其他采集器字段重现，建议采集器侧统一 TRIM 字符串字段（proposed）。
 
 
 ## 2026-08-09 — ref #226/#227/#228 UI 组件规范偏差修复 epic：test-first + review MAJOR 修复 + GUI 冒烟
 
-**What was done**: 修复 compass-ui 三个组件规范偏差（issue #226 IconButton 默认尺寸改读 control_md token、#227 Badge min-width 16px、#228 Dropdown 弹层搜索框复用 Input 组件）。门禁 3.5/4 步委派双测试 agent 写 7 个 RED 测试（3 内嵌 + 4 集成），实现 GREEN（224 lib + 9 集成全绿）。review-work 第 1 轮 Code Quality FAIL（MAJOR：Input 无条件 -56px icon 预算导致无 icon 输入窄 48px），修复 + 第 2 轮 5/5 PASS。6 commits 全部在 fix/ui-widgets-deviations worktree。文档同步 kb/design/ui-widgets.md 偏差回填。GUI 冒烟验证（像素采样）。完成交付后用户报告新 UI 问题 → 委派 ui-designer 产出 #230 设计方案（issue https://github.com/qiboda/compass/issues/230）。
+**What was done**: 修复 compass-ui 三个组件规范偏差（issue #226 IconButton 默认尺寸改读 control_md token、#227 Badge min-width 16px、#228 Dropdown 弹层搜索框复用 Input 组件）。门禁 3.5/4 步委派双测试 agent 写 7 个 RED 测试（3 内嵌 + 4 集成），实现 GREEN（224 lib + 9 集成全绿）。review-work 第 1 轮 Code Quality FAIL（MAJOR：Input 无条件 -56px icon 预算导致无 icon 输入窄 48px），修复 + 第 2 轮 5/5 PASS。6 commits 全部在 fix/ui-widgets-deviations worktree。文档同步 .dsh/kb/design/ui-widgets.md 偏差回填。GUI 冒烟验证（像素采样）。完成交付后用户报告新 UI 问题 → 委派 ui-designer 产出 #230 设计方案（issue https://github.com/qiboda/compass/issues/230）。
 
 **User corrections**（逐字引用对话记录）:
 1. "开始"（多次）——确认执行 handoff 锁定方案。
@@ -1164,11 +1164,11 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 4. **ref #217「统一 text_primary」决策有 light 主题边界条件**——「跟随主题」验收在 dark 成立、light 退化（深字在亮蓝底对比不足）；语义分层的 on_* token 是正确演进方向（#230 设计已采纳）。
 
 **Process improvements**: 
-- proposed：kb/dev/toolchain.md 排查卡补「pgrep 自匹配」条目（#105 教训未固化导致本次复发）；kb/dev/testing.md 补「GUI 冒烟像素采样验证法（grim + ImageMagick histogram）+ 渲染断言 vs 字段断言」——代码/文档变更走 gate 建 issue 落档。
+- proposed：.dsh/kb/dev/toolchain.md 排查卡补「pgrep 自匹配」条目（#105 教训未固化导致本次复发）；.dsh/kb/dev/testing.md 补「GUI 冒烟像素采样验证法（grim + ImageMagick histogram）+ 渲染断言 vs 字段断言」——代码/文档变更走 gate 建 issue 落档。
 
 ### Trends (last 10)
 - **pgrep 自匹配复发**（#105 2026-08-01 → 本次 2026-08-09）：同一模式第二次出现，教训未固化到 toolchain 排查卡——必须在本次 Process improvements 落实（proposed）。
-- **UI 验证手段摩擦反复出现**（#217 kittest Node API 误用/`value()` 扫描 → 本次截图工具链 grim/import 踩坑）：GUI 验证方法多次返工，应统一固化「验证手段速查」（kittest 断言 + 像素采样）到 kb/dev/testing.md。
+- **UI 验证手段摩擦反复出现**（#217 kittest Node API 误用/`value()` 扫描 → 本次截图工具链 grim/import 踩坑）：GUI 验证方法多次返工，应统一固化「验证手段速查」（kittest 断言 + 像素采样）到 .dsh/kb/dev/testing.md。
 - **设计委派流程稳定**（#217「让设计师设计去」→ 本次「让设计师设计一下」）：design-first（ui-designer 产出 .omo/designs → 用户确认 → 实现）已成为 UI 问题标准路径，两次均获用户认可。
 
 
@@ -1193,7 +1193,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 ### Trends (last 10)
 - **子代理证据落盘权限摩擦**（#217/#226 modal 截图失败 → 本次测试 agent 无法写 evidence）：子代理沙箱权限限制（bash/edit 白名单）反复导致交付物无法落盘，主 agent 代写成为常态——建议在委派 prompt 统一加"权限受限时回复输出完整记录"条款（本次已应用，观察后续）。
 - **委派 prompt 信息不完整导致 agent 空转**（本次 RED 测试 2 次失败）：高风险委派（测试/逆向）前先验证可行性假设再给模板——同类模式（#226 测试 agent gh 命令被 deny）表明子代理工具/语义约束需在 prompt 预声明。
-- **真实数据 QA 超时**（本次 import 18M+ 行 300s 超时）：大库手动验证需小样本 fixture 策略——建议 kb/dev/process.md 调试章节补"大库 CLI QA 用小样本临时库"提示（proposed）。
+- **真实数据 QA 超时**（本次 import 18M+ 行 300s 超时）：大库手动验证需小样本 fixture 策略——建议 .dsh/kb/dev/process.md 调试章节补"大库 CLI QA 用小样本临时库"提示（proposed）。
 
 ## 2026-08-06 — ref #184/#182 CI hooks：pre-commit fmt 落地 + temp 竞争根治（#189 收尾）
 
@@ -1237,7 +1237,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. 数据管线变更的冒烟必须是**全链路**（import → 下游消费方）：单位/格式修正会影响所有关联 parquet（stock_daily 与 stock_basic 的 symbol 格式必须一致才能 join）——刷新主表时盘点所有依赖它的副表，一并刷新。
 
 **Process improvements**: 
-- 已落实（docs）：`kb/dev/toolchain.md` 指数混源卡片补注 #201 已落地 import 侧剔除（随本 PR 提交）。
+- 已落实（docs）：`.dsh/kb/dev/toolchain.md` 指数混源卡片补注 #201 已落地 import 侧剔除（随本 PR 提交）。
 - 建议（可检测）：数据管线变更的 plan 中，冒烟步骤显式列出"全链路验证（含所有依赖副表格式一致性）"——proposed（下次 plan 模板层面落实）。
 
 ### Trends (last 10)
@@ -1266,7 +1266,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 2. worktree 内执行脚本时 `$0` 相对路径解析的是 worktree 副本而非主仓库脚本——涉及"定位主仓库/项目根"的脚本逻辑，一律用 `git rev-parse --git-common-dir` 而非 `dirname $0`；同时注意已存在 worktree 的脚本副本需同步才生效。
 
 **Process improvements**: 
-- 已落实：`scripts/open-worktrees.sh` 抽 `resolve_project_root()`（git-common-dir 定位）+ PROJECT_ROOT 空值守卫；`kb/dev/process.md` 记录 worktree 副本同步注意点。
+- 已落实：`scripts/open-worktrees.sh` 抽 `resolve_project_root()`（git-common-dir 定位）+ PROJECT_ROOT 空值守卫；`.dsh/kb/dev/process.md` 记录 worktree 副本同步注意点。
 - 已落实：测试扩展 3 例（worktree cwd / repo root / 仓库外 fallback），其中 worktree cwd 用例正是本 bug 的回归保护。
 - 建议（可检测）：`open-worktrees-test.sh` 可增加"从 fixture worktree 内部真实执行脚本"的端到端用例（当前 #22 只验证 resolve_project_root 函数，未验证顶层 PROJECT_ROOT 集成）——proposed
 
@@ -1287,7 +1287,7 @@ Pass 4a 全部 kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池、fr
 4. **LSP 陈旧缓存误报**：sepa.rs 编辑后 LSP 报"no such field: label/note"（旧字段名），实际是 rebase 冲突解决后的 stale 索引——重复 3 轮才确认是缓存问题，浪费诊断轮次。教训：冲突解决后的 LSP 报错先 cargo check 验证再信。
 
 **Lessons learned**:
-1. git 命令挂起/超时/非预期行为 → 第一步查 kb/dev/toolchain.md 已知坑表（GIT_EDITOR/TTY/权限卡），确认无匹配再诊断根因
+1. git 命令挂起/超时/非预期行为 → 第一步查 .dsh/kb/dev/toolchain.md 已知坑表（GIT_EDITOR/TTY/权限卡），确认无匹配再诊断根因
 2. 数值/格式化类 i18n 变更的测试必须用非干净值（小数、正负号、边界）锁定精度契约——干净值测试让精度回归静默通过（factor-note 教训）
 3. 冲突解决/LSP 索引过期的报错以 cargo check 为准，不逐轮猜 LSP 输出
 4. push 前就绪核查必须包含"fetch + ahead/behind 复验"，不信任早前 rebase 结果

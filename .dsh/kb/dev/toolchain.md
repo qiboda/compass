@@ -198,7 +198,7 @@
   （进程存在 ≠ 窗口可见，ref #105）
 - **教训**: `pgrep -f` 自匹配已两次复发（ref #105、ref #226）——若在
   process.md 纪律章节已写"检测/结束 GUI 进程的正确姿势"却仍走 `-f`，
-  先回查该章节（`kb/dev/process.md` 调试技巧）再动手；长链命令
+  先回查该章节（`.dsh/kb/dev/process.md` 调试技巧）再动手；长链命令
   （pkill;sleep;build;tmux;sleep;pgrep）分步执行，避免 bash 工具超时
   留下半启动状态
 

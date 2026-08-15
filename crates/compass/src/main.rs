@@ -4044,7 +4044,7 @@ default_timeframe = "1w"
         // kittest constructs CompassApp directly without main() (Metis M5),
         // so no set_locale call ever runs on that path. rust-i18n's
         // process-global locale defaults to "en" (the `default-locale` cargo
-        // metadata is a no-op in 4.2.1 — see kb/dev/toolchain.md), so the zh
+        // metadata is a no-op in 4.2.1 — see .dsh/kb/dev/toolchain.md), so the zh
         // contract is pinned explicitly here rather than assumed from the
         // library default.
         let _guard = LANG_LOCK

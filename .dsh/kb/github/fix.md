@@ -6,7 +6,7 @@
 
 ## 项目约定
 
-你已阅读 `AGENTS.md`。对于任何代码修改，你必须遵循 compass 工作流：测试优先、提交信息包含 `ref #N`、行为变更时更新相关 `kb/` 文件。
+你已阅读 `AGENTS.md`。对于任何代码修改，你必须遵循 compass 工作流：测试优先、提交信息包含 `ref #N`、行为变更时更新相关 `.dsh/kb/` 文件。
 
 ## 前置检查
 
@@ -52,10 +52,10 @@
    - `cargo clippy -- -D warnings` — 干净
    - `cargo fmt --check` — 干净
    - `lsp_diagnostics` 对修改的文件干净
-5. 如果行为、API 或配置变更：更新相关 `kb/` 文件
-   （根据 `~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → kb/ 映射表由项目自身定义）确定对应的 kb 文件）
+5. 如果行为、API 或配置变更：更新相关 `.dsh/kb/` 文件
+   （根据 `~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → .dsh/kb/ 映射表由项目自身定义）确定对应的 kb 文件）
 6. 提交信息格式：`fix: <description>\n\nref #<issue_number>`
-   - 将 kb/ 更新包含在同一提交中
+   - 将 .dsh/kb/ 更新包含在同一提交中
 7. 创建 PR：`gh pr create --title "fix: <description>" --body "Addresses #<issue_number>" --label "C-Bug,<A-label>"`
 8. 在 issue 中评论附上 PR 链接 —— 由人工审核并合并
 

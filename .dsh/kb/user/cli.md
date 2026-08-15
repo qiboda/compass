@@ -239,7 +239,7 @@ block_trade 的 buyer/seller）。仅去 ASCII 空格（U+0020），全角空格
 `fetch_stock_basic.py` 仍保留但不再用于 stock_basic——其 EM_FS m:0+t:81 段混入
 6841 只新三板/老三板股票。原先为东财分页设计的 `--resume` / `--max-pages` 标志已移除。
 
-采集器管线的完整描述见 `kb/design/architecture.md`。
+采集器管线的完整描述见 `.dsh/kb/design/architecture.md`。
 
 ---
 
@@ -317,7 +317,7 @@ cargo run --bin compass-data -- sepa backtest --start 2026-07-01 --top 30 --days
 
 **输出**：stdout 摘要指标表（策略累计/年化收益、胜率、盈亏比、最大回撤、换仓次数、基准累计、超额收益、年化超额）；`--csv` 写权益曲线文件；Dolt `backtest_result` 表存每日策略/基准净值曲线（单快照全表替换，幂等可重跑，`data_updates` 同步登记）。
 
-**已知限制**：概念成员/ST 状态为当前快照（历史回测存在轻微前瞻偏差，窗口 2025 起可控，报告中标注）；主力资金流无历史 → 资金模块降级为量价配合+筹码集中（大资金流入归 0）。架构细节与决策记录见 `kb/design/backtest.md`。
+**已知限制**：概念成员/ST 状态为当前快照（历史回测存在轻微前瞻偏差，窗口 2025 起可控，报告中标注）；主力资金流无历史 → 资金模块降级为量价配合+筹码集中（大资金流入归 0）。架构细节与决策记录见 `.dsh/kb/design/backtest.md`。
 
 ---
 

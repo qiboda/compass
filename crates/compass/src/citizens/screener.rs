@@ -2167,7 +2167,7 @@ mod tests {
         // kittest cannot reliably click a second popup inside the nested
         // sub-group scope (the first in-group popup works, the second click
         // is swallowed by the Area close-on-outside logic — see
-        // kb/dev/toolchain.md). Add the two cards via the view model instead;
+        // .dsh/kb/dev/toolchain.md). Add the two cards via the view model instead;
         // the in-group popup interaction itself is covered by the root add
         // menu in `add_condition_via_root_menu_appends_card`.
         if let CondItem::Group(g) = &mut panel.builder_root[6] {

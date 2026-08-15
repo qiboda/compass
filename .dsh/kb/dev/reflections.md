@@ -3,7 +3,7 @@
 属于项目书。记录每次功能与修复的事后反思——做了什么、哪里出错、下次怎么做。
 
 **归档机制**：教训已融入流程（AGENTS.md 规则、skill 步骤、hook、回归测试、CI 门禁）
-的条目不再具活性参考价值，归档至 `kb/dev/reflections-archive.md`（历史可查）。
+的条目不再具活性参考价值，归档至 `.dsh/kb/dev/reflections-archive.md`（历史可查）。
 主文件仅保留仍具活性参考价值的条目（最近 + 教训未完全固化者）。
 
 **自动归档（skwy-reflect 第 5 步，ref #238）**：本文件超过 500 行时自动归档一次
@@ -25,22 +25,22 @@
 
 **What went wrong**:
 1. **F1 evidence 早期声称"9 commits"**：plan 完成审计（F1）在修复轮中途写就，声称 9 commits 全部含 ref #181——实际完成时 14 commits。上下文挖掘 lane 抓出"evidence 过期声称"，违反 AGENTS.md ref #174"完成声明前必须核实、禁止过度声称"。教训：F-wave evidence 应在全部实现完成后一次性写，中途写必然过期。
-2. **MINOR 修复引入 doc drift（43→BJ 未同步 kb/）**：c79564c 给 `infer_exchange_prefix` 加 43→BJ 分支（对齐官方采集器），但 kb/design/symbols.md L57/L211 + kb/user/config.md D10 迁移规则仍是"8/92→BJ、其余→SZ"——三方 review（Goal/CodeQuality/Context）同时抓出。违反 plan 自身 success criterion "kb/ 文档与代码一致"。教训：行为变更（尤其规则/启发式改动）必须同 commit 同步文档，不能等"文档任务"。
+2. **MINOR 修复引入 doc drift（43→BJ 未同步 .dsh/kb/）**：c79564c 给 `infer_exchange_prefix` 加 43→BJ 分支（对齐官方采集器），但 .dsh/kb/design/symbols.md L57/L211 + .dsh/kb/user/config.md D10 迁移规则仍是"8/92→BJ、其余→SZ"——三方 review（Goal/CodeQuality/Context）同时抓出。违反 plan 自身 success criterion ".dsh/kb/ 文档与代码一致"。教训：行为变更（尤其规则/启发式改动）必须同 commit 同步文档，不能等"文档任务"。
 3. **Security lane 抓到 --start-date/--end-date 注入未封**：首轮修复只封了 --symbols 注入，日期参数仍是原始插值——修复不完整导致第二轮 FAIL。教训：安全修复要覆盖同一漏洞类的全部实例（--since 已有校验，start/end 应同构处理），review 通过后修复必须逐条验证而非"修了主要的那条"。
 
 **Lessons learned**:
 1. **F-wave evidence 只在全部实现完成后写**——中途写必然"过期声称"；如不得已中途写，完成后必须补正（本次已补正为 11→14 commits 但应避免再犯）。"声明完成前逐条核实"是 ref #174 的强制要求，evidence 产物本身也必须真实。
-2. **规则/启发式改动 = 文档同 commit 同步**——行为变更的 commit 必须包含其文档同步，不能依赖独立的"文档任务"兜底；doc-drift 会被 review 抓出但已在 review 后才暴露（成本更高）。可固化：commit 自检增加"改了规则/常量 → 检查 kb/ 是否有对应文字"。
+2. **规则/启发式改动 = 文档同 commit 同步**——行为变更的 commit 必须包含其文档同步，不能依赖独立的"文档任务"兜底；doc-drift 会被 review 抓出但已在 review 后才暴露（成本更高）。可固化：commit 自检增加"改了规则/常量 → 检查 .dsh/kb/ 是否有对应文字"。
 3. **安全修复按"漏洞类"而非"单点"闭合**——--symbols 与日期参数是同类注入面，修复必须枚举全部入口；review 通过 ≠ 无遗漏，复审要验证修复覆盖了 finding 描述的全部范围。
 
 **Process improvements**:
 - 已落实：无机制变更（本次为 review 修复闭环 + evidence 补正，规则已在 AGENTS.md/KB 中；43→BJ 规则已同步三处文档，F1 evidence 已补正）
 - 建议（可检测失误）：plan 的 Final verification wave F1 增加"evidence 文件日期/commit 计数与 HEAD 一致"自检项——proposed，走 gate 建 issue 时评估
-- 建议（行为类）：commit-msg 前自检清单增加"规则/启发式改动 → 同 commit 检查 kb/ 对应文字"——proposed
+- 建议（行为类）：commit-msg 前自检清单增加"规则/启发式改动 → 同 commit 检查 .dsh/kb/ 对应文字"——proposed
 
 ### Trends (last 10)
 - **"完成声明先于验证/声称过期"模式延续**（ref #160 → #174 → 本次 F1 "9 commits" 过期声称）：声明 plan 完成前的证据核实是反复被"学到"但未固化的教训——F1 evidence 应在实现收尾后统一写，且 evidence 本身内容要可复核（commit 计数、grep 结果）
-- **doc-drift 反复出现**（ref #171 陈旧文档、ref #139 决策记录同步、本次 43→BJ 未同步 kb/）：行为变更（规则/启发式/默认值）与 kb/ 文档必须同 commit 提交——"文档任务"兜底模式已被证实两次失败，应固化为 commit 自检
+- **doc-drift 反复出现**（ref #171 陈旧文档、ref #139 决策记录同步、本次 43→BJ 未同步 .dsh/kb/）：行为变更（规则/启发式/默认值）与 .dsh/kb/ 文档必须同 commit 提交——"文档任务"兜底模式已被证实两次失败，应固化为 commit 自检
 - **安全/质量修复不完整导致复审 FAIL**（ref #154 两轮修复、本次 security lane 抓到日期注入）：review 发现的修复必须逐条验证覆盖 finding 全部范围——"修了主要实例"不等于"闭合漏洞类"
 
 
@@ -71,7 +71,7 @@
 
 ## 2026-08-08 — ref #208 mold 链接器 + collectors CSV 输出目录统一
 
-**What was done**: (1) 新增 `.cargo/config.toml`（参考 atom 项目布局）：Linux 启用 mold（`linker="clang"` + `-fuse-ld=/usr/bin/mold`），macOS/Windows 默认链接器占位，Nightly flags 注释保留；CI `rust`/`bench-check` job 安装 mold+clang；AGENTS.md + kb/user/index.md 补 mold 前置条件。(2) collectors 全部 11 个采集器默认 CSV 输出从 `collectors/` 相对路径统一到 `csv_dir()`（`/data/compass-data/csv`，`COMPASS_CSV_DIR` env 可覆盖），`-o/--output` 保留覆盖；`main.py` import 路径同步；conftest autouse fixture 隔离测试目录；review 修复后补 `csv_dir()` mkdir + 删 `COLLECTORS_DIR` 死代码。3 commits（735d4ea/8d7bca4/2c24f68），5-way review 两轮。
+**What was done**: (1) 新增 `.cargo/config.toml`（参考 atom 项目布局）：Linux 启用 mold（`linker="clang"` + `-fuse-ld=/usr/bin/mold`），macOS/Windows 默认链接器占位，Nightly flags 注释保留；CI `rust`/`bench-check` job 安装 mold+clang；AGENTS.md + .dsh/kb/user/index.md 补 mold 前置条件。(2) collectors 全部 11 个采集器默认 CSV 输出从 `collectors/` 相对路径统一到 `csv_dir()`（`/data/compass-data/csv`，`COMPASS_CSV_DIR` env 可覆盖），`-o/--output` 保留覆盖；`main.py` import 路径同步；conftest autouse fixture 隔离测试目录；review 修复后补 `csv_dir()` mkdir + 删 `COLLECTORS_DIR` 死代码。3 commits（735d4ea/8d7bca4/2c24f68），5-way review 两轮。
 
 **User corrections**（逐字引用对话记录）:
 1. "支持各个平台。 所有需要编译的都需要，要不然就编译不过了。。。" —— grill Q2 我推荐"只配 Linux target 段"，用户否决：要求像 atom 一样覆盖各平台段，且 CI 所有编译 job 都要装 mold（否则 rustflags 引用 mold 会编译失败）
@@ -120,16 +120,16 @@
 4. **on_* token 语义**：Material `on-*`（彩色实底上的对比前景）与 `text_primary`（普通浅底主文字）语义分离，是解决「同色值两场景对比度不同」的正确分层——ref #217 统一 text_primary 决策在 light 主题的边界条件被 #230 暴露。
 
 **Process improvements**:
-- None（一次性/已落实：设计文档 `.dsh/designs/button-theme-and-width-fix.md` 已提交；kb/design/ui.md L261 决策记录已修订为 ref #230 版本；ui-widgets.md Button 条目已同步。测试 helper 重复 → proposed 提取 `tests/common/mod.rs`）。
+- None（一次性/已落实：设计文档 `.dsh/designs/button-theme-and-width-fix.md` 已提交；.dsh/kb/design/ui.md L261 决策记录已修订为 ref #230 版本；ui-widgets.md Button 条目已同步。测试 helper 重复 → proposed 提取 `tests/common/mod.rs`）。
 
 ### Trends (last 10)
-- **「先猜根因再验证」返工模式持续出现**（#139/#217 布局诊断、本次 #230 宽度观感）：本次因用户明确要求「查根本原因」而走了 kittest 断言先行，直接锁定根因（宽度真实跟随、遮罩观感）——验证「先复现拿证据再二分」有效，建议在 kb/dev/process.md 调试章节固化该排查框架（proposed）。
+- **「先猜根因再验证」返工模式持续出现**（#139/#217 布局诊断、本次 #230 宽度观感）：本次因用户明确要求「查根本原因」而走了 kittest 断言先行，直接锁定根因（宽度真实跟随、遮罩观感）——验证「先复现拿证据再二分」有效，建议在 .dsh/kb/dev/process.md 调试章节固化该排查框架（proposed）。
 - **ui-designer 设计委派流程已成标准路径**（#217 → 本次 #230）：design-first（产出 .omo/designs → 用户逐点确认 → 实现）两次均获认可，无偏差。
 - **并行子代理测试重复**（本次 loading 文字色测试双写）：新出现模式——需在双测试 agent 委派时显式划分边界，观察后续是否再现。
 
 ## 2026-08-10 — ref #238 skwy-reflect 反思文件 >500 行自动归档规则 + 归档执行
 
-**What was done**: 给 skwy-reflect skill 新增第 5 步「反思文件超行数自动归档」：>500 行自动触发（`wc -l` 检查），三分类处理（值得处理的列候选建 issue 后归档、已处理的直接归档、剩余的保留待下次检阅、归档后仍超 500 行交用户判断），归档沿用脚本切分 + 行级丢失校验；同步 AGENTS.md / reflections.md 头部 / kb/design/workflow-skills.md 决策记录。对当前 801 行 reflections.md 执行首次归档：23 条归档（19 已处理 + 4 建 issue 后）、7 条保留、0 行丢失，主文件降至 208 行。建 issue #239（testing.md GUI 测试方法论）/ #240（process.md 磁盘预检+大库小样本）。commit 68fa517。
+**What was done**: 给 skwy-reflect skill 新增第 5 步「反思文件超行数自动归档」：>500 行自动触发（`wc -l` 检查），三分类处理（值得处理的列候选建 issue 后归档、已处理的直接归档、剩余的保留待下次检阅、归档后仍超 500 行交用户判断），归档沿用脚本切分 + 行级丢失校验；同步 AGENTS.md / reflections.md 头部 / .dsh/kb/design/workflow-skills.md 决策记录。对当前 801 行 reflections.md 执行首次归档：23 条归档（19 已处理 + 4 建 issue 后）、7 条保留、0 行丢失，主文件降至 208 行。建 issue #239（testing.md GUI 测试方法论）/ #240（process.md 磁盘预检+大库小样本）。commit 68fa517。
 
 **User corrections**（逐字引用对话记录）:
 1. "1， 4， 5， 6 建立issue。描述清楚。2和3不处理。" —— 从反思评估候选中选定建 issue 项，否决 sepa Dolt commit 内置与后台任务失活判定两项
@@ -147,7 +147,7 @@
 3. 可复用的数据操作脚本入库（scripts/）供第 5 步复用，避免每次 /tmp 重写 + 返工
 
 **Process improvements**:
-- 已落实：skwy-reflect skill 第 5 步（>500 行自动归档 + 三分类 + 行级校验）；AGENTS.md L314 归档描述；reflections.md 头部说明；kb/design/workflow-skills.md 决策记录（commit 68fa517）
+- 已落实：skwy-reflect skill 第 5 步（>500 行自动归档 + 三分类 + 行级校验）；AGENTS.md L314 归档描述；reflections.md 头部说明；.dsh/kb/design/workflow-skills.md 决策记录（commit 68fa517）
 - 已建 issue：#239（testing.md GUI 测试方法论）、#240（process.md 磁盘预检+大库小样本）；上轮 #234-237
 - proposed（代码类）：归档脚本入库 `scripts/archive-reflections.py` 供第 5 步复用（本次 /tmp 脚本两次返工暴露的一次性工具问题）——走 gate 建 issue 评估
 - 教训 2/3 为一次性，写入本条目
@@ -182,7 +182,7 @@
 - 无机制变更（纯 docs 批次，不新增规则）。amend/reset 操作纪律为一次性操作性教训，写入本条目——commit-msg hook 与 pre-commit 已覆盖可检测部分，操作顺序类摩擦难以 hook 化。
 
 ### Trends (last 10)
-- **commit 操作摩擦高频出现**（ref #184 commit-msg 误写 → ref #222 rebase 挂起 → 本次 amend 误操作 + staged 混入）：git 操作纪律（amend 前确认 HEAD、reset 后清 staged）建议沉淀到 kb/dev/process.md「版本控制」章节——commit 操作是比实现代码更高频的摩擦源
+- **commit 操作摩擦高频出现**（ref #184 commit-msg 误写 → ref #222 rebase 挂起 → 本次 amend 误操作 + staged 混入）：git 操作纪律（amend 前确认 HEAD、reset 后清 staged）建议沉淀到 .dsh/kb/dev/process.md「版本控制」章节——commit 操作是比实现代码更高频的摩擦源
 - **「文档已固化但未遵守」模式**（ref #184 记录第五次 → 本次 commit message 中文）：AGENTS.md 规则存在但执行时未查——commit 前自查清单（message 英文 + ref 前缀 + 叙述性提及用 #N）值得做成 pre-commit 可检测项或提交模板
 
 ## 2026-08-11 — ref #46/#132/#71 timeframe-theme-stocklist 批次：3 个 issue 批量修复
@@ -265,7 +265,7 @@
 3. **F-wave evidence 一次性写全所有 task 证据**：task-1/2 测试证据与 task-5 验证证据同批落盘，不先写部分再补（本次后补暴露的完整性缺口）。
 
 **Process improvements**:
-- 已落实（docs）：`kb/dev/toolchain.md` 新增 llvm-cov double-spawn 排查卡（先重跑验证竞态）。
+- 已落实（docs）：`.dsh/kb/dev/toolchain.md` 新增 llvm-cov double-spawn 排查卡（先重跑验证竞态）。
 - 建议（可检测）：skwy-adversarial-test / skwy-requirement-test 的 agent edit 权限 glob 核查——`**/src/**/*.rs` 未匹配 `crates/*/src/lib.rs`，验证 agent 权限配置是否覆盖工作区全部目标文件（proposed，走 gate 建 issue 评估）。
 
 ### Trends (last 10)
@@ -359,7 +359,7 @@
 
 **Process improvements**:
 - toolchain.md 新增 2 张排查卡：`子分组 scope INFINITY 布局`（已修复 + 遗留 kittest 二次 popup 限制）、kittest NaN/inf rect 点击静默丢弃 + popup 单帧 step 时序教训
-- kb/dev/testing.md 未更新——kittest 多匹配/locale 教训已在 toolchain 卡覆盖，待下次测试文档修订时并入（proposed）
+- .dsh/kb/dev/testing.md 未更新——kittest 多匹配/locale 教训已在 toolchain 卡覆盖，待下次测试文档修订时并入（proposed）
 
 ### Trends (last 10)
 - **子代理交付验证重复 2 次**（ref #244 worker 超时零交付 → ref #245 两次只分析未落盘）：委派 prompt 必须内置"交付前 git status 验证 + 未落盘视为失败"的硬性检查，纯"注意"不固化则每批再犯——本批已通过 prompt 显式要求缓解，但尚未固化为 skill/AGENTS.md 规则
@@ -405,7 +405,7 @@
 2. **pre-commit hook 多轮拒绝**（C1 commit 时）：ruff SIM105（try-except-pass ×2）+ SIM117（嵌套 with ×2）共 4 处修复才通过。hook 规则明确但实现 agent 未预检 ruff。
 3. **FIX-3 抽样核对测试数据设计错误**：3001 vs 2990 差 0.37% 在 0.5% 容差内——测试断言"必须报警"但数据未超容差，多轮调试后定位是测试数据问题而非实现缺陷。
 4. **FIX-4 真实数据冒烟被网络阻塞**：东财 push2his 全部 host（主域 + 91./79./17./7./80./29. 镜像）HTTP 000 不可达，真实采集无法执行；仅 quote.eastmoney.com 首页可达。按问题闭环记录根因（环境网络策略），降级为 tempdir 真实形态数据验证管线，真实采集待网络恢复。
-5. **review-work 5-lane 的 Goal/Security FAIL 暴露的缺口**：T8 文档同步缺失（kb/ 零更新）、决策 6 抽样核对未实现、--since 注入校验缺失——均为实现 agent 的 scope 遗漏，review 独立发现（体现 review 价值）。
+5. **review-work 5-lane 的 Goal/Security FAIL 暴露的缺口**：T8 文档同步缺失（.dsh/kb/ 零更新）、决策 6 抽样核对未实现、--since 注入校验缺失——均为实现 agent 的 scope 遗漏，review 独立发现（体现 review 价值）。
 
 **Lessons learned**:
 1. **子代理委派必须内置"落盘验证"硬性检查**：prompt 加"交付前 git status 确认改动落盘，未落盘视为失败并立即报告"——本次虽已写但 C1 agent 仍截断零落盘，说明对**后台长任务**还需加"完成后主 agent 必须 git status 核验落盘"（本批主 agent 已核验，但应固化为流程）。
@@ -447,7 +447,7 @@
 
 ## 2026-08-15 — ref #263 迁移 .opencode/.omo 内容到项目 .dsh 目录
 
-**What was done**: OpenCode→DSH 工具链切换——161 个文件迁入 `.dsh/`（plans/designs/evidence/drafts/notepads/skills/handoff-compress.md），删除旧目录 `.opencode/`、`.omo/` 与两个 opencode.json，弃机器生成内容（run-continuation/node_modules/boulder.json）；AGENTS.md + kb/ + 代码注释 + locales + CI 模板的 `.omo`/`.opencode` 路径引用机械替换为 `.dsh` 对应路径；`.gitignore` 移除 `.omo/*` 排除+放行规则（`.dsh/` 全部跟踪）。1 实现 commit（3f6679a）+ 本反思 commit。
+**What was done**: OpenCode→DSH 工具链切换——161 个文件迁入 `.dsh/`（plans/designs/evidence/drafts/notepads/skills/handoff-compress.md），删除旧目录 `.opencode/`、`.omo/` 与两个 opencode.json，弃机器生成内容（run-continuation/node_modules/boulder.json）；AGENTS.md + .dsh/kb/ + 代码注释 + locales + CI 模板的 `.omo`/`.opencode` 路径引用机械替换为 `.dsh` 对应路径；`.gitignore` 移除 `.omo/*` 排除+放行规则（`.dsh/` 全部跟踪）。1 实现 commit（3f6679a）+ 本反思 commit。
 
 **User corrections**:
 1. "方案B" —— 目标结构否决我推荐的方案 A（保留 .opencode/.omo 命名空间），选定扁平重组
@@ -457,7 +457,7 @@
 
 **What went wrong**:
 1. **引用范围侦察不完整**：grill 阶段只 grep `*.md`（77 处），执行时才发现代码注释（Rust 20+ 处）、locales yml、Python 测试注释、`.github/ISSUE_TEMPLATE` 还有 21 处引用，被迫临时扩展替换范围。与 ref #117 同类教训（archive L456："命令/术语引用全仓搜索"），该教训载体（`.opencode/skills/docs/SKILL.md`）已随本次迁移删除，教训失效后第二次再现。
-2. **半替换产生失效表述**：批量 sed 后未逐处审查命中上下文，`kb/dev/process.md` L233 出现"排除 `.omo/*` 但放行 `!.dsh/plans/`"的矛盾表述——靠最终 grep 残留清单发现后修正（改用"不忽略 .dsh 下任何内容"现状描述）。
+2. **半替换产生失效表述**：批量 sed 后未逐处审查命中上下文，`.dsh/kb/dev/process.md` L233 出现"排除 `.omo/*` 但放行 `!.dsh/plans/`"的矛盾表述——靠最终 grep 残留清单发现后修正（改用"不忽略 .dsh 下任何内容"现状描述）。
 
 **Lessons learned**:
 1. 引用替换/删除前全仓 grep 全部文件类型（*.rs/*.py/*.yml/*.md/模板/hook），不只 *.md——已落实为 process.md「知识库同步」章节规则（ref #263）。
@@ -465,8 +465,8 @@
 3. 迁移类任务的 grill 阶段就应逐类问清"档案 vs 死配置"去向——用户连续两次在散件与规则细节上纠正推荐方向。
 
 **Process improvements**:
-- kb/dev/process.md「知识库同步」新增"引用替换/删除前全仓 grep 所有文件类型"规则（ref #263 落实；补记 ref #117 教训载体失效历史）
+- .dsh/kb/dev/process.md「知识库同步」新增"引用替换/删除前全仓 grep 所有文件类型"规则（ref #263 落实；补记 ref #117 教训载体失效历史）
 
 ### Trends (last 10)
-- **引用搜索范围教训第二次出现**（ref #117 docs skill"命令/术语引用全仓搜索" → ref #263 只搜 md 漏 21 处）：前次教训载体（.opencode/skills/docs/SKILL.md）随工具链迁移失效，教训未固化到 kb/ 导致再现——本次已写入 kb/dev/process.md（项目书核心文件，不随工具链消失）
+- **引用搜索范围教训第二次出现**（ref #117 docs skill"命令/术语引用全仓搜索" → ref #263 只搜 md 漏 21 处）：前次教训载体（.opencode/skills/docs/SKILL.md）随工具链迁移失效，教训未固化到 .dsh/kb/ 导致再现——本次已写入 .dsh/kb/dev/process.md（项目书核心文件，不随工具链消失）
 - **用户对"过程归档 vs 活跃配置"边界持续敏感**（本次"3 留着，1 2 删除"+ gitignore 写法纠正）：用户倾向明确区分历史档案（不篡改）与活跃配置（清理死物），迁移类任务应在 grill 阶段就逐类问清去向
