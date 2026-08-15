@@ -442,7 +442,8 @@ async def _fetch_tencent_kline(
         data = await _get_json(session, throttle, (TENCENT_KLINE_URL,), {"param": param})
         if data is None:
             return None
-        payload = (data.get("data") or {}).get(tcode) or {}
+        data_section = data.get("data")
+        payload = data_section.get(tcode) if isinstance(data_section, dict) else None
         rows = payload.get("day") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             # Structurally malformed response: treat the whole target as failed.

@@ -258,6 +258,8 @@ class TestTencentMalformedPayloads:
             {"code": 0, "msg": "", "data": {"sh000001": {"day": None}}},   # day is None
             {"code": 0, "msg": "", "data": {"sh000001": {"day": {}}}},     # day is a dict
             {"code": 0, "msg": "", "data": {"sh000001": {"day": "not-a-list"}}},
+            {"code": 0, "msg": "", "data": []},                            # data is a list
+            {"code": 0, "msg": "", "data": "bad"},                         # data is a string
         ],
     )
     async def test_malformed_payload_is_failure_not_crash(

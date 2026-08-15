@@ -166,6 +166,11 @@ class TestTencentPagination:
         assert len(klines) == _TENCENT_PAGE_SIZE + 50, (
             f"must merge both pages, got {len(klines)} rows"
         )
+        # Merged output must be chronological ascending and duplicate-free
+        # (matches the live Tencent API verification).
+        dates = [k.split(",")[0] for k in klines]
+        assert dates == sorted(dates), "merged klines must be ascending by date"
+        assert len(set(dates)) == len(dates), "merged klines must not duplicate dates"
         # First request: end date empty/absent (count ≤ 2000 caps the page).
         first = calls[0].get("param", "")
         assert first.startswith("sh000001,day,"), f"param {first!r}"
@@ -205,6 +210,9 @@ class TestTencentPagination:
 
         klines = await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
         assert len(klines) == 100
+        dates = [k.split(",")[0] for k in klines]
+        assert dates == sorted(dates), "single short page must stay ascending"
+        assert len(set(dates)) == len(dates), "single short page must not duplicate dates"
         assert len(calls) == 1, "a short first page must not page again"
 
 
