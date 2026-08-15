@@ -1,5 +1,10 @@
 # 工具链问题排查卡
 
+> **历史注记（ref #264）**：本文件含 OpenCode 时代排查卡（如 GitHub MCP 401 的
+> `~/.config/opencode/github-token` 配置、`opencode.json` MCP environment、opencode
+> bash 工具无 TTY 等），OpenCode 已退役、DSH 下不适用；卡原文保留可追溯。新排查卡
+> 按 DSH 语境追加。
+
 本文件记录执行过程中遇到并解决的问题，按**问题排查卡**格式沉淀可复用的
 排查路径（而非事件流水账）。每条卡片的「排查路径」是核心价值——下次遇到
 同类问题直接照做。

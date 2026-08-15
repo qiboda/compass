@@ -6,17 +6,17 @@
 
 ```
 User raises requirement
-  →  OpenCode grills (/grill-me) to clarify scope and decisions
+  →  agent loads grill-me skill to clarify scope and decisions
   →  Shared understanding reached → summarize locked-in decisions
-  →  OpenCode creates GitHub issue (feature_request or bug_report template)
-  →  OpenCode shows issue with gh issue view <N>
-  →  /ulw-plan (if multi-step)  →  plan may identify sub-issues for epic decomposition
-  →  For epics: /skwy-github-workflow creates epic + sub-issues upfront, batches by DAG
+  →  agent creates GitHub issue via skwy-github-workflow skill + GitHub MCP
+  →  agent shows issue with gh issue view <N>
+  →  DSH plan mode (if multi-step) → plan may identify sub-issues for epic decomposition
+  →  For epics: skwy-github-workflow skill creates epic + sub-issues upfront, batches by DAG
   →  implement (each sub-issue walks GATE independently)
   →  cargo nextest (tests must pass)
   →  commit with ref #<sub-N> (epic) or ref #N (single issue)
-  →  ai-review (/review-work) — per sub-issue + pre-PR
-  →  user confirms push → /skwy-reflect (write reflection commit) → push master (one PR with all commits)
+  →  ai-review (subagent_review) — per sub-issue + pre-PR
+  →  user confirms push → skwy-reflect skill (write reflection commit) → push master (one PR with all commits)
   →  CI passes  →  batch close sub-issues + epic with gh issue close
 ```
 
@@ -35,19 +35,20 @@ User raises requirement
 
 ### Epic & Sub-Issue 工作流
 
-大型需求通过 GitHub 原生子 issue 支持（`gh issue create --parent <epic-N>`）分解为
+大型需求通过 GitHub 原生子 issue 支持（GitHub MCP `create_issue` 或
+`gh issue create --parent <epic-N>`）分解为
 **epic**（父 issue）与 **sub-issues**（子 issue）。
 
 核心规则：epic 创建/批次执行/关闭的完整流程见
-`~/.config/opencode/skills/skwy-github-workflow/SKILL.md`。要点：
+`/home/skwy/.dsh/skills/skwy-github-workflow/SKILL.md`。要点：
 
-- Epic + sub-issues 在规划时一次性创建（`/ulw-plan` 识别、`/skwy-github-workflow` 批量创建）
+- Epic + sub-issues 在规划时一次性创建（plan mode 识别、`skwy-github-workflow` skill 批量创建）
 - `.dsh/plans/<epic>.md` 以 `pending | in_progress | done` 表跟踪状态
 - 子任务按依赖 DAG 分批次，批次切换需**人工确认**
 - 一个 epic 一个 PR，每个 sub-issue 一个 commit（`ref #<sub-N>`），regular merge
 - 每个 sub-issue 独立走 GATE；合并后先关 sub-issues 再关 epic
 
-### 当 OpenCode 发现新 Bug 时
+### 当 agent 发现新 Bug 时
 
 1. 使用 `.github/ISSUE_TEMPLATE/bug_report.md` 模板创建 issue
 2. 回读确认（`gh issue view <N>`）issue 已存在
@@ -94,7 +95,7 @@ open_set=$(unset GITHUB_TOKEN 2>/dev/null; gh issue list --repo qiboda/compass \
 重新评估分页策略。行为测试见 `scripts/tests/gh-issue-list-test.sh`（fake gh 注入
 PATH，精确断言命令参数与 OPEN 判定）。
 
-## OpenCode 工作流
+## DSH 工作流
 
 完整流程由 **`skwy-workflow` skill** 强制执行（plan → gate → test-first →
 per-step verify → commit → review → push）。以下是 skill 未覆盖的本地细节：
@@ -149,7 +150,7 @@ feat/xxx       ●──●──●──┘   (feature branch, PR, merge)
 直接从目标分支切修复分支，修复后合并回目标分支，各 PR 互不阻塞：
 
 ```sh
-# 1. 从目标分支切修复分支（复用 /skwy-worktree skill）
+# 1. 从目标分支切修复分支（复用 skwy-worktree skill）
 git worktree add -b fix/<desc> .worktrees/<name> <target-branch>
 
 # 2. 修复 + commit（ref #N）
@@ -192,19 +193,19 @@ Worktrees 位于 `.worktrees/<name>/`（gitignored）。每个 worktree 是一�
 
 **创建时机（强制，ref #138）**：需求经 grill-me 确认需要 worktree 时（feature/epic、
 2+ 模块、将产出 `.dsh/plans/*.md` 或 `.dsh/designs/*.md`），**grill 共识达成后立即
-创建并切换**——plan/design 等 .omo 产出文件直接在 worktree 内创建，随实现 PR 提交。
+创建并切换**——plan/design 等 `.dsh` 产出文件直接在 worktree 内创建，随实现 PR 提交。
 **禁止**在 master 工作区先产出 plan/design 再迁移：git worktree 是独立 checkout，
 master 工作区的 untracked 文件不会出现在 worktree 中（SEPA 教训：全程在 master 规划
 导致 plan/design 成 untracked、需手动迁移）。
 
-**加载 `/skwy-worktree` skill 获取完整流程****（创建、post-creation MANDATORY 步骤、
+**加载 `skwy-worktree` skill 获取完整流程****（创建、post-creation MANDATORY 步骤、
 handoff 移交、自动启动区域、`--close` 退出清理、合并后清理）。
 主 session 创建 worktree 后仅需写 handoff（用途 + issue URL + 已锁定决策），
 剩余工作全部由 worktree 内 agent 自主完成。
 
-`--close <name>` 停止 cwd 指向该 worktree 的 opencode 进程、关闭其承载终端窗口，
+`--close <name>` 停止 cwd 指向该 worktree 的 agent 会话进程、关闭其承载终端窗口，
 然后移除 worktree 与分支。**当该 worktree 存在运行中的持有进程**（包括从 worktree
-自身内部执行时的调用者——例如在该 worktree 的 opencode 会话里运行 `--close`），
+自身内部执行时的调用者——例如在该 worktree 的会话里运行 `--close`），
 清理会交给一个 `setsid` 脱离会话的子进程完成（`logs/open-worktrees-close.log`），
 因此调用者被终止后清理仍会执行完毕（ref #104）。终端窗口关闭对每窗口终端
 （kitty/xterm/konsole）可靠；对 client-server 终端（gnome-terminal）为尽力而为，
@@ -212,13 +213,14 @@ xfce4-terminal 因单实例守护进程（进程名即 xfce4-terminal）不尝�
 
 **`--close` 从 worktree 内部执行（ref #205）**：脚本通过 `git rev-parse --git-common-dir`
 定位主仓库根（`resolve_project_root()`），不依赖 `$0` 相对路径——从 worktree 内
-以 `bash ~/.config/opencode/skills/skwy-worktree/scripts/open-worktrees.sh --close <name>`
+以 `bash /home/skwy/.dsh/skills/skwy-worktree/scripts/open-worktrees.sh --close <name>`
 调用也能正确解析主仓库。脚本已随 skwy-worktree 技能放全局（单一来源，无副本同步
 问题——全局副本即最新版，无需合并 master/重新同步）。
 
-**为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco worktree 插件 via OCX），
+**为何不用 plugins**：评估了 `opencode-worktree` 插件（kdco worktree 插件 via OCX，
+OpenCode 时代评估，历史留档），
 发现存在阻塞性问题（无法幂等地重新打开、终端启动不可靠、无法重新打开 session）。
-手动 worktrees + `/skwy-worktree` skill 提供了完全的控制，避免了这些问题。
+手动 worktrees + `skwy-worktree` skill 提供了完全的控制，避免了这些问题。
 
 ## 版本控制
 
@@ -260,7 +262,7 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 
 ## 添加功能（手动）
 
-如果不使用 OpenCode：
+不经 agent 工作流、纯手动开发：
 
 1. **探索**相关源文件（布局见 `.dsh/kb/design/architecture.md`）。
 2. **测试先行**：在 `#[cfg(test)] mod tests` 中编写失败的测试。
@@ -274,7 +276,7 @@ cargo run --bin compass-data -- backup                    # Parquet → 百度�
 commit 中更新相关 `.dsh/kb/` 文件。如果架构概览发生变化，必须更新 AGENTS.md。
 
 权威的「变更类型 → .dsh/kb/ 文件」映射表见
-`~/.config/opencode/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → .dsh/kb/ 映射表由项目自身定义）。
+`/home/skwy/.dsh/skills/skwy-workflow/SKILL.md` 内嵌「文档同步」章节（变更 → .dsh/kb/ 映射表由项目自身定义）。
 
 **路径/标识符引用替换或删除前，必须全仓 grep 所有文件类型。**
 目录迁移、路径替换或标识符删除时，搜索范围必须覆盖全部文件类型
@@ -426,7 +428,7 @@ Config 位于 `~/.config/compass/config.toml`，全部字段可选，缺省回�
    通过**脚本文件**运行（脚本内 `cd` 只影响自身进程），不在持久会话直接 `cd`。
 3. **子代理委托**：委托 QA/集成验证 agent 执行 kill 类验证时，明确要求
    fixture 隔离（`/tmp` 路径）、禁止触碰真实 worktree/仓库、疑似危险命令改
-   为只读 Oracle 复查。agent 误杀宿主 opencode 会话 = 用户工作区被破坏。
+   为只读 Oracle 复查。agent 误杀宿主会话 = 用户工作区被破坏。
 
 ### 检测/结束 GUI 进程的正确姿势（ref #105 QA 复发教训）
 

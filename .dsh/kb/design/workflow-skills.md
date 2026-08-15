@@ -1,5 +1,9 @@
 # Workflow Skills — skwy 技能组设计
 
+> **迁移注记（ref #264）**：技能已随 OpenCode→DSH 工具链切换迁至
+> `/home/skwy/.dsh/skills/`（2026-08-15）。本文档为 #210 设计决策留档，
+> 决策记录保持原样。
+
 本文档记录 compass 工作流技能去全局化（skwy- 技能组）的设计决策。实现见 issue #210。
 
 ## 背景
