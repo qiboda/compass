@@ -61,6 +61,7 @@ _MAPPING_ROWS = [
     ["industry", "白酒Ⅱ", "Liquor"],
     ["industry", "半导体", "Semiconductors"],
     ["concept", "白酒概念", "Alcoholic Concept"],
+    ["concept", "半导体", "Semiconductors"],
 ]
 
 
@@ -228,6 +229,50 @@ class TestIndexBasicNameEn:
                 )
             )
             == "1"
+        )
+
+    def test_concept_board_matches_name_en_by_name(
+        self,
+        dolt_env: tuple[Path, Callable[[str], str]],
+        tmp_path: Path,
+        mapping_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """P1-1 regression: a concept board row (BK symbol, absent from the
+        index section) must resolve its name_en through the concept section
+        by Chinese name — the D1-A concept map source."""
+        from fetch_index_daily import import_to_dolt  # noqa: E402
+
+        dolt_dir_, dolt_sql_csv = dolt_env
+        monkeypatch.setenv(_MAPPING_ENV, str(mapping_path))
+        csv_path = tmp_path / "index_basic.csv"
+        _write_csv(
+            csv_path,
+            _INDEX_BASIC_HEADER,
+            [
+                ["BK0475", "半导体", "concept"],
+                ["BK0476", "白酒", "industry"],
+            ],
+        )
+
+        rows = import_to_dolt(csv_path)
+        assert rows == 2
+        assert (
+            _last(
+                dolt_sql_csv(
+                    "SELECT COALESCE(name_en, '<NULL>') FROM index_basic WHERE symbol='BK0475'"
+                )
+            )
+            == "Semiconductors"
+        )
+        # Unmapped concept name stays NULL.
+        assert (
+            _last(
+                dolt_sql_csv(
+                    "SELECT COALESCE(name_en, '<NULL>') FROM index_basic WHERE symbol='BK0476'"
+                )
+            )
+            == "<NULL>"
         )
 
     def test_index_basic_ddl_has_name_en_column(

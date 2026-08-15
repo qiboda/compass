@@ -519,23 +519,31 @@ def _import_index_daily(csv_path: Path) -> int:
 def _import_index_basic(csv_path: Path) -> int:
     """Merge-import the index_basic CSV (PK symbol, names for the picker).
 
-    Epic #266 B1: when the name-en mapping is available the INSERT LEFT-JOINs
-    it by ``symbol`` to fill ``name_en``; unmapped symbols → NULL (GUI falls
-    back to Chinese). A missing mapping degrades gracefully — the base import
+    Epic #266 B1 + review P1-1: when the name-en mapping is available the
+    INSERT LEFT-JOINs it twice — by ``symbol`` against the ``index`` section
+    (official indexes) and by ``name`` against the ``concept`` section
+    (concept/industry boards, which carry BK symbols the index section does
+    not cover). The symbol hit wins via COALESCE; a double LEFT JOIN keeps
+    one row per CSV row (no inflation). Unmapped rows → NULL (GUI falls back
+    to Chinese). A missing mapping degrades gracefully — the base import
     always lands.
     """
     print("[import index_basic]", file=sys.stderr)
     mapping = load_name_en_mapping()
     try:
         if mapping:
-            join = """
-                LEFT JOIN _tmp_name_en m
-                  ON m.section = 'index' AND m.`key` = t.symbol
+            joins = """
+                LEFT JOIN _tmp_name_en m1
+                  ON m1.section = 'index' AND m1.`key` = t.symbol
+                LEFT JOIN _tmp_name_en m2
+                  ON m2.section = 'concept' AND m2.`key` = t.name
             """
             insert_cols = "(symbol, name, index_type, name_en)"
-            select_cols = "t.symbol, t.name, t.index_type, m.value"
+            select_cols = (
+                "t.symbol, t.name, t.index_type, COALESCE(m1.value, m2.value)"
+            )
         else:
-            join = ""
+            joins = ""
             insert_cols = "(symbol, name, index_type)"
             select_cols = "t.symbol, t.name, t.index_type"
         return import_replace_table(
@@ -546,7 +554,7 @@ def _import_index_basic(csv_path: Path) -> int:
                 INSERT IGNORE INTO index_basic {insert_cols}
                 SELECT {select_cols}
                 FROM _tmp_ixb t
-                {join}
+                {joins}
             """,
             merge=True,
             dolt_table="index_basic",
