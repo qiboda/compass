@@ -6,6 +6,8 @@ Independent module — uses common.py for shared infrastructure.
 Source: EastMoney push2his ``kline/get`` for daily bars (``klt=101``,
 ``fqt=0``, ``beg=0&end=20500000`` full history) and push2 ``clist/get``
 (``fs=m:90 t:3`` / ``t:2`` ``f:!50``) for the concept/industry board list.
+Official indices additionally fall back to Tencent ``fqkline/get`` when
+EastMoney fails or returns empty klines (issue #278).
 
 Three index classes (handoff decisions 1/5/7):
 - ``official`` — hardcoded whitelist of ~30 mainstream exchange indices
@@ -35,7 +37,7 @@ import asyncio
 import csv
 import random
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from common import (
@@ -62,6 +64,13 @@ PUSH2HIS_MIRRORS = (
     "https://79.push2his.eastmoney.com/api/qt/stock/kline/get",
 )
 KLINE_HOSTS = (PUSH2HIS, *PUSH2HIS_MIRRORS)
+
+# Tencent fallback for official indices (issue #278): web.ifzq.gtimg.cn
+# fqkline/get supports count<=2000 and start-date pagination. Used when
+# EastMoney fails or returns empty klines for an official whitelist target.
+TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+_TENCENT_PAGE_SIZE = 2000
+_TENCENT_MAX_PAGES = 10
 
 # Board list discovery (push2 clist) — concept ``t:3`` / industry ``t:2``.
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
@@ -390,6 +399,82 @@ async def fetch_kline(
     return (klines, str(payload.get("code") or "")) if data else None
 
 
+def _tencent_code(secid: str) -> str:
+    """Map an EastMoney secid to a Tencent symbol (1.→sh, 0.→sz + lower code)."""
+    if not isinstance(secid, str) or "." not in secid:
+        raise ValueError(f"invalid EastMoney secid: {secid!r}")
+    market, code = secid.split(".", 1)
+    if market not in ("1", "0"):
+        raise ValueError(f"invalid EastMoney market prefix: {secid!r}")
+    if len(code) != 6 or not code.isdigit():
+        raise ValueError(f"invalid EastMoney code: {secid!r}")
+    return ("sh" if market == "1" else "sz") + code.lower()
+
+
+async def _fetch_tencent_kline(
+    session: AsyncSession,
+    throttle: Throttle,
+    secid: str,
+) -> list[str] | None:
+    """Fetch full-history daily klines from Tencent for one official index.
+
+    Paginates with count=2000, advancing the start date backwards until a
+    short page or a bounded page cap. Returns klines in the same 7-field CSV
+    format as EastMoney (amount filled with 0), or None on any failure.
+    """
+    tcode = _tencent_code(secid)
+    pages: list[list[str]] = []
+    start_date = ""
+    previous_min: str | None = None
+
+    for _ in range(_TENCENT_MAX_PAGES):
+        param = f"{tcode},day,{start_date},,{_TENCENT_PAGE_SIZE},qfq"
+        data = await _get_json(session, throttle, (TENCENT_KLINE_URL,), {"param": param})
+        if data is None:
+            return None
+        payload = (data.get("data") or {}).get(tcode) or {}
+        rows = payload.get("day") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            # Structurally malformed response: treat the whole target as failed.
+            return None
+
+        page_klines: list[str] = []
+        min_date: str | None = None
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 6:
+                continue
+            cells = [str(v) for v in row[:6]]
+            date_cell = cells[0].strip()
+            if not date_cell:
+                continue
+            if min_date is None or date_cell < min_date:
+                min_date = date_cell
+            page_klines.append(",".join([*cells, "0"]))
+
+        if not page_klines:
+            # Empty or all-invalid page: no more data.
+            break
+
+        pages.append(page_klines)
+
+        if len(rows) < _TENCENT_PAGE_SIZE:
+            break  # last page
+
+        # Advance backwards: next page starts the day before the earliest bar
+        # seen in this page. Stop if no backward progress (avoid infinite loop).
+        if min_date is None:
+            break
+        next_start = (date.fromisoformat(min_date) - timedelta(days=1)).isoformat()
+        if previous_min is not None and min_date >= previous_min:
+            break
+        previous_min = min_date
+        start_date = next_start
+
+    # Pages were fetched newest-first; reverse so the merged history is
+    # chronological ascending (oldest first).
+    return [kline for page in reversed(pages) for kline in page]
+
+
 async def run() -> Path:
     """Fetch official indices + concept/industry boards into two CSVs.
 
@@ -472,19 +557,38 @@ async def run() -> Path:
                     file=sys.stderr, end=" ", flush=True,
                 )
                 result = await fetch_kline(session, throttle, target["secid"])
-                if result is None:
-                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
-                    print("FAILED", file=sys.stderr)
-                elif not result[0]:
-                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
-                    print("empty (skipped)", file=sys.stderr)
+                if result is None or not result[0]:
+                    # EastMoney failed/empty → try Tencent fallback (issue #278).
+                    source_label = "FAILED" if result is None else "empty (skipped)"
+                    print(
+                        f"{source_label} (eastmoney); trying tencent...",
+                        file=sys.stderr,
+                    )
+                    tencent_klines = await _fetch_tencent_kline(
+                        session, throttle, target["secid"]
+                    )
+                    if tencent_klines:
+                        symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
+                            else f"SZ{target['code']}"
+                        consecutive_failures = 0
+                        basic_records.append(
+                            {"symbol": symbol, "name": target["name"], "index_type": "official"}
+                        )
+                        daily_records.extend(
+                            _kline_records(symbol, "official", tencent_klines, _today())
+                        )
+                        print(f"{len(tencent_klines)} bars (tencent)", file=sys.stderr)
+                    else:
+                        consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
+                        print("FAILED (eastmoney+tencent)", file=sys.stderr)
                 else:
                     klines, code = result
                     symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
                         else f"SZ{target['code']}"
                     # EastMoney echoes either the bare code ("000001") or the full
                     # symbol ("SH000001"); accept both, anything else is a different
-                    # index (delisted/renamed code) — skip.
+                    # index (delisted/renamed code) — skip. A mismatch must NOT
+                    # trigger the Tencent fallback (issue #278 semantics).
                     if code != target["code"] and code != symbol:
                         print(f"code mismatch ({code!r}), skipped", file=sys.stderr)
                     else:

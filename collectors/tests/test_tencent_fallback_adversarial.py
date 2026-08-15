@@ -1,0 +1,584 @@
+"""Adversarial tests for issue #278 — Tencent fallback for official indices.
+
+Complement (not a duplicate) of test_tencent_fallback_requirement.py. That
+file owns the declared happy paths (mapping, basic pagination, basic
+fallback+amount, basic fast-fail). This file ATTACKS the edge cases the plan
+declares but does not nail down:
+  A1. _tencent_code(secid): behavior on INVALID/inapplicable secids (prefix not
+      1. / 0., no code, empty) must be explicit — raise ValueError OR return
+      None — and must NEVER fabricate an sh/sz symbol with a garbage prefix.
+      A wrong symbol would silently route an EastMoney secid to the wrong
+      Tencent security.
+  A2. _fetch_tencent_kline pagination boundedness: when the source keeps
+      answering FULL (==2000) pages WITHOUT forward progress (same earliest
+      date / resetting window every request) a naive ``while len==2000`` loop
+      never sees a short page and spins forever — resource exhaustion. The
+      helper must terminate after a bounded number of requests (a page cap or
+      a no-progress guard), and also stay bounded on a healthy always-full
+      stream.
+  A3. Malformed Tencent payload degrade-to-failure, never a crash: missing
+      ``data`` / missing ``data[code].day`` / ``day`` not a list / a day row
+      with fewer than 6 fields. At run() level these are double-failures
+      (EastMoney already failed), so they must count once and terminate, not
+      blow up on a TypeError / KeyError.
+  A4. Fallback semantics on EastMoney code-MISMATCH: a non-empty kline whose
+      echoed code does not match the whitelisted code is a #277 SKIP (neither
+      a failure nor a success) and must NOT trigger the Tencent fallback. Only
+      an EastMoney failure or EMPTY list may fall back.
+  A5. Fast-fail through the fallback: 5 consecutive double-fails (EastMoney +
+      Tencent both fail) terminate AND stop issuing further Tencent requests;
+      a Tencent success mid-streak RESETS the counter so a fresh streak starts;
+      the amount of a Tencent-written official row is 0/empty.
+
+STATUS: RED — issue #278 (Tencent source) is not implemented, so every test
+below hits AttributeError/ImportError before any assertion can run. That IS
+the expected RED: the contract symbols do not exist yet.
+"""
+
+import asyncio
+import sys
+from datetime import date
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from conftest import StubResponse  # noqa: E402
+
+TENCENT_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+_TENCENT_PAGE_SIZE = 2000
+
+
+# ── payload / stub builders re-used across test classes ──────────────────────
+
+
+def _tencent_row(day: str, close: float = 3000.0) -> list[str]:
+    """A valid 6-field Tencent day row (NO amount field)."""
+    return [
+        day,
+        f"{close - 1}",
+        f"{close}",
+        f"{close + 1}",
+        f"{close - 2}",
+        "120000000",  # volume
+    ]
+
+
+def _tencent_payload(code: str, rows: list[list[str]]) -> dict:
+    return {"code": 0, "msg": "", "data": {code: {"day": rows}}}
+
+
+def _kline_payload(code: str, klines: list[str]) -> dict:
+    return {"rc": 0, "data": {"code": code, "name": "stub", "klines": klines}}
+
+
+def _clist_payload(diff: list[dict]) -> dict:
+    return {"rc": 0, "data": {"total": len(diff), "diff": diff}}
+
+
+def _board(code: str, name: str) -> dict:
+    return {"f12": code, "f14": name}
+
+
+def _pin_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fetch_index_daily._today", lambda: date(2026, 8, 2))
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+
+
+def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+
+
+# A.1 ── _tencent_code on invalid / inapplicable secids ────────────────────────
+
+
+class TestTencentCodeInvalidInputs:
+    """A1: invalid secids must yield an explicit None/ValueError, never a
+    fabricated sh/sz symbol with a garbage prefix."""
+
+    @pytest.mark.parametrize(
+        "bad_secid",
+        [
+            "5.000001",        # prefix not 1./0.
+            "0.3990019",       # 9-digit code
+            "1.0X0001",        # non-digit chars in code
+            "sh000001",        # already fully-prefixed symbol, not a secid
+            "1.",              # prefix with NO code
+            "",                # empty
+            ".000001",         # no market prefix at all
+            "7.000001",        # 7. = another (unknown) category
+        ],
+    )
+    def test_invalid_secid_is_explicit_not_garbage_symbol(self, bad_secid: str) -> None:
+        """The final symbol for an inapplicable secid must be explicit None or
+        a ValueError — it must never be a str that starts with sh/sz (which
+        would silently map junk into the Tencent symbol space)."""
+        from fetch_index_daily import _tencent_code  # noqa: E402
+
+        try:
+            result = _tencent_code(bad_secid)
+        except (ValueError, TypeError):
+            return  # explicit rejection is acceptable
+        assert result is None or (
+            isinstance(result, str) and not result.startswith(("sh", "sz"))
+        ), (
+            f"_tencent_code({bad_secid!r}) must reject inapplicable input, "
+            f"got {result!r}"
+        )
+
+    def test_valid_prefix_still_maps_after_invalid_rejected(self) -> None:
+        """Regression: after rejecting invalid input the valid mapping must
+        keep working (1.000001 → sh000001). Guards against an over-eager
+        reorder in _tencent_code."""
+        from fetch_index_daily import _tencent_code  # noqa: E402
+
+        assert _tencent_code("1.000001") == "sh000001"
+        assert _tencent_code("0.399001") == "sz399001"
+
+
+# A.2 ── _fetch_tencent_kline pagination must be bounded (resource) ───────────
+
+
+class TestTencentPaginationBounded:
+    """A2: full-width source must not make the helper loop forever."""
+
+    @staticmethod
+    def _days(n: int, start: str) -> list[str]:
+        d = date.fromisoformat(start)
+        from datetime import timedelta
+
+        return [(d + timedelta(days=i)).isoformat() for i in range(n)]
+
+    async def test_no_progress_full_pages_terminate_in_bounded_requests(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RED (resource-exhaustion attack on pagination): the stub answers
+        EXACTLY 2000 rows every time and the days NEVER move forward (the same
+        earliest date is re-served on every request). A naive
+        ``while len(page) == 2000: ...`` loop would never observe a short page
+        and would request forever. The helper must terminate after a bounded
+        number of requests (page cap or a no-forward-progress guard),
+        raising or returning partial data — never spinning indefinitely.
+
+        Bounded means: far fewer requests than a pure data race could exhaust
+        (≤ 10 pages), because there is provably no more data to harvest.
+        """
+        from fetch_index_daily import (
+            Throttle,  # noqa: E402
+            _fetch_tencent_kline,  # noqa: E402
+        )
+
+        # A full page, but every request starts from the same window → no
+        # forward progress on start_date.
+        full = [_tencent_row(d) for d in self._days(_TENCENT_PAGE_SIZE, "2026-01-01")]
+
+        n_requests = {"n": 0}
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            n_requests["n"] += 1
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                code = param.split(",")[0]
+                return StubResponse(json_data=_tencent_payload(code, full))
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        # Must either return or raise — must NOT hang.
+        await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
+
+        assert n_requests["n"] <= 10, (
+            "a source with no forward progress must be detected and stopped, "
+            f"got {n_requests['n']} requests (unbounded loop)"
+        )
+
+    async def test_always_full_advancing_pages_still_bounded(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RED (ordering attack, second boundedness check): even when start_date
+        DOES advance every page but the page stays exactly 2000 rows wide, the
+        helper must eventually give up after a page cap rather than enumerate
+        months of synthetic data. Assert termination and a hard bound on the
+        number of requests (≤ 200, an order below the 192-request budget the
+        whole module already documents for its worst case)."""
+        from fetch_index_daily import (
+            Throttle,  # noqa: E402
+            _fetch_tencent_kline,  # noqa: E402
+        )
+
+        days = self._days(_TENCENT_PAGE_SIZE, "2026-01-01")
+        full = [_tencent_row(d) for d in days]
+
+        n_requests = {"n": 0}
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            n_requests["n"] += 1
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                # Serve the SAME full window every time (page never goes short).
+                return StubResponse(
+                    json_data=_tencent_payload(param.split(",")[0], full)
+                )
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
+
+        assert n_requests["n"] <= 200, (
+            "full-width endless pages must be capped by a page limit, "
+            f"got {n_requests['n']} requests"
+        )
+
+
+# A.3 ── malformed Tencent payloads degrade to failure, never crash ───────────
+
+
+class TestTencentMalformedPayloads:
+    """A3: malformed Tencent JSON must degrade to a counted failure, not crash
+    the run with a TypeError/KeyError."""
+
+    @staticmethod
+    def _days(n: int, start: str) -> list[str]:
+        from datetime import timedelta
+
+        d = date.fromisoformat(start)
+        return [(d + timedelta(days=i)).isoformat() for i in range(n)]
+
+    @pytest.mark.parametrize(
+        "bad_payload",
+        [
+            {"code": 0, "msg": ""},                                # no "data"
+            {"code": 0, "msg": "", "data": {}},                    # data w/o the code key
+            {"code": 0, "msg": "", "data": {"sh000001": {}}},      # code present, no "day"
+            {"code": 0, "msg": "", "data": {"sh000001": {"day": None}}},   # day is None
+            {"code": 0, "msg": "", "data": {"sh000001": {"day": {}}}},     # day is a dict
+            {"code": 0, "msg": "", "data": {"sh000001": {"day": "not-a-list"}}},
+        ],
+    )
+    async def test_malformed_payload_is_failure_not_crash(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        bad_payload: dict,
+    ) -> None:
+        """RED: EastMoney fails for the official, Tencent returns a structurally
+        broken body → the target is a double-fail (counts once, run completes,
+        no crash). A TypeError on ``payload["data"][code]["day"]`` would escape
+        run() and crash the pipeline — the helper must treat it as empty/failed."""
+        from fetch_index_daily import run  # noqa: E402
+
+        _env(monkeypatch, tmp_path)
+        _pin_today(monkeypatch)
+        monkeypatch.setattr(
+            "fetch_index_daily.OFFICIAL_INDICES",
+            ({"secid": "1.000001", "code": "000001", "name": "上证指数"},),
+        )
+
+        requests = {"tencent": 0}
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "clist/get" in url:
+                return StubResponse(json_data=_clist_payload([]))
+            if "ifzq.gtimg.cn" in url:  # Tencent structurally broken
+                requests["tencent"] += 1
+                return StubResponse(json_data=bad_payload)
+            if "kline/get" in url:  # EastMoney fails
+                return StubResponse(status_code=500, json_data={})
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        # A malformed Tencent body must degrade to a clean failure (RuntimeError
+        # when no data exists), never a TypeError/KeyError crash.
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), pytest.raises(RuntimeError):
+            await run()
+
+        assert requests["tencent"] == 1, (
+            "the malformed Tencent body must have been requested exactly once "
+            "(EastMoney already failed → one Tencent fallback attempt)"
+        )
+
+    async def test_day_row_fewer_than_six_fields_skipped_safely(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """RED: a short day row (fewer than 6 fields) inside an otherwise valid
+        ``day`` list must not crash the row builder and must not emit a broken
+        record — the row is skipped, valid siblings survive, amount is 0."""
+        from fetch_index_daily import run  # noqa: E402
+
+        _env(monkeypatch, tmp_path)
+        _pin_today(monkeypatch)
+        monkeypatch.setattr(
+            "fetch_index_daily.OFFICIAL_INDICES",
+            ({"secid": "1.000001", "code": "000001", "name": "上证指数"},),
+        )
+
+        good = _tencent_row("2026-07-30", 3000.0)
+        bad = ["2026-07-31"]  # only the date — 1 field, must be skipped
+        rows = [good, bad, _tencent_row("2026-07-29", 2900.0)]
+
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "clist/get" in url:
+                return StubResponse(json_data=_clist_payload([]))
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                return StubResponse(
+                    json_data=_tencent_payload(param.split(",")[0], rows)
+                )
+            if "kline/get" in url:
+                return StubResponse(status_code=500, json_data={})
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_index_daily.AsyncSession", return_value=stub):
+            tmp_path_ok = await run()
+
+        import csv
+
+        with open(tmp_path_ok, newline="", encoding="utf-8-sig") as f:
+            records = list(csv.DictReader(f))
+        official = [r for r in records if r["symbol"] == "SH000001"]
+        # The 2 valid rows survived; the 1-field row was skipped.
+        assert len(official) == 2, (
+            f"only valid sibling rows may be written, got {official!r}"
+        )
+        assert all(r["trade_date"] in {"2026-07-30", "2026-07-29"} for r in official)
+        assert all(r["amount"] in {"0", ""} for r in official), (
+            "Tencent rows carry no amount → amount must be 0/empty"
+        )
+
+
+# A.4 ── EastMoney code-mismatch must NOT trigger the Tencent fallback ────────
+
+
+class TestTencentNoFallbackOnCodeMismatch:
+    """A4: an EastMoney respose whose echoed code doesn't match the whitelisted
+    code is a #277 SKIP — non-empty, so it is neither a failure (must not count
+    toward the streak) nor a success (must not reset). Critically it must NOT
+    trigger the Tencent fallback: the API is telling us the secid maps to a
+    different index, so falling back would silently substitute Tencent data for
+    the wrong security."""
+
+    async def test_code_mismatch_skips_fallback_and_preserves_counter(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """RED: 4 boards fail (counter=4). O1 mismatches on EastMoney (skip →
+        counter stays 4, NO Tencent request). O2 then double-fails → counter=5
+        → abort on O2. If O1 wrongly reset the counter (mismatch-as-success)
+        there would be no abort; if O1 wrongly triggered Tencent fallback that
+        fallback's success/failure would corrupt the streak. Both are pinned."""
+        from fetch_index_daily import run  # noqa: E402
+
+        _env(monkeypatch, tmp_path)
+        _pin_today(monkeypatch)
+
+        boards = [_board(f"BK41{i:02d}", f"B{i}") for i in range(1, 5)]
+        o1 = {"secid": "1.000001", "code": "000001", "name": "上证指数"}
+        o2 = {"secid": "1.000016", "code": "000016", "name": "上证50"}
+        monkeypatch.setattr("fetch_index_daily.OFFICIAL_INDICES", (o1, o2))
+
+        tencent_reqs: list[str] = []
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "clist/get" in url:
+                return StubResponse(json_data=_clist_payload(boards))
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                tencent_reqs.append(param)
+                return StubResponse(status_code=500, json_data={})  # Tencent fail
+            if "kline/get" in url:
+                secid = (params or {}).get("secid", "")
+                bare = secid.rsplit(".", 1)[-1]
+                if secid.startswith("90."):  # boards fail
+                    return StubResponse(status_code=500, json_data={})
+                if secid == "1.000001":
+                    # mismatch: non-empty klines echo a DIFFERENT code
+                    return StubResponse(
+                        json_data=_kline_payload(f"99{bare}", ["2026-07-31,1,2,3,4,5,6,7,8,9,0"])
+                    )
+                if secid == "1.000016":
+                    return StubResponse(status_code=500, json_data={})
+                return StubResponse(status_code=500, json_data={})
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), pytest.raises(
+            RuntimeError
+        ) as e:
+            await run()
+
+        assert "连续" in str(e.value), (
+            "4 board fails + O1 mismatch (skip) + O2 double-fail = 5 consecutive "
+            "failures → abort; the mismatch must NOT reset the counter. "
+            f"got {str(e.value)!r}"
+        )
+        # The mismatch (O1) must never have been routed to Tencent; O2's
+        # double-fail may still have one Tencent attempt.
+        assert not any(p.startswith("sh000001") for p in tencent_reqs), (
+            "a code-mismatch skip must NOT trigger the Tencent fallback; "
+            f"got tencent params {tencent_reqs!r}"
+        )
+
+
+# A.5 ── fast-fail through the fallback + amount ───────────────────────────────
+
+
+class TestTencentFastFailAdversarial:
+    """A5: 5 consecutive double-fails terminate the run AND stop further Tencent
+    requests; a Tencent success mid-streak resets the counter; amount stays 0."""
+
+    async def test_five_double_fails_abort_and_stop_tencent_requests(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """RED (exact boundary + resource): 6 officials, all EastMoney fail.
+        Tencent ALSO fails for all 6 → the first 5 are consecutive double-fails
+        → run aborts and the 6th is never requested BY EITHER source. This pins
+        that the Tencent segment is inside the #277 boundary: nothing after the
+        5th double-fail, including Tencent, may consume a request."""
+        from fetch_index_daily import run  # noqa: E402
+
+        _env(monkeypatch, tmp_path)
+        _pin_today(monkeypatch)
+
+        targets = tuple(
+            {"secid": f"{'1' if i % 2 else '0'}.{100000 + i:06d}",
+             "code": f"{100000 + i:06d}", "name": f"官方{i}"}
+            for i in range(1, 7)
+        )
+        monkeypatch.setattr("fetch_index_daily.OFFICIAL_INDICES", targets)
+
+        em_secids: list[str] = []
+        tencent_params: list[str] = []
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "clist/get" in url:
+                return StubResponse(json_data=_clist_payload([]))
+            if "ifzq.gtimg.cn" in url:
+                tencent_params.append((params or {}).get("param", ""))
+                return StubResponse(status_code=500, json_data={})
+            if "kline/get" in url:
+                secid = (params or {}).get("secid", "")
+                em_secids.append(secid)
+                return StubResponse(status_code=500, json_data={})
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), pytest.raises(
+            RuntimeError
+        ) as e:
+            await run()
+
+        assert "连续" in str(e.value), f"5 double-fails must fast-fail, got {str(e.value)!r}"
+
+        # The 6th target must be untouched by EastMoney...
+        last = targets[-1]["secid"]
+        assert last not in em_secids, (
+            "after 5 consecutive double-fails the 6th must not be requested on "
+            f"EastMoney; requested {em_secids}"
+        )
+        # ...and NOT touched by Tencent either (resource: fallback stops too).
+        # Exactly the first 5 targets had one logical Tencent fallback each
+        # (HTTP retries may repeat the same param, so count distinct params).
+        distinct_tencent = set(tencent_params)
+        assert len(distinct_tencent) == 5, (
+            "exactly the 5 double-failed targets each get one Tencent fallback "
+            f"attempt, got {len(distinct_tencent)}"
+        )
+        last_tencent = _tencent_symbol(targets[-1]["secid"], targets[-1]["code"])
+        assert not any(p.startswith(last_tencent) for p in distinct_tencent), (
+            "the 6th target must not receive a Tencent fallback request"
+        )
+
+    async def test_tencent_success_resets_counter_and_writes_zero_amount(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """RED (semantics + amount): officials O1,O2,E,F: E fails on EastMoney +
+        Tencent, F fails on EastMoney but SUCCEEDS on Tencent. Then 5 more
+        officials double-fail → the streak restarts AFTER F's success: the 5
+        double-fails FOLLOWING F must terminate only at their own 5th (O7). If
+        F's Tencent success had NOT cleared the counter the run would have
+        aborted earlier. F's written row has amount 0/empty."""
+        from fetch_index_daily import run  # noqa: E402
+
+        _env(monkeypatch, tmp_path)
+        _pin_today(monkeypatch)
+
+        # 7 officials: [0]=EM fail+tencen fail, [1]=EM fail+tencen success,
+        # [2..6]=EM fail+tencen fail (5 consecutive double-fails after [1]).
+        targets = tuple(
+            {"secid": f"{'1' if i % 2 else '0'}.{100000 + i:06d}",
+             "code": f"{100000 + i:06d}", "name": f"官方{i}"}
+            for i in range(0, 7)
+        )
+        monkeypatch.setattr("fetch_index_daily.OFFICIAL_INDICES", targets)
+
+        # [0] double-fail sets counter 1; [1] EM-fail + tencent SUCCESS resets 0;
+        # [2..6] 5 double-fails → abort on [6]. An [7] would not be fetched, but
+        # the boundary test already covers "no requests after abort".
+        em_secids: list[str] = []
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "clist/get" in url:
+                return StubResponse(json_data=_clist_payload([]))
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                code = param.split(",")[0]
+                # Tencent success only for target[1] (symbol from its secid).
+                target_symbol = _tencent_symbol(targets[1]["secid"], targets[1]["code"])
+                if code == target_symbol:
+                    return StubResponse(
+                        json_data=_tencent_payload(code, [_tencent_row("2026-07-31", 3100.0)])
+                    )
+                return StubResponse(status_code=500, json_data={})
+            if "kline/get" in url:
+                secid = (params or {}).get("secid", "")
+                em_secids.append(secid)
+                return StubResponse(status_code=500, json_data={})
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        # Proving the abort lands at [6], not earlier: if [1] did NOT reset the
+        # counter, the streak from [0]+[2..] would abort at [5].
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), pytest.raises(
+            RuntimeError
+        ) as e:
+            await run()
+
+        assert "连续" in str(e.value), "the post-reset 5 double-fails must fast-fail"
+        # [6] was requested (it is the 5th double-fail after the reset), so the
+        # counter reached 5 AFTER [1]'s success — proving the reset happened.
+        assert targets[6]["secid"] in em_secids, (
+            "the 5 double-fails after the Tencent-success reset must reach their "
+            "own 5th ([6]); a missing reset would have aborted earlier"
+        )
+
+        import csv
+
+        daily = tmp_path / "index_daily.csv"
+        with open(daily, newline="", encoding="utf-8-sig") as f:
+            records = list(csv.DictReader(f))
+        f_symbol = f"{'SH' if targets[1]['secid'].startswith('1.') else 'SZ'}{targets[1]['code']}"
+        row = [r for r in records if r["symbol"] == f_symbol]
+        assert row, f"the Tencent-success official must write a row ({f_symbol})"
+        assert row[0]["amount"] in {"0", ""}, (
+            f"Tencent rows carry no amount → amount must be 0/empty, got {row[0]['amount']!r}"
+        )
+
+
+def _tencent_symbol(secid: str, code: str) -> str:
+    """Local oracle for the fallback symbol: sh for 1., sz for 0. (matches the
+    #278 plan). NOT the implementation under test — this is the asserting side."""
+    return ("sh" if secid.startswith("1.") else "sz") + code.lower()

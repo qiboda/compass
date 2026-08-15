@@ -42,3 +42,21 @@ IP 级 HTTP 000 全镜像封锁）。`fetch_index_daily.py::run()` 对失败标�
 3. 实现 GREEN（fetch_index_daily.py run() 连续失败计数 + common.py EM_MIN_INTERVAL=2.0）
 4. 全套件验证 → commit（ref #277）→ subagent_review → 待用户 push
 5. 文档同步：toolchain.md 反爬排查卡补充"快速失败机制"；续采记录 .dsh/evidence/index-fetch-resume-2026-08-15.md 更新限流建议（EM_MIN_INTERVAL 已全局 2s）
+
+---
+
+## 追加任务（2026-08-15 20:30，用户确认）— 腾讯源接入官方指数
+
+**Issue**: https://github.com/qiboda/compass/issues/278（OPEN，依赖 #277 同批实施）
+
+**背景**：东财 push2his 封禁未解（5.5h+），官方指数 30 个全缺。用户决策：**官方指数走腾讯源**（已验证可拉：web.ifzq.gtimg.cn fqkline/get，count≤2000 分页，15 连发零限流），板块 1000 个等东财解封后用 #277 机制补。
+
+**验收标准**：
+1. fetch_index_daily.py 新增腾讯源拉官方指数 30 个（OFFICIAL_INDICES 白名单，secid 映射 1.→sh、0.→sz + 小写 code）
+2. 东财优先、失败/empty 自动切腾讯；CSV 输出格式不变（amount 腾讯无则填 0）
+3. 全历史分页：count=2000 循环 + 起始日期推进
+4. 腾讯段受 #277 连续失败快速终止保护
+5. 测试覆盖：腾讯解析/分页/东财失败切换/amount 缺省
+6. pytest 全绿（cov ≥95%）
+
+**实现顺序**：#277（快速失败 + 限流 2s）先行 → #278（腾讯源）追加在 fetch_index_daily.py 同一文件内 → 两个 issue 各自 commit（ref #277 / ref #278）→ 一起 review → 用户 push。
