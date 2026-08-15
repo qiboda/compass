@@ -227,7 +227,6 @@ index:
   empty_desc: Import index_daily data first, then click Refresh
   segment:
     industry: Industry
-    concept: Concept
     official: Official
   table:
     name: Name

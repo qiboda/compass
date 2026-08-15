@@ -304,8 +304,6 @@ pub struct SepaRow {
     /// English industry name (epic #266; `None` when unmapped — the GUI
     /// falls back to the Chinese `industry`).
     pub industry_en: Option<String>,
-    /// Concept themes; may be empty.
-    pub themes: Vec<String>,
     /// Latest raw close price.
     pub latest_price: f64,
     /// Day-over-day change percent (A-share red-up convention).

@@ -37,13 +37,6 @@ struct TestStock {
     bars: Vec<TestBar>,
 }
 
-/// One concept membership row (concept_member.parquet).
-struct TestMember {
-    concept_code: &'static str,
-    symbol: &'static str,
-    concept_name: &'static str,
-}
-
 /// One capital-main-flow row (capital_main_flow.parquet).
 struct TestFlow {
     symbol: &'static str,
@@ -73,7 +66,6 @@ struct TestSurvey {
 
 struct Fixture {
     stocks: Vec<TestStock>,
-    members: Vec<TestMember>,
     flows: Vec<TestFlow>,
     dragons: Vec<TestDragon>,
     blocks: Vec<TestBlock>,
@@ -84,17 +76,11 @@ impl Fixture {
     fn new(stocks: Vec<TestStock>) -> Self {
         Fixture {
             stocks,
-            members: Vec::new(),
             flows: Vec::new(),
             dragons: Vec::new(),
             blocks: Vec::new(),
             surveys: Vec::new(),
         }
-    }
-
-    fn with_members(mut self, members: Vec<TestMember>) -> Self {
-        self.members = members;
-        self
     }
 
     fn with_flows(mut self, flows: Vec<TestFlow>) -> Self {
@@ -179,25 +165,6 @@ impl Fixture {
             tmp.path().join("stock_basic.parquet").display()
         ))
         .expect("copy basic");
-
-        if !self.members.is_empty() {
-            conn.execute_batch(
-                "CREATE TABLE concept_member (concept_code VARCHAR, symbol VARCHAR, concept_name VARCHAR, update_date DATE);",
-            )
-            .expect("create concept_member");
-            for m in &self.members {
-                conn.execute(
-                    "INSERT INTO concept_member VALUES (?, ?, ?, '2026-07-31')",
-                    duckdb::params![m.concept_code, m.symbol, m.concept_name],
-                )
-                .expect("insert concept_member");
-            }
-            conn.execute_batch(&format!(
-                "COPY concept_member TO '{}' (FORMAT PARQUET)",
-                tmp.path().join("concept_member.parquet").display()
-            ))
-            .expect("copy concept_member");
-        }
 
         if !self.flows.is_empty() {
             conn.execute_batch(
@@ -365,8 +332,8 @@ fn strong_series() -> Vec<TestBar> {
     s
 }
 
-/// Second member of the hot concept: same rise but a +7% final bar (keeps the
-/// board's 领涨带动 condition satisfied with ≥2 leaders > 5%).
+/// Second member of the hot industry: same rise but a +7% final bar (keeps
+/// the board's 领涨带动 condition satisfied with ≥2 leaders > 5%).
 fn strong_series_b() -> Vec<TestBar> {
     let mut closes: Vec<f64> = (0..300).map(|i| 10.0 + i as f64 * 12.73 / 299.0).collect();
     closes[299] = 24.3;
@@ -396,24 +363,19 @@ fn filler_series() -> Vec<TestBar> {
 }
 
 fn ranking_fixture() -> Fixture {
+    // The strong pair shares an industry so the theme module (issue #283 D5)
+    // aggregates them into one hot board; the rest stay in separate
+    // industries that cannot outrank it.
+    let mut strong_a = stock("SZ000001", "平安银行", "2010-01-01", strong_series());
+    strong_a.industry = "半导体";
+    let mut strong_b = stock("SH600003", "测试科技", "2015-01-01", strong_series_b());
+    strong_b.industry = "半导体";
     Fixture::new(vec![
-        stock("SZ000001", "平安银行", "2010-01-01", strong_series()),
-        stock("SH600003", "测试科技", "2015-01-01", strong_series_b()),
+        strong_a,
+        strong_b,
         stock("SH600000", "工商银行", "2005-01-01", junk_series()),
         stock("SH600001", "测试甲", "2005-01-01", filler_series()),
         stock("SH600002", "测试乙", "2005-01-01", filler_series()),
-    ])
-    .with_members(vec![
-        TestMember {
-            concept_code: "BK1000",
-            symbol: "SZ000001",
-            concept_name: "AI概念",
-        },
-        TestMember {
-            concept_code: "BK1000",
-            symbol: "SH600003",
-            concept_name: "AI概念",
-        },
     ])
     .with_flows(
         (0..5)
@@ -461,7 +423,7 @@ fn strong_stock_outranks_junk_stock() {
     assert_eq!(data.date, "2026-07-31");
     assert_eq!(data.rows.len(), 5);
 
-    // Official order: strong > concept peer > fillers > junk.
+    // Official order: strong > industry peer > fillers > junk.
     assert_eq!(data.rows[0].symbol, "SZ000001");
     assert_eq!(data.rows[4].symbol, "SH600000");
     let strong = &data.rows[0];
@@ -491,10 +453,6 @@ fn strong_stock_outranks_junk_stock() {
         junk.total_score
     );
     assert_eq!(junk.risk, -1.5, "junk risk = -(30 deductions) × 0.05");
-
-    // Themes come from fetch_concept_member grouped by symbol.
-    assert_eq!(strong.themes, vec!["AI概念".to_string()]);
-    assert!(junk.themes.is_empty());
 
     // Details carry the five modules with locked sub-item maxima.
     assert_eq!(

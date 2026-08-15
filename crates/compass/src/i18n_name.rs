@@ -1,7 +1,8 @@
 //! Data-name i18n helpers (epic #266 B3).
 //!
-//! Data names (index/industry/concept/theme) carry a Chinese name and an
-//! optional English name from the data layer (`name_en` / `industry_en`).
+//! Data names (index/industry) carry a Chinese name and an optional English
+//! name from the data layer (`name_en` / `industry_en`; concept names were
+//! removed with issue #283 D4).
 //! The GUI resolves which one to render from the current locale:
 //! `locale == "en"` + a non-empty English name → English; everything else →
 //! Chinese. An empty `Some("")` is treated as unmapped (legacy/blank row

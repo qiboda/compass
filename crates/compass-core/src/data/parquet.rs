@@ -15,8 +15,8 @@ use egui_charts::model::Bar;
 use crate::data::provider::{DataError, DataProvider};
 use crate::indicators::{RawBar, adjust_ohlc};
 use crate::model::{
-    BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow, IndexBasic,
-    IndexDailyRow, InstitutionSurveyRow, StockBasic, SymbolInfo,
+    BlockTradeRow, CapitalMainFlow, CrossSectionBar, DragonListRow, IndexBasic, IndexDailyRow,
+    InstitutionSurveyRow, StockBasic, SymbolInfo,
 };
 
 /// One row from the daily parquet query: (date_str, open, high, low, close,
@@ -29,15 +29,19 @@ type DailyRow = (String, f64, f64, f64, f64, f64, Option<f64>);
 /// With the single-file format, symbols are bound as DuckDB parameters (`?`),
 /// not inserted into SQL strings. This function provides defense-in-depth:
 /// only the canonical exchange-prefixed form (`SH`/`SZ`/`BJ` + 6 digits, e.g.
-/// `SZ000001`, or `BK` + 4 digits for board/index codes, e.g. `BK0475`) is
-/// accepted (D9; BK namespace epic #255). Bare codes, dot forms
-/// (`sh.000001`) and any other alphanumeric shapes are rejected.
+/// `SZ000001`, or `BK` + 4-6 digits for board/index codes, e.g. `BK0475`
+/// EastMoney / `BK881101` THS, issue #283 D7) is accepted (D9; BK namespace
+/// epic #255). Bare codes, dot forms (`sh.000001`) and any other alphanumeric
+/// shapes are rejected.
 pub(crate) fn validate_symbol(symbol: &str) -> Result<&str, DataError> {
     let bytes = symbol.as_bytes();
     let valid = (bytes.len() == 8
         && matches!(&bytes[..2], b"SH" | b"SZ" | b"BJ")
         && bytes[2..].iter().all(u8::is_ascii_digit))
-        || (bytes.len() == 6 && &bytes[..2] == b"BK" && bytes[2..].iter().all(u8::is_ascii_digit));
+        || (bytes.len() >= 6
+            && bytes.len() <= 8
+            && &bytes[..2] == b"BK"
+            && bytes[2..].iter().all(u8::is_ascii_digit));
     if !valid {
         return Err(DataError::NoData {
             symbol: symbol.to_string(),
@@ -701,28 +705,6 @@ impl ParquetReader {
         Ok(bars)
     }
 
-    /// Load all concept-board membership rows from `concept_member.parquet`.
-    ///
-    /// No date filter — the table is a versioned snapshot, not a time series
-    /// (epic #139 decision 20). If the file doesn't exist, returns an empty vec.
-    pub fn fetch_concept_member(&self) -> Result<Vec<ConceptMember>, DataError> {
-        let path = self.parquet_dir.join("concept_member.parquet");
-        let sql = format!(
-            "SELECT concept_code, symbol, concept_name, CAST(update_date AS VARCHAR) AS update_date
-             FROM read_parquet('{}')
-             ORDER BY concept_code, symbol",
-            escape_sql_path(&path.to_string_lossy())
-        );
-        self.query_parquet(&path, &sql, params![], |row| {
-            Ok(ConceptMember {
-                concept_code: row.get(0)?,
-                symbol: row.get(1)?,
-                concept_name: row.get(2)?,
-                update_date: parse_naive_date_opt(row.get(3)?)?,
-            })
-        })
-    }
-
     /// Load daily main-capital net flows within `[start, end]` (inclusive).
     ///
     /// Null amounts are coalesced to `0.0`; `small_net` stays `Option` because
@@ -1249,39 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn fetch_concept_member_returns_all_rows() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        create_test_table_parquet(
-            &tmp,
-            "concept_member",
-            "CREATE TABLE concept_member (concept_code VARCHAR, symbol VARCHAR, concept_name VARCHAR, update_date DATE)",
-            &[
-                "INSERT INTO concept_member VALUES ('BK1169', 'SH600519', 'Kimi概念', '2026-08-01')",
-                "INSERT INTO concept_member VALUES ('BK1169', 'SZ000001', 'Kimi概念', '2026-08-01')",
-                "INSERT INTO concept_member VALUES ('BK0800', 'SH601127', NULL, '2026-08-01')",
-            ],
-        );
 
-        let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        let rows = reader.fetch_concept_member().expect("fetch concept member");
-        assert_eq!(rows.len(), 3);
-        // Ordered by concept_code, then symbol: BK0800 < BK1169.
-        assert_eq!(rows[0].concept_code, "BK0800");
-        assert_eq!(rows[0].symbol, "SH601127");
-        assert_eq!(rows[0].concept_name, None, "NULL concept_name is None");
-        let kimi = rows
-            .iter()
-            .find(|r| r.concept_code == "BK1169")
-            .expect("row");
-        assert_eq!(kimi.symbol, "SH600519");
-        assert_eq!(kimi.concept_name.as_deref(), Some("Kimi概念"));
-        assert_eq!(
-            kimi.update_date,
-            Some(NaiveDate::from_ymd_opt(2026, 8, 1).expect("date"))
-        );
-    }
-
-    #[test]
     fn fetch_capital_main_flow_filters_by_date_range() {
         let tmp = tempfile::tempdir().expect("tempdir");
         create_test_table_parquet(
@@ -1444,7 +1394,6 @@ mod tests {
         // not DataError — otherwise run_sepa's `?` fails hard (review revision).
         let tmp = tempfile::tempdir().expect("tempdir");
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        assert!(reader.fetch_concept_member().expect("empty").is_empty());
         assert!(
             reader
                 .fetch_capital_main_flow(
@@ -1613,11 +1562,12 @@ mod tests {
 
     #[test]
     fn validate_symbol_rejects_malformed_bk_codes() {
-        // Wrong length (3/5 digits), non-digit tails and wrong case rejected.
+        // Wrong length (3/7 digits), non-digit tails and wrong case rejected
+        // (issue #283 D7: 4-6 digits are the valid BK range).
         assert!(validate_symbol("BK047").is_err(), "BK + 3 digits rejected");
         assert!(
-            validate_symbol("BK04755").is_err(),
-            "BK + 5 digits rejected"
+            validate_symbol("BK0475555").is_err(),
+            "BK + 7 digits rejected"
         );
         assert!(validate_symbol("BKAB12").is_err(), "BK + letters rejected");
         assert!(
@@ -1628,6 +1578,35 @@ mod tests {
         assert!(
             validate_symbol("BK0475;DROP").is_err(),
             "stacked SQL rejected"
+        );
+    }
+
+    #[test]
+    fn validate_symbol_accepts_bk_4_to_6_digits() {
+        // Issue #283 D7: the BK namespace extends to 4-6 digit bare codes so the
+        // new THS 881xxx industries (BK881234) validate. Today only BK + exactly
+        // 4 digits is accepted (BK881234 is REJECTED) => this test is RED.
+        validate_symbol("BK881234").expect("BK + 6 digits should now be valid");
+        validate_symbol("BK88123").expect("BK + 5 digits should now be valid");
+        validate_symbol("BK8811").expect("BK + 4 digits stays valid");
+        // SH/SZ/BJ 6-digit codes keep working (zero regression).
+        validate_symbol("SZ000001").expect("SZ000001 should be valid");
+        validate_symbol("SH600519").expect("SH600519 should be valid");
+    }
+
+    #[test]
+    fn validate_symbol_rejects_bk_outside_4_6_digit_range() {
+        // The BK extension is bounded: 3-digit and 7+-digit bare codes stay
+        // rejected (no wildcard). These must keep failing even after the
+        // 4-6 digit expansion.
+        assert!(validate_symbol("BK881").is_err(), "BK + 3 digits rejected");
+        assert!(
+            validate_symbol("BK8812345").is_err(),
+            "BK + 7 digits rejected"
+        );
+        assert!(
+            validate_symbol("BK88123456").is_err(),
+            "BK + 8 digits rejected"
         );
     }
 

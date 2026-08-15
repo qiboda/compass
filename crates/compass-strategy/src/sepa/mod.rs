@@ -2,10 +2,11 @@
 //!
 //! Pure technical-indicator library over
 //! [`CrossSectionBar`](compass_core::model::CrossSectionBar) cross-sections,
-//! local concept-board daily aggregation ([`aggregation`]), the
-//! whole-market thermometer ([`temperature`]) and the five-module scoring
-//! engine ([`scoring`]). All functions are pure, return `None`/0 on
-//! insufficient windows and never panic or produce `NaN`.
+//! local industry-board daily aggregation ([`aggregation`], issue #283 D5:
+//! theme scoring groups by `stock_basic.industry`), the whole-market
+//! thermometer ([`temperature`]) and the five-module scoring engine
+//! ([`scoring`]). All functions are pure, return `None`/0 on insufficient
+//! windows and never panic or produce `NaN`.
 
 /// Main engine look-back window (calendar days) shared by the thermometer and
 /// the five-module scoring engine: `fetch_cross_section(now - 550, now)`.

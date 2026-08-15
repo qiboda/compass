@@ -151,6 +151,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_explicit_prefix_bk_4_to_6_digits() {
+        // Issue #283 D7: the BK namespace extends to 4-6 digit bare codes
+        // (the THS 881xxx industries). parse_explicit_prefix is length-agnostic
+        // so 4/5/6-digit tails already parse; these lock the expanded contract.
+        assert_eq!(parse_explicit_prefix("BK881234"), ("BK", "881234"));
+        assert_eq!(parse_explicit_prefix("BK88123"), ("BK", "88123"));
+        assert_eq!(parse_explicit_prefix("BK8811"), ("BK", "8811"));
+        assert_eq!(parse_explicit_prefix("BK0475"), ("BK", "0475"));
+    }
+
+    #[test]
+    fn exchange_of_symbol_bk_4_to_6_digits() {
+        // Issue #283 D7: exchange_of_symbol reports "BK" for every 4-6 digit
+        // BK code (no bare-code heuristic fallback).
+        assert_eq!(exchange_of_symbol("BK881234"), "BK");
+        assert_eq!(exchange_of_symbol("BK88123"), "BK");
+        assert_eq!(exchange_of_symbol("BK8811"), "BK");
+    }
+
+    #[test]
     fn exchange_of_symbol_explicit_prefix_wins() {
         assert_eq!(exchange_of_symbol("SZ000001"), "SZ");
         assert_eq!(exchange_of_symbol("sh600519"), "SH");

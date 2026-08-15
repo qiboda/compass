@@ -150,24 +150,6 @@ pub struct CrossSectionBar {
     pub amount: f64,
 }
 
-/// A single (concept, stock) membership row of an EastMoney concept board.
-///
-/// Read from `concept_member.parquet` by
-/// [`crate::data::parquet::ParquetReader::fetch_concept_member`]. Versioned by
-/// `update_date` — a snapshot of memberships, not a per-day time series
-/// (epic #139 decision 20).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConceptMember {
-    /// Concept board code (e.g. "BK1169").
-    pub concept_code: String,
-    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
-    pub symbol: String,
-    /// Concept board display name.
-    pub concept_name: Option<String>,
-    /// Date this membership row was last updated.
-    pub update_date: Option<chrono::NaiveDate>,
-}
-
 /// Daily main-capital (主力资金) net flow for one symbol.
 ///
 /// Read from `capital_main_flow.parquet` by

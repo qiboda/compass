@@ -482,39 +482,6 @@ fn import_dolt_since_filters_to_empty_is_ok() {
 // import_compass::run — integration boundary attacks
 // ---------------------------------------------------------------------------
 
-/// concept_member has no tiny-skip path: an empty table still exports a
-/// schema-only parquet and must verify 0 vs 0 as Ok.
-#[test]
-fn concept_member_empty_table_import_ok() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    setup_dolt(tmp.path());
-    dolt_sql(
-        tmp.path(),
-        "CREATE TABLE concept_member (\
-         concept_code VARCHAR(20) NOT NULL, \
-         symbol VARCHAR(20) NOT NULL, \
-         concept_name VARCHAR(50), \
-         update_date DATE, \
-         PRIMARY KEY (concept_code, symbol))",
-    );
-
-    import_compass::run(
-        tmp.path().to_path_buf(),
-        tmp.path().to_path_buf(),
-        CompassTable::ConceptMember,
-        false,
-        None,
-    )
-    .expect("empty concept_member must import Ok (0 vs 0)");
-
-    let parquet = tmp.path().join("concept_member.parquet");
-    assert_eq!(
-        read_parquet_row_count(&parquet),
-        0,
-        "schema-only parquet must report 0 rows"
-    );
-}
-
 /// Merge boundary: old parquet holds 1 row, Dolt updates that same key, the
 /// incremental merge keeps exactly 1 row. merged == old must NOT error (the
 /// no-loss check only fails on merged < old).

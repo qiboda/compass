@@ -178,7 +178,6 @@ pub const KEY_INDEX_REFRESH: &str = "index.refresh";
 pub const KEY_INDEX_EMPTY_TITLE: &str = "index.empty_title";
 pub const KEY_INDEX_EMPTY_DESC: &str = "index.empty_desc";
 pub const KEY_INDEX_SEGMENT_INDUSTRY: &str = "index.segment.industry";
-pub const KEY_INDEX_SEGMENT_CONCEPT: &str = "index.segment.concept";
 pub const KEY_INDEX_SEGMENT_OFFICIAL: &str = "index.segment.official";
 pub const KEY_INDEX_TABLE_NAME: &str = "index.table.name";
 pub const KEY_INDEX_TABLE_CODE: &str = "index.table.code";
@@ -347,7 +346,6 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_INDEX_EMPTY_TITLE,
     KEY_INDEX_EMPTY_DESC,
     KEY_INDEX_SEGMENT_INDUSTRY,
-    KEY_INDEX_SEGMENT_CONCEPT,
     KEY_INDEX_SEGMENT_OFFICIAL,
     KEY_INDEX_TABLE_NAME,
     KEY_INDEX_TABLE_CODE,
