@@ -88,9 +88,9 @@
 |---|---|---|---|
 | [#268](https://github.com/qiboda/compass/issues/268) | B1 | collectors 数据层 + 映射表（Python + pytest） | ✅ done（28420ce + f3ccb45） |
 | [#269](https://github.com/qiboda/compass/issues/269) | B2 | Rust 数据层（compass-core/compass-data + 测试） | ✅ done（ea9d802） |
-| [#270](https://github.com/qiboda/compass/issues/270) | B3 | GUI 渲染取用（market/sepa/screener + 测试） | in_progress |
-| [#271](https://github.com/qiboda/compass/issues/271) | B4 | 搜索三路匹配（picker/dropdown + 测试） | pending |
-| [#272](https://github.com/qiboda/compass/issues/272) | B5 | docs 同步 + 冒烟 + 验收修订 | pending |
+| [#270](https://github.com/qiboda/compass/issues/270) | B3 | GUI 渲染取用（market/sepa/screener + 测试） | ✅ done（8afe221 + 243e901） |
+| [#271](https://github.com/qiboda/compass/issues/271) | B4 | 搜索三路匹配（picker/dropdown + 测试） | ✅ done（02036b5 + e8d2f20），审查中 |
+| [#272](https://github.com/qiboda/compass/issues/272) | B5 | docs 同步 + 冒烟 + 验收修订 | in_progress |
 
 DAG: #268 → #269 → #270 → #271 → #272
 

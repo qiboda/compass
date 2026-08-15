@@ -3013,6 +3013,63 @@ mod tests {
     }
 
     #[test]
+    fn adversarial_270_screener_dropdown_shared_en_label_falls_back_to_zh() {
+        // P1-1 regression (review): two zh keys mapping to ONE English label
+        // (real data: Mining <- {B 采矿业, 采矿业}) must BOTH display their
+        // Chinese labels — the shared English label cannot round-trip to a
+        // unique zh key, so it is excluded from the display and the reverse map.
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec![
+            "B 采矿业".to_string(),
+            "采矿业".to_string(),
+            "银行".to_string(),
+        ];
+        let en_map = std::collections::HashMap::from([
+            ("B 采矿业".to_string(), "Mining".to_string()),
+            ("采矿业".to_string(), "Mining".to_string()),
+            ("银行".to_string(), "Banks".to_string()),
+        ]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["B 采矿业".to_string()];
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS must be created");
+        assert_eq!(
+            entry.options,
+            vec![
+                "B 采矿业".to_string(),
+                "采矿业".to_string(),
+                "Banks".to_string(),
+            ],
+            "P1-1: shared-English zh keys must display zh (Mining excluded); \
+             one-to-one keys still display en"
+        );
+        assert_eq!(
+            entry.selected,
+            vec!["B 采矿业".to_string()],
+            "P1-1: a shared-English selected value displays zh"
+        );
+        assert_eq!(
+            values,
+            vec!["B 采矿业".to_string()],
+            "P1-1: no-change frame must leave the stored zh key untouched"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
     fn adversarial_270_screener_table_industry_column_resolves_locale() {
         let _guard = LANG_LOCK
             .lock()
