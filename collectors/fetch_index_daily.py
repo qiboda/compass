@@ -197,6 +197,11 @@ def _kline_records(
         }
         for i, field in enumerate(_KLINE_FIELDS[1:], start=1):
             record[field] = _num(parts[i])
+        # DAILY_INSERT_COLS / the index_daily DDL both reference update_date;
+        # write_csv() infers the CSV header from this record's keys, so the
+        # key MUST be present or the merge import fails with "column
+        # update_date could not be found" (issue #273).
+        record["update_date"] = today_iso
         records.append(record)
     return records
 

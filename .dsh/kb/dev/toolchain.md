@@ -469,3 +469,20 @@
 - **修复**: 无需修复——干净重跑成功（EXIT=0）。非环境/配置问题。
 - **验证**: 重跑 `cargo llvm-cov nextest --json --summary-only --output-path ...` 后
   `bash scripts/check-coverage.sh` 8 项全 OK（2026-08-12，ref #250 首次遇到）。
+
+### [数据] index_daily 导入必败：CSV 缺 update_date 列（采集器契约断裂）
+
+- **症状**: `python main.py import index_daily` 报 `column "update_date" could not be found in any table in scope`，
+  index_daily 表建好后永远 0 行；index_basic 正常（1000 行）。2026-08-15 首次真实采集（1000 板块，3.5h）暴露。
+- **根因**: `fetch_index_daily.py::_kline_records()` 构造的 record 字典**不含 `update_date` 键**，而
+  `common.write_csv()` 按首个 record 的 keys 推断 CSV 表头 → 真实 `index_daily.csv` 缺 `update_date` 列；
+  但 `DAILY_INSERT_COLS` 与 INSERT SQL 引用该列 → 导入必败。**测试盲区**：`TestImportToDolt` 用手工
+  header（含 update_date）+ `_write_csv()` 拼 CSV，绕过了 `run() → write_csv()` 真实路径，缺陷从未暴露。
+- **排查路径**: 真实导入报 SQL 列缺失错误 → 对比 CSV 表头（9 列）vs `DAILY_INSERT_COLS`（10 列）→
+  检查 `_kline_records` 与 `write_csv` 键推断逻辑 → 确认测试用手工 header 绕过真实路径。
+- **修复**: `_kline_records()` record 补 `record["update_date"] = today_iso`（issue #273）；新增端到端
+  测试 `tests/test_index_daily_e2e.py` + 对抗测试 `tests/test_index_daily_adversarial.py` 走真实
+  run() → CSV → import_to_dolt() 路径（不再用手工 header）。
+- **验证**: 451 passed / cov 95%；真实数据导入成功（2759 行，update_date 无 NULL）。
+- **教训**: 采集器测试必须覆盖 `run() → write_csv() → import_to_dolt()` 真实链路，手工构造 CSV
+  的 import 测试会掩蔽列契约断裂——与 stock_daily 混源教训同理：数据级 bug 只能靠真实链路暴露。
