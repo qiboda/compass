@@ -874,7 +874,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |
 |---|---|---|---|---|
-| 文档位置 | `.dsh/kb/design/ui-widgets.md`（直接写权威版）/ `.dsh/designs/ui-widgets.md`（过程归档） | `.dsh/designs/ui-widgets.md` 过程归档，确认后主 agent 同步 .dsh/kb/ | 遵循项目「.dsh/kb/ 是知识唯一数据源、.omo/designs 仅归档」既有约定（ui.md 决策记录第 2 条）；ui-designer 只写 `.dsh/designs/` | 直接写 .dsh/kb/ 违反 ui-designer 写限与归档/权威分离约定 |
+| 文档位置 | `.dsh/kb/design/ui-widgets.md`（直接写权威版）/ `.dsh/designs/ui-widgets.md`（过程归档） | `.dsh/designs/ui-widgets.md` 过程归档，确认后主 agent 同步 .dsh/kb/ | 遵循项目「.dsh/kb/ 是知识唯一数据源、`.dsh/designs/` 仅归档」既有约定（ui.md 决策记录第 2 条）；ui-designer 只写 `.dsh/designs/` | 直接写 .dsh/kb/ 违反 ui-designer 写限与归档/权威分离约定 |
 | 组件模板 | 统一 8 字段模板 / 按组件类型灵活模板 / 表格化精简模板 | 统一 8 字段（用途/适用场景/变体/API 要点/示例/反模式/相关组件/测试锚点） | 任务已锁定；8 字段恰好覆盖「选型（2/7）+ 变体与用法（3/4/5）+ 约束（6）+ 验证（8）」完整闭环；统一模板保证 24 个组件可并排对比 | 灵活模板制造对比噪音；精简模板丢失反模式/测试锚点这两个最重要的校验字段 |
 | 分层方式 | 原子(16)/复合(8)/业务(4 citizen) 三层 / 平铺 24 个 | 三层 | 沿袭 gui-upgrade.md §5 + D11 既有决策；三层与依赖方向（compass-ui 零业务依赖）天然对齐；业务层独立小节保持组件库纯 UI | 平铺会让业务面板混入通用组件库，复用边界模糊（D11 排除理由） |
 | 反模式依据 | 仅代码注释/测试/设计决策有据条目 / 允许「未见约束」占位 | 有据条目为主，「未见约束」显式标注 | 反模式是本文最高价值字段，但 24 组件中部分组件（Badge/Label/Tooltip 等）确实缺少既有约束记录；显式标注避免「看起来像规范」实则编造 | 只写有据条目会留下空白组件；不标注的编造违反「从代码出发」原则 |

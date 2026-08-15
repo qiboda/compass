@@ -1,4 +1,4 @@
-name: opencode-ci-fix
+name: ci-fix
 
 on:
   workflow_run:

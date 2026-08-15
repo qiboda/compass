@@ -27,7 +27,7 @@ description: 产品 agent，分析代码库状态并为冲刺规划提出里程�
 - **git log**：`git log --oneline --since="2 weeks ago"` — 最近构建了什么？
 - **Open issues**：`gh issue list --state open` — 需求池即 open issues（含 backlog 候选，标 `C-Feature`）；不再使用 `backlog.md` 文件
 - **设计文档**：读取 `.dsh/kb/design/architecture.md`、`data-providers.md`、`symbols.md` — 架构状态如何？
-- **计划文件**：列出 `.omo/plans/*.md` — 哪些正在规划中？
+- **计划文件**：列出 `.dsh/plans/*.md` — 哪些正在规划中？
 
 ### 第 2 步：分析
 
@@ -108,4 +108,4 @@ Based on analysis of <N open issues, M recent commits>:
 
 - Open issues — 需求池（backlog 候选为 `C-Feature` 且 body 标注"需求池/Backlog"）
 - `AGENTS.md` — 冲刺规划章节
-- `.omo/plans/` — 进行中和已完成的计划
+- `.dsh/plans/` — 进行中和已完成的计划
