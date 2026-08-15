@@ -565,3 +565,22 @@
   再跑 Dolt 相关测试。
 - **验证**: 禁用后完整前缀 140 用例 60.9s 通过，全套件 + coverage 全绿。
 - **教训**: 本地/CI 无外网时，Dolt 遥测是隐藏的挂起源；涉及 Dolt 的测试命令应显式禁用遥测。
+
+### [数据] 东财封禁下官方指数爬取：快速失败机制误伤 + name_en 列缺失
+
+- **症状**: ① `python main.py fetch index_daily` 在东财封禁下跑：板块段（无 fallback）连续 5 个失败即触发
+  #277 快速失败终止，**官方指数段（有腾讯 fallback）根本轮不到**——fallback 形同虚设；② `import index_daily`
+  时报 `Unknown column 'name_en' in 'index_basic'`。
+- **根因**: ① run() 执行顺序为 boards → official，快速失败计数器跨两段累计，封禁下板块段必然先打满 5 连败；
+  ② #266（data-name-i18n）合并后 `BASIC_DDL` 加了 `name_en` 列，但 Dolt 里 `index_basic` 是**旧 schema**——
+  `CREATE TABLE IF NOT EXISTS` 不会改已有表，导入 SQL（`LEFT JOIN _tmp_name_en` + `name_en` 列）报列缺失。
+- **排查路径**: ① 看 run() 日志尾部 `RuntimeError: 连续 5 个标的失败` → 读 run() 确认 boards 先于 official →
+  判断快速失败在板块段即触发；② import 报错定位到 `_import_index_basic` 的 INSERT 引用了 `name_en` →
+  `SHOW CREATE TABLE index_basic` 确认 Dolt 旧表无此列。
+- **修复**: ① 封禁期间不跑完整 run()，用一次性脚本只拉官方指数段（复用 `_fetch_tencent_kline` +
+  `_kline_records`，产出同格式 CSV）——不改生产代码；② `dolt sql -q "ALTER TABLE index_basic ADD COLUMN name_en VARCHAR(100)"` 补列后重导。
+- **验证**: 30 个官方指数全量入库（145,215 行，上证 8531 根自 1990-12-19），index_basic 1030 条（含 30 official），
+  update_date 无空值；Dolt commit chmn88d 已推送。
+- **教训**: ① 快速失败计数器跨段累计时，fallback 段若排在无 fallback 段之后会被误伤——段间应重置计数器或
+  官方段前置；② Dolt schema 变更（DDL 加列）对已存在的表不生效，`CREATE TABLE IF NOT EXISTS` 只建新表——
+  列增变更需显式 `ALTER TABLE` 迁移或 DROP 重建。
