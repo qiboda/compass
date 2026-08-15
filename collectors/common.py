@@ -6,12 +6,15 @@ and state-file management — used by all collector modules.
 
 import asyncio
 import csv
+import json
 import logging
 import os
 import random
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -38,6 +41,9 @@ __all__ = [
     "dolt_table_import",
     "fetch_paginated",
     "flatten_record",
+    "Progress",
+    "progress_path",
+    "read_progress",
     "import_replace_table",
     "last_report_date",
     "write_csv",
@@ -96,7 +102,150 @@ def csv_dir() -> Path:
     return path
 
 
+# ── Progress tracking ───────────────────────────────────────────
+
+
+def progress_path(name: str) -> Path:
+    """Return the JSON progress file path for a collector name.
+
+    The file lives alongside the raw CSVs so a separate ``main.py progress``
+    process can read it while the fetch is still running.
+
+    Defensive: only plain filename characters (``[A-Za-z0-9_.-]``) are kept —
+    anything else (path separators, ``..`` segments, spaces) is replaced with
+    ``_`` so a hostile or buggy name can never write outside ``csv_dir()``.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+    return csv_dir() / f"{safe}.progress.json"
+
+
+def read_progress(name: str) -> dict[str, object] | None:
+    """Read a collector's progress JSON, or None when absent/unreadable.
+
+    A corrupt/partial file (e.g. a concurrent write) is treated as missing
+    rather than crashing the query command.
+    """
+    path = progress_path(name)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+class Progress:
+    """Small JSON progress tracker for long-running collectors.
+
+    Each update is written atomically to ``csv_dir()/<name>.progress.json`` so
+    another process can query live progress without locking. The file is kept
+    after completion with status ``completed`` or ``failed`` for post-run
+    inspection.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        total_items: int | None = None,
+        output_csv: str | Path | None = None,
+        message: str = "starting",
+    ) -> None:
+        self.name = name
+        self.path = progress_path(name)
+        self.total_items = total_items
+        self.output_csv = str(output_csv) if output_csv is not None else None
+        self.completed_items = 0
+        self.fetched_rows = 0
+        self.current_item: str | None = None
+        self.message = message
+        self.status = "running"
+        self.error: str | None = None
+        self.started_at = datetime.now().isoformat(timespec="seconds")
+        self.updated_at = self.started_at
+        self._write()
+
+    def _data(self) -> dict[str, object]:
+        percent: float | None = None
+        if self.total_items:
+            # Clamp to [0, 100]: a negative completed count (buggy caller)
+            # must never leak a negative percent into the live-query file.
+            percent = round(min(max(self.completed_items, 0) / self.total_items * 100, 100.0), 2)
+        return {
+            "name": self.name,
+            "status": self.status,
+            "started_at": self.started_at,
+            "updated_at": self.updated_at,
+            "total_items": self.total_items,
+            "completed_items": self.completed_items,
+            "fetched_rows": self.fetched_rows,
+            "current_item": self.current_item,
+            "percent": percent,
+            "message": self.message,
+            "output_csv": self.output_csv,
+            "error": self.error,
+        }
+
+    def _write(self) -> None:
+        self.updated_at = datetime.now().isoformat(timespec="seconds")
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(self._data(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp, self.path)
+
+    def update(
+        self,
+        *,
+        completed: int | None = None,
+        fetched_rows: int | None = None,
+        current_item: str | None = None,
+        message: str | None = None,
+        total_items: int | None = None,
+    ) -> None:
+        if total_items is not None:
+            self.total_items = total_items
+        if completed is not None:
+            self.completed_items = completed
+        if fetched_rows is not None:
+            self.fetched_rows = fetched_rows
+        if current_item is not None:
+            self.current_item = current_item
+        if message is not None:
+            self.message = message
+        self._write()
+
+    def finish(
+        self,
+        *,
+        fetched_rows: int | None = None,
+        message: str = "completed",
+    ) -> None:
+        self.status = "completed"
+        if fetched_rows is not None:
+            self.fetched_rows = fetched_rows
+        if self.total_items is not None:
+            self.completed_items = self.total_items
+        self.message = message
+        self.error = None
+        self._write()
+
+    def fail(self, error: str, *, message: str = "failed") -> None:
+        self.status = "failed"
+        self.error = str(error)
+        self.message = message
+        self._write()
+
+    def __enter__(self) -> "Progress":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        if exc_type is not None:
+            self.fail(str(exc) if exc else str(exc_type))
+        return False
+
+
 # ── Throttle ────────────────────────────────────────────────────
+
 
 class Throttle:
     """Rate-limiter with jitter to avoid triggering API throttling."""
@@ -117,6 +266,7 @@ class Throttle:
 
 
 # ── Dolt helpers ────────────────────────────────────────────────
+
 
 def dolt_sql(sql: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
     """Run a Dolt SQL query against compass_data."""
@@ -149,7 +299,9 @@ def dolt_table_import(
     if create_sql:
         create = subprocess.run(
             ["dolt", "--data-dir", str(dolt_dir()), "sql", "-q", create_sql],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         if create.returncode != 0:
             print(f"  dolt create error: {create.stderr.strip()}", file=sys.stderr)
@@ -159,10 +311,19 @@ def dolt_table_import(
         mode = "-c"
     result = subprocess.run(
         [
-            "dolt", "--data-dir", str(dolt_dir()),
-            "table", "import", mode, table_name, "--continue", str(csv_abs),
+            "dolt",
+            "--data-dir",
+            str(dolt_dir()),
+            "table",
+            "import",
+            mode,
+            table_name,
+            "--continue",
+            str(csv_abs),
         ],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
     if result.returncode != 0:
         print(f"  dolt import error: {result.stderr.strip()}", file=sys.stderr)
@@ -244,9 +405,9 @@ def import_replace_table(
 
     if merge:
         before_total = int(
-            dolt_sql_csv(f"SELECT COUNT(*) FROM {dolt_table}")
-            .strip().split("\n")[-1]
-            if _table_exists(dolt_table) == "1" else 0
+            dolt_sql_csv(f"SELECT COUNT(*) FROM {dolt_table}").strip().split("\n")[-1]
+            if _table_exists(dolt_table) == "1"
+            else 0
         )
         created = dolt_sql(ddl).returncode == 0
         result = dolt_sql(insert_sql, timeout=600) if created else None
@@ -280,10 +441,7 @@ def import_replace_table(
     lines = stdout.strip().split("\n")
     total = int(lines[-1]) if len(lines) > 1 else 0
     last_val = (
-        dolt_sql_csv(f"SELECT {last_report_expr} FROM {dolt_table}")
-        .strip()
-        .split("\n")[-1]
-        .strip()
+        dolt_sql_csv(f"SELECT {last_report_expr} FROM {dolt_table}").strip().split("\n")[-1].strip()
     )
     last_val = "NULL" if (not last_val or last_val == "NULL") else f"'{last_val}'"
 
@@ -302,6 +460,7 @@ def import_replace_table(
 
 
 # ── Data fetching ───────────────────────────────────────────────
+
 
 def flatten_record(item: dict[str, object]) -> dict[str, str | int | float]:
     """Flatten nested fields for CSV export."""
@@ -368,7 +527,7 @@ async def fetch_paginated(
                 break
 
             except Exception as e:
-                wait = min(2 ** attempt, 30) + random.uniform(0, 3)
+                wait = min(2**attempt, 30) + random.uniform(0, 3)
                 if attempt < EM_MAX_RETRIES - 1:
                     print(
                         f"    retry {attempt + 1}/{EM_MAX_RETRIES} in {wait:.0f}s: {e}",
@@ -403,6 +562,7 @@ async def fetch_paginated(
 
 
 # ── CSV output ──────────────────────────────────────────────────
+
 
 def write_csv(
     records: list[dict[str, str | int | float]], filepath: Path, append: bool = False
