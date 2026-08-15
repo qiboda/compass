@@ -371,12 +371,15 @@ def load_name_en_mapping(tmp_name: str = NAME_EN_MAPPING_TMP) -> bool:
     ``collectors/name_en_mapping.csv``; a missing file degrades to False and
     importers proceed with every en column NULL (epic #266 decision 4). The
     staging table ``_tmp_name_en`` carries ``(section, key, value)`` and is
-    dropped by the caller after the JOIN.
+    dropped by the caller after the JOIN. A stale staging table from a
+    previous failed run is dropped first — otherwise the CREATE would fail
+    and every en column would silently degrade to NULL (review P1-1).
     """
     path = name_en_mapping_path()
     if not path.exists():
         print(f"  name_en_mapping not found ({path}); en columns stay NULL", file=sys.stderr)
         return False
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
     if not dolt_table_import(tmp_name, path, create_sql=NAME_EN_MAPPING_DDL):
         print("  name_en_mapping import failed; en columns stay NULL", file=sys.stderr)
         return False

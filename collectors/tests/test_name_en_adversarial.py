@@ -406,6 +406,40 @@ class TestIndexBasicNameEn:
         )
         assert value == "Semiconductor", f"rerun must keep the mapped name_en, got {value!r}"
 
+    def test_stale_mapping_staging_table_is_rebuilt(
+        self,
+        dolt_env: TempDolt,
+        mapping_path: Callable[[str], Path],
+        tmp_path: Path,
+    ) -> None:
+        """Error path (review P1-1): a stale ``_tmp_name_en`` staging table
+        left by a failed run must be dropped before the fresh import — the
+        CREATE would otherwise fail and every en column silently degrade to
+        NULL. The mapping must still land after the rebuild."""
+        dolt_env.dolt_sql(
+            "CREATE TABLE _tmp_name_en (section VARCHAR(20), `key` VARCHAR(100), value VARCHAR(100))"
+        )
+        mapping_path(
+            "section,key,value\nindex,SH000001,SSE Composite\nindex,BK0475,Semiconductor\n"
+        )
+        csv_path = self._write_index_basic(dolt_env, tmp_path)
+        assert fetch_index_daily.import_to_dolt(csv_path) == 2
+        value = dolt_env.last(
+            dolt_env.dolt_sql_csv(
+                "SELECT IFNULL(name_en,'<NONE>') FROM index_basic WHERE symbol='SH000001'"
+            )
+        )
+        assert value == "SSE Composite", (
+            f"stale staging table must be rebuilt and joined, got {value!r}"
+        )
+        # Staging table cleaned up after the import.
+        n = dolt_env.last(
+            dolt_env.dolt_sql_csv(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='_tmp_name_en'"
+            )
+        )
+        assert n == "0", f"staging table must be dropped after import, got {n}"
+
 
 # ═══════════════════════════════════════════════════════════════════
 # stock_basic (key = industry string)

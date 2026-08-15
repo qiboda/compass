@@ -83,12 +83,15 @@ def _import_stock_basic() -> None:
         if mapping:
             # Dual-key JOIN: exact TRIMmed industry, or its Roman-numeral
             # suffix stripped (白酒Ⅱ → 白酒) so suffixed industries hit the
-            # base mapping key.
+            # base mapping key. The `<>` guard prevents double-match
+            # inflation when the mapping holds both the suffixed and the
+            # base key for one industry (review P2-1).
             join = """
                 LEFT JOIN _tmp_name_en m
                   ON m.section = 'industry'
                  AND (m.`key` = TRIM(t.industry)
                       OR (TRIM(t.industry) REGEXP '[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]$'
+                          AND m.`key` <> TRIM(t.industry)
                           AND m.`key` = LEFT(TRIM(t.industry),
                                              CHAR_LENGTH(TRIM(t.industry)) - 1)))
             """
