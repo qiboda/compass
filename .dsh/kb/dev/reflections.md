@@ -208,3 +208,27 @@
 - **测试 agent 自验结论失真变体再现**（ref #235 RED 断言目标语义错误 → 本次 #265 self-GREEN fixture 与契约不一致）：测试 agent 的 RED/GREEN 结论都不能直接采信——主 agent 独立复核（真实实现重跑 / 逐断言核对语义）应成为固定步骤；testing.md 已固化条款
 - **子代理交付/自验可靠性系列第 5 次**（ref #244 零交付 → #245 只分析 → #255 截断零落盘 → #235 断言失真 → 本次自验 fixture 失真）："委派后核验"持续靠主 agent 手动补救，至今未固化为 skill/hook——建议正式写入 skwy-workflow 委派协议（proposed，连续 5 批未落实）
 - **独立 review 持续抓出主 agent 盲区**（#255 → #264 → 本次测试脚本静默崩退 P1 + trap P3）：审查-修复闭环价值稳定实证，保持强制
+## 2026-08-15 — ref #273 指数采集真实运行：CSV 缺 update_date 列修复 + 首次采集暴露反爬封禁
+
+**What was done**: 首次真实运行 epic #255 指数采集管线（1000 板块，3.5h），暴露 `_kline_records()` 缺 `update_date` 键导致 CSV 缺列、Dolt 导入必败（测试用手工 header 掩蔽契约断裂）；修复 + 新增 e2e/对抗测试走真实 run()→CSV→import_to_dolt() 链路。采集后期被东财 push2his 反爬封禁（HTTP 000 全镜像），仅 45 概念板块入库（index_daily 2759 行 + index_basic 1000 行），官方指数 30/行业 496/概念 459 待解封后续采（记录在 .dsh/evidence/index-fetch-resume-2026-08-15.md）。
+
+**User corrections**: 无纠正类消息。用户追加要求："push2his 反爬拉黑，什么时候能好呢？先记录下当前的拉取范围，方便下次继续拉取"——已将续采指引与缺失清单落盘 .dsh/evidence/。
+
+**What went wrong**:
+1. 采集 3.5h 全程盲等：后台任务用 `| tail -40` 管道缓冲输出，48 次 job_output 轮询看不到进度——应先探测板块总数（504+496=1000）估算时长，或用 `> logfile 2>&1` 直写日志按需 tail
+2. 提交被 pre-commit hook 拦截一次（ruff 4 错误：测试文件 F401/I001）——本地应先自跑 `uv run ruff check *.py tests/` 再提交
+3. edit 一次失败（file changed since read，需 re-read 重试）；compress 一次失败（seq 不在 surface）
+4. 提交 2585829 落 master（存在活跃 worktree collector-progress/data-name-i18n，但均为他任务）：判定 #273 为单模块 Python bugfix（collectors 目录内，不产出 plans/designs），按 0.5 步规则无需 worktree——判断依据记录在案
+
+**Lessons learned**:
+1. 网络采集类后台任务：先算请求总数（clist 探测）预估时长，日志直写文件而非 tail 管道，避免盲等
+2. commit 前自跑项目 lint（`uv run ruff check *.py tests/`）——hook 是最后防线不是第一道
+3. 测试子代理产出后主 agent 先过一遍 lint 再提交，避免 hook 拦截返工
+
+**Process improvements**:
+- toolchain.md 追加排查卡（采集器测试必须覆盖真实 run()→write_csv→import 链路；手工 CSV 掩蔽列契约断裂）——已随 2585829 提交
+- 续采记录 .dsh/evidence/index-fetch-resume-2026-08-15.md + 两份缺失清单——已落盘（待提交）
+
+### Trends (last 10)
+- 数据级 bug 反复由真实数据首次暴露（#181 stock_daily 混源、#273 update_date 缺列）：fixture 测试覆盖不到，epic #255 的"真实数据冒烟"步骤在实现时未执行真实采集，本次 3.5h 采集才撞出契约断裂——真实冒烟不应滞后到交付后
+- 子代理交付后主 agent 未立即验证（本次 ruff 由 review 子代理发现而非提交前）：与 #244/#255"子代理交付验证"模式同类，commit 前 lint 自跑应成为固定动作
