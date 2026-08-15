@@ -376,3 +376,25 @@
 - **子代理交付/输出异常系列第 N 次**（#244/#245/#255/#235/#265/#273/#277 → 本次 #278 需求子代理首轮未落盘）：委派后核验产物仍未固化为 skill/hook，建议正式写入 skwy-workflow 委派协议
 - **外部 API 语义假设需 live 实证**（#255 真实采集网络不可达 → 本次腾讯分页方向 start/end 修正）：先探测再实现，避免测试桩与真实行为脱节
 - **URL 子串匹配/引用范围侦察类摩擦**（#264 引用范围漏目录 → 本次 stub 子串误匹配）：匹配条件应使用更精确的标识（完整域名/URL），避免包含关系误伤
+## 2026-08-15 — ref #281 官方指数经腾讯源全量入库 + 过程问题排查卡
+
+**What was done**: 东财 push2his 封禁未解期间，用一次性脚本经腾讯源拉全 30 个官方指数（145,215 行全历史，上证自 1990-12-19）入 Dolt（commit chmn88d）+ index_basic 补 30 official 条目 + name_en 列 ALTER 迁移；三个过程问题沉淀 toolchain 排查卡（随 e1365ce，ref #281）。
+
+**User corrections**: ①"反爬被封大概是爬取了多久后发生的事情"→ 分析确认封禁触发点 = 45 请求/2 分钟内（前 45 板块成功、第 46 个起全败），非指纹问题；②"修改爬取的程序，一旦爬取失败，立即结束"→ 快速失败需求 #277；③"或者试一下其他网站？例如腾讯的？"→ 腾讯源调研 #278；④"export duckdb的流程先不用管"→ 我对 export duckdb 未镜像 index 表深挖多轮（job_output ×6 + 多次重跑），用户叫停——GUI 有 parquet fallback，该问题非阻塞。
+
+**What went wrong**:
+1. export duckdb 未镜像问题过度深挖：多轮重跑 export（bash-97/98/99/101/102）、RUST_LOG=debug 排查，直到用户"先不用管"才停——应更早识别非阻塞（GUI 大盘 tab 走 ParquetReader 直读，不依赖 DuckDB）
+2. 快速失败机制设计盲区：run() 板块段先跑（无 fallback）打满 5 连败 abort，官方段（有腾讯 fallback）轮不到——fallback 形同虚设，只能靠一次性脚本绕过
+3. name_en 列缺失：Dolt 旧表无此列，CREATE TABLE IF NOT EXISTS 对已有表不生效 → ALTER TABLE 补齐
+4. 一次性脚本只写 index_daily.csv，官方 basic 条目需手动合并进 index_basic.csv
+
+**Lessons learned**:
+1. 快速失败计数器应**段间重置**或 fallback 段前置——无 fallback 段在前会误伤有 fallback 的段（已入排查卡，建议后续修 run()）
+2. 用户叫停前应主动识别非阻塞项：GUI 有 parquet fallback 时，DuckDB 镜像缺失不阻塞功能——深挖前先判断阻塞性
+3. Dolt DDL 列增变更需显式 ALTER TABLE 迁移，CREATE IF NOT EXISTS 不覆盖已有表
+
+**Process improvements**: toolchain.md 排查卡（快速失败误伤 fallback 段 + name_en 列迁移，ref #281）；官方指数数据已入库推送（Dolt chmn88d）
+
+### Trends (last 10)
+- 数据级问题反复由真实数据首次暴露（#181 混源、#273 update_date、本次 name_en 列/快速失败误伤）：fixture 覆盖不到数据链路的真实集成，真实冒烟/真实爬取仍是唯一暴露途径（#273、#277 反思同模式）
+- 非阻塞问题过度深挖被用户叫停（本次 export duckdb）——与"真实冒烟滞后"同属范围判断：工作前先标定阻塞性
