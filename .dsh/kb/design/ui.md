@@ -162,10 +162,11 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
   （`bg_hover`，100ms `motion.fast`）；点击 `dispatch_symbol_fetch` 联动图表
   （**不切 tab**，SEPA 行点击先例）。快照缺行时名称回退白名单内嵌值、点位显示 `--`。
   其余官方指数 + 全部板块经 ③ 列表按 Segmented 切换可达，与「全部官方指数」锁定决策不冲突。
-- **② 工具条**：计数标签「共 N 个 · 日期」+ `Segmented [行业板块|概念板块|官方指数]`
-  （**行业板块为默认段**）+ 刷新按钮（Primary + ARROW_CLOCKWISE；loading 禁用 + spinner；
-  **纯手动触发，无自动刷新**，SEPA 先例）。Segmented 切换仅过滤**本地内存副本**
-  （`index_type` 匹配），**绝不回写 shared_state、不重新 fetch**（SEPA TOP-N 本地截断先例）。
+- **② 工具条**：计数标签「共 N 个 · 日期」+ `Segmented [行业板块|官方指数]`
+  （**行业板块为默认段**；概念段已随 issue #283 D4 移除）+ 刷新按钮（Primary +
+  ARROW_CLOCKWISE；loading 禁用 + spinner；**纯手动触发，无自动刷新**，SEPA 先例）。
+  Segmented 切换仅过滤**本地内存副本**（`index_type` 匹配），**绝不回写
+  shared_state、不重新 fetch**（SEPA TOP-N 本地截断先例）。
 - **③ 板块/指数列表 DataTable**：列 = 名称 `Text` / 代码 `Text`(mono) / 最新 `Price` /
   涨跌幅 `PriceText::percent_only()` / 成交额 `Count`（亿元，整数）；
   **默认按涨跌幅降序**（板块轮动视角：当日强势/弱势板块优先）；表头点击可改列与升降序
@@ -360,6 +361,7 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 2026-08-10 | GUI 全面中文化 + 多语言 i18n（rust-i18n 键表 + 工具栏语言下拉 + config language 键 + fork 图表日期/tooltip 键化）（ref #222） | `.dsh/designs/gui-i18n.md` | 已实现（与代码同步） |
 | 2026-08-13 | 选股器条件构建器（Epic #243 Batch 2）：Metabase 范式条件卡片组（AND/OR 嵌套）操作 Filter AST，替换固定表单（ref #245） | `.dsh/designs/llm-screener-ui.md` | 已实现（与代码同步） |
 | 2026-08-14 | 大盘 tab（epic #255）：核心指数 Card（6 白名单）+ 板块/指数排序表 + Segmented 行业/概念/官方 + 手动刷新 + 行点击联动不切 tab + BK 前缀搜索 + 前复权 Tag 按类型隐藏 | `.dsh/designs/index-data.md` | 已实现（与代码同步） |
+| 2026-08-16 | 板块数据源战略调整（issue #283）：行业板块切同花顺 90 个（881xxx，BK+6 位符号）；概念板块全链路移除（Segmented 概念段、SEPA 概念主题标签、concept_member）；SEPA 题材模块改用行业板块聚合（stock_basic.industry 分组） | `.dsh/plans/industry-ths.md` | 已实现（与代码同步） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.dsh/designs/<feature>.md` 归档文件、实现状态。
@@ -424,6 +426,7 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 子组 scope 高度（ref #245 测试发现） | `f32::INFINITY` / `available_rect_before_wrap().bottom()` | 有限底部 | INFINITY 使 wrap 垂直居中算 NaN → 组内与组后控件 rect 全毁、点击静默丢弃（生产 + kittest 同受影响） | INFINITY 写法直白但布局不可用 |
 | en locale 测试并发（ref #222） | 并行 / LANG_LOCK 串行 | `LANG_LOCK: Mutex` 串行（ui_fixes_218.rs 定义） | `set_locale` 进程全局，并行测试互相污染 locale 造成 flaky；复用 HOME_LOCK 先例 | 并行省时但不可靠 |
 | 大盘 tab 入口（epic #255） | 新 dock tab「大盘」/ 仅增强 picker / 侧栏分组 | 新 dock tab（报告型面板，TabKind::Market，叠入 Chart leaf 三 tab） | 板块轮动需要「排序列表 + 概览」这类浏览场景，picker 是精确查找不是浏览；与 SEPA 报告型先例同构；SEPA 先例证明每 leaf 多 tab 已支持 | 仅 picker 无法承载板块排序列表；侧栏分组把 500 行塞进 240px 侧栏，浏览效率差 |
+| 大盘 Segmented 概念段移除（issue #283 D4） | 保留概念段（数据源已删）/ 移除 | 移除概念段，Segmented 缩为 [行业板块, 官方指数] | 概念板块行情/发现全链路删除后保留段会渲染空列表，误导用户；删除型变更无新设计 | 保留段需保留概念数据，与「彻底放弃概念」决策冲突 |
 | 核心指数白名单 6 只（epic #255） | 全量官方指数进 Card / 核心白名单 Card + 全量进列表 | 白名单 Card（6 只：上证/深成/创业板/沪深300/中证500/中证1000）+ 全量进 Segmented 列表 | Card 横向空间有限，白名单保证概览可读；全量仍可经列表/搜索可达，不违背「全部官方指数」锁定决策 | 全量进 Card 横向溢出、可读性差 |
 | 板块列表默认排序（epic #255） | 名称升序 / 涨跌幅降序 | 涨跌幅降序（板块轮动视角） | 核心用途「板块轮动」即找当日强势/弱势板块，默认排序直击场景；表头可改 | 名称升序是中性默认但无信息价值 |
 | 行点击不切 tab（epic #255） | 切图表 tab / 不切（与 SEPA 一致） | 不切 tab | 与 SEPA/选股器行点击行为完全统一（ref #152 先例）；用户可连续点行对比 | 切 tab 打断连续浏览，且引入 dock_state 操作复杂度 |

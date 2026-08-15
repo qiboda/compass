@@ -166,15 +166,21 @@ CREATE TABLE IF NOT EXISTS index_basic (
 )
 ```
 
-- **`index_type` 取值**：`official`（交易所官方指数）/ `concept`（概念板块）/
-  `industry`（行业板块）。官方指数为**硬编码白名单**（约 30 只主流指数，
-  `fetch_index_daily.py::OFFICIAL_INDICES`，akshare index_zh_em 同款做法：SH000001 上证指数 /
-  SZ399001 深证成指 / SZ399006 创业板指 / SH000300 沪深300 / SH000905 中证500 /
-  SH000852 中证1000 等）；概念/行业板块从东财 clist（`fs=m:90 t:3` / `t:2`）全量发现，
-  新板块自动入库。
+- **`index_type` 取值**：`official`（交易所官方指数）/ `industry`（行业板块）。
+  官方指数为**硬编码白名单**（约 30 只主流指数，`fetch_index_daily.py::OFFICIAL_INDICES`，
+  akshare index_zh_em 同款做法：SH000001 上证指数 / SZ399001 深证成指 / SZ399006 创业板指 /
+  SH000300 沪深300 / SH000905 中证500 / SH000852 中证1000 等）；行业板块为**同花顺
+  90 个申万一级行业**（issue #283 D1：列表实时抓 `q.10jqka.com.cn/thshy/` GBK 页面
+  href 提取 `881xxx` + 名称，140 行去重 → 90；symbol 为 `BK` + 6 位，如 `BK881101`）。
+  **概念板块（`concept`）已彻底移除**（issue #283 D4）：不再采集/发现/入库，Dolt
+  存量概念行与 `concept_member` 表已清理，GUI 概念段与 SEPA 概念主题标签同步删除。
+- **同花顺行业 K 线（issue #283 D2）**：按年分页 `d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`
+  （JSONP 包装，`data` 字段 `;` 分隔），年循环 2007→当前年、空年提前终止；
+  7 字段列序为 `日期,开,高,低,收,量,额`（与东财 `开,收,高,低` **不同**，解析时重排为
+  东财序再复用 `_kline_records`）。同花顺段受 #277 连续失败快速终止保护。
 - **腾讯回退（issue #278）**：官方指数优先东财 push2his；东财失败/empty 时自动切腾讯
   `web.ifzq.gtimg.cn/appstock/app/fqkline/get`（count≤2000，end 日期反向分页拉全历史；
-  amount 腾讯无则填 0；受 #277 连续失败快速终止保护）。板块仍只走东财。
+  amount 腾讯无则填 0；受 #277 连续失败快速终止保护）。行业板块只走同花顺。
 - **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线 `beg=0` 全量拉取 +
   `INSERT IGNORE` 按 PK (symbol, trade_date) 去重，新标的自动补全量历史。
 - **Parquet 布局**：
@@ -185,9 +191,9 @@ CREATE TABLE IF NOT EXISTS index_basic (
   - `index_basic.parquet`：`symbol, name, name_en, index_type`。
   - **`name_en` / `stock_basic.industry_en`（epic #266）**：collectors 静态映射表
     `collectors/name_en_mapping.csv`（`section,key,value`：index 按 symbol /
-    industry 按行业中文 / concept 按概念中文）import 时 LEFT JOIN 写入；未收录 →
-    NULL → GUI 回退中文。读取侧（`ParquetReader`）对旧 parquet（无新列）优雅降级
-    `None`（`is_missing_column` binder 错误匹配后重试无列查询）。
+    industry 按行业中文；concept 段已随 #283 删除）import 时 LEFT JOIN 写入；
+    未收录 → NULL → GUI 回退中文。读取侧（`ParquetReader`）对旧 parquet（无新列）
+    优雅降级 `None`（`is_missing_column` binder 错误匹配后重试无列查询）。
 - **导出语义**：`import-compass --table index_daily` 走**增量 merge**
   （parquet 侧 PK (symbol, tradedate)，`prefer_new` 即 Dolt 新值优先，`--since` 支持，
   与 capital_main_flow 同款 `import_append_table`）；`--table index_basic` **全量覆盖**
@@ -334,12 +340,12 @@ SEPA 扩展（epic #139）加入 `open`/`high`/`low`/`amount`：形态（VCP）�
 
 ### SEPA 数据表读取原语（epic #139）
 
-5 个只读原语，模式与 `fetch_cross_section` 一致（`read_parquet()` + 内存 DuckDB 查询），
-文件名 = Dolt 表名 + `.parquet`，与 `stock_daily.parquet` 同目录（由 `import-compass --table ...` 生成）：
+4 个只读原语，模式与 `fetch_cross_section` 一致（`read_parquet()` + 内存 DuckDB 查询），
+文件名 = Dolt 表名 + `.parquet`，与 `stock_daily.parquet` 同目录（由 `import-compass --table ...` 生成）；
+`fetch_concept_member` 已随 issue #283 D4 移除（题材模块改用 stock_basic.industry 分组）：
 
 | 方法 | 文件 | 日期过滤 | 说明 |
 |---|---|---|---|
-| `fetch_concept_member()` | `concept_member.parquet` | 无（全量快照） | 概念成分映射，版本化非每日快照 |
 | `fetch_capital_main_flow(start, end)` | `capital_main_flow.parquet` | `trade_date` | 主力资金流；NULL 金额 COALESCE 为 0.0，`small_net` 保持 Option |
 | `fetch_dragon_list(start, end)` | `dragon_list.parquet` | `trade_date` | 龙虎榜席位；`institution_flag` 为 TINYINT → `Option<i8>` |
 | `fetch_block_trade(start, end)` | `block_trade.parquet` | `trade_date` | 大宗交易；price/volume/amount NULL 时 COALESCE 为 0.0 |
