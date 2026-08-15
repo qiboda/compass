@@ -289,6 +289,7 @@ pub struct SharedState {
                                 │  result_slot.start()       │
                                 │    |resp| {                │
                                 │      state.bars.set(bars)  │
+                                │      logger.log_info(...)  │
                                 │      state.loading.set(false)
                                 │      egui_ctx.request_repaint()
                                 │    }                       │
@@ -305,7 +306,9 @@ pub struct SharedState {
    一个 `Signal<FetchResponse>`（输出）和一个异步工作函数。
 
 3. **`result_slot::start()`** —— 一个在 UI 线程上运行的闭包，每当
-   `FetchResponse` 到达时执行。它将结果写入 `Dynamic<T>` 字段并调用
+   `FetchResponse` 到达时执行。它将结果写入 `Dynamic<T>` 字段，**先写
+   显示日志再清除 `loading`**（fetch/screener/SEPA/index 四个 slot 同构，
+   保证 `loading==false` 可观察时日志已存在，ref #276），最后调用
    `request_repaint()`。
 
 `BackendHandle` 结构体持有 `AsyncDispatcher`。只要它存活（存储在 `CompassApp`
