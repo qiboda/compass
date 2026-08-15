@@ -116,6 +116,7 @@ fi
 
 # --- basic error path: no justfile in a temp dir → `just --list` must fail ---
 TMPDIR_X=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_X"' EXIT
 if (cd "$TMPDIR_X" && "$JUST" --list >/dev/null 2>&1); then
     echo "FAIL: error-path — \`just --list\` in dir without justfile unexpectedly succeeded"
     FAIL=1

@@ -191,12 +191,13 @@ just_dryrun check
 if [ "$DRY_RC" -ne 0 ]; then
     verdict "'just -n check' must resolve (rc=0)" 0 "$DRY_ERR"
 else
-    # Fix (main agent, #265): grep -nFx 'cargo fmt' never matched the contract
-    # line 'cargo fmt -- --check' (whole-line -x), so line_fmt was empty and the
-    # script died under set -e. Assert the full contract command instead.
-    line_fmt=$(printf '%s\n' "$DRY_ERR" | grep -nFx 'cargo fmt -- --check' | head -1 | cut -d: -f1)
-    line_clippy=$(printf '%s\n' "$DRY_ERR" | grep -nFx 'cargo clippy -- -D warnings' | head -1 | cut -d: -f1)
-    line_test=$(printf '%s\n' "$DRY_ERR" | grep -nFx 'cargo test' | head -1 | cut -d: -f1)
+    # Review fix (ref #265): all three line lookups must tolerate a missing
+    # match (|| true) — under set -e -o pipefail a bare grep no-match would
+    # silently abort the script with zero diagnostics instead of reaching the
+    # clear FAIL verdict below when the check gate regresses.
+    line_fmt=$(printf '%s\n' "$DRY_ERR" | grep -nFx 'cargo fmt -- --check' | head -1 | cut -d: -f1 || true)
+    line_clippy=$(printf '%s\n' "$DRY_ERR" | grep -nFx 'cargo clippy -- -D warnings' | head -1 | cut -d: -f1 || true)
+    line_test=$(printf '%s\n' "$DRY_ERR" | grep -nFx 'cargo test' | head -1 | cut -d: -f1 || true)
     if [ -n "$line_fmt" ] && [ -n "$line_clippy" ] && [ -n "$line_test" ] \
         && [ "$line_fmt" -lt "$line_clippy" ] && [ "$line_clippy" -lt "$line_test" ]; then
         verdict "'just -n check' gate order fmt($line_fmt) < clippy($line_clippy) < test($line_test)" 1
