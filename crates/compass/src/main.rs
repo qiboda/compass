@@ -685,6 +685,10 @@ fn stock_projection() -> StockProjection<compass_core::model::StockBasic> {
         |s: &compass_core::model::StockBasic| &s.name,
         |s: &compass_core::model::StockBasic| Some(exchange_of_symbol(&s.symbol)),
     )
+    // Epic #266 B4: index/board rows converted to the picker shape carry
+    // their English name here — search matches "SSE" → 上证指数. Stock rows
+    // have `None` and stay on the code+name routes (D0-B).
+    .name_en(|s: &compass_core::model::StockBasic| s.name_en.as_deref())
 }
 
 /// Load the stock list for the GUI picker, filtered to currently-listed
@@ -746,6 +750,7 @@ fn index_basic_to_stock(index: IndexBasic) -> compass_core::model::StockBasic {
     compass_core::model::StockBasic {
         symbol: index.symbol,
         name: index.name,
+        name_en: index.name_en,
         area: None,
         industry: None,
         industry_en: None,
@@ -2526,6 +2531,7 @@ default_timeframe = "1w"
         let stocks = vec![StockBasic {
             symbol: "SH600519".to_string(),
             name: "贵州茅台".to_string(),
+            name_en: None,
             area: None,
             industry: None,
             industry_en: None,
@@ -2565,6 +2571,7 @@ default_timeframe = "1w"
         StockBasic {
             symbol: symbol.to_string(),
             name: name.to_string(),
+            name_en: None,
             area: None,
             industry: None,
             industry_en: None,
@@ -3220,6 +3227,7 @@ default_timeframe = "1w"
             vec![StockBasic {
                 symbol: "BK0475".into(),
                 name: "半导体".into(),
+                name_en: None,
                 area: None,
                 industry: None,
                 industry_en: None,

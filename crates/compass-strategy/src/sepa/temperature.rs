@@ -296,6 +296,7 @@ mod tests {
                 StockBasic {
                     symbol: symbol.clone(),
                     name: format!("S{i}"),
+                    name_en: None,
                     area: None,
                     industry: None,
                     industry_en: None,
@@ -430,6 +431,7 @@ mod tests {
             StockBasic {
                 symbol: symbol.clone(),
                 name: "S0".to_string(),
+                name_en: None,
                 area: None,
                 industry: None,
                 industry_en: None,

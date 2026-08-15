@@ -51,6 +51,12 @@ pub struct StockBasic {
     pub symbol: String,
     /// Chinese display name.
     pub name: String,
+    /// English display name (epic #266 B4). Stock rows never carry one
+    /// (stocks are not translated — D0-B); index/board rows converted to
+    /// the picker's `StockBasic` shape carry their `name_en` here so the
+    /// search can match "SSE" → 上证指数.
+    #[serde(default)]
+    pub name_en: Option<String>,
     /// Geographic area.
     pub area: Option<String>,
     /// Industry classification.

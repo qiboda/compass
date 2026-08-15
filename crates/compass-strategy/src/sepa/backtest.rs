@@ -903,6 +903,7 @@ mod tests {
         StockBasic {
             symbol: symbol.to_string(),
             name: symbol.to_string(),
+            name_en: None,
             area: None,
             industry: Some("测试".to_string()),
             industry_en: None,

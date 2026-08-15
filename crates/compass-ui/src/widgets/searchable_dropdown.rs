@@ -22,6 +22,10 @@ pub struct StockProjection<T> {
     symbol: for<'a> fn(&'a T) -> &'a str,
     name: for<'a> fn(&'a T) -> &'a str,
     exchange: for<'a> fn(&'a T) -> Option<&'a str>,
+    /// Optional English-name accessor (epic #266 B4): when present, search
+    /// matches it as a third route (`code` + `name` + `name_en`). Stocks
+    /// carry no English name — `None` keeps them on the two-route match.
+    name_en: Option<for<'a> fn(&'a T) -> Option<&'a str>>,
 }
 
 impl<T> StockProjection<T> {
@@ -35,7 +39,15 @@ impl<T> StockProjection<T> {
             symbol,
             name,
             exchange,
+            name_en: None,
         }
+    }
+
+    /// Attach an English-name accessor; search then matches it as a third
+    /// route (`code` + `name` + `name_en`, epic #266 B4).
+    pub fn name_en(mut self, name_en: for<'a> fn(&'a T) -> Option<&'a str>) -> Self {
+        self.name_en = Some(name_en);
+        self
     }
 
     /// Read the stock's symbol.
@@ -51,6 +63,12 @@ impl<T> StockProjection<T> {
     /// Read the stock's exchange code (`"SH"` / `"SZ"` / `"BJ"`).
     pub fn exchange_of<'a>(&self, stock: &'a T) -> Option<&'a str> {
         (self.exchange)(stock)
+    }
+
+    /// Read the stock's English display name, when the projection carries
+    /// the accessor (epic #266 B4).
+    pub fn name_en_of<'a>(&self, stock: &'a T) -> Option<&'a str> {
+        self.name_en.and_then(|f| f(stock))
     }
 }
 
@@ -95,12 +113,17 @@ pub(crate) fn strip_exchange_prefix(symbol: &str) -> &str {
 /// with the normalized query, or its bare code starts with the pure-code part
 /// of the query, or its name contains the normalized query. The three
 /// spellings of one code — `"600519"`, `"SH600519"`, `"sh.600519"` — all
-/// match `SH600519`.
+/// match `SH600519`. When the projection carries an English-name accessor
+/// (epic #266 B4) the English name is matched as a third route, so "SSE"
+/// finds 上证指数 — non-empty English names only.
 fn matches_query<T>(projection: &StockProjection<T>, stock: &T, q: &str, q_code: &str) -> bool {
     let symbol = projection.symbol_of(stock).to_lowercase();
     symbol.starts_with(q)
         || (!q_code.is_empty() && strip_exchange_prefix(&symbol).starts_with(q_code))
         || projection.name_of(stock).to_lowercase().contains(q)
+        || projection
+            .name_en_of(stock)
+            .is_some_and(|en| !en.is_empty() && en.to_lowercase().contains(q))
 }
 
 /// Pure filter: symbol/name match against a free-text query (bare code,

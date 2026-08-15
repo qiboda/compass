@@ -332,6 +332,7 @@ mod tests {
         StockBasic {
             symbol: "SZ000001".to_string(),
             name: "平安银行".to_string(),
+            name_en: None,
             area: None,
             industry: Some("银行".to_string()),
             industry_en: None,

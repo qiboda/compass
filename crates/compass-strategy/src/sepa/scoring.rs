@@ -1500,6 +1500,7 @@ mod tests {
         let mk_basic = |symbol: &str| StockBasic {
             symbol: symbol.to_string(),
             name: "S".to_string(),
+            name_en: None,
             area: None,
             industry: None,
             industry_en: None,

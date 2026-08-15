@@ -381,6 +381,7 @@ impl ParquetReader {
                     Ok(StockBasic {
                         symbol: row.get("symbol")?,
                         name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        name_en: None, // stocks carry no English name (D0-B)
                         area: row.get::<_, Option<String>>("region")?,
                         industry: row.get::<_, Option<String>>("industry")?,
                         industry_en: row.get::<_, Option<String>>("industry_en")?,
@@ -409,6 +410,7 @@ impl ParquetReader {
                     Ok(StockBasic {
                         symbol: row.get("symbol")?,
                         name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        name_en: None, // stocks carry no English name (D0-B)
                         area: row.get::<_, Option<String>>("region")?,
                         industry: row.get::<_, Option<String>>("industry")?,
                         industry_en: None,
@@ -472,6 +474,7 @@ impl ParquetReader {
                     Ok(StockBasic {
                         symbol: row.get("symbol")?,
                         name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        name_en: None, // stocks carry no English name (D0-B)
                         area: row.get::<_, Option<String>>("region")?,
                         industry: row.get::<_, Option<String>>("industry")?,
                         industry_en: row.get::<_, Option<String>>("industry_en")?,
@@ -497,6 +500,7 @@ impl ParquetReader {
                     Ok(StockBasic {
                         symbol: row.get("symbol")?,
                         name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        name_en: None, // stocks carry no English name (D0-B)
                         area: row.get::<_, Option<String>>("region")?,
                         industry: row.get::<_, Option<String>>("industry")?,
                         industry_en: None,
