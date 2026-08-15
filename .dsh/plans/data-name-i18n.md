@@ -55,10 +55,10 @@
 - pytest：映射加载 / JOIN 写入 / 未收录 NULL / 带后缀行业匹配 / 概念名匹配
 
 ### B2 — Rust 数据层（compass-core + compass-data）
-- `model.rs`：`IndexBasic` + `name_en: Option<String>`；`StockBasic` + `industry_en: Option<String>`
-- `parquet.rs`：`load_all_index_basics` / `load_all_stock_basics` / `get_stock_basic_blocking` SELECT 加列
-- `import_compass.rs`：`import_index_basic` SELECT 加 `name_en`；`import_stock_basic` 加 `industry_en`；测试 DDL 同步
-- `export.rs`：index_basic/stock_basic DuckDB mirror 测试 DDL 同步
+- `model.rs`：`IndexBasic` + `name_en: Option<String>`；`StockBasic` + `industry_en: Option<String>`（✅ 接口骨架已落地，serde default）
+- `parquet.rs`：`load_all_index_basics` / `load_all_stock_basics` / `get_stock_basic_blocking` SELECT 加列 + 旧文件降级（try-fallback，待实现）
+- `import_compass.rs`：`import_index_basic` SELECT 加 `name_en`；`import_stock_basic` 加 `industry_en`；测试 DDL 同步（待实现）
+- `export.rs`：DuckDB mirror `AS SELECT * FROM read_parquet` 自动继承 schema，仅测试 DDL 同步
 
 ### B3 — GUI 渲染取用（compass-types + compass-strategy + compass）
 - `compass-types`：`IndexRow` + `name_en: Option<String>`；`SepaRow` + `industry_en: Option<String>`
@@ -86,8 +86,8 @@
 
 | 子 issue | 批次 | 内容 | 状态 |
 |---|---|---|---|
-| [#268](https://github.com/qiboda/compass/issues/268) | B1 | collectors 数据层 + 映射表（Python + pytest） | pending |
-| [#269](https://github.com/qiboda/compass/issues/269) | B2 | Rust 数据层（compass-core/compass-data + 测试） | pending |
+| [#268](https://github.com/qiboda/compass/issues/268) | B1 | collectors 数据层 + 映射表（Python + pytest） | ✅ done（commit 28420ce） |
+| [#269](https://github.com/qiboda/compass/issues/269) | B2 | Rust 数据层（compass-core/compass-data + 测试） | in_progress |
 | [#270](https://github.com/qiboda/compass/issues/270) | B3 | GUI 渲染取用（market/sepa/screener + 测试） | pending |
 | [#271](https://github.com/qiboda/compass/issues/271) | B4 | 搜索三路匹配（picker/dropdown + 测试） | pending |
 | [#272](https://github.com/qiboda/compass/issues/272) | B5 | docs 同步 + 冒烟 + 验收修订 | pending |

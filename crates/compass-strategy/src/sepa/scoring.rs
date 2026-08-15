@@ -1501,6 +1501,7 @@ mod tests {
             name: "S".to_string(),
             area: None,
             industry: None,
+            industry_en: None,
             market: None,
             board: None,
             full_name: None,

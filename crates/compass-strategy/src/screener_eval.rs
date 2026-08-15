@@ -334,6 +334,7 @@ mod tests {
             name: "平安银行".to_string(),
             area: None,
             industry: Some("银行".to_string()),
+            industry_en: None,
             market: Some("主板".to_string()),
             board: Some("主板".to_string()),
             full_name: None,

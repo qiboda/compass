@@ -904,6 +904,7 @@ mod tests {
             name: symbol.to_string(),
             area: None,
             industry: Some("测试".to_string()),
+            industry_en: None,
             market: Some("主板".to_string()),
             board: Some("主板".to_string()),
             full_name: Some(symbol.to_string()),

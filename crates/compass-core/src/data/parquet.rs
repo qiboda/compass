@@ -54,6 +54,17 @@ fn escape_sql_path(path: &str) -> String {
     path.replace('\'', "''")
 }
 
+/// True when a DuckDB error is a binder "column not found" failure — the
+/// signal that a legacy parquet file predates a schema column (epic #266).
+/// Only this failure class triggers the legacy fallback; genuine errors
+/// (corrupt file, IO) propagate.
+fn is_missing_column(e: &duckdb::Error) -> bool {
+    let msg = e.to_string();
+    msg.contains("not found in FROM clause")
+        || msg.contains("does not have a column")
+        || msg.contains("Binder Error")
+}
+
 /// Read A-share OHLCV data from a single Parquet file with a `symbol` column.
 ///
 /// Expected directory layout:
@@ -355,37 +366,74 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+                    board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region, industry_en
+             FROM read_parquet('{escaped}')
+             WHERE symbol = ?"
+        );
+        let sql_legacy = format!(
+            "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
                     board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              WHERE symbol = ?"
         );
 
-        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
-        let result = stmt
-            .query_row(params![symbol], |row| {
-                Ok(StockBasic {
-                    symbol: row.get("symbol")?,
-                    name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
-                    area: row.get::<_, Option<String>>("region")?,
-                    industry: row.get::<_, Option<String>>("industry")?,
-                    market: None,
-                    board: row.get::<_, Option<String>>("board")?,
-                    full_name: row.get::<_, Option<String>>("full_name")?,
-                    total_share: row.get::<_, Option<f64>>("total_share")?,
-                    list_date: row
-                        .get::<_, Option<String>>("list_date")?
-                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
-                    delist_date: row
-                        .get::<_, Option<String>>("delist_date")?
-                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+        let result = match conn.prepare(&sql) {
+            Ok(mut stmt) => stmt
+                .query_row(params![symbol], |row| {
+                    Ok(StockBasic {
+                        symbol: row.get("symbol")?,
+                        name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        area: row.get::<_, Option<String>>("region")?,
+                        industry: row.get::<_, Option<String>>("industry")?,
+                        industry_en: row.get::<_, Option<String>>("industry_en")?,
+                        market: None,
+                        board: row.get::<_, Option<String>>("board")?,
+                        full_name: row.get::<_, Option<String>>("full_name")?,
+                        total_share: row.get::<_, Option<f64>>("total_share")?,
+                        list_date: row
+                            .get::<_, Option<String>>("list_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                        delist_date: row
+                            .get::<_, Option<String>>("delist_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                    })
                 })
-            })
-            .map_err(|e| match e {
-                duckdb::Error::QueryReturnedNoRows => DataError::NoData {
-                    symbol: symbol.to_string(),
-                },
-                other => DataError::Database(other),
-            })?;
+                .map_err(|e| match e {
+                    duckdb::Error::QueryReturnedNoRows => DataError::NoData {
+                        symbol: symbol.to_string(),
+                    },
+                    other => DataError::Database(other),
+                })?,
+            Err(e) if is_missing_column(&e) => conn
+                .prepare(&sql_legacy)
+                .map_err(DataError::Database)?
+                .query_row(params![symbol], |row| {
+                    Ok(StockBasic {
+                        symbol: row.get("symbol")?,
+                        name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        area: row.get::<_, Option<String>>("region")?,
+                        industry: row.get::<_, Option<String>>("industry")?,
+                        industry_en: None,
+                        market: None,
+                        board: row.get::<_, Option<String>>("board")?,
+                        full_name: row.get::<_, Option<String>>("full_name")?,
+                        total_share: row.get::<_, Option<f64>>("total_share")?,
+                        list_date: row
+                            .get::<_, Option<String>>("list_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                        delist_date: row
+                            .get::<_, Option<String>>("delist_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                    })
+                })
+                .map_err(|e| match e {
+                    duckdb::Error::QueryReturnedNoRows => DataError::NoData {
+                        symbol: symbol.to_string(),
+                    },
+                    other => DataError::Database(other),
+                })?,
+            Err(e) => return Err(DataError::Database(e)),
+        };
 
         Ok(Some(result))
     }
@@ -409,44 +457,80 @@ impl ParquetReader {
 
         let sql = format!(
             "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
+                    board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region, industry_en
+             FROM read_parquet('{escaped}')
+             ORDER BY symbol"
+        );
+        let sql_legacy = format!(
+            "SELECT symbol, name, CAST(list_date AS VARCHAR) AS list_date, CAST(delist_date AS VARCHAR) AS delist_date,
                     board, full_name, CAST(total_share AS DOUBLE) AS total_share, industry, region
              FROM read_parquet('{escaped}')
              ORDER BY symbol"
         );
 
-        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
-        let rows: Vec<StockBasic> = stmt
-            .query_map([], |row| {
-                Ok(StockBasic {
-                    symbol: row.get("symbol")?,
-                    name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
-                    area: row.get::<_, Option<String>>("region")?,
-                    industry: row.get::<_, Option<String>>("industry")?,
-                    market: None,
-                    board: row.get::<_, Option<String>>("board")?,
-                    full_name: row.get::<_, Option<String>>("full_name")?,
-                    total_share: row.get::<_, Option<f64>>("total_share")?,
-                    list_date: row
-                        .get::<_, Option<String>>("list_date")?
-                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
-                    delist_date: row
-                        .get::<_, Option<String>>("delist_date")?
-                        .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+        let rows: Vec<StockBasic> = match conn.prepare(&sql) {
+            Ok(mut stmt) => stmt
+                .query_map([], |row| {
+                    Ok(StockBasic {
+                        symbol: row.get("symbol")?,
+                        name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        area: row.get::<_, Option<String>>("region")?,
+                        industry: row.get::<_, Option<String>>("industry")?,
+                        industry_en: row.get::<_, Option<String>>("industry_en")?,
+                        market: None,
+                        board: row.get::<_, Option<String>>("board")?,
+                        full_name: row.get::<_, Option<String>>("full_name")?,
+                        total_share: row.get::<_, Option<f64>>("total_share")?,
+                        list_date: row
+                            .get::<_, Option<String>>("list_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                        delist_date: row
+                            .get::<_, Option<String>>("delist_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                    })
                 })
-            })
-            .map_err(DataError::Database)?
-            .collect::<Result<Vec<_>, duckdb::Error>>()
-            .map_err(DataError::Database)?;
+                .map_err(DataError::Database)?
+                .collect::<Result<Vec<_>, duckdb::Error>>()
+                .map_err(DataError::Database)?,
+            Err(e) if is_missing_column(&e) => conn
+                .prepare(&sql_legacy)
+                .map_err(DataError::Database)?
+                .query_map([], |row| {
+                    Ok(StockBasic {
+                        symbol: row.get("symbol")?,
+                        name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        area: row.get::<_, Option<String>>("region")?,
+                        industry: row.get::<_, Option<String>>("industry")?,
+                        industry_en: None,
+                        market: None,
+                        board: row.get::<_, Option<String>>("board")?,
+                        full_name: row.get::<_, Option<String>>("full_name")?,
+                        total_share: row.get::<_, Option<f64>>("total_share")?,
+                        list_date: row
+                            .get::<_, Option<String>>("list_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                        delist_date: row
+                            .get::<_, Option<String>>("delist_date")?
+                            .and_then(|s| date_str_to_utc(&s).map(|dt| dt.date_naive())),
+                    })
+                })
+                .map_err(DataError::Database)?
+                .collect::<Result<Vec<_>, duckdb::Error>>()
+                .map_err(DataError::Database)?,
+            Err(e) => return Err(DataError::Database(e)),
+        };
 
         Ok(rows)
     }
 
     /// Load all rows from `index_basic.parquet` (epic #255).
     ///
-    /// Returns the full index/board name table (symbol, name, index_type)
-    /// for the GUI toolbar picker and the market tab. If
+    /// Returns the full index/board name table (symbol, name, name_en,
+    /// index_type) for the GUI toolbar picker and the market tab. If
     /// `index_basic.parquet` doesn't exist, returns an empty vec — the GUI
-    /// degrades gracefully to the stock-only list.
+    /// degrades gracefully to the stock-only list. Legacy parquet files
+    /// written before the `name_en` column (epic #266) fall back to
+    /// `name_en: None` — the SELECT is retried without the column.
     pub fn load_all_index_basics(&self) -> Result<Vec<IndexBasic>, DataError> {
         let path = self.parquet_dir.join("index_basic.parquet");
         if !path.exists() {
@@ -459,23 +543,46 @@ impl ParquetReader {
             .lock()
             .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
 
-        let sql = format!(
+        let sql_en = format!(
+            "SELECT symbol, name, index_type, name_en \
+             FROM read_parquet('{escaped}') ORDER BY symbol"
+        );
+        let sql_legacy = format!(
             "SELECT symbol, name, index_type FROM read_parquet('{escaped}') ORDER BY symbol"
         );
-        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
-        let rows: Vec<IndexBasic> = stmt
-            .query_map([], |row| {
-                Ok(IndexBasic {
-                    symbol: row.get("symbol")?,
-                    name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
-                    index_type: row
-                        .get::<_, Option<String>>("index_type")?
-                        .unwrap_or_default(),
+        let rows: Vec<IndexBasic> = match conn.prepare(&sql_en) {
+            Ok(mut stmt) => stmt
+                .query_map([], |row| {
+                    Ok(IndexBasic {
+                        symbol: row.get("symbol")?,
+                        name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        name_en: row.get::<_, Option<String>>("name_en")?,
+                        index_type: row
+                            .get::<_, Option<String>>("index_type")?
+                            .unwrap_or_default(),
+                    })
                 })
-            })
-            .map_err(DataError::Database)?
-            .collect::<Result<Vec<_>, duckdb::Error>>()
-            .map_err(DataError::Database)?;
+                .map_err(DataError::Database)?
+                .collect::<Result<Vec<_>, duckdb::Error>>()
+                .map_err(DataError::Database)?,
+            Err(e) if is_missing_column(&e) => conn
+                .prepare(&sql_legacy)
+                .map_err(DataError::Database)?
+                .query_map([], |row| {
+                    Ok(IndexBasic {
+                        symbol: row.get("symbol")?,
+                        name: row.get::<_, Option<String>>("name")?.unwrap_or_default(),
+                        name_en: None,
+                        index_type: row
+                            .get::<_, Option<String>>("index_type")?
+                            .unwrap_or_default(),
+                    })
+                })
+                .map_err(DataError::Database)?
+                .collect::<Result<Vec<_>, duckdb::Error>>()
+                .map_err(DataError::Database)?,
+            Err(e) => return Err(DataError::Database(e)),
+        };
 
         Ok(rows)
     }
@@ -1976,5 +2083,458 @@ mod tests {
             .expect("fetch");
         assert_eq!(bars.len(), 1);
         assert!((bars[0].close - 10.0).abs() < 0.01);
+    }
+
+    // -----------------------------------------------------------------------
+    // epic #266 B2: name_en / industry_en read chain
+    // -----------------------------------------------------------------------
+    //
+    // RED: `load_all_index_basics` / `load_all_stock_basics` /
+    // `get_stock_basic_blocking` hardcode the new fields to `None`
+    // (SELECT does not yet carry the `name_en` / `industry_en` columns), so
+    // the "real values are returned" assertions fail until B2 wires the
+    // columns through. The legacy-schema assertions (no new columns → None)
+    // guard against a naive implementation that adds the columns
+    // unconditionally — DuckDB errors on a missing column, so a non-optional
+    // SELECT break those tests.
+
+    /// Create `stock_basic.parquet` with the *new* schema (incl. `industry_en`).
+    fn create_test_stock_basic_with_industry_en(tmp: &tempfile::TempDir) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR, industry_en VARCHAR);
+             INSERT INTO basic VALUES ('SZ000001', '平安银行', 'SZ', '1991-04-03', NULL, '主板', '平安银行股份有限公司', 19405918198, '银行', '广东省', 'Bank');
+             INSERT INTO basic VALUES ('SH600519', '贵州茅台', 'SH', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 1256197800, '白酒', '贵州省', 'Liquor');
+             INSERT INTO basic VALUES ('SZ999999', 'hacked', 'SZ', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);",
+        )
+        .expect("create");
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_basic.parquet").display()
+        ))
+        .expect("copy");
+    }
+
+    /// Create `stock_basic.parquet` with the *legacy* schema (no `industry_en`).
+    fn create_test_stock_basic_legacy(tmp: &tempfile::TempDir) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);
+             INSERT INTO basic VALUES ('SH600519', '贵州茅台', 'SH', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 1256197800, '白酒', '贵州省');",
+        )
+        .expect("create");
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("stock_basic.parquet").display()
+        ))
+        .expect("copy");
+    }
+
+    /// Create `index_basic.parquet` with the *new* schema (incl. `name_en`).
+    fn create_test_index_basic_with_name_en(tmp: &tempfile::TempDir) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t (symbol VARCHAR, name VARCHAR, name_en VARCHAR, index_type VARCHAR);
+             INSERT INTO t VALUES ('SH000001', '上证指数', 'SSE Composite', 'official');
+             INSERT INTO t VALUES ('SH000300', '沪深300', 'CSI 300', 'official');
+             INSERT INTO t VALUES ('BK0475', '半导体', NULL, 'concept');",
+        )
+        .expect("create");
+        conn.execute_batch(&format!(
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("index_basic.parquet").display()
+        ))
+        .expect("copy");
+    }
+
+    /// Create `index_basic.parquet` with the *legacy* schema (no `name_en`).
+    fn create_test_index_basic_legacy(tmp: &tempfile::TempDir) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE t (symbol VARCHAR, name VARCHAR, index_type VARCHAR);
+             INSERT INTO t VALUES ('SH000001', '上证指数', 'official');",
+        )
+        .expect("create");
+        conn.execute_batch(&format!(
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("index_basic.parquet").display()
+        ))
+        .expect("copy");
+    }
+
+    /// Happy path: new-schema `stock_basic.parquet` yields real `industry_en`.
+    #[test]
+    fn load_all_stock_basics_carries_industry_en() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_basic_with_industry_en(&tmp);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+
+        let basics = reader.load_all_stock_basics().expect("load");
+
+        let pab = basics
+            .iter()
+            .find(|b| b.symbol == "SZ000001")
+            .expect("find SZ000001");
+        assert_eq!(pab.name, "平安银行");
+        assert_eq!(
+            pab.industry_en.as_deref(),
+            Some("Bank"),
+            "industry_en must carry the mapped value (RED until B2)"
+        );
+
+        let mt = basics
+            .iter()
+            .find(|b| b.symbol == "SH600519")
+            .expect("find SH600519");
+        assert_eq!(mt.industry_en.as_deref(), Some("Liquor"));
+
+        // Unmapped row / NULL industry_en → None (graceful, not dropped).
+        let hack = basics
+            .iter()
+            .find(|b| b.symbol == "SZ999999")
+            .expect("find SZ999999");
+        assert_eq!(hack.industry_en, None, "NULL industry_en maps to None");
+    }
+
+    /// Happy path: `get_stock_basic_blocking` carries `industry_en`.
+    #[test]
+    fn get_stock_basic_blocking_carries_industry_en() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_basic_with_industry_en(&tmp);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+
+        let info = reader
+            .get_stock_basic_blocking("SZ000001")
+            .expect("should succeed")
+            .expect("should find SZ000001");
+        assert_eq!(info.industry.as_deref(), Some("银行"));
+        assert_eq!(
+            info.industry_en.as_deref(),
+            Some("Bank"),
+            "get_stock_basic_blocking must carry industry_en (RED until B2)"
+        );
+
+        let info2 = reader
+            .get_stock_basic_blocking("SZ999999")
+            .expect("should succeed")
+            .expect("should find SZ999999");
+        assert_eq!(info2.industry_en, None, "NULL industry_en maps to None");
+    }
+
+    /// Legacy schema: `stock_basic.parquet` without `industry_en` still reads,
+    /// with `industry_en == None` (no panic, no error).
+    #[test]
+    fn load_all_stock_basics_legacy_schema_degrades_to_none() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_basic_legacy(&tmp);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+
+        let basics = reader.load_all_stock_basics().expect("load");
+        assert_eq!(basics.len(), 1);
+        assert_eq!(basics[0].symbol, "SH600519");
+        assert_eq!(
+            basics[0].industry_en, None,
+            "legacy parquet (no industry_en column) must yield None, not panic"
+        );
+
+        let info = reader
+            .get_stock_basic_blocking("SH600519")
+            .expect("should succeed")
+            .expect("should find SH600519");
+        assert_eq!(info.industry_en, None, "single-row read must also degrade");
+    }
+
+    /// Happy path: new-schema `index_basic.parquet` yields real `name_en`.
+    #[test]
+    fn load_all_index_basics_carries_name_en() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_index_basic_with_name_en(&tmp);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+
+        let rows = reader.load_all_index_basics().expect("load");
+        assert_eq!(rows.len(), 3);
+
+        let sse = rows
+            .iter()
+            .find(|r| r.symbol == "SH000001")
+            .expect("find SH000001");
+        assert_eq!(sse.name, "上证指数");
+        assert_eq!(
+            sse.name_en.as_deref(),
+            Some("SSE Composite"),
+            "name_en must carry the mapped value (RED until B2)"
+        );
+
+        let csi = rows
+            .iter()
+            .find(|r| r.symbol == "SH000300")
+            .expect("find SH000300");
+        assert_eq!(csi.name_en.as_deref(), Some("CSI 300"));
+
+        // Unmapped row (NULL name_en) → None, not dropped.
+        let semi = rows
+            .iter()
+            .find(|r| r.symbol == "BK0475")
+            .expect("find BK0475");
+        assert_eq!(semi.name_en, None, "NULL name_en maps to None");
+    }
+
+    /// Legacy schema: `index_basic.parquet` without `name_en` still reads,
+    /// with `name_en == None` (no panic, no error).
+    #[test]
+    fn load_all_index_basics_legacy_schema_degrades_to_none() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_index_basic_legacy(&tmp);
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+
+        let rows = reader.load_all_index_basics().expect("load");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].symbol, "SH000001");
+        assert_eq!(rows[0].name, "上证指数");
+        assert_eq!(
+            rows[0].name_en, None,
+            "legacy parquet (no name_en column) must yield None, not panic"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // serde compatibility (epic #266 B2, plan acceptance #1)
+    // -----------------------------------------------------------------------
+
+    /// Old JSON (without the new fields) must deserialize: new fields → None.
+    #[test]
+    fn index_basic_deserializes_legacy_json_without_name_en() {
+        // End-to-end shape already includes the 3 mandatory fields; the new
+        // `name_en` field is omitted from the payload (legacy producer).
+        let json = r#"{"symbol":"SH000001","name":"上证指数","index_type":"official"}"#;
+        let parsed: IndexBasic =
+            serde_json::from_str(json).expect("legacy JSON without name_en must deserialize");
+        assert_eq!(parsed.name, "上证指数");
+        assert_eq!(
+            parsed.name_en, None,
+            "name_en must default to None when absent from the payload"
+        );
+    }
+
+    /// Old JSON (without `industry_en`) must deserialize: new field → None.
+    #[test]
+    fn stock_basic_deserializes_legacy_json_without_industry_en() {
+        let json = r#"{"symbol":"SZ000001","name":"平安银行","industry":"银行","area":"广东省"}"#;
+        let parsed: StockBasic =
+            serde_json::from_str(json).expect("legacy JSON without industry_en must deserialize");
+        assert_eq!(parsed.industry.as_deref(), Some("银行"));
+        assert_eq!(
+            parsed.industry_en, None,
+            "industry_en must default to None when absent from the payload"
+        );
+    }
+
+    /// New JSON (with both new fields and NULLs) round-trips Option semantics.
+    #[test]
+    fn index_basic_roundtrips_name_en_when_present() {
+        let json = r#"{"symbol":"SH000001","name":"上证指数","name_en":"SSE Composite","index_type":"official"}"#;
+        let parsed: IndexBasic =
+            serde_json::from_str(json).expect("JSON with name_en must deserialize");
+        assert_eq!(parsed.name_en.as_deref(), Some("SSE Composite"));
+    }
+
+    // -----------------------------------------------------------------------
+    // epic #266 B2 — adversarial edge cases (name_en / industry_en read chain)
+    // -----------------------------------------------------------------------
+    //
+    // The happy-path suite above proves values flow on a clean fixture. These
+    // attack the boundary / error / scale / concurrency corners the naive
+    // implementation (add the column to the SELECT, read it directly) breaks
+    // in production:
+    //   - empty-string vs NULL must stay distinct (a value filter such as
+    //     `.filter(|s| !s.is_empty())` collapses them and silently loses data)
+    //   - a name_en longer than the VARCHAR(100) DDL width must not be
+    //     silently lost or truncated
+    //   - a new-schema column that is entirely NULL must not drop rows or panic
+    //   - a thousands-of-rows table must not regress to O(n²) / lose the
+    //     column on any row
+    //   - concurrent readers sharing the `Arc<Mutex<Connection>>` must return
+    //     consistent data (no race / panic under the new query shape)
+
+    /// Write `index_basic.parquet` in `tmp` from a raw DDL + inserts (shared
+    /// by all edge-case fixtures) so the boundary values stay explicit.
+    fn write_index_basic_parquet(tmp: &tempfile::TempDir, ddl: &str, inserts: &[&str]) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(ddl).expect("create");
+        for ins in inserts {
+            conn.execute_batch(ins).expect("insert");
+        }
+        conn.execute_batch(&format!(
+            "COPY t TO '{}' (FORMAT PARQUET)",
+            tmp.path().join("index_basic.parquet").display()
+        ))
+        .expect("copy");
+    }
+
+    const INDEX_NEW_DDL: &str =
+        "CREATE TABLE t (symbol VARCHAR, name VARCHAR, name_en VARCHAR, index_type VARCHAR)";
+
+    /// Boundary: `''` (empty string) is a real value — must stay `Some("")`,
+    /// distinct from `NULL` (`None`). A naive `Option::filter(!is_empty)`
+    /// collapse makes this assertion fail, silently losing the row's locale
+    /// value.
+    #[test]
+    fn name_en_distinguishes_empty_string_from_null() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_index_basic_parquet(
+            &tmp,
+            INDEX_NEW_DDL,
+            &[
+                "INSERT INTO t VALUES ('SH000001', '上证指数', 'SSE Composite', 'official')",
+                "INSERT INTO t VALUES ('SH000005', '上证50', '', 'official')",
+                "INSERT INTO t VALUES ('SH000006', '上证180', NULL, 'official')",
+            ],
+        );
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let rows = reader.load_all_index_basics().expect("load");
+
+        let sse = rows
+            .iter()
+            .find(|r| r.symbol == "SH000001")
+            .expect("SH000001");
+        assert_eq!(sse.name_en.as_deref(), Some("SSE Composite"));
+        let empty = rows
+            .iter()
+            .find(|r| r.symbol == "SH000005")
+            .expect("SH000005");
+        assert_eq!(
+            empty.name_en.as_deref(),
+            Some(""),
+            "empty-string name_en is a real (empty) value, not None"
+        );
+        let null = rows
+            .iter()
+            .find(|r| r.symbol == "SH000006")
+            .expect("SH000006");
+        assert_eq!(
+            null.name_en, None,
+            "NULL name_en stays None — empty string and NULL must not be conflated"
+        );
+    }
+
+    /// Boundary: a `name_en` longer than the VARCHAR(100) DDL width must
+    /// round-trip through the reader intact (no silent truncation / loss).
+    #[test]
+    fn name_en_long_value_is_not_truncated() {
+        let long = "A deliberately over-length official English board name that exceeds one hundred characters such that a VARCHAR truncation bug would bite";
+        assert!(
+            long.chars().count() > 100,
+            "fixture must exceed the DDL width"
+        );
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_index_basic_parquet(
+            &tmp,
+            INDEX_NEW_DDL,
+            &[&format!(
+                "INSERT INTO t VALUES ('SH000001', '上证指数', '{}', 'official')",
+                long.replace('\'', "''")
+            )],
+        );
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let rows = reader.load_all_index_basics().expect("load");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].name_en.as_deref(),
+            Some(long),
+            "over-length name_en must be preserved verbatim"
+        );
+    }
+
+    /// Error path / boundary: a new-schema column that is entirely NULL must
+    /// yield one `None` per row, without dropping rows or erroring.
+    #[test]
+    fn name_en_all_null_column_yields_none_not_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_index_basic_parquet(
+            &tmp,
+            INDEX_NEW_DDL,
+            &[
+                "INSERT INTO t VALUES ('SH000001', '上证指数', NULL, 'official')",
+                "INSERT INTO t VALUES ('BK0475', '半导体', NULL, 'concept')",
+                "INSERT INTO t VALUES ('BK1169', 'Kimi概念', NULL, 'concept')",
+            ],
+        );
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let rows = reader.load_all_index_basics().expect("load");
+        assert_eq!(rows.len(), 3, "no rows dropped when the column is all NULL");
+        assert!(
+            rows.iter().all(|r| r.name_en.is_none()),
+            "all-NULL name_en column must map every row to None"
+        );
+    }
+
+    /// Performance / scale: a thousands-of-rows `index_basic` must load all
+    /// rows with the `name_en` column intact on every row, within a generous
+    /// ceiling (catches O(n²) or per-row re-binding regressions).
+    #[test]
+    fn name_en_large_table_scales_linearly() {
+        const N: usize = 5000;
+        let mut inserts = String::new();
+        for i in 0..N {
+            // Every row distinct so a row/mapping mix-up is exposed.
+            inserts.push_str(&format!(
+                "INSERT INTO t VALUES ('SH9600{i:04}', '名称{i}', 'EN Name {i}', 'official');"
+            ));
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_index_basic_parquet(&tmp, INDEX_NEW_DDL, &[&inserts]);
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let t0 = std::time::Instant::now();
+        let rows = reader.load_all_index_basics().expect("load");
+        let elapsed = t0.elapsed();
+
+        assert_eq!(rows.len(), N, "all {N} rows must be returned");
+        // Spot-check the first, middle and last rows carry their own name_en.
+        assert_eq!(rows[0].name_en.as_deref(), Some("EN Name 0"));
+        assert_eq!(rows[N / 2].name_en.as_deref(), Some("EN Name 2500"));
+        assert_eq!(rows[N - 1].name_en.as_deref(), Some("EN Name 4999"));
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "a {N}-row load must complete in a sane bound, took {elapsed:?}"
+        );
+    }
+
+    /// Concurrency: multiple threads reading the same reader (shared
+    /// `Arc<Mutex<Connection>>`) must each see consistent `name_en`, with no
+    /// panic / data race under the new query shape.
+    #[test]
+    fn name_en_concurrent_reads_are_consistent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_index_basic_parquet(
+            &tmp,
+            INDEX_NEW_DDL,
+            &[
+                "INSERT INTO t VALUES ('SH000001', '上证指数', 'SSE Composite', 'official')",
+                "INSERT INTO t VALUES ('SH000300', '沪深300', 'CSI 300', 'official')",
+            ],
+        );
+        let reader = std::sync::Arc::new(ParquetReader::new(tmp.path()).expect("create reader"));
+
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                let rd = std::sync::Arc::clone(&reader);
+                s.spawn(move || {
+                    let rows = rd.load_all_index_basics().expect("load");
+                    assert_eq!(rows.len(), 2);
+                    assert!(
+                        rows.iter()
+                            .any(|r| r.name_en.as_deref() == Some("SSE Composite")),
+                        "each thread must see the name_en value"
+                    );
+                    // Confirm the shared connection serialises cleanly (no
+                    // poisoned-mutex / cross-thread row bleed).
+                    assert_ne!(
+                        rows[0].name_en, rows[1].name_en,
+                        "distinct rows must keep distinct name_en"
+                    );
+                });
+            }
+        });
     }
 }
