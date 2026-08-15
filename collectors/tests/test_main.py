@@ -64,7 +64,8 @@ class TestDispatchFetch:
     """dispatch_fetch(target, years, resume, page_size, max_pages)"""
 
     def test_stock_basic_sets_sys_argv_and_calls_official_main(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """dispatch_fetch('stock_basic') → fetch_stock_basic_official.main() (sync)."""
         import fetch_stock_basic_official as fsbo
@@ -89,7 +90,8 @@ class TestDispatchFetch:
         mock_fsbo_main.assert_called_once()
 
     def test_fin_indicators_sets_sys_argv_with_years(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_fin_indicators as ffi
         import main as main_mod
@@ -116,7 +118,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_balance_sheet_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_balance_sheet as fbs
         import main as main_mod
@@ -131,7 +134,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_income_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_income as fi
         import main as main_mod
@@ -146,7 +150,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_cash_flow_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_cash_flow as fcf
         import main as main_mod
@@ -175,7 +180,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_dragon_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_dragon as fdr
         import main as main_mod
@@ -190,7 +196,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_block_trade_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_block_trade as fbt
         import main as main_mod
@@ -205,7 +212,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_institution_survey_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_institution_survey as fis
         import main as main_mod
@@ -220,7 +228,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_concept_member_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_concept_member as fcm
         import main as main_mod
@@ -235,7 +244,8 @@ class TestDispatchFetch:
         mock_run.assert_called_once()
 
     def test_main_flow_calls_run_via_asyncio(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_main_flow as fmf
         import main as main_mod
@@ -257,7 +267,8 @@ class TestDispatchFetch:
 
 class TestDispatchImport:
     def test_stock_basic_calls_import_stock_basic(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -268,7 +279,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_fin_indicators_calls_import_fin_indicators(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -279,7 +291,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_balance_sheet_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_balance_sheet as fbs
         import main as main_mod
@@ -291,7 +304,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_income_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_income as fi
         import main as main_mod
@@ -303,7 +317,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_cash_flow_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_cash_flow as fcf
         import main as main_mod
@@ -315,7 +330,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_dragon_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_dragon as fdr
         import main as main_mod
@@ -327,7 +343,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_block_trade_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_block_trade as fbt
         import main as main_mod
@@ -339,7 +356,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_institution_survey_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_institution_survey as fis
         import main as main_mod
@@ -351,7 +369,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_concept_member_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_concept_member as fcm
         import main as main_mod
@@ -363,7 +382,8 @@ class TestDispatchImport:
         mock_import.assert_called_once()
 
     def test_main_flow_calls_import_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import fetch_main_flow as fmf
         import main as main_mod
@@ -382,7 +402,8 @@ class TestDispatchImport:
 
 class TestDoSync:
     def test_calls_all_5_fetches_and_5_imports(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """do_sync() triggers fetch+import for all tables, plus data_updates."""
         import common
@@ -435,7 +456,8 @@ class TestDoSync:
         assert mock_dolt.call_count >= 5
 
     def test_restart_flag_accepted_no_behavior_change(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """restart=True accepted (no-op for sync subcommand, future-compat)."""
         import common
@@ -485,7 +507,9 @@ class TestDoSync:
 
 class TestSyncInvestmentData:
     def test_investment_dir_missing_exits_early(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When investment_data/.dolt does not exist, returns early."""
         import main as main_mod
@@ -499,7 +523,9 @@ class TestSyncInvestmentData:
         sync_investment_data(restart=False)
 
     def test_restart_stops_server_if_dir_exists(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """With restart=True, pkill is called."""
         import main as main_mod
@@ -517,14 +543,13 @@ class TestSyncInvestmentData:
         sync_investment_data(restart=True)
 
         # pkill should have been called
-        pkill_calls = [
-            c for c in mock_subprocess_run.call_args_list
-            if "pkill" in str(c)
-        ]
+        pkill_calls = [c for c in mock_subprocess_run.call_args_list if "pkill" in str(c)]
         assert len(pkill_calls) >= 1
 
     def test_restart_false_skips_server_restart(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         import main as main_mod
 
@@ -540,9 +565,7 @@ class TestSyncInvestmentData:
         sync_investment_data(restart=False)
 
         # No pkill calls
-        pkill_calls = [
-            c for c in mock_run.call_args_list if "pkill" in str(c)
-        ]
+        pkill_calls = [c for c in mock_run.call_args_list if "pkill" in str(c)]
         assert len(pkill_calls) == 0
 
 
@@ -647,12 +670,14 @@ class TestDispatchProgress:
 
 class TestMain:
     def test_fetch_stock_basic(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["main.py", "fetch", "stock_basic"],
         )
         mock_dispatch = Mock()
@@ -662,12 +687,14 @@ class TestMain:
         mock_dispatch.assert_called_once_with("stock_basic", years=None)
 
     def test_fetch_fin_indicators_with_years(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["main.py", "fetch", "fin_indicators", "--years", "2024,2025"],
         )
         mock_dispatch = Mock()
@@ -677,12 +704,14 @@ class TestMain:
         mock_dispatch.assert_called_once_with("fin_indicators", years=[2024, 2025])
 
     def test_fetch_with_years_list(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["main.py", "fetch", "stock_basic", "--years", "2024"],
         )
         mock_dispatch = Mock()
@@ -692,7 +721,8 @@ class TestMain:
         mock_dispatch.assert_called_once_with("stock_basic", years=[2024])
 
     def test_import_stock_basic(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -704,7 +734,8 @@ class TestMain:
         mock_dispatch.assert_called_once_with("stock_basic")
 
     def test_import_balance_sheet(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -716,7 +747,8 @@ class TestMain:
         mock_dispatch.assert_called_once_with("balance_sheet")
 
     def test_sync(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -728,7 +760,8 @@ class TestMain:
         mock_sync.assert_called_once()
 
     def test_sync_investment(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -740,12 +773,15 @@ class TestMain:
         mock_sync_inv.assert_called_once_with(False)
 
     def test_sync_investment_restart(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
         monkeypatch.setattr(
-            sys, "argv", ["main.py", "sync-investment", "--restart"],
+            sys,
+            "argv",
+            ["main.py", "sync-investment", "--restart"],
         )
         mock_sync_inv = Mock()
         monkeypatch.setattr(main_mod, "sync_investment_data", mock_sync_inv)
@@ -780,7 +816,8 @@ class TestMain:
         mock_progress.assert_called_once_with("block_trade", as_json=True)
 
     def test_no_command_prints_help(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import main as main_mod
 
@@ -797,7 +834,9 @@ class TestMain:
 
 class TestImportStockBasic:
     def test_csv_missing_exits_early(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When stock_basic.csv does not exist, function returns early."""
         import main as main_mod
@@ -809,7 +848,9 @@ class TestImportStockBasic:
         main_mod._import_stock_basic()
 
     def test_csv_exists_imports_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When csv exists, dolt_sql / dolt_table_import / dolt_sql_csv are called."""
         import common
@@ -831,7 +872,9 @@ class TestImportStockBasic:
         main_mod._import_stock_basic()
 
         assert mock_sql.call_count >= 3
-        mock_table_import.assert_called_once()
+        # Two imports since epic #266 B1: the stock CSV staging table plus the
+        # name-en mapping staging table (when the checked-in mapping exists).
+        assert mock_table_import.call_count == 2
         assert mock_sql_csv.call_count >= 1
 
 
@@ -842,7 +885,9 @@ class TestImportStockBasic:
 
 class TestImportFinIndicators:
     def test_csv_missing_exits_early(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When RPT_LICO_FN_CPD.csv does not exist, function returns early."""
         import main as main_mod
@@ -852,7 +897,9 @@ class TestImportFinIndicators:
         main_mod._import_fin_indicators()
 
     def test_csv_exists_imports_to_dolt(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When csv exists, dolt operations are triggered."""
         import common
@@ -895,14 +942,43 @@ class TestImportFinIndicatorsMerge:
     # Full CSV header — every column referenced by the INSERT SELECT in
     # _import_fin_indicators (missing columns break _tmp_fin typing).
     _HEADER = [
-        "SECUCODE", "SECURITY_CODE", "REPORTDATE", "UPDATE_DATE", "NOTICE_DATE",
-        "DATATYPE", "QDATE", "EITIME", "DATAYEAR", "DATEMMDD",
-        "SECURITY_NAME_ABBR", "TRADE_MARKET", "TRADE_MARKET_CODE", "TRADE_MARKET_ZJG",
-        "SECURITY_TYPE", "SECURITY_TYPE_CODE", "PUBLISHNAME", "BOARD_CODE",
-        "BOARD_NAME", "ORI_BOARD_CODE", "ORG_CODE", "ISNEW", "BASIC_EPS",
-        "DEDUCT_BASIC_EPS", "TOTAL_OPERATE_INCOME", "PARENT_NETPROFIT",
-        "WEIGHTAVG_ROE", "BPS", "MGJYXJJE", "XSMLL", "YSTZ", "SJLTZ", "YSHZ",
-        "SJLHZ", "ZXGXL", "ASSIGNDSCRPT", "PAYYEAR",
+        "SECUCODE",
+        "SECURITY_CODE",
+        "REPORTDATE",
+        "UPDATE_DATE",
+        "NOTICE_DATE",
+        "DATATYPE",
+        "QDATE",
+        "EITIME",
+        "DATAYEAR",
+        "DATEMMDD",
+        "SECURITY_NAME_ABBR",
+        "TRADE_MARKET",
+        "TRADE_MARKET_CODE",
+        "TRADE_MARKET_ZJG",
+        "SECURITY_TYPE",
+        "SECURITY_TYPE_CODE",
+        "PUBLISHNAME",
+        "BOARD_CODE",
+        "BOARD_NAME",
+        "ORI_BOARD_CODE",
+        "ORG_CODE",
+        "ISNEW",
+        "BASIC_EPS",
+        "DEDUCT_BASIC_EPS",
+        "TOTAL_OPERATE_INCOME",
+        "PARENT_NETPROFIT",
+        "WEIGHTAVG_ROE",
+        "BPS",
+        "MGJYXJJE",
+        "XSMLL",
+        "YSTZ",
+        "SJLTZ",
+        "YSHZ",
+        "SJLHZ",
+        "ZXGXL",
+        "ASSIGNDSCRPT",
+        "PAYYEAR",
     ]
 
     # Mirrors the real fin_indicators schema; every column nullable except
@@ -943,22 +1019,26 @@ class TestImportFinIndicatorsMerge:
         """
         subprocess.run(
             ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         subprocess.run(
             ["dolt", "config", "--global", "--add", "user.name", "CI"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         init = subprocess.run(
             ["dolt", "--data-dir", str(tmp_path), "init"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert init.returncode == 0, init.stderr
 
         def dolt_sql_csv(sql: str) -> str:
             return subprocess.run(
                 ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             ).stdout
 
         dolt_sql_csv(
@@ -981,9 +1061,7 @@ class TestImportFinIndicatorsMerge:
         lines = stdout.strip().split("\n")
         return lines[-1] if lines else ""
 
-    def _make_row(
-        self, secucode: str = "000001.SZ", report_date: str = "2024-12-31"
-    ) -> list[str]:
+    def _make_row(self, secucode: str = "000001.SZ", report_date: str = "2024-12-31") -> list[str]:
         """Build a full 37-col CSV row with only identity columns populated."""
         row = [""] * len(self._HEADER)
         row[self._HEADER.index("SECUCODE")] = secucode
@@ -1012,29 +1090,31 @@ class TestImportFinIndicatorsMerge:
         dolt_dir_, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "RPT_LICO_FN_CPD.csv"
 
-        self._write_csv(
-            csv_path, [self._make_row(), self._make_row(report_date="2023-12-31")]
-        )
+        self._write_csv(csv_path, [self._make_row(), self._make_row(report_date="2023-12-31")])
         main_mod._import_fin_indicators()
 
-        self._write_csv(
-            csv_path, [self._make_row(), self._make_row(secucode="000002.SZ")]
-        )
+        self._write_csv(csv_path, [self._make_row(), self._make_row(secucode="000002.SZ")])
         main_mod._import_fin_indicators()
 
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "3"
-        assert self._last(
-            dolt_sql_csv(
-                "SELECT COUNT(*) FROM fin_indicators "
-                "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
+        assert (
+            self._last(
+                dolt_sql_csv(
+                    "SELECT COUNT(*) FROM fin_indicators "
+                    "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
+                )
             )
-        ) == "1"
-        assert self._last(
-            dolt_sql_csv(
-                "SELECT row_count, last_report_date FROM data_updates "
-                "WHERE table_name='fin_indicators'"
+            == "1"
+        )
+        assert (
+            self._last(
+                dolt_sql_csv(
+                    "SELECT row_count, last_report_date FROM data_updates "
+                    "WHERE table_name='fin_indicators'"
+                )
             )
-        ) == "3,2024-12-31"
+            == "3,2024-12-31"
+        )
 
     def test_merge_same_csv_refetch_idempotent(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -1065,9 +1145,7 @@ class TestImportFinIndicatorsMerge:
 
         dolt_dir_, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "RPT_LICO_FN_CPD.csv"
-        self._write_csv(
-            csv_path, [self._make_row(), self._make_row(report_date="2023-12-31")]
-        )
+        self._write_csv(csv_path, [self._make_row(), self._make_row(report_date="2023-12-31")])
         main_mod._import_fin_indicators()
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "2"
 
@@ -1077,18 +1155,23 @@ class TestImportFinIndicatorsMerge:
         main_mod._import_fin_indicators()
 
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "2"
-        assert self._last(
-            dolt_sql_csv(
-                "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_name='_tmp_fin'"
+        assert (
+            self._last(
+                dolt_sql_csv(
+                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='_tmp_fin'"
+                )
             )
-        ) == "0"
-        assert self._last(
-            dolt_sql_csv(
-                "SELECT row_count, last_report_date FROM data_updates "
-                "WHERE table_name='fin_indicators'"
+            == "0"
+        )
+        assert (
+            self._last(
+                dolt_sql_csv(
+                    "SELECT row_count, last_report_date FROM data_updates "
+                    "WHERE table_name='fin_indicators'"
+                )
             )
-        ) == "2,2024-12-31"
+            == "2,2024-12-31"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1098,7 +1181,9 @@ class TestImportFinIndicatorsMerge:
 
 class TestSyncInvestmentRestartServer:
     def test_restart_with_server_script(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When restart=True and start-dolt-server.sh exists, server restarts."""
         import main as main_mod
@@ -1143,35 +1228,73 @@ class TestUpsert:
     # API CSV 列 → Dolt DDL 列（35 值列；PK 列 symbol/report_date 特殊处理）。
     # 键顺序与 FIN_INDICATORS_DDL 值列顺序一致（与 _ddl_columns()[2:] 对齐）。
     _CSV_TO_DDL = {
-        "UPDATE_DATE": "update_date", "NOTICE_DATE": "notice_date",
-        "DATATYPE": "data_type", "QDATE": "qdate", "EITIME": "eitime",
-        "DATAYEAR": "data_year", "DATEMMDD": "date_label", "SECUCODE": "secucode",
-        "SECURITY_NAME_ABBR": "name", "TRADE_MARKET": "trade_market",
-        "TRADE_MARKET_CODE": "trade_market_code", "TRADE_MARKET_ZJG": "trade_market_zjg",
-        "SECURITY_TYPE": "security_type", "SECURITY_TYPE_CODE": "security_type_code",
-        "PUBLISHNAME": "industry", "BOARD_CODE": "board_code", "BOARD_NAME": "board_name",
-        "ORI_BOARD_CODE": "ori_board_code", "ORG_CODE": "org_code", "ISNEW": "is_new",
-        "BASIC_EPS": "basic_eps", "DEDUCT_BASIC_EPS": "deduct_basic_eps",
-        "TOTAL_OPERATE_INCOME": "revenue", "PARENT_NETPROFIT": "net_profit",
-        "WEIGHTAVG_ROE": "roe", "BPS": "bps", "MGJYXJJE": "cash_flow_per_share",
-        "XSMLL": "gross_margin", "YSTZ": "revenue_yoy", "SJLTZ": "net_profit_yoy",
-        "YSHZ": "operating_profit_yoy", "SJLHZ": "net_profit_qoq",
-        "ZXGXL": "shares_growth", "ASSIGNDSCRPT": "dividend_plan",
+        "UPDATE_DATE": "update_date",
+        "NOTICE_DATE": "notice_date",
+        "DATATYPE": "data_type",
+        "QDATE": "qdate",
+        "EITIME": "eitime",
+        "DATAYEAR": "data_year",
+        "DATEMMDD": "date_label",
+        "SECUCODE": "secucode",
+        "SECURITY_NAME_ABBR": "name",
+        "TRADE_MARKET": "trade_market",
+        "TRADE_MARKET_CODE": "trade_market_code",
+        "TRADE_MARKET_ZJG": "trade_market_zjg",
+        "SECURITY_TYPE": "security_type",
+        "SECURITY_TYPE_CODE": "security_type_code",
+        "PUBLISHNAME": "industry",
+        "BOARD_CODE": "board_code",
+        "BOARD_NAME": "board_name",
+        "ORI_BOARD_CODE": "ori_board_code",
+        "ORG_CODE": "org_code",
+        "ISNEW": "is_new",
+        "BASIC_EPS": "basic_eps",
+        "DEDUCT_BASIC_EPS": "deduct_basic_eps",
+        "TOTAL_OPERATE_INCOME": "revenue",
+        "PARENT_NETPROFIT": "net_profit",
+        "WEIGHTAVG_ROE": "roe",
+        "BPS": "bps",
+        "MGJYXJJE": "cash_flow_per_share",
+        "XSMLL": "gross_margin",
+        "YSTZ": "revenue_yoy",
+        "SJLTZ": "net_profit_yoy",
+        "YSHZ": "operating_profit_yoy",
+        "SJLHZ": "net_profit_qoq",
+        "ZXGXL": "shares_growth",
+        "ASSIGNDSCRPT": "dividend_plan",
         "PAYYEAR": "dividend_year",
     }
 
     # 与 main.py 现状一致的 TRIM 文本列（SELECT 侧 TRIM，ODKU 引用别名即得已 TRIM 值）
     _TRIM_COLS = {
-        "DATATYPE", "QDATE", "DATEMMDD", "SECURITY_NAME_ABBR", "TRADE_MARKET",
-        "TRADE_MARKET_ZJG", "SECURITY_TYPE", "PUBLISHNAME", "BOARD_NAME",
-        "ASSIGNDSCRPT", "PAYYEAR",
+        "DATATYPE",
+        "QDATE",
+        "DATEMMDD",
+        "SECURITY_NAME_ABBR",
+        "TRADE_MARKET",
+        "TRADE_MARKET_ZJG",
+        "SECURITY_TYPE",
+        "PUBLISHNAME",
+        "BOARD_NAME",
+        "ASSIGNDSCRPT",
+        "PAYYEAR",
     }
 
     # DDL 中 double 类型的值列（round-trip 断言用 float 比较避免格式差异）
     _DOUBLE_COLS = {
-        "basic_eps", "deduct_basic_eps", "revenue", "net_profit", "roe", "bps",
-        "cash_flow_per_share", "gross_margin", "revenue_yoy", "net_profit_yoy",
-        "operating_profit_yoy", "net_profit_qoq", "shares_growth",
+        "basic_eps",
+        "deduct_basic_eps",
+        "revenue",
+        "net_profit",
+        "roe",
+        "bps",
+        "cash_flow_per_share",
+        "gross_margin",
+        "revenue_yoy",
+        "net_profit_yoy",
+        "operating_profit_yoy",
+        "net_profit_qoq",
+        "shares_growth",
     }
 
     _CSV_HEADER = TestImportFinIndicatorsMerge._HEADER  # 复用既有 37 列清单
@@ -1254,8 +1377,7 @@ class TestUpsert:
             select_parts.append(f"{expr} AS _c{i}")
         select = (
             "CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS _sym,\n"
-            "    REPORTDATE AS _rpt,\n    "
-            + ",\n    ".join(select_parts)
+            "    REPORTDATE AS _rpt,\n    " + ",\n    ".join(select_parts)
         )
         col_list = ", ".join(["symbol", "report_date"] + value_cols)
         odku = odku_override or {c: f"_c{i}" for i, c in enumerate(value_cols)}
@@ -1278,28 +1400,33 @@ class TestUpsert:
 
         subprocess.run(
             ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         subprocess.run(
             ["dolt", "config", "--global", "--add", "user.name", "CI"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         init = subprocess.run(
             ["dolt", "--data-dir", str(tmp_path), "init"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert init.returncode == 0, init.stderr
 
         def dolt_sql_csv(sql: str) -> str:
             return subprocess.run(
                 ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             ).stdout
 
         def dolt_sql(sql: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 ["dolt", "--data-dir", str(tmp_path), "sql", "-q", sql],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
 
         dolt_sql_csv(
@@ -1320,9 +1447,7 @@ class TestUpsert:
         lines = stdout.strip().split("\n")
         return lines[-1] if lines else ""
 
-    def test_alias_odku_overwrites_existing_pk(
-        self, dolt_env, tmp_path: Path
-    ) -> None:
+    def test_alias_odku_overwrites_existing_pk(self, dolt_env, tmp_path: Path) -> None:
         """① SELECT 别名 + ODKU 无前缀别名引用：同 PK 全列覆盖成功（数值 + TRIM 文本列）。
 
         钉住 plan 验收：数值 369.40→170.86、name/data_type 等 TRIM 文本列被覆盖
@@ -1364,9 +1489,7 @@ class TestUpsert:
         assert rows[0]["update_date"] == "2026-04-30"
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "1"
 
-    def test_upsert_all_35_value_columns_roundtrip(
-        self, dolt_env, tmp_path: Path
-    ) -> None:
+    def test_upsert_all_35_value_columns_roundtrip(self, dolt_env, tmp_path: Path) -> None:
         """④ 全行 35 列 round-trip：旧特征值 → UPSERT → 每列等于新特征值。"""
         import io
 
@@ -1412,9 +1535,7 @@ class TestUpsert:
         # 同 PK 覆盖而非新增行
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_indicators")) == "1"
 
-    def test_qualified_source_column_reference_rejected(
-        self, dolt_env, tmp_path: Path
-    ) -> None:
+    def test_qualified_source_column_reference_rejected(self, dolt_env, tmp_path: Path) -> None:
         """② 限定源列引用 `_tmp_fin.COL` 对 TRIM 文本列在 Dolt 报错（禁用写法）。"""
         import common
 
@@ -1430,9 +1551,7 @@ class TestUpsert:
         assert result.returncode != 0, "qualified source-column reference must fail on Dolt"
         assert "_tmp_fin" in result.stderr, result.stderr
 
-    def test_values_function_rejected(
-        self, dolt_env, tmp_path: Path
-    ) -> None:
+    def test_values_function_rejected(self, dolt_env, tmp_path: Path) -> None:
         """③ VALUES() 写法在 Dolt 报错（禁用写法）。"""
         import common
 

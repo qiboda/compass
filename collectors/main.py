@@ -48,8 +48,22 @@ def _parse_years(s: str) -> list[int] | None:
 
 
 def _import_stock_basic() -> None:
-    """Import stock_basic_official.csv (SSE/SZSE/BSE official) into Dolt."""
-    from common import csv_dir, dolt_sql, dolt_sql_csv, dolt_table_import
+    """Import stock_basic_official.csv (SSE/SZSE/BSE official) into Dolt.
+
+    Epic #266 B1: when the name-en mapping is available the INSERT LEFT-JOINs
+    it by ``TRIM(industry)`` to fill ``industry_en``; unmapped industries →
+    NULL. The mapping staging table also gains suffix-stripped keys (Roman
+    numerals like 白酒Ⅱ → 白酒) so both exact and base keys match; a missing
+    mapping degrades gracefully — the base import always lands.
+    """
+    from common import (
+        csv_dir,
+        dolt_sql,
+        dolt_sql_csv,
+        dolt_table_import,
+        drop_name_en_mapping,
+        load_name_en_mapping,
+    )
 
     csv_path = csv_dir() / "stock_basic_official.csv"
     print("[import stock_basic]", file=sys.stderr)
@@ -61,20 +75,44 @@ def _import_stock_basic() -> None:
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
     dolt_table_import("_tmp_sb", csv_path, timeout=120)
 
-    dolt_sql("DELETE FROM stock_basic")
-    # Column names match the Dolt schema directly; dolt table import already
-    # typed the date/float columns and converted empty strings to NULL.
-    sql = """
-        INSERT INTO stock_basic (symbol, ts_code, code, name, list_date,
-            delist_date, board, full_name, total_share, industry, region, update_date)
-        SELECT symbol, ts_code, code, TRIM(name), list_date,
-            delist_date,
-            TRIM(board), TRIM(full_name),
-            total_share,
-            TRIM(industry), TRIM(region), update_date
-        FROM _tmp_sb
-    """
-    dolt_sql(sql)
+    mapping = load_name_en_mapping()
+    try:
+        dolt_sql("DELETE FROM stock_basic")
+        # Column names match the Dolt schema directly; dolt table import already
+        # typed the date/float columns and converted empty strings to NULL.
+        if mapping:
+            # Dual-key JOIN: exact TRIMmed industry, or its Roman-numeral
+            # suffix stripped (白酒Ⅱ → 白酒) so suffixed industries hit the
+            # base mapping key.
+            join = """
+                LEFT JOIN _tmp_name_en m
+                  ON m.section = 'industry'
+                 AND (m.`key` = TRIM(t.industry)
+                      OR (TRIM(t.industry) REGEXP '[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]$'
+                          AND m.`key` = LEFT(TRIM(t.industry),
+                                             CHAR_LENGTH(TRIM(t.industry)) - 1)))
+            """
+            insert_en_cols = ", industry_en"
+            select_en_cols = ", m.value"
+        else:
+            join = ""
+            insert_en_cols = ""
+            select_en_cols = ""
+        sql = f"""
+            INSERT INTO stock_basic (symbol, ts_code, code, name, list_date,
+                delist_date, board, full_name, total_share, industry, region,
+                update_date{insert_en_cols})
+            SELECT t.symbol, t.ts_code, t.code, TRIM(t.name), t.list_date,
+                t.delist_date,
+                TRIM(t.board), TRIM(t.full_name),
+                t.total_share,
+                TRIM(t.industry), TRIM(t.region), t.update_date{select_en_cols}
+            FROM _tmp_sb t
+            {join}
+        """
+        dolt_sql(sql)
+    finally:
+        drop_name_en_mapping()
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
 
     stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")

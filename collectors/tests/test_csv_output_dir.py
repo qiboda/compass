@@ -40,38 +40,52 @@ class TestRunDefaultOutputInCsvDir:
         "module_name, report_name, run_kwargs, since_value",
         [
             pytest.param(
-                "fetch_income", "RPT_F10_FINANCE_GINCOME",
-                {"years": [2024], "periods": "FY"}, "2099-12-31",
+                "fetch_income",
+                "RPT_F10_FINANCE_GINCOME",
+                {"years": [2024], "periods": "FY"},
+                "2099-12-31",
                 id="income",
             ),
             pytest.param(
-                "fetch_balance_sheet", "RPT_F10_FINANCE_GBALANCE",
-                {"years": [2024], "periods": "FY"}, "2099-12-31",
+                "fetch_balance_sheet",
+                "RPT_F10_FINANCE_GBALANCE",
+                {"years": [2024], "periods": "FY"},
+                "2099-12-31",
                 id="balance_sheet",
             ),
             pytest.param(
-                "fetch_cash_flow", "RPT_F10_FINANCE_GCASHFLOW",
-                {"years": [2024], "periods": "FY"}, "2099-12-31",
+                "fetch_cash_flow",
+                "RPT_F10_FINANCE_GCASHFLOW",
+                {"years": [2024], "periods": "FY"},
+                "2099-12-31",
                 id="cash_flow",
             ),
             pytest.param(
-                "fetch_block_trade", "RPT_DATA_BLOCKTRADE",
-                {"years": [2024]}, "2099-12-31",
+                "fetch_block_trade",
+                "RPT_DATA_BLOCKTRADE",
+                {"years": [2024]},
+                "2099-12-31",
                 id="block_trade",
             ),
             pytest.param(
-                "fetch_dragon", "RPT_DAILYBILLBOARD_DETAILSNEW",
-                {}, "2099-12-31",
+                "fetch_dragon",
+                "RPT_DAILYBILLBOARD_DETAILSNEW",
+                {},
+                "2099-12-31",
                 id="dragon",
             ),
             pytest.param(
-                "fetch_institution_survey", "RPT_ORG_SURVEYNEW",
-                {}, "2099-12-31",
+                "fetch_institution_survey",
+                "RPT_ORG_SURVEYNEW",
+                {},
+                "2099-12-31",
                 id="institution_survey",
             ),
             pytest.param(
-                "fetch_main_flow", "RPT_MAIN_MONEY_FLOW",
-                {}, "today",
+                "fetch_main_flow",
+                "RPT_MAIN_MONEY_FLOW",
+                {},
+                "today",
                 id="main_flow",
             ),
         ],
@@ -91,9 +105,7 @@ class TestRunDefaultOutputInCsvDir:
         monkeypatch.setenv("COMPASS_CSV_DIR", str(csv_dir))
         if since_value == "today":
             # main_flow short-circuits only when the watermark equals today.
-            monkeypatch.setattr(
-                mod, "last_report_date", lambda _tbl: mod._today().isoformat()
-            )
+            monkeypatch.setattr(mod, "last_report_date", lambda _tbl: mod._today().isoformat())
         else:
             monkeypatch.setattr(mod, "last_report_date", lambda _tbl: since_value)
 
@@ -160,7 +172,8 @@ class TestArgparseDefaultOutputInCsvDir:
         monkeypatch.setattr(fsbo.requests, "Session", lambda: stub)
         monkeypatch.setattr(fsbo.time, "sleep", Mock())
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["fetch_stock_basic_official.py", "--update-date", "2026-07-31"],
         )
 
@@ -222,7 +235,8 @@ class TestArgparseDefaultOutputInCsvDir:
         with (
             patch("fetch_fin_indicators.AsyncSession", return_value=stub),
             patch.object(
-                ffi.sys, "argv",
+                ffi.sys,
+                "argv",
                 ["fetch_fin_indicators.py", "--years", "2024", "--periods", "FY"],
             ),
         ):
@@ -236,9 +250,7 @@ class TestArgparseDefaultOutputInCsvDir:
 class TestOutputOverrideWins:
     """-o/--output must keep overriding the default csv_dir() — no regression."""
 
-    def test_stock_basic_official_output_flag_overrides(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_stock_basic_official_output_flag_overrides(self, tmp_path: Path, monkeypatch) -> None:
         import fetch_stock_basic_official as fsbo
 
         csv_dir = tmp_path / "csv"
@@ -256,9 +268,9 @@ class TestOutputOverrideWins:
         monkeypatch.setattr(fsbo.time, "sleep", Mock())
         override = tmp_path / "override.csv"
         monkeypatch.setattr(
-            sys, "argv",
-            ["fetch_stock_basic_official.py", "-o", str(override),
-             "--update-date", "2026-07-31"],
+            sys,
+            "argv",
+            ["fetch_stock_basic_official.py", "-o", str(override), "--update-date", "2026-07-31"],
         )
 
         fsbo.main()
@@ -290,9 +302,17 @@ class TestOutputOverrideWins:
         with (
             patch("fetch_fin_indicators.AsyncSession", return_value=stub),
             patch.object(
-                ffi.sys, "argv",
-                ["fetch_fin_indicators.py", "--years", "2024", "--periods", "FY",
-                 "--output", str(override)],
+                ffi.sys,
+                "argv",
+                [
+                    "fetch_fin_indicators.py",
+                    "--years",
+                    "2024",
+                    "--periods",
+                    "FY",
+                    "--output",
+                    str(override),
+                ],
             ),
         ):
             await ffi.main()
@@ -304,9 +324,7 @@ class TestOutputOverrideWins:
 class TestMainImportReadsCsvDir:
     """main.py import helpers must read CSVs from csv_dir(), not COLLECTORS_DIR."""
 
-    def test_import_stock_basic_reads_csv_dir(
-        self, monkeypatch, tmp_path: Path
-    ) -> None:
+    def test_import_stock_basic_reads_csv_dir(self, monkeypatch, tmp_path: Path) -> None:
         import common
         import main as main_mod
 
@@ -324,11 +342,11 @@ class TestMainImportReadsCsvDir:
 
         main_mod._import_stock_basic()
 
-        assert mock_table_import.call_args.args[1] == csv_dir / "stock_basic_official.csv"
+        # First dolt_table_import is the stock CSV itself; the second (since
+        # epic #266 B1) stages the name-en mapping table.
+        assert mock_table_import.call_args_list[0].args[1] == csv_dir / "stock_basic_official.csv"
 
-    def test_import_fin_indicators_reads_csv_dir(
-        self, monkeypatch, tmp_path: Path
-    ) -> None:
+    def test_import_fin_indicators_reads_csv_dir(self, monkeypatch, tmp_path: Path) -> None:
         import common
         import main as main_mod
 
