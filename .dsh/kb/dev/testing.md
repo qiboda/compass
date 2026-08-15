@@ -146,6 +146,18 @@ let range = db.get_stored_range("SZ000001").await?;
 - `test-sepa-daily.sh`：`bash -n` + **mock cargo/uv/dolt**（PATH 前置假命令，
   日志记录调用参数）断言 7 步流水线调用顺序、Dolt `add` 限定表、失败非零退出、
   preflight 分支；数据目录用 `SEPA_COMPASS_DATA_DIR` 等 env 覆盖指向临时目录
+- `justfile-test.sh` / `justfile-adversarial-test.sh`（ref #265）：justfile 回归测试
+  ——需求验收（22 断言：9 recipe 存在性、逐字命令映射、默认 recipe、check 门禁
+  顺序、`--fmt --check`）+ 对抗（18 项：命令静默弱化、默认漂移、recipe 集合恰
+  9 个、性能、无 justfile 区分性）。只读操作（`just -n`/`--list`/`--fmt --check`），
+  禁 cargo 重型命令。手动运行：`bash scripts/tests/justfile-test.sh`
+
+**委派测试 agent 的自验可信度（ref #265 教训）**：测试 agent 汇报的 self-GREEN
+模拟若使用与需求契约**逐字不一致**的 fixture（如契约 `cargo fmt -- --check`、
+fixture 却写 `cargo fmt`），自验全绿也不可信——断言可能永远落空。委派时必须
+要求：① 自验 fixture 与 issue/plan 契约逐字一致；② 对关键断言做 mutation
+负面验证（削弱实现 → 断言必须 FAIL）。主 agent 收到自验报告后，应在真实实现
+上重跑一遍两批测试再采信。
 
 ## 基准测试
 

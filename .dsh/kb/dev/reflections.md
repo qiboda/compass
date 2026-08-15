@@ -181,3 +181,30 @@
 ### Trends (last 10)
 - **引用范围侦察缺陷第三次出现**（ref #117 archive → #263 只搜 md → #264 grep 路径漏技能目录）：前两次教训均已固化但执行变体仍再现——本次补充"路径范围覆盖全仓（含被迁移目录）"到 process.md 规则；独立 subagent_review 成功抓出主 agent 验证盲区（P1 漏改），审查-修复闭环价值持续实证（#255 → #264）
 - **文件名推断 vs 内容事实**（#264 ci-fix.yml）：文件名含 opencode 但内容无依赖，用户纠正删除决策——文件操作类决策（删除/迁移/改名）必须先读内容再判断
+
+## 2026-08-15 — ref #265 justfile：便捷启动与常用命令集
+
+**What was done**: 根目录新增 `justfile`（9 recipes：run/build/test/fmt/clippy/check/import/export/backup，run 为默认 recipe，`just` 即启动 GUI）+ 两批回归测试（需求 22 断言 `justfile-test.sh` + 对抗 18 项 `justfile-adversarial-test.sh`）+ 文档同步（AGENTS.md Commands、gui.md 启动、index.md 快速开始）。2 实现 commit（351c19a / 3a52eba），RED→GREEN 全流程，subagent_review 无 blocking（P1×1 已修）。
+
+**User corrections**（逐字引用对话记录）:
+1. "算了那就不修复了。 改为安装just工具，让我能方便的启动项目" —— 否决我推荐的 `default-members` 修复方案（cargo run 默认 compass），转向 just 方案。grill 确认环节正常运转：用户对推荐方案行使否决权并给出新方向。
+2. "push" —— 授权推送。
+
+**What went wrong**:
+1. **对抗测试 agent 的 self-GREEN 自验 fixture 与需求契约不一致**：其 check 顺序断言 `grep -nFx 'cargo fmt'`（-x 全行匹配）在契约行 `cargo fmt -- --check` 下永远落空；其临时自验 fixture 用的是 `cargo fmt`（无 `--check`）所以"ALL 18 PASSED"。真实 justfile 落地后该断言失效，脚本在 set -e 下静默崩退（rc=1 零诊断）。与 ref #235 "RED 因错误原因失败"同族：测试 agent 自述的验证结论（RED/GREEN）都必须独立复核，不能直接采信。
+2. **主 agent 修复测试 bug 时只修了第一处**：首修仅改了 fmt 行的断言（`grep -nFx 'cargo fmt -- --check'`），review P1 抓出 clippy/test 两行**同类问题**（同模式 grep 无匹配即 set -e 崩退）——"修一处"在重复模式断言前是陷阱，应 grep 同模式全部出现点一次修全。
+3. **review 抓出 requirement 脚本 tempdir 无 trap**（P3）：set -e 中断会残留临时目录，已补 `trap 'rm -rf "$TMPDIR_X"' EXIT`。
+4. 工具层摩擦（子代理侧已自行规避）：bash 工具用 heredoc 写多行 justfile 时换行偶被吞，改用 printf 逐行/拷贝现成文件可靠。
+
+**Lessons learned**:
+1. 测试 agent 的 self-GREEN 模拟必须使用与需求契约**逐字一致**的 fixture，并对关键断言做 mutation 负面验证（削弱实现 → 断言必须 FAIL）；主 agent 收到自验报告后在真实实现上重跑两批测试再采信。
+2. 修复测试/代码中的重复模式断言 bug 时，先 grep 同模式全部出现点再统一修复（本次 `grep -nFx` 三连只修一处，review 第二轮抓出同病两处）。
+3. 对"测试脚本在 set -e 下静默崩退"的防御：所有命令替换的 grep 管线加 `|| true`，让空结果走到清晰 FAIL verdict 而非无诊断退出。
+
+**Process improvements**:
+- .dsh/kb/dev/testing.md「脚本自测」章节新增：两个 justfile 回归测试脚本记录 + 「委派测试 agent 的自验可信度」条款（自验 fixture 与契约逐字一致 + mutation 负面验证 + 主 agent 重跑采信），已随本次反思 commit 落地
+
+### Trends (last 10)
+- **测试 agent 自验结论失真变体再现**（ref #235 RED 断言目标语义错误 → 本次 #265 self-GREEN fixture 与契约不一致）：测试 agent 的 RED/GREEN 结论都不能直接采信——主 agent 独立复核（真实实现重跑 / 逐断言核对语义）应成为固定步骤；testing.md 已固化条款
+- **子代理交付/自验可靠性系列第 5 次**（ref #244 零交付 → #245 只分析 → #255 截断零落盘 → #235 断言失真 → 本次自验 fixture 失真）："委派后核验"持续靠主 agent 手动补救，至今未固化为 skill/hook——建议正式写入 skwy-workflow 委派协议（proposed，连续 5 批未落实）
+- **独立 review 持续抓出主 agent 盲区**（#255 → #264 → 本次测试脚本静默崩退 P1 + trap P3）：审查-修复闭环价值稳定实证，保持强制
