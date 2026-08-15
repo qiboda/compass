@@ -8,6 +8,7 @@ Version-tracking semantics: each run fully replaces the previous version
 import asyncio
 import csv
 import io
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -369,6 +370,13 @@ class TestRun:
         assert len(rows) == 3
         assert {r["SECUCODE"] for r in rows} == {"600880.SH", "300624.SZ", "603999.SH"}
         assert {r["NEW_BOARD_CODE"] for r in rows} == {"BK1169", "BK1170"}
+
+        progress_path = tmp_path / "concept_member.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] == 100.0
+        assert progress["total_items"] == 2
 
     async def test_run_member_fetch_exception_aborts_without_csv(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from common import (
     AsyncSession,
+    Progress,
     Throttle,
     csv_dir,
     import_replace_table,
@@ -225,28 +226,42 @@ async def run(page_size: int = 1000) -> Path:
     print(f"Report: {REPORT_NAME} ({SOURCE})", file=sys.stderr)
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
 
-    throttle = Throttle()
-    async with AsyncSession(impersonate="chrome142") as session:
-        diff = await _fetch_snapshot(session, throttle, page_size)
+    with Progress("main_flow", output_csv=output_path) as progress:
+        throttle = Throttle()
+        async with AsyncSession(impersonate="chrome142") as session:
+            diff = await _fetch_snapshot(session, throttle, page_size)
 
-    if not diff:
-        output_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            "No data from push2 (rate-limited or empty) — aborting, "
-            "no CSV written"
+        if not diff:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                "No data from push2 (rate-limited or empty) — aborting, "
+                "no CSV written"
+            )
+
+        trade_date = _trade_date_from_quotes(diff)
+        progress.update(
+            fetched_rows=len(diff),
+            current_item=trade_date.isoformat(),
+            message=f"Snapshot fetched, trade_date={trade_date}",
         )
+        print(f"Snapshot: {len(diff)} items, trade_date={trade_date}", file=sys.stderr)
 
-    trade_date = _trade_date_from_quotes(diff)
-    print(f"Snapshot: {len(diff)} items, trade_date={trade_date}", file=sys.stderr)
+        if last == trade_date.isoformat():
+            print(f"Trade date {trade_date} already imported; skipping", file=sys.stderr)
+            progress.finish(
+                fetched_rows=0,
+                message=f"Trade date {trade_date} already imported",
+            )
+            return output_path
 
-    if last == trade_date.isoformat():
-        print(f"Trade date {trade_date} already imported; skipping", file=sys.stderr)
+        records = _build_records(diff, trade_date)
+        write_csv(records, output_path)
+        progress.finish(
+            fetched_rows=len(records),
+            message=f"Done: {len(records)} records",
+        )
+        print(f"\nDone: {len(records)} records → {output_path.resolve()}", file=sys.stderr)
         return output_path
-
-    records = _build_records(diff, trade_date)
-    write_csv(records, output_path)
-    print(f"\nDone: {len(records)} records → {output_path.resolve()}", file=sys.stderr)
-    return output_path
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:

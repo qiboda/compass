@@ -2,6 +2,7 @@
 
 import asyncio
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -282,6 +283,13 @@ class TestRun:
         link = [r for r in rows if r["SEAT_TYPE"] == "深股通专用"]
         assert len(link) == 1
         assert link[0]["INSTITUTION_FLAG"] == "0"
+
+        progress_path = tmp_path / "dragon.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] == 100.0
+        assert progress["total_items"] == 1
 
     async def test_run_incremental_resumes_after_last_date(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

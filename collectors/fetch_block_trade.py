@@ -21,6 +21,7 @@ from pathlib import Path
 
 from common import (
     AsyncSession,
+    Progress,
     Throttle,
     csv_dir,
     fetch_paginated,
@@ -99,38 +100,51 @@ async def run(
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
     print(file=sys.stderr)
 
-    throttle = Throttle()
-    all_records: list[dict[str, str | int | float]] = []
-    failure: str | None = None
+    with Progress(
+        "block_trade", total_items=len(all_dates), output_csv=output_path
+    ) as progress:
+        throttle = Throttle()
+        all_records: list[dict[str, str | int | float]] = []
+        failure: str | None = None
 
-    async with AsyncSession(impersonate="chrome142") as session:
-        for i, trade_date in enumerate(all_dates):
-            print(
-                f"[{i + 1}/{len(all_dates)}] {trade_date} ...",
-                file=sys.stderr, end=" ", flush=True,
-            )
-            try:
-                records = await fetch_paginated(
-                    session, throttle, REPORT_NAME, FILTER_COLUMN, trade_date, page_size,
+        async with AsyncSession(impersonate="chrome142") as session:
+            for i, trade_date in enumerate(all_dates):
+                print(
+                    f"[{i + 1}/{len(all_dates)}] {trade_date} ...",
+                    file=sys.stderr, end=" ", flush=True,
                 )
-            except Exception as e:
-                failure = f"{trade_date}: {e}"
-                print(f"FAILED: {e}", file=sys.stderr)
-                break
+                try:
+                    records = await fetch_paginated(
+                        session, throttle, REPORT_NAME, FILTER_COLUMN, trade_date, page_size,
+                    )
+                except Exception as e:
+                    failure = f"{trade_date}: {e}"
+                    print(f"FAILED: {e}", file=sys.stderr)
+                    break
 
-            all_records.extend(records)
-            print(f"{len(records)} records" if records else "empty", file=sys.stderr)
+                all_records.extend(records)
+                progress.update(
+                    completed=i + 1,
+                    fetched_rows=len(all_records),
+                    current_item=trade_date,
+                    message=f"Fetched {trade_date}",
+                )
+                print(f"{len(records)} records" if records else "empty", file=sys.stderr)
 
-    if failure is not None:
-        output_path.unlink(missing_ok=True)
-        raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
+        if failure is not None:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
 
-    write_csv(all_records, output_path)
-    print(
-        f"\nDone: {len(all_records)} records → {output_path.resolve()}",
-        file=sys.stderr,
-    )
-    return output_path
+        write_csv(all_records, output_path)
+        progress.finish(
+            fetched_rows=len(all_records),
+            message=f"Done: {len(all_records)} records",
+        )
+        print(
+            f"\nDone: {len(all_records)} records → {output_path.resolve()}",
+            file=sys.stderr,
+        )
+        return output_path
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:

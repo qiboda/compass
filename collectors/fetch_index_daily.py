@@ -40,6 +40,7 @@ from pathlib import Path
 
 from common import (
     AsyncSession,
+    Progress,
     Throttle,
     csv_dir,
     dolt_sql_csv,
@@ -341,88 +342,107 @@ async def run() -> Path:
     print("Report: index_daily/index_basic (EastMoney push2his + push2 clist)", file=sys.stderr)
     print(f"Output: {daily_path.resolve()} / {basic_path.resolve()}", file=sys.stderr)
 
-    throttle = Throttle()
-    daily_records: list[dict[str, object]] = []
-    basic_records: list[dict[str, object]] = []
+    with Progress("index_daily", output_csv=daily_path) as progress:
+        throttle = Throttle()
+        daily_records: list[dict[str, object]] = []
+        basic_records: list[dict[str, object]] = []
 
-    async with AsyncSession(impersonate="chrome142") as session:
-        boards = await fetch_board_list(session, throttle)
-        print(f"Boards: {len(boards)}", file=sys.stderr)
+        async with AsyncSession(impersonate="chrome142") as session:
+            boards = await fetch_board_list(session, throttle)
+            print(f"Boards: {len(boards)}", file=sys.stderr)
+            progress.update(
+                total_items=len(boards) + len(OFFICIAL_INDICES),
+                message="Fetching board and index klines",
+            )
 
-        # Boards first (discovery order), official after — index_basic order
-        # convention (GUI picker lists boards prominently).
-        for code, name, index_type in boards:
-            basic_records.append(
-                {"symbol": code, "name": name, "index_type": index_type}
-            )
-            print(f"  [board] {code} {name} ...", file=sys.stderr, end=" ", flush=True)
-            result = await fetch_kline(session, throttle, f"90.{code}")
-            if result is None:
-                print("FAILED", file=sys.stderr)
-                continue
-            klines, _code = result
-            if not klines:
-                print("empty (skipped)", file=sys.stderr)
-                continue
-            daily_records.extend(
-                _kline_records(code, index_type, klines, _today())
-            )
-            print(f"{len(klines)} bars", file=sys.stderr)
+            # Boards first (discovery order), official after — index_basic order
+            # convention (GUI picker lists boards prominently).
+            for i, (code, name, index_type) in enumerate(boards):
+                basic_records.append(
+                    {"symbol": code, "name": name, "index_type": index_type}
+                )
+                print(f"  [board] {code} {name} ...", file=sys.stderr, end=" ", flush=True)
+                result = await fetch_kline(session, throttle, f"90.{code}")
+                if result is None:
+                    print("FAILED", file=sys.stderr)
+                elif not result[0]:
+                    print("empty (skipped)", file=sys.stderr)
+                else:
+                    klines, _code = result
+                    daily_records.extend(
+                        _kline_records(code, index_type, klines, _today())
+                    )
+                    print(f"{len(klines)} bars", file=sys.stderr)
+                progress.update(
+                    completed=i + 1,
+                    fetched_rows=len(daily_records),
+                    current_item=code,
+                    message=f"Fetched board {code} {name}",
+                )
 
-        # Official indices: response data.code must echo the whitelisted code,
-        # otherwise the API returned a different index (skip + log).
-        for target in OFFICIAL_INDICES:
-            print(
-                f"  [official] {target['secid']} {target['name']} ...",
-                file=sys.stderr, end=" ", flush=True,
-            )
-            result = await fetch_kline(session, throttle, target["secid"])
-            if result is None:
-                print("FAILED", file=sys.stderr)
-                continue
-            klines, code = result
-            if not klines:
-                print("empty (skipped)", file=sys.stderr)
-                continue
-            symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
-                else f"SZ{target['code']}"
-            # EastMoney echoes either the bare code ("000001") or the full
-            # symbol ("SH000001"); accept both, anything else is a different
-            # index (delisted/renamed code) — skip.
-            if code != target["code"] and code != symbol:
-                print(f"code mismatch ({code!r}), skipped", file=sys.stderr)
-                continue
-            basic_records.append(
-                {"symbol": symbol, "name": target["name"], "index_type": "official"}
-            )
-            daily_records.extend(
-                _kline_records(symbol, "official", klines, _today())
-            )
-            print(f"{len(klines)} bars", file=sys.stderr)
+            # Official indices: response data.code must echo the whitelisted code,
+            # otherwise the API returned a different index (skip + log).
+            for j, target in enumerate(OFFICIAL_INDICES, start=len(boards)):
+                print(
+                    f"  [official] {target['secid']} {target['name']} ...",
+                    file=sys.stderr, end=" ", flush=True,
+                )
+                result = await fetch_kline(session, throttle, target["secid"])
+                if result is None:
+                    print("FAILED", file=sys.stderr)
+                elif not result[0]:
+                    print("empty (skipped)", file=sys.stderr)
+                else:
+                    klines, code = result
+                    symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
+                        else f"SZ{target['code']}"
+                    # EastMoney echoes either the bare code ("000001") or the full
+                    # symbol ("SH000001"); accept both, anything else is a different
+                    # index (delisted/renamed code) — skip.
+                    if code != target["code"] and code != symbol:
+                        print(f"code mismatch ({code!r}), skipped", file=sys.stderr)
+                    else:
+                        basic_records.append(
+                            {"symbol": symbol, "name": target["name"], "index_type": "official"}
+                        )
+                        daily_records.extend(
+                            _kline_records(symbol, "official", klines, _today())
+                        )
+                        print(f"{len(klines)} bars", file=sys.stderr)
+                progress.update(
+                    completed=j + 1,
+                    fetched_rows=len(daily_records),
+                    current_item=target["name"],
+                    message=f"Fetched official {target['name']}",
+                )
 
-    if not daily_records and not basic_records:
-        daily_path.unlink(missing_ok=True)
-        basic_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            "No index data from push2his/clist (rate-limited or empty) — "
-            "aborting, no CSV written"
+        if not daily_records and not basic_records:
+            daily_path.unlink(missing_ok=True)
+            basic_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                "No index data from push2his/clist (rate-limited or empty) — "
+                "aborting, no CSV written"
+            )
+
+        if daily_records:
+            write_csv(daily_records, daily_path)
+        # index_basic is (re)built on full runs only (data_updates.last_report_date
+        # empty) and only when the board universe was actually discovered — an
+        # empty clist means the API glitched, and a boards-less basic table would
+        # silently drop every board's name entry on the merge import. Incremental
+        # runs publish the daily CSV alone; official names ride along on full runs.
+        if not last and boards and basic_records:
+            write_csv(basic_records, basic_path)
+        progress.finish(
+            fetched_rows=len(daily_records),
+            message=f"Done: {len(daily_records)} daily rows",
         )
-
-    if daily_records:
-        write_csv(daily_records, daily_path)
-    # index_basic is (re)built on full runs only (data_updates.last_report_date
-    # empty) and only when the board universe was actually discovered — an
-    # empty clist means the API glitched, and a boards-less basic table would
-    # silently drop every board's name entry on the merge import. Incremental
-    # runs publish the daily CSV alone; official names ride along on full runs.
-    if not last and boards and basic_records:
-        write_csv(basic_records, basic_path)
-    print(
-        f"\nDone: {len(daily_records)} daily rows, {len(basic_records)} basic "
-        f"rows → {daily_path.resolve()}, {basic_path.resolve()}",
-        file=sys.stderr,
-    )
-    return daily_path
+        print(
+            f"\nDone: {len(daily_records)} daily rows, {len(basic_records)} basic "
+            f"rows → {daily_path.resolve()}, {basic_path.resolve()}",
+            file=sys.stderr,
+        )
+        return daily_path
 
 
 def _csv_has_valid_dates(csv_path: Path) -> bool:

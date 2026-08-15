@@ -2,6 +2,7 @@
 
 import asyncio
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -264,6 +265,13 @@ class TestRun:
         assert result.name == "RPT_DATA_BLOCKTRADE.csv"
         csv_path = tmp_path / "RPT_DATA_BLOCKTRADE.csv"
         assert csv_path.exists()
+
+        progress_path = tmp_path / "block_trade.progress.json"
+        assert progress_path.exists()
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        assert progress["status"] == "completed"
+        assert progress["percent"] == 100.0
+        assert progress["total_items"] == 366  # 2024 is a leap year
 
     async def test_run_incremental_since_short_circuits(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
