@@ -63,7 +63,7 @@ Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成�
 | **0.5. Worktree** | 需求是否需要 worktree？（feature/epic、2+ 模块、将产出 `.dsh/plans/*.md` 或 `.dsh/designs/*.md`）→ 需要则**立即创建并切换**（`skwy-worktree` skill），plan/design 直接在 worktree 内创建；不需要则跳过 | worktree 名称 + `.dsh/handoff.md` 已写入 |
 | **1. Design** | 涉及界面设计时：委派 `subagent_ui_designer` 产出 `.dsh/designs/<feature>.md` 方案并经用户确认；纯逻辑/数据变更可跳过 | 展示方案要点 + 用户确认 |
 | **2. Issue** | 调用 `skwy-github-workflow` skill + GitHub MCP 工具（create_issue 等）创建/管理 issue | 向用户展示 issue URL |
-| **3. Plan** | 涉及 2+ 模块时进入 DSH plan mode 制定计划，`exit_plan_mode` 呈现获批准 | `.dsh/plans/*.md` 文件创建 + 用户批准 |
+| **3. Plan** | 涉及 2+ 模块时进入 DSH plan mode 制定计划，`exit_plan_mode` 呈现获批准（**`exit_plan_mode` 仅在 session 处于 plan mode 时可用**——系统提示无 plan mode 指示时，改用普通消息 + ask_user_question 呈现计划，ref #267/#266） | `.dsh/plans/*.md` 文件创建 + 用户批准 |
 | **3.5. Adversarial Tests** | 委派 `subagent_skwy_adversarial_test` 写对抗性测试（RED；plan 无接口契约时返回 DEFERRED，首个可编译接口 commit 后携带 SHA 重新委派） | 测试失败输出 / DEFERRED 记录 |
 | **4. Tests** | 委派 `subagent_skwy_requirement_test` 写失败测试（需求验收 RED） | 测试失败输出 |
 | **5b. Docs** | 按 `skwy-workflow` 技能内嵌「文档同步」章节确定哪些 `.dsh/kb/` 文件需更新 | 向用户列出文件清单 |

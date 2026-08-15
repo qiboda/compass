@@ -256,3 +256,42 @@
 ### Trends (last 10)
 - **ref #138 教训（产出/编辑落 master 工作区）再现变体**：该次是 untracked plan/design 文件，本次是 tracked 文档编辑——worktree 会话的路径纪律仍是薄弱点，值得在 AGENTS.md worktree 章节显式补一句"所有文件操作使用 worktree 绝对路径"
 - **用户方向质疑→重新评估→发现真实缺口的模式第 2 次实证**（ref #264 迁移范围 → 本次 choices 收敛）：对"已审查/已计划"结论保持怀疑、以代码证据核验的流程价值持续
+
+## 2026-08-15 — ref #266 epic data-name-i18n：数据名称翻译全链路（B1-B5）
+
+**What was done**: 完成 epic #266 数据名称翻译——index_basic.name_en + stock_basic.industry_en 数据层英文列（Dolt→parquet→DuckDB→GUI 全链路）；collectors/name_en_mapping.csv 静态映射表（index 30 官方译名 / industry 75 标准译名 / concept 486 直译，真实数据覆盖率行业 100%、概念 96.6%、指数 12/12）；GUI locale 渲染（i18n_name.rs display_name + CORE_INDEX_WHITELIST 三元组 + SEPA concept_names/industry_names 映射 + screener shared_en 冲突回退）；搜索三路匹配（symbol/code/name_en，股票恒 None 按 D0-B）；concept 节按名称双 JOIN + COALESCE（PR 审查 P1-1）。10 commits（rebase 后基点 b0729ad，全部在 feat/data-name-i18n），467 Python + 1320+ Rust 全绿，5 轮 subagent_review 全部处理后通过（B1 前置 drop / B2 is_missing_column 收窄 / B3 SC2 碰撞 / PR 级 concept 断裂）。
+
+**User corrections**（逐字引用对话记录）:
+1. "批准" —— plan 批准（.dsh/plans/data-name-i18n.md）。
+2. D0/D1 裁决（ask_user_question 回答）："B：股票不参与英文搜索"（d0-stock-name-en）、"A：GUI 层概念名映射（推荐）"（d1-theme-translation）——验收 3 修订为 "SSE"→上证指数 可达目标（issue comment 已追加）。
+3. "批准，提交 B1（推荐）"（mapping-review）—— 591 行映射表提交确认。
+4. "A：concept 节按名称 JOIN（推荐）"（concept-join-fix）—— PR 级审查 P1-1（486 行 concept 死数据）修复方案裁决，用户批准方案 A。
+5. "push" —— push 授权。
+
+**What went wrong**:
+1. **Python 脚本批量正则改 Rust 构造点误伤字段声明**：为测试 fixture 批量插入 `name_en: None` 时正则条件未排除字段声明行，`name_en: None` 插到 `name: &'static str` 后 → E0573 类型错误；git checkout 恢复 + 条件排除 pub/类型行精确重做，多轮返工。
+2. **edit 工具误删测试体开头**：old_string 过短匹配到别处，删掉了测试函数首段 → 重读修复。
+3. **测试子代理并发写文件**：多个后台测试 agent 同时改同文件 → 多次 "file changed since it was read" 重读。
+4. **fixture 列数与 DDL 不同步**：test_trim_imports fixture 改 13 列后 INSERT VALUES 仍 12 值 → 20 个 trim 测试批量失败。
+5. **统计输出解析误判**：`grep -c "test result: ok"` 返回 0 误判测试未跑；llvm-cov percent 字段单位误解（9521.2% → 自己算 covered/count 得 95.2%）。
+6. **rebase 冲突残留标记**：master Progress 重构 vs B1 手动解决冲突后残留 `>>>>>>> 28420ce` 行（sed 删除）；rebase --continue 第一轮直接跑超时后才用 GIT_EDITOR=true 后台重跑成功——toolchain.md 已有该排查卡（ref #189），执行侧未第一时间遵守。
+7. **exit_plan_mode 不在 plan mode 报错**：先调用后报错，改用普通消息呈现计划（#267 已记录同教训，第二次出现）。
+
+**Lessons learned**:
+1. 批量脚本改代码：正则条件必须精确排除"字段声明/类型行"（构造点 vs 声明区分），改后立即 cargo check 验证；失败先 git checkout 恢复再精确重做，不反复修补。
+2. edit 工具 old_string 必须带足够上下文锚点（唯一匹配）；编辑测试体先重读确认当前内容。
+3. fixture schema 变更必须同步更新同文件所有 INSERT/DDL（列数一致），改后跑全相关测试。
+4. 统计类命令输出（grep 计数、覆盖率 percent）先验证格式语义再采信，必要时直接算原始数值。
+5. rebase 冲突手动解决后 grep 残留 `<<<<<<<`/`>>>>>>>` 校验；rebase --continue 直接前置 GIT_EDITOR=true（已有排查卡，执行时先想起）。
+6. 呈现计划前先确认 session 是否处于 plan mode（exit_plan_mode 仅 plan mode 可用）；不在则普通消息呈现。
+
+**Process improvements**:
+- toolchain.md 测试章节追加 2 张排查卡：Python 批量正则改 Rust 构造点误伤字段声明（E0573）、cargo 输出 grep 计数与 llvm-cov percent 单位解析——已随本 commit 落地
+- toolchain.md Git 章节追加 1 张卡：rebase 冲突手动解决后残留冲突标记校验——已随本 commit 落地
+- AGENTS.md Step 3 补 plan mode 确认注记（exit_plan_mode 可用性）——已随本 commit 落地
+- GIT_EDITOR=true 卡既有（ref #189），本次为执行侧未第一时间遵守——记录第二实例，不重复立卡
+
+### Trends (last 10)
+- **exit_plan_mode 可用性教训第二次出现**（#267 → 本次）：#267 已记录"工具可用性先验证再依赖"但未固化——本次落实为 AGENTS.md Step 3 注记（趋势报警生效：第二次出现 = 上次未固化）
+- **命令输出解析类摩擦跨批再现**（#273 后台 tail 盲等 → 本次 grep 计数误判 + llvm-cov percent 单位）：对工具输出格式先验证再采信——toolchain.md 已追加解析卡
+- **GIT_EDITOR=true 卡（ref #189）执行侧再现**（本次 rebase --continue 先直接跑超时）：已有排查卡但未第一时间遵守——"文档已固化未遵守"模式再现，执行侧习惯待养成

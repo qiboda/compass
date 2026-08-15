@@ -176,6 +176,19 @@
   `GIT_EDITOR=true`——"文档已固化但未遵守"同类：规则写入（本卡）
   需执行侧习惯（每次 rebase 前想起 GIT_EDITOR=true）（ref #189）
 
+### [Git] rebase 冲突手动解决后残留冲突标记（`>>>>>>>` 行）
+
+- **症状**: rebase 冲突手动编辑解决后，某文件残留
+  `>>>>>>> <sha>` 冲突结束标记行（手动合并时漏删），后续 commit 把
+  垃圾行带进仓库；`git status` 已显示 resolved 不报错，无自动拦截
+- **根因**: 手动解决冲突时逐块删除 `<<<<<<<`/`=======`/`>>>>>>>`，
+  结束标记漏删；`git add` 后 git 不再检查冲突标记
+- **排查路径**: 解决后 `grep -rn "^<<<<<<<\|^=======\|^>>>>>>>" --include="*.rs" --include="*.py" --include="*.md" .` 全仓扫描
+- **修复**: `sed -i '/^>>>>>>> /d' <file>` 删除残留行；再 grep 校验零残留
+- **验证**: grep 扫描零输出；`git diff` 确认删除正确
+- **教训**: 手动解决 rebase 冲突后，`git add` 前必须 grep 全仓冲突标记
+  残留（ref #266）
+
 ---
 
 ## 进程（检测 / 结束）
@@ -337,6 +350,35 @@
   `fit_contents()` 会随内容测量放大此症状（INF 内容 → 窗口尺寸失真），
   交互测试用固定大窗口更稳；`Harness::run()` 对持续 repaint（popup 动画
   request_repaint_after）会在 4 帧后 panic，popup 交互用单帧 `step()`
+
+### [测试] Python 脚本批量正则改 Rust 构造点误伤字段声明（E0573）
+
+- **症状**: 用 Python 脚本对多个 Rust 测试 fixture 批量插入新字段
+  （如 `name_en: None`）时，正则条件过宽误匹配**字段声明**行
+  （`name: &'static str`），插入后变 `name: name_en: None ...` 类型错误
+  E0573，多个文件连锁编译失败，多轮返工
+- **根因**: 批量替换目标应是**结构体字面量**（`Foo { name: ..., }`），
+  但 `name: .*,` 类模式同时命中 `pub name: Type` 字段声明行——声明与
+  构造点同形，无排除条件
+- **排查路径**: `cargo check` 报 E0573 的定位行 → 检查脚本替换模式是否
+  覆盖声明行（`grep -n "pub.*name"` 对照）
+- **修复**: 正则条件加排除（`^(?!.*pub)` / 跳过含 `:` 后接类型大写字母的
+  行）；改后立即 `cargo check` 验证；失败先 `git checkout` 恢复再精确重做
+- **验证**: `cargo check --tests` 全绿；`git diff` 核对仅构造点被改
+- **教训**: 批量脚本改代码前先区分「字段声明」vs「构造点」两类匹配点，
+  用条件排除声明行；改后立即编译验证，不反复修补
+
+### [测试] cargo 输出 grep 计数与 llvm-cov percent 单位误解
+
+- **症状**: ①`grep -c "test result: ok"` 返回 0 误判"测试未跑"（实际
+  输出含 ANSI/换行差异）；②llvm-cov JSON 的 percent 字段解读错误
+  （如 `9521.2%` 其实是 covered/count 比值放大，需自己算）
+- **根因**: 对工具输出格式假设错误——grep 模式与真实输出不匹配
+  （多行/前缀/转义），percent 字段非直观百分比
+- **修复**: ①计数用 `grep -cE "^test result: ok"` 或直接看
+  `tail -N` 原始输出；②llvm-cov 用 `covered/count` 自己算百分比
+- **验证**: 与原始输出逐行对照
+- **教训**: 统计类命令输出先验证格式语义再采信（ref #266）
 
 ---
 
