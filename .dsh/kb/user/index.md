@@ -33,7 +33,7 @@ Dolt 是**主要**数据源 — 完整、离线、快速。东方财富数据由
 cargo run --bin compass-data -- import
 
 # 2. 启动图表应用
-scripts/run.sh
+just                # 或 scripts/run.sh（无 just 环境）
 
 # 输入股票代码（如 600519），点击 Fetch
 ```

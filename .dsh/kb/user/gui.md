@@ -3,7 +3,8 @@
 ## 启动
 
 ```sh
-scripts/run.sh      # 一键启动（前台运行，Ctrl+C 退出）
+just                # 一键启动（默认 recipe，前台运行，Ctrl+C 退出）
+scripts/run.sh      # 备用入口（无 just 环境）
 cargo run --bin compass   # 等价的手动方式
 ```
 

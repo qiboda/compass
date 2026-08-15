@@ -430,8 +430,10 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 ## Commands
 
 ```sh
+just                          # 一键启动 GUI（默认 recipe；scripts/run.sh 的便捷替代，全部 recipe 见 `just --list`）
+just check                    # 提交前门禁：fmt --check + clippy + test
 cargo build
-scripts/run.sh                # 一键启动 GUI 图表窗口（前台，Ctrl+C 退出）
+scripts/run.sh                # 一键启动 GUI 图表窗口（前台，Ctrl+C 退出；无 just 环境的备用入口）
 cargo run --bin compass       # 等价手动方式（需 X11/Wayland）
 cargo run --bin compass-data -- <subcommand>  # 数据管线 CLI
 cargo test                   # 单元 + 集成测试
