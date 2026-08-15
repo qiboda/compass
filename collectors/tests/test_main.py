@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import json
 import subprocess
 import sys
 from collections.abc import Callable
@@ -546,6 +547,100 @@ class TestSyncInvestmentData:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# dispatch_progress — live fetch progress query
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestDispatchProgress:
+    def _write_progress(self, tmp_path: Path, name: str, status: str = "running") -> None:
+        (tmp_path / f"{name}.progress.json").write_text(
+            json.dumps({"name": name, "status": status, "percent": 50.0, "message": "x"}),
+            encoding="utf-8",
+        )
+
+    def test_target_human_readable(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        self._write_progress(tmp_path, "block_trade", "completed")
+        main_mod.dispatch_progress("block_trade")
+        out = capsys.readouterr().out
+        assert "[block_trade] completed" in out
+
+    def test_target_json(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        self._write_progress(tmp_path, "dragon", "running")
+        main_mod.dispatch_progress("dragon", as_json=True)
+        data = json.loads(capsys.readouterr().out)
+        assert data["name"] == "dragon"
+        assert data["status"] == "running"
+
+    def test_all_lists_progress_files(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        self._write_progress(tmp_path, "block_trade", "completed")
+        self._write_progress(tmp_path, "main_flow", "running")
+        main_mod.dispatch_progress()
+        out = capsys.readouterr().out
+        assert "block_trade" in out
+        assert "main_flow" in out
+
+    def test_missing_target_exits(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        with pytest.raises(SystemExit):
+            main_mod.dispatch_progress("missing")
+
+    def test_target_with_total_current_error(
+        self, monkeypatch, tmp_path: Path, capsys,
+    ) -> None:
+        import main as main_mod
+
+        (tmp_path / "dragon.progress.json").write_text(
+            json.dumps({
+                "name": "dragon",
+                "status": "failed",
+                "percent": 42.0,
+                "message": "stopped",
+                "total_items": 10,
+                "completed_items": 4,
+                "fetched_rows": 12,
+                "current_item": "2024-12-30",
+                "error": "boom",
+            }),
+            encoding="utf-8",
+        )
+        main_mod.dispatch_progress("dragon")
+        out = capsys.readouterr().out
+        assert "completed: 4/10" in out
+        assert "current: 2024-12-30" in out
+        assert "error: boom" in out
+
+    def test_all_json_output(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        self._write_progress(tmp_path, "block_trade", "completed")
+        self._write_progress(tmp_path, "main_flow", "running")
+        main_mod.dispatch_progress(as_json=True)
+        data = json.loads(capsys.readouterr().out)
+        assert [d["name"] for d in data] == ["block_trade", "main_flow"]
+
+    def test_no_files_prints_stderr(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        main_mod.dispatch_progress()
+        captured = capsys.readouterr()
+        assert "No fetch progress files found." in captured.err
+
+    def test_corrupt_progress_file_skipped(self, monkeypatch, tmp_path: Path, capsys) -> None:
+        import main as main_mod
+
+        (tmp_path / "bad.progress.json").write_text("{not json", encoding="utf-8")
+        main_mod.dispatch_progress()
+        assert "bad" not in capsys.readouterr().out
+
+
+# ═══════════════════════════════════════════════════════════════════
 # main() — thin argparse + dispatch
 # ═══════════════════════════════════════════════════════════════════
 
@@ -657,6 +752,32 @@ class TestMain:
 
         main_mod.main()
         mock_sync_inv.assert_called_once_with(True)
+
+    def test_progress_no_target(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import main as main_mod
+
+        monkeypatch.setattr(sys, "argv", ["main.py", "progress"])
+        mock_progress = Mock()
+        monkeypatch.setattr(main_mod, "dispatch_progress", mock_progress)
+
+        main_mod.main()
+        mock_progress.assert_called_once_with(None, as_json=False)
+
+    def test_progress_target_json(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import main as main_mod
+
+        monkeypatch.setattr(
+            sys, "argv", ["main.py", "progress", "block_trade", "--json"],
+        )
+        mock_progress = Mock()
+        monkeypatch.setattr(main_mod, "dispatch_progress", mock_progress)
+
+        main_mod.main()
+        mock_progress.assert_called_once_with("block_trade", as_json=True)
 
     def test_no_command_prints_help(
         self, monkeypatch: pytest.MonkeyPatch,

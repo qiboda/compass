@@ -22,12 +22,15 @@ Usage:
     uv run python main.py import institution_survey
     uv run python main.py import concept_member
     uv run python main.py import main_flow
+    uv run python main.py progress         # show live fetch progress
+    uv run python main.py progress block_trade --json
     uv run python main.py sync              # fetch all + import all
     uv run python main.py sync-investment   # sync investment_data from upstream
 """
 
 import argparse
 import asyncio
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +45,7 @@ def _parse_years(s: str) -> list[int] | None:
 
 
 # ── Import helpers for existing (non-refactored) tables ─────────
+
 
 def _import_stock_basic() -> None:
     """Import stock_basic_official.csv (SSE/SZSE/BSE official) into Dolt."""
@@ -260,6 +264,7 @@ def _import_fin_indicators() -> int:
 
 # ── sync_investment_data ────────────────────────────────────────
 
+
 def sync_investment_data(restart: bool = False) -> None:
     """Sync investment_data: fetch from chenditc, push to skwy fork."""
     invest_dir = PROJECT_ROOT / "investment_data"
@@ -271,7 +276,9 @@ def sync_investment_data(restart: bool = False) -> None:
     def dolt(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["dolt", "--data-dir", str(invest_dir)] + list(args),
-            capture_output=True, text=True, timeout=300,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
 
     if restart:
@@ -292,7 +299,8 @@ def sync_investment_data(restart: bool = False) -> None:
             print("[sync-investment] Restarting server...", file=sys.stderr)
             subprocess.Popen(
                 ["nohup", "bash", str(server_script)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
 
@@ -316,11 +324,13 @@ def dispatch_fetch(
     """
     if target == "stock_basic":
         import fetch_stock_basic_official
+
         sys.argv = ["fetch_stock_basic_official"]
         fetch_stock_basic_official.main()
 
     elif target == "fin_indicators":
         import fetch_fin_indicators
+
         sys.argv = ["fetch_fin_indicators"]
         if years:
             sys.argv.extend(["--years", ",".join(str(y) for y in years)])
@@ -328,39 +338,110 @@ def dispatch_fetch(
 
     elif target == "balance_sheet":
         import fetch_balance_sheet
+
         asyncio.run(fetch_balance_sheet.run(years=years))
 
     elif target == "income":
         import fetch_income
+
         asyncio.run(fetch_income.run(years=years))
 
     elif target == "cash_flow":
         import fetch_cash_flow
+
         asyncio.run(fetch_cash_flow.run(years=years))
 
     elif target == "dragon":
         import fetch_dragon
+
         asyncio.run(fetch_dragon.run())
 
     elif target == "block_trade":
         import fetch_block_trade
+
         asyncio.run(fetch_block_trade.run())
 
     elif target == "institution_survey":
         import fetch_institution_survey
+
         asyncio.run(fetch_institution_survey.run())
 
     elif target == "concept_member":
         import fetch_concept_member
+
         asyncio.run(fetch_concept_member.run())
 
     elif target == "main_flow":
         import fetch_main_flow
+
         asyncio.run(fetch_main_flow.run())
 
     elif target == "index_daily":
         import fetch_index_daily
+
         asyncio.run(fetch_index_daily.run())
+
+
+def _print_progress(data: dict[str, object]) -> None:
+    """Print one progress record in a compact human-readable form."""
+    name = data.get("name", "?")
+    status = data.get("status", "?")
+    percent = data.get("percent")
+    percent_str = f"{percent:.1f}%" if isinstance(percent, (int, float)) else "n/a"
+    print(f"[{name}] {status} {percent_str} — {data.get('message', '')}")
+    total = data.get("total_items")
+    if total is not None:
+        print(
+            f"  completed: {data.get('completed_items', 0)}/{total}  "
+            f"rows: {data.get('fetched_rows', 0)}"
+        )
+    else:
+        print(f"  rows: {data.get('fetched_rows', 0)}")
+    if data.get("current_item"):
+        print(f"  current: {data['current_item']}")
+    if data.get("error"):
+        print(f"  error: {data['error']}")
+
+
+def dispatch_progress(target: str | None = None, as_json: bool = False) -> None:
+    """Show live fetch progress from JSON files written by collectors.
+
+    With ``target`` omitted, every ``*.progress.json`` in csv_dir() is shown.
+    ``--json`` emits raw JSON for machine consumption.
+    """
+    from common import csv_dir, read_progress
+
+    if target is not None:
+        data = read_progress(target)
+        if data is None:
+            print(
+                f"No progress file for {target} (fetch not started?)",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if as_json:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        else:
+            _print_progress(data)
+        return
+
+    files = sorted(csv_dir().glob("*.progress.json"))
+    if not files:
+        print("No fetch progress files found.", file=sys.stderr)
+        return
+
+    entries: list[dict[str, object]] = []
+    for path in files:
+        try:
+            entries.append(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    if as_json:
+        print(json.dumps(entries, ensure_ascii=False, indent=2))
+    else:
+        for data in entries:
+            _print_progress(data)
 
 
 def dispatch_import(target: str) -> None:
@@ -377,31 +458,40 @@ def dispatch_import(target: str) -> None:
         _import_fin_indicators()
     elif target == "balance_sheet":
         import fetch_balance_sheet
+
         fetch_balance_sheet.import_to_dolt()
     elif target == "income":
         import fetch_income
+
         fetch_income.import_to_dolt()
     elif target == "cash_flow":
         import fetch_cash_flow
+
         fetch_cash_flow.import_to_dolt()
     elif target == "dragon":
         import fetch_dragon
+
         fetch_dragon.import_to_dolt()
     elif target == "block_trade":
         import fetch_block_trade
+
         fetch_block_trade.import_to_dolt()
     elif target == "institution_survey":
         import fetch_institution_survey
+
         fetch_institution_survey.import_to_dolt()
     elif target == "concept_member":
         import fetch_concept_member
+
         fetch_concept_member.import_to_dolt()
     elif target == "main_flow":
         import fetch_main_flow
+
         fetch_main_flow.import_to_dolt()
 
     elif target == "index_daily":
         import fetch_index_daily
+
         fetch_index_daily.import_to_dolt()
 
 
@@ -418,6 +508,7 @@ def do_sync(restart: bool = False) -> None:
     # 1. stock_basic
     print("[sync] Fetching stock_basic...", file=sys.stderr)
     import fetch_stock_basic_official
+
     sys.argv = ["fetch_stock_basic_official"]
     fetch_stock_basic_official.main()
     _import_stock_basic()
@@ -425,6 +516,7 @@ def do_sync(restart: bool = False) -> None:
     # 2. fin_indicators
     print("\n[sync] Fetching fin_indicators (incremental)...", file=sys.stderr)
     import fetch_fin_indicators
+
     sys.argv = ["fetch_fin_indicators", "--incremental"]
     asyncio.run(fetch_fin_indicators.main())
     _import_fin_indicators()
@@ -432,62 +524,74 @@ def do_sync(restart: bool = False) -> None:
     # 3. balance_sheet
     print("\n[sync] Fetching balance_sheet...", file=sys.stderr)
     import fetch_balance_sheet
+
     asyncio.run(fetch_balance_sheet.run())
     fetch_balance_sheet.import_to_dolt()
 
     # 4. income
     print("\n[sync] Fetching income...", file=sys.stderr)
     import fetch_income
+
     asyncio.run(fetch_income.run())
     fetch_income.import_to_dolt()
 
     # 5. cash_flow
     print("\n[sync] Fetching cash_flow...", file=sys.stderr)
     import fetch_cash_flow
+
     asyncio.run(fetch_cash_flow.run())
     fetch_cash_flow.import_to_dolt()
 
     # 6. dragon_list (龙虎榜席位)
     print("\n[sync] Fetching dragon_list...", file=sys.stderr)
     import fetch_dragon
+
     asyncio.run(fetch_dragon.run())
     fetch_dragon.import_to_dolt()
 
     # 7. block_trade (大宗交易)
     print("\n[sync] Fetching block_trade...", file=sys.stderr)
     import fetch_block_trade
+
     asyncio.run(fetch_block_trade.run())
     fetch_block_trade.import_to_dolt()
 
     # 8. institution_survey (机构调研)
     print("\n[sync] Fetching institution_survey...", file=sys.stderr)
     import fetch_institution_survey
+
     asyncio.run(fetch_institution_survey.run())
     fetch_institution_survey.import_to_dolt()
 
     # 9. concept_member (概念板块成分)
     print("\n[sync] Fetching concept_member...", file=sys.stderr)
     import fetch_concept_member
+
     asyncio.run(fetch_concept_member.run())
     fetch_concept_member.import_to_dolt()
 
     # 10. main_flow (主力资金流)
     print("\n[sync] Fetching main_flow...", file=sys.stderr)
     import fetch_main_flow
+
     asyncio.run(fetch_main_flow.run())
     fetch_main_flow.import_to_dolt()
 
     # 11. index_daily (指数日线: 官方/概念/行业)
     print("\n[sync] Fetching index_daily...", file=sys.stderr)
     import fetch_index_daily
+
     asyncio.run(fetch_index_daily.run())
     fetch_index_daily.import_to_dolt()
 
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)
     for tbl in [
-        "stock_basic", "fin_indicators",
-        "fin_balance_sheet", "fin_income", "fin_cash_flow",
+        "stock_basic",
+        "fin_indicators",
+        "fin_balance_sheet",
+        "fin_income",
+        "fin_cash_flow",
         "index_daily",
     ]:
         dolt_sql(
@@ -501,6 +605,7 @@ def do_sync(restart: bool = False) -> None:
 
 # ── Main CLI ────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compass data pipeline")
     sub = parser.add_subparsers(dest="command")
@@ -508,15 +613,56 @@ def main() -> None:
     fetch = sub.add_parser("fetch", help="Fetch data from EastMoney")
     fetch.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow", "index_daily"],
+        choices=[
+            "stock_basic",
+            "fin_indicators",
+            "balance_sheet",
+            "income",
+            "cash_flow",
+            "dragon",
+            "block_trade",
+            "institution_survey",
+            "concept_member",
+            "main_flow",
+            "index_daily",
+        ],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
         "target",
-        choices=["stock_basic", "fin_indicators", "balance_sheet", "income", "cash_flow", "dragon", "block_trade", "institution_survey", "concept_member", "main_flow", "index_daily"],
+        choices=[
+            "stock_basic",
+            "fin_indicators",
+            "balance_sheet",
+            "income",
+            "cash_flow",
+            "dragon",
+            "block_trade",
+            "institution_survey",
+            "concept_member",
+            "main_flow",
+            "index_daily",
+        ],
     )
+
+    prog = sub.add_parser("progress", help="Show fetch progress")
+    prog.add_argument(
+        "target",
+        nargs="?",
+        choices=[
+            "main_flow",
+            "block_trade",
+            "index_daily",
+            "institution_survey",
+            "concept_member",
+            "dragon",
+        ],
+        default=None,
+        help="Show progress for one collector (default: all)",
+    )
+    prog.add_argument("--json", action="store_true", help="Output raw JSON")
 
     sub.add_parser("sync", help="Fetch all + import all")
     inv = sub.add_parser("sync-investment", help="Sync investment_data from upstream")
@@ -530,6 +676,9 @@ def main() -> None:
 
     elif args.command == "import":
         dispatch_import(args.target)
+
+    elif args.command == "progress":
+        dispatch_progress(args.target, as_json=args.json)
 
     elif args.command == "sync":
         do_sync()
