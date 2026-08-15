@@ -6,9 +6,9 @@ Contract under test (issue #278 acceptance criteria, fetch_index_daily.py):
       prefix ``1.`` → ``sh``, ``0.`` → ``sz`` + lowercase code
       (``1.000001`` → ``sh000001``, ``0.399001`` → ``sz399001``).
   C2. ``_fetch_tencent_kline(session, throttle, secid)`` fetches full history by
-      paginating ``param=<code>,day,<start_date>,,<count>,qfq`` with count ≤ 2000;
-      it keeps advancing the start_date until a short (<2000) page is seen and
-      returns the merged round bars.
+      paginating ``param=<code>,day,,<end_date>,<count>,qfq`` with count ≤ 2000;
+      it keeps advancing the end_date backwards until a short (<2000) page is
+      seen and returns the merged round bars.
   C3. ``run()`` fetches official indices from EastMoney first; when a target's
       EastMoney kline fails or is empty it automatically falls back to Tencent.
       The CSV output format is unchanged — a Tencent bar (which carries no
@@ -118,25 +118,27 @@ class TestTencentCodeMapping:
 
 
 class TestTencentPagination:
-    """C2: _fetch_tencent_kline loops count=2000 + advances start_date."""
+    """C2: _fetch_tencent_kline loops count=2000 + advances the end date."""
 
     def _days(self, n: int, start: str = "2026-01-01") -> list[str]:
         d = date.fromisoformat(start)
         return [(d + timedelta(days=i)).isoformat() for i in range(n)]
 
-    async def test_merges_pages_and_advances_start_date(
+    async def test_merges_pages_and_advances_end_date(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """RED: page 1 returns exactly 2000 rows (full), page 2 returns fewer —
-        the helper must (a) request page 1 with empty start_date, (b) advance
-        start_date on the 2nd request, and (c) return ALL 2000+ rows merged."""
+        the helper must (a) request page 1 with empty end date, (b) advance the
+        end date on the 2nd request, and (c) return ALL 2000+ rows merged."""
         from fetch_index_daily import (
             Throttle,  # noqa: E402
             _fetch_tencent_kline,  # noqa: E402
         )
 
-        page1_days = self._days(_TENCENT_PAGE_SIZE, "2025-01-01")
-        page2_days = self._days(50, "2026-06-13")  # calendar-following tail
+        # page1 = latest 2000-bar window, page2 = strictly older window
+        # (non-overlapping, matching the real Tencent end-date pagination).
+        page1_days = self._days(_TENCENT_PAGE_SIZE, "2020-01-01")
+        page2_days = self._days(50, "2018-01-01")
         page1 = [_tencent_row(d) for d in page1_days]
         page2 = [_tencent_row(d) for d in page2_days]
 
@@ -149,8 +151,8 @@ class TestTencentPagination:
                 param = (params or {}).get("param", "")
                 code = param.split(",")[0]
                 parts = param.split(",")
-                start = parts[2] if len(parts) > 2 else ""
-                if start == "":
+                end = parts[3] if len(parts) > 3 else ""
+                if end == "":
                     return StubResponse(json_data=_tencent_payload(code, page1))
                 return StubResponse(json_data=_tencent_payload(code, page2))
             return StubResponse(status_code=200, json_data={})
@@ -164,17 +166,17 @@ class TestTencentPagination:
         assert len(klines) == _TENCENT_PAGE_SIZE + 50, (
             f"must merge both pages, got {len(klines)} rows"
         )
-        # First request: start_date empty/absent (count ≤ 2000 caps the page).
+        # First request: end date empty/absent (count ≤ 2000 caps the page).
         first = calls[0].get("param", "")
         assert first.startswith("sh000001,day,"), f"param {first!r}"
         assert ",,2000,qfq" in first or ",2000,qfq" in first, f"page1 count={first!r}"
-        # Second request carries an advanced start_date (a real date follows
+        # Second request carries an advanced end date (a real date follows
         # the last fetched date, not an empty window).
         second = calls[1].get("param", "")
         assert second.startswith("sh000001,day,"), f"param2 {second!r}"
         parts2 = second.split(",")
-        start2 = parts2[2] if len(parts2) > 2 else ""
-        assert start2 != "", f"2nd page must advance start_date, got {second!r}"
+        end2 = parts2[3] if len(parts2) > 3 else ""
+        assert end2 != "", f"2nd page must advance end_date, got {second!r}"
 
     async def test_single_short_page_returns_without_second_request(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
@@ -186,7 +188,7 @@ class TestTencentPagination:
             _fetch_tencent_kline,  # noqa: E402
         )
 
-        rows = [_tencent_row(f"2026-07-{(i % 27) + 1:02d}") for i in range(100)]
+        rows = [_tencent_row(d) for d in self._days(100, "2026-01-01")]
         calls: list[dict] = []
         stub = make_stub_session()
 
@@ -312,7 +314,7 @@ class TestTencentFastFail:
     sources are exhausted.
     """
 
-    async def test_five_eastmoney_only_failures_abort_without_tencent(
+    async def test_eastmoney_only_failures_recover_via_tencent(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """RED: 6 official indices whitelisted; EastMoney fails for ALL of them

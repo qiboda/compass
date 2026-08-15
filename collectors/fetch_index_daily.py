@@ -70,6 +70,8 @@ KLINE_HOSTS = (PUSH2HIS, *PUSH2HIS_MIRRORS)
 # EastMoney fails or returns empty klines for an official whitelist target.
 TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 _TENCENT_PAGE_SIZE = 2000
+# 10 pages * 2000 bars ≈ 20k rows ceiling; A-share index full history is
+# ~8.5k bars, so this is a generous safety cap against API misbehavior.
 _TENCENT_MAX_PAGES = 10
 
 # Board list discovery (push2 clist) — concept ``t:3`` / industry ``t:2``.
@@ -418,17 +420,25 @@ async def _fetch_tencent_kline(
 ) -> list[str] | None:
     """Fetch full-history daily klines from Tencent for one official index.
 
-    Paginates with count=2000, advancing the start date backwards until a
+    Paginates with count=2000, advancing the end date backwards until a
     short page or a bounded page cap. Returns klines in the same 7-field CSV
     format as EastMoney (amount filled with 0), or None on any failure.
     """
-    tcode = _tencent_code(secid)
+    try:
+        tcode = _tencent_code(secid)
+    except ValueError:
+        # A misconfigured whitelist entry should degrade to a fallback failure
+        # instead of crashing the whole run.
+        return None
     pages: list[list[str]] = []
-    start_date = ""
+    end_date = ""
     previous_min: str | None = None
 
     for _ in range(_TENCENT_MAX_PAGES):
-        param = f"{tcode},day,{start_date},,{_TENCENT_PAGE_SIZE},qfq"
+        # The fourth param field is the end date; leaving it empty returns the
+        # latest `count` bars, setting it to (previous earliest - 1 day) pulls
+        # the next older page (verified against the live Tencent API).
+        param = f"{tcode},day,,{end_date},{_TENCENT_PAGE_SIZE},qfq"
         data = await _get_json(session, throttle, (TENCENT_KLINE_URL,), {"param": param})
         if data is None:
             return None
@@ -460,19 +470,29 @@ async def _fetch_tencent_kline(
         if len(rows) < _TENCENT_PAGE_SIZE:
             break  # last page
 
-        # Advance backwards: next page starts the day before the earliest bar
-        # seen in this page. Stop if no backward progress (avoid infinite loop).
+        # Advance backwards: next page's end date is the day before the
+        # earliest bar seen in this page. Stop if no backward progress.
         if min_date is None:
             break
-        next_start = (date.fromisoformat(min_date) - timedelta(days=1)).isoformat()
+        next_end = (date.fromisoformat(min_date) - timedelta(days=1)).isoformat()
         if previous_min is not None and min_date >= previous_min:
             break
         previous_min = min_date
-        start_date = next_start
+        end_date = next_end
 
     # Pages were fetched newest-first; reverse so the merged history is
-    # chronological ascending (oldest first).
-    return [kline for page in reversed(pages) for kline in page]
+    # chronological ascending (oldest first). Deduplicate by trade_date as a
+    # defensive guard against any page-boundary overlap.
+    seen: set[str] = set()
+    merged: list[str] = []
+    for page in reversed(pages):
+        for kline in page:
+            trade_date = kline.split(",", 1)[0]
+            if trade_date in seen:
+                continue
+            seen.add(trade_date)
+            merged.append(kline)
+    return merged
 
 
 async def run() -> Path:
