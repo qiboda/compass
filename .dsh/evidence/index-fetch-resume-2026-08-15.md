@@ -35,8 +35,11 @@ uv run python main.py import index_daily  # INSERT IGNORE merge，按 PK(symbol,
 
 - 已入库的 45 板块数据会被保留（同 PK 行 IGNORE，新行追加），无需清表
 - 官方指数首次写入时会自动补 index_basic 条目（run() 在非增量全量运行时重建 basic）
-- **建议限流更保守**：本次 Throttle 0.5-0.8s/请求 × 1000+ 标的触发封禁。续采建议临时调大
-  `common.py::EM_MIN_INTERVAL` 至 2-3s，或分批运行（官方 30 个先拉，板块分 2-3 批）
+- **限流已全局调大**：本次 Throttle 0.5-0.8s/请求 × 1000+ 标的触发封禁。issue #277 已将
+  `common.py::EM_MIN_INTERVAL` 及 `fetch_fin_indicators.py` / `fetch_stock_basic.py` 的
+  局部限流常量全部调至 **2.0s**；续采无需临时改，仍建议分批运行（官方 30 个先拉，板块分 2-3 批）
+- **快速失败保护（issue #277）**：`fetch_index_daily.py::run()` 现维护连续失败计数器，连续 5 个标的失败
+  （请求失败或 empty）即终止并保留已抓 CSV，避免封禁后再次空转数小时
 - **封禁恢复检测**：`curl -s -o /dev/null -w "%{http_code}" "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.000001&klt=101&fqt=0&beg=0&end=20500000&lmt=10&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"` → 200 即恢复
 
 ## 完成定义

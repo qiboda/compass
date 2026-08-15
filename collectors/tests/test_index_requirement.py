@@ -107,7 +107,17 @@ class TestFetchHappyPath:
         async def _get(url, params=None, headers=None):
             params = params or {}
             if url == KLINE_URL:
-                return StubResponse(json_data=kline_by_secid[params["secid"]])
+                secid = params.get("secid", "")
+                if secid in kline_by_secid:
+                    return StubResponse(json_data=kline_by_secid[secid])
+                # Officials outside the 3 under test return a code-mismatch
+                # skip: neither a success nor a failure, so they add no rows
+                # and cannot trigger the fast-fail streak (issue #277).
+                return StubResponse(
+                    json_data=_kline_payload(
+                        "999999", "unknown", [_kline_row("2026-07-30")]
+                    )
+                )
             if url == CLIST_URL:
                 fs = params.get("fs", "")
                 # fs arrives as "m:90 t:3 f:!50" — match on the t: segment.

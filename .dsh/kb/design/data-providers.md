@@ -172,6 +172,9 @@ CREATE TABLE IF NOT EXISTS index_basic (
   SZ399001 深证成指 / SZ399006 创业板指 / SH000300 沪深300 / SH000905 中证500 /
   SH000852 中证1000 等）；概念/行业板块从东财 clist（`fs=m:90 t:3` / `t:2`）全量发现，
   新板块自动入库。
+- **腾讯回退（issue #278）**：官方指数优先东财 push2his；东财失败/empty 时自动切腾讯
+  `web.ifzq.gtimg.cn/appstock/app/fqkline/get`（count≤2000，end 日期反向分页拉全历史；
+  amount 腾讯无则填 0；受 #277 连续失败快速终止保护）。板块仍只走东财。
 - **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线 `beg=0` 全量拉取 +
   `INSERT IGNORE` 按 PK (symbol, trade_date) 去重，新标的自动补全量历史。
 - **Parquet 布局**：

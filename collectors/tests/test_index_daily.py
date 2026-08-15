@@ -455,12 +455,26 @@ class TestRunFailureModes:
             "fetch_index_daily.write_csv",
             lambda records, _path: captured.append(records),
         )
-        stub = make_stub_session(
-            canned_responses={
-                KLINE_URL: {"json_data": _kline_payload("BK0475", [])},  # empty klines
-                CLIST_URL: {"json_data": _clist_payload([{"f12": "BK0475", "f14": "半导体"}])},
-            }
-        )
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "kline/get" in url:
+                secid = (params or {}).get("secid", "")
+                if secid == "90.BK0475":
+                    return StubResponse(json_data=_kline_payload("BK0475", []))
+                # Official indices succeed so a single empty board does not
+                # create a 5-failure streak (issue #277 fast-fail).
+                code = secid.rsplit(".", 1)[-1]
+                return StubResponse(
+                    json_data=_kline_payload(code, [_kline_row("2026-07-31")])
+                )
+            if "clist/get" in url:
+                return StubResponse(
+                    json_data=_clist_payload([{"f12": "BK0475", "f14": "半导体"}])
+                )
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 

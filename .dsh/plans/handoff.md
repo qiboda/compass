@@ -1,39 +1,62 @@
-# Handoff — data-name-i18n worktree
+# Handoff — fix-277-fast-fail
 
-**用途**：数据名称翻译 epic（issue #266）——`index_basic` / `stock_basic` 增加英文名列（`name_en` / `industry_en`），collectors 静态映射表 import 时 JOIN 写入，GUI 按语言取用 + 搜索三路匹配。
+## 用途
 
-**Epic**：https://github.com/qiboda/compass/issues/266
+collectors 采集器**连续失败快速终止**（反爬封禁不再空转数小时）+ 全局限流调大。
 
-**⚠️ 启动第一步：同步原始分支**
-`git fetch origin master && git rebase origin/master`（worktree 创建后 master 可能推进），冲突解决后再开始。
+**Issue**: https://github.com/qiboda/compass/issues/277（OPEN）
+**分支**: fix/fast-fail-collector（基于 master 44c9d4a）
+**原始分支**: master —— worktree 会话启动后先 `git fetch origin master && git rebase origin/master` 同步，再开始工作
 
-## 已锁定的 grill-me 决策（2026-08，用户确认）
+## 背景
 
-| # | 决策 | 内容 |
-|---|---|---|
-| 1 | 范围 | 所有 tab 的数据名称（大盘核心卡片/榜单、SEPA 行业+主题、screener 行业下拉、搜索下拉），**有合适翻译就翻译**（中↔英双向）；专用于中文/无合适翻译的不翻译 |
-| 2 | 机制 | **数据层加英文名列**：`index_basic.name_en` + `stock_basic.industry_en`；全链路 Dolt → parquet → DuckDB → GUI |
-| 3 | 来源策略 | 核心指数官方译名（SSE Composite、CSI 300…）、行业标准译名、**概念名直译**（AI Concept…）；**股票名不纳入**（回退中文） |
-| 4 | 载体 | **collectors 静态映射表**（`name_en_mapping.csv` 随仓库提交），import 时 JOIN 写入；未收录 → NULL → 回退中文，按需增量 |
-| 5 | 搜索 | 搜索**三路匹配** `code` + `name` + `name_en`；**用户裁决 D0-B（2026-08-15）**：股票无 name_en，维持 code+name 两路；三路匹配仅对有 name_en 的实体（指数/行业/概念）；验收 3 示例修订为 "SSE"→上证指数 |
-| 6 | SEPA 主题名 | **用户裁决 D1-A（2026-08-15）**：GUI 层用 index_basic.name_en（concept 行）构建「概念名 zh→en」映射，渲染 themes 时按名查询，未命中回退中文；不动 concept_member schema |
-| 7 | CORE_INDEX_WHITELIST | 常量扩为 `(symbol, zh, en)` 三元组（英文官方译名 fallback，待 plan 批准确认） |
+2026-08-15 首次真实采集指数数据（epic #255/#260）时东财 push2his 反爬封禁（45 请求/2 分钟触发，
+IP 级 HTTP 000 全镜像封锁）。`fetch_index_daily.py::run()` 对失败标的从不中断流程：单标的失败
+（2 hosts × 3 attempts 重试后）仅打印 FAILED 并 continue。封禁后 955 板块 + 30 官方指数 × 6 次尝试
+≈ 3.5 小时空转。详细诊断见 `.dsh/evidence/index-fetch-resume-2026-08-15.md`（master 上已有）。
 
-## 关键现状（主 session 已探明）
+## grill-me 锁定决策（不得偏离）
 
-- 生产代码 UI 框架文本已全部走 i18n key；硬编码中文只有数据名称（`market.rs` CORE_INDEX_WHITELIST 6 指数 fallback、SEPA industry/themes、screener 行业下拉）
-- `index_basic`：Dolt 表（compass_data 库），schema `(symbol, name, index_type)`，来源 `fetch_index_daily.py`（EastMoney），import 走 `import_index_basic`（INSERT IGNORE，PK symbol）
-- `stock_basic`：12 列 schema（含 name/board/full_name/industry/region），来源三大交易所官网 `fetch_stock_basic_official.py`，import 走 `main.py _import_stock_basic`（全量 DELETE + INSERT）
-- GUI 数据流：`ParquetReader::load_all_index_basics` → `IndexBasic`（compass-core model）→ picker；`build_index_snapshot`（backend.rs）→ `IndexRow`（compass-types）→ market/SEPA 渲染
-- SEPA 行业名来自 `row.industry`（stock_basic.industry），主题名 `row.themes`（概念名，存于 SEPA 结果）
-- 映射表匹配键：`index_basic` 按 symbol（SH000001/BK0475）；`stock_basic.industry` 按行业字符串（"白酒Ⅱ" 带后缀，import 前有 trim）
+| 决策 | 选择 |
+|---|---|
+| 终止粒度 | **连续 5 个标的失败（含重试）即终止**——反爬封禁必连续失败，及时止损；网络偶发抖动不误杀 |
+| 失败定义 | 请求失败（`_get_json` 返回 None，所有 host×attempt 用尽）或 empty 响应（klines 为空）均计入连续失败 |
+| 终止行为 | 保留已抓数据（写 CSV，可续采）+ 抛 RuntimeError 提示疑似反爬/接口故障 |
+| 限流 | `common.py::EM_MIN_INTERVAL` 全局 0.5s → **2s**（用户确认全局调大，影响全部采集器） |
+| 工作区 | 独立 worktree（本目录），因主工作区被其他会话（#276）占用 |
 
-## 下一步（gate 剩余步骤，按序执行）
+## 验收标准（issue #277）
 
-1. **Step 1 DESIGN**：数据名称取用 + 渲染规则属数据/逻辑变更，无布局/视觉变更——可跳过 ui-designer（判断后记录）
-2. **Step 3 PLAN**：DSH plan mode 产出 `.dsh/plans/data-name-i18n.md`（任务批次 + DAG + 验收），exit_plan_mode 批准
-3. **Step 2 ISSUE**：epic #266 已建；plan 批准后按 epic 模式创建子 issues（--parent 266）
-4. **Step 3.5/4 TESTS**：plan 批准后委派 skwy-adversarial-test / skwy-requirement-test 写 RED 测试（Python collectors + Rust 双侧）
-5. **Step 5b DOCS**：按 AGENTS.md 映射表更新 `.dsh/kb/design/data-providers.md`（schema 变更）+ `.dsh/kb/design/gui-i18n.md`（契约变更）+ `.dsh/kb/user/gui.md`（如有 UI 行为变化）；**注意 `.dsh/designs/gui-i18n.md` 的"数据名不翻译"契约需同步修订**
-6. **Step 5c**：相关 design 文档补「决策记录」章节
-7. 映射表首版（核心指数 + 全量行业 + 概念直译）批量生成，提交前请用户 review
+1. `run()` 维护连续失败计数器；连续 5 个标的失败（FAILED 或 empty）→ 立即终止，不再请求剩余标的
+2. 终止前已抓 daily/basic 记录写入 CSV（保留可续采），然后 RuntimeError 抛出
+3. 失败-成功交错不触发终止（成功即清零计数器）
+4. 连续 4 个失败不终止（第 5 个才触发）
+5. `common.py::EM_MIN_INTERVAL` = 2.0
+6. 测试覆盖：连续失败终止 + CSV 保留 + 交错不误杀 + 边界（4/5）+ 限流值断言
+7. `uv run pytest collectors/tests/ --cov=. --cov-fail-under=95 -q` 全绿
+
+## 下一步（worktree 会话）
+
+1. 同步原始分支（fetch + rebase origin/master）
+2. PRE-IMPLEMENTATION GATE 剩余步骤：委派 subagent_skwy_requirement_test + subagent_skwy_adversarial_test 写 RED 测试（注入项目 Python 测试方法论：make_stub_session / COMPASS_DATA_DIR tmp_path / tests 目录模式）
+3. 实现 GREEN（fetch_index_daily.py run() 连续失败计数 + common.py EM_MIN_INTERVAL=2.0）
+4. 全套件验证 → commit（ref #277）→ subagent_review → 待用户 push
+5. 文档同步：toolchain.md 反爬排查卡补充"快速失败机制"；续采记录 .dsh/evidence/index-fetch-resume-2026-08-15.md 更新限流建议（EM_MIN_INTERVAL 已全局 2s）
+
+---
+
+## 追加任务（2026-08-15 20:30，用户确认）— 腾讯源接入官方指数
+
+**Issue**: https://github.com/qiboda/compass/issues/278（OPEN，依赖 #277 同批实施）
+
+**背景**：东财 push2his 封禁未解（5.5h+），官方指数 30 个全缺。用户决策：**官方指数走腾讯源**（已验证可拉：web.ifzq.gtimg.cn fqkline/get，count≤2000 分页，15 连发零限流），板块 1000 个等东财解封后用 #277 机制补。
+
+**验收标准**：
+1. fetch_index_daily.py 新增腾讯源拉官方指数 30 个（OFFICIAL_INDICES 白名单，secid 映射 1.→sh、0.→sz + 小写 code）
+2. 东财优先、失败/empty 自动切腾讯；CSV 输出格式不变（amount 腾讯无则填 0）
+3. 全历史分页：count=2000 循环 + 起始日期推进
+4. 腾讯段受 #277 连续失败快速终止保护
+5. 测试覆盖：腾讯解析/分页/东财失败切换/amount 缺省
+6. pytest 全绿（cov ≥95%）
+
+**实现顺序**：#277（快速失败 + 限流 2s）先行 → #278（腾讯源）追加在 fetch_index_daily.py 同一文件内 → 两个 issue 各自 commit（ref #277 / ref #278）→ 一起 review → 用户 push。

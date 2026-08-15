@@ -11,7 +11,7 @@ Compass 是一个**本地优先的 A 股股票图表应用**。与依赖远程�
 | 面孔 | 二进制 | 用途 |
 |---|---|---|
 | **图表应用** | `compass` | 交互式 K 线图：股票搜索、时间周期选择、十字准线、缩放、平移。通过 egui 以原生桌面窗口运行。仅从本地 Parquet 文件读取数据。 |
-| **数据管线** | `compass-data` | 离线数据管理——从 Dolt 导入、导出为其他格式、备份。EastMoney 数据通过 Python collector 脚本获取。 |
+| **数据管线** | `compass-data` | 离线数据管理——从 Dolt 导入、导出为其他格式、备份。EastMoney 数据通过 Python collector 脚本获取；官方指数在东财失败/empty 时回退腾讯源（issue #278）。 |
 
 两者共享同一个库 crate（`compass-core`），其中定义了数据模型、provider trait
 以及所有 I/O 逻辑。

@@ -68,7 +68,7 @@ EM_HEADERS = {
 }
 
 # Rate limiting
-EM_MIN_INTERVAL = 0.5
+EM_MIN_INTERVAL = 2.0
 EM_JITTER = (0.1, 0.3)
 EM_MAX_RETRIES = 4
 EM_PAGE_SIZE = 100  # max for this API
