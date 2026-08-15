@@ -530,19 +530,19 @@ mod tests {
         }
     }
 
-    /// Poll a result-data predicate until it holds (or timeout).
+    /// Poll a predicate until it holds (or timeout).
     ///
     /// Unlike the `wait_for_*_response` helpers, this must NOT touch any
     /// `*_loading` `Dynamic` — callers of this helper are typically holding
     /// that loading mutex (via `Dynamic::lock()`) to deterministically park
-    /// the result slot between "write result data" and "clear loading", so
-    /// calling `.get()` on the loading field here would self-deadlock.
+    /// the result slot at `*_loading.set(false)`, so calling `.get()` on the
+    /// loading field here would self-deadlock.
     fn wait_for_result_data(what: &'static str, mut cond: impl FnMut() -> bool) {
-        for _ in 0..500 {
+        for _ in 0..100 {
             if cond() {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(100));
         }
         panic!("timeout waiting for {what}");
     }
@@ -694,8 +694,8 @@ mod tests {
     /// `state.loading` is observable as `false`, the display log entry must
     /// already exist. The buggy slot wrote `loading.set(false)` before
     /// `logger.log_info(...)`; the fix writes the log first. We hold the
-    /// `loading` mutex so the result slot parks exactly between writing
-    /// result data and clearing loading — then the log must already be there.
+    /// `loading` mutex so the result slot parks at `loading.set(false)` —
+    /// after the log write in fixed code, before it in buggy code.
     #[test]
     fn fetch_result_slot_writes_log_before_clearing_loading() {
         let _guard = LANG_LOCK
@@ -733,11 +733,6 @@ mod tests {
         wait_for_result_data("fetch display log entry", || {
             state.log.get().log_count() > 0
         });
-
-        assert!(
-            state.log.get().log_count() > 0,
-            "display log entry must be written before loading is cleared"
-        );
         drop(_loading_guard);
 
         wait_for_result_data("loading=false after drop", || !state.loading.get());
@@ -928,8 +923,8 @@ mod tests {
     /// Screener result-slot ordering regression (issue #276): by the time
     /// `screener_loading` is observable as `false`, the display log entry must
     /// already exist. Hold the `screener_loading` mutex so the result slot
-    /// parks between writing `screener_result`/`screener_total` and clearing
-    /// loading — then the log must already be present.
+    /// parks at `screener_loading.set(false)` — after the log write in fixed
+    /// code, before it in buggy code.
     #[test]
     fn screener_result_slot_writes_log_before_clearing_loading() {
         let _guard = LANG_LOCK
@@ -963,11 +958,6 @@ mod tests {
         wait_for_result_data("screener display log entry", || {
             state.log.get().log_count() > 0
         });
-
-        assert!(
-            state.log.get().log_count() > 0,
-            "screener display log entry must be written before loading is cleared"
-        );
         drop(_loading_guard);
 
         wait_for_result_data("screener loading=false after drop", || {
@@ -1075,8 +1065,8 @@ mod tests {
     /// SEPA result-slot ordering regression (issue #276): by the time
     /// `sepa_loading` is observable as `false`, the display log entry must
     /// already exist. Hold the `sepa_loading` mutex so the result slot parks
-    /// between writing `sepa_data` and clearing loading — the log must already
-    /// be present.
+    /// at `sepa_loading.set(false)` — after the log write in fixed code,
+    /// before it in buggy code.
     #[test]
     fn sepa_result_slot_writes_log_before_clearing_loading() {
         let _guard = LANG_LOCK
@@ -1105,11 +1095,6 @@ mod tests {
         // logging, so this times out (RED); in fixed code the log is written
         // before the slot blocks on `sepa_loading.set(false)`.
         wait_for_result_data("sepa display log entry", || state.log.get().log_count() > 0);
-
-        assert!(
-            state.log.get().log_count() > 0,
-            "sepa display log entry must be written before loading is cleared"
-        );
         drop(_loading_guard);
 
         wait_for_result_data("sepa loading=false after drop", || {
@@ -1121,9 +1106,10 @@ mod tests {
     /// Index snapshot result-slot ordering regression (issue #276): by the
     /// time `index_snapshot_loading` is observable as `false`, the display log
     /// entry must already exist. Hold the `index_snapshot_loading` mutex so the
-    /// result slot parks between writing `index_snapshot` and clearing loading.
-    /// An empty tempdir yields an empty snapshot, but the slot still writes
-    /// `Some(data)` before touching loading.
+    /// result slot parks at `index_snapshot_loading.set(false)` — after the log
+    /// write in fixed code, before it in buggy code. An empty tempdir yields an
+    /// empty snapshot, but the slot still writes `Some(data)` before touching
+    /// loading.
     #[test]
     fn index_result_slot_writes_log_before_clearing_loading() {
         let _guard = LANG_LOCK
@@ -1131,7 +1117,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("en");
         // Empty dir: no index parquet → builder returns an empty snapshot
-        // (empty/error response), yet the result slot still sets `Some(data)`.
+        // (success branch), yet the result slot still sets `Some(data)`.
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
@@ -1155,11 +1141,6 @@ mod tests {
         wait_for_result_data("index display log entry", || {
             state.log.get().log_count() > 0
         });
-
-        assert!(
-            state.log.get().log_count() > 0,
-            "index display log entry must be written before loading is cleared"
-        );
         drop(_loading_guard);
 
         wait_for_result_data("index loading=false after drop", || {
