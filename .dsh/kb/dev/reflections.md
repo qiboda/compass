@@ -232,3 +232,27 @@
 ### Trends (last 10)
 - 数据级 bug 反复由真实数据首次暴露（#181 stock_daily 混源、#273 update_date 缺列）：fixture 测试覆盖不到，epic #255 的"真实数据冒烟"步骤在实现时未执行真实采集，本次 3.5h 采集才撞出契约断裂——真实冒烟不应滞后到交付后
 - 子代理交付后主 agent 未立即验证（本次 ruff 由 review 子代理发现而非提交前）：与 #244/#255"子代理交付验证"模式同类，commit 前 lint 自跑应成为固定动作
+
+## 2026-08-15 — ref #267 collector-progress：6 个一次性写 CSV 的 collector 抓取进度可查询
+
+**What was done**: 为 6 个一次性写 CSV 的 SEPA collector（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon）接入 Progress 进度跟踪：common.py 新增 Progress 类（原子写 `csv_dir()/<name>.progress.json`，tmp+os.replace，percent clamp [0,100]，path sanitize 防穿越，best-effort 写失败不击穿采集器）；6 个 fetch_*.py 以 `with Progress(...)` 包裹（动态 total、早退 finish、异常自动 fail）；main.py 新增 `progress [target] [--json]` 子命令（choices 收敛为 6 个接入者）。5 个 commit（3b353c5/7f449f3/797198b/127d642/1ee37f0），需求+对抗双测试 agent 共 49 项新测试（RED 7 failed→GREEN），全量 502 passed，5 角度 review 无 blocking。
+
+**User corrections**（逐字引用对话记录）:
+1. "继续plan。根据半成品的代码。也许写的方向有问题，需要重写。" —— 用户对我准备"按 handoff 直接收尾半成品"的计划提出方向质疑，要求先基于代码重新评估是否重写。我做了逐文件方向评估（方案形态/原子写/统一接入/动态 total/早退路径/测试覆盖 6 项证据），结论"方向正确无需重写、仅 2 个真实缺口"，用户确认后继续。**质疑驱动了本 PR 最关键的修复**：choices 收敛（requirement RED 5 项）正是评估中发现的缺口。
+
+**What went wrong**:
+1. **文档编辑误落 master 工作区（ref #138 教训再现）**：doc-sync 阶段我用 `/data/codes/compass/.dsh/kb/user/cli.md`（master 路径）而非 worktree 路径编辑，commit 前 `git status` 检查 master 才发现两文件改动落在主分支工作区——立即 `git checkout` 还原并在 worktree 重做。虽然发现及时未造成提交污染，但正是 ref #138 记载的"产出文件落 master"摩擦的变体（该次是 untracked 文件，本次是 tracked 文件编辑）；worktree 会话内一切文件编辑必须使用 worktree 绝对路径，AGENTS.md 虽已写"plan/design 在 worktree 内创建"，但**编辑既有文档的路径选择**没有显式规则。
+2. **计划批次划分未预见测试重复**：commit 划分假设"5 个 commit"，实际 choices 修复与子命令同文件无法按文件粒度拆分（合并为 4+1 个），review 又抓出 contract 测试与 test_main 重复 5 项——批次规划应早读测试文件评估可拆性。
+3. **首次 exit_plan_mode 失败**：当前 session 不在 plan mode，exit_plan_mode 报错后才改用普通消息呈现计划——工具可用性应先确认再调用。
+
+**Lessons learned**:
+1. **worktree 会话内编辑任何既有文件（含 .dsh/kb 文档）必须使用 worktree 绝对路径**（`/data/codes/compass/.worktrees/<name>/...`），禁止凭记忆/默认路径落笔；编辑后 commit 前对 master 工作区跑 `git status` 交叉验证无意外改动（本次靠 commit 前检查发现）。
+2. **质疑驱动的方向评估应更早触发**：handoff 声称"主 session 已审查设计质量良好"，但用户一句质疑就导向了完整重新评估——半成品的"已审查"结论不应直接采信，首个可编译工作区内先做逐文件证据核验再规划，成本远低于事后返工。
+3. 分步 commit 规划前先读测试文件确认拆分粒度可行性；工具（exit_plan_mode）可用性先验证再依赖。
+
+**Process improvements**:
+- AGENTS.md 无新增（worktree 路径规则已隐含在 worktree 章节，本条目作为 ref #138 的实践补充记录，暂不重复立规）
+
+### Trends (last 10)
+- **ref #138 教训（产出/编辑落 master 工作区）再现变体**：该次是 untracked plan/design 文件，本次是 tracked 文档编辑——worktree 会话的路径纪律仍是薄弱点，值得在 AGENTS.md worktree 章节显式补一句"所有文件操作使用 worktree 绝对路径"
+- **用户方向质疑→重新评估→发现真实缺口的模式第 2 次实证**（ref #264 迁移范围 → 本次 choices 收敛）：对"已审查/已计划"结论保持怀疑、以代码证据核验的流程价值持续
