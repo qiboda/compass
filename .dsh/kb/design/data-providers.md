@@ -121,9 +121,9 @@ Parquet 主数据库布局（`stock_daily.parquet` 由 `compass-data import` 生
 
 ```
 parquet_data/
-├── stock_basic.parquet        # symbol, name, list_date, delist_date, board, full_name, total_share, industry, region
+├── stock_basic.parquet        # symbol, name, list_date, delist_date, board, full_name, total_share, industry, industry_en, region（epic #266 加 industry_en）
 ├── stock_daily.parquet        # symbol, tradedate, open, high, low, close, adjclose, volume, amount
-├── index_basic.parquet        # symbol, name, index_type（指数/板块名称表，epic #255）
+├── index_basic.parquet        # symbol, name, name_en, index_type（指数/板块名称表，epic #255；epic #266 加 name_en）
 ├── index_daily.parquet        # symbol, index_type, tradedate, open, high, low, close, volume, amount, adjclose（指数/板块日线，epic #255）
 ├── fin_income.parquet         # 利润表 — F10 完整版（203 字段），PK (symbol, report_date)
 ├── fin_balance_sheet.parquet  # 资产负债表 — F10 完整版（319 字段），PK (symbol, report_date)
@@ -161,7 +161,8 @@ CREATE TABLE IF NOT EXISTS index_daily (
 CREATE TABLE IF NOT EXISTS index_basic (
     symbol      VARCHAR(20) NOT NULL PRIMARY KEY,
     name        VARCHAR(100),
-    index_type  VARCHAR(20)
+    index_type  VARCHAR(20),
+    name_en     VARCHAR(100)
 )
 ```
 
@@ -178,7 +179,12 @@ CREATE TABLE IF NOT EXISTS index_basic (
     ——导出时 Dolt `trade_date` 重命名为 `tradedate`（对齐 `stock_daily.parquet` 列名），
     **`adjclose = close` 占位**（指数无复权概念，东财 `fqt=0` 不复权拉取；占位列使
     `DuckDbProvider` 既有 7 列查询 / 前复权缩放（factor=1.0 恒等）/ 1w·1M 聚合零改动复用）。
-  - `index_basic.parquet`：`symbol, name, index_type`。
+  - `index_basic.parquet`：`symbol, name, name_en, index_type`。
+  - **`name_en` / `stock_basic.industry_en`（epic #266）**：collectors 静态映射表
+    `collectors/name_en_mapping.csv`（`section,key,value`：index 按 symbol /
+    industry 按行业中文 / concept 按概念中文）import 时 LEFT JOIN 写入；未收录 →
+    NULL → GUI 回退中文。读取侧（`ParquetReader`）对旧 parquet（无新列）优雅降级
+    `None`（`is_missing_column` binder 错误匹配后重试无列查询）。
 - **导出语义**：`import-compass --table index_daily` 走**增量 merge**
   （parquet 侧 PK (symbol, tradedate)，`prefer_new` 即 Dolt 新值优先，`--since` 支持，
   与 capital_main_flow 同款 `import_append_table`）；`--table index_basic` **全量覆盖**
@@ -491,3 +497,6 @@ compass_data_dir = "/data/compass-data/compass_data"
 | index_daily 列对齐（epic #255） | 自定义列名 / 与 DuckDbProvider 查询列对齐 | DDL 按 DuckDbProvider 查询列设计（trade_date/open/high/low/close/volume/amount + PK(symbol, trade_date)），导出时 `trade_date → tradedate` 重命名 | 查询/聚合/前复权代码零改动；`adjclose=close` 占位使 factor=1.0 恒等 | 自定义列名需改 duckdb.rs 查询 SQL 与映射，波及共享路径 |
 | 双 parquet 路由（epic #255） | FetchRequest 加 domain 字段 / 双文件 fallback / 独立 IndexProvider | DuckDbProvider 双文件 fallback（stock → index） | 零消息契约改动、零 GUI 调用方改动；ref #201 剔除使路由确定性成立（指数在 stock 文件必然查空）；1w/1M 聚合逻辑直接复用 | domain 字段扩大消息契约波及三处消费点；独立 provider 重复 fetch/聚合逻辑 |
 | index_basic 名称表（epic #255） | 名称硬编码在 GUI / 独立名称表 | 独立 `index_basic` 表 + `index_basic.parquet`（symbol/name/index_type），全量覆盖导出 | picker 与板块列表需要名称与类型（官方/概念/行业）来源；板块由 clist 动态发现，硬编码无法覆盖新板块 | GUI 硬编码使新板块不可搜索，且名称与数据分离维护 |
+| name_en/industry_en 列（epic #266） | i18n 静态键 / **数据层英文列 + collectors 静态映射表** | 数据层英文列（index_basic.name_en + stock_basic.industry_en）+ `name_en_mapping.csv` import JOIN | 数据动态增长，静态键不可维护；映射表随仓库版本可审；未收录 NULL 回退中文按需增量；全链路 Dolt→parquet→DuckDB→GUI | i18n 键需穷举全部数据名且随新增失效；数据库映射表需额外同步链路 |
+| 旧 parquet 兼容（epic #266） | 硬失败 / **读取侧降级 None** | `ParquetReader` 对新列 try-fallback（binder 缺列错误 → 无列查询，`name_en: None`） | 存量 parquet 无需重导即可启动；GUI 按语言回退中文；`is_missing_column` 仅匹配具体缺列短语，genuine 错误传播 | 硬失败强迫全量重导，升级窗口大 |
+| 行业后缀匹配（epic #266） | 精确匹配 / **双键（原样 + 去罗马数字后缀）** | import JOIN 条件 `m.key = TRIM(industry) OR (REGEXP 后缀 AND m.key = LEFT(len-1))` | 旧数据"白酒Ⅱ"类后缀行业可命中基础键"白酒"；双键防膨胀（`<>` guard） | 单键匹配漏掉后缀行业 |

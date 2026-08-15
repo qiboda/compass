@@ -22,6 +22,10 @@ pub struct StockProjection<T> {
     symbol: for<'a> fn(&'a T) -> &'a str,
     name: for<'a> fn(&'a T) -> &'a str,
     exchange: for<'a> fn(&'a T) -> Option<&'a str>,
+    /// Optional English-name accessor (epic #266 B4): when present, search
+    /// matches it as a third route (`code` + `name` + `name_en`). Stocks
+    /// carry no English name — `None` keeps them on the two-route match.
+    name_en: Option<for<'a> fn(&'a T) -> Option<&'a str>>,
 }
 
 impl<T> StockProjection<T> {
@@ -35,7 +39,15 @@ impl<T> StockProjection<T> {
             symbol,
             name,
             exchange,
+            name_en: None,
         }
+    }
+
+    /// Attach an English-name accessor; search then matches it as a third
+    /// route (`code` + `name` + `name_en`, epic #266 B4).
+    pub fn name_en(mut self, name_en: for<'a> fn(&'a T) -> Option<&'a str>) -> Self {
+        self.name_en = Some(name_en);
+        self
     }
 
     /// Read the stock's symbol.
@@ -51,6 +63,12 @@ impl<T> StockProjection<T> {
     /// Read the stock's exchange code (`"SH"` / `"SZ"` / `"BJ"`).
     pub fn exchange_of<'a>(&self, stock: &'a T) -> Option<&'a str> {
         (self.exchange)(stock)
+    }
+
+    /// Read the stock's English display name, when the projection carries
+    /// the accessor (epic #266 B4).
+    pub fn name_en_of<'a>(&self, stock: &'a T) -> Option<&'a str> {
+        self.name_en.and_then(|f| f(stock))
     }
 }
 
@@ -95,12 +113,17 @@ pub(crate) fn strip_exchange_prefix(symbol: &str) -> &str {
 /// with the normalized query, or its bare code starts with the pure-code part
 /// of the query, or its name contains the normalized query. The three
 /// spellings of one code — `"600519"`, `"SH600519"`, `"sh.600519"` — all
-/// match `SH600519`.
+/// match `SH600519`. When the projection carries an English-name accessor
+/// (epic #266 B4) the English name is matched as a third route, so "SSE"
+/// finds 上证指数 — non-empty English names only.
 fn matches_query<T>(projection: &StockProjection<T>, stock: &T, q: &str, q_code: &str) -> bool {
     let symbol = projection.symbol_of(stock).to_lowercase();
     symbol.starts_with(q)
         || (!q_code.is_empty() && strip_exchange_prefix(&symbol).starts_with(q_code))
         || projection.name_of(stock).to_lowercase().contains(q)
+        || projection
+            .name_en_of(stock)
+            .is_some_and(|en| !en.is_empty() && en.to_lowercase().contains(q))
 }
 
 /// Pure filter: symbol/name match against a free-text query (bare code,
@@ -447,6 +470,7 @@ mod tests {
         symbol: String,
         name: String,
         exchange: Option<String>,
+        name_en: Option<String>,
     }
 
     impl TestStock {
@@ -455,7 +479,13 @@ mod tests {
                 symbol: symbol.into(),
                 name: name.into(),
                 exchange: Some(exchange.into()),
+                name_en: None,
             }
+        }
+
+        fn with_name_en(mut self, name_en: &str) -> Self {
+            self.name_en = Some(name_en.into());
+            self
         }
     }
 
@@ -465,6 +495,7 @@ mod tests {
             |s: &TestStock| &s.name,
             |s: &TestStock| s.exchange.as_deref(),
         )
+        .name_en(|s: &TestStock| s.name_en.as_deref())
     }
 
     fn make_stocks() -> Vec<TestStock> {
@@ -652,6 +683,69 @@ mod tests {
         let found: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
         assert!(found.contains(&"SZ000001"));
         assert!(found.contains(&"SH600036"));
+    }
+
+    // --- three-route matching (epic #266 B4): code + name + name_en ---
+
+    #[test]
+    fn filter_stocks_english_name_matches_name_en() {
+        // "SSE" must find the row whose English name carries it (index rows
+        // in the picker), while the Chinese name does not contain "SSE".
+        let stocks = vec![
+            TestStock::new("SZ000001", "平安银行", "SZ").with_name_en("Ping An Bank"),
+            TestStock::new("SH000001", "上证指数", "SH").with_name_en("SSE Composite"),
+        ];
+        let result = filter_stocks(&stocks, "sse", None, &test_projection());
+        let found: Vec<_> = result.iter().map(|s| s.symbol.as_str()).collect();
+        assert_eq!(
+            found,
+            vec!["SH000001"],
+            "\"sse\" must match the name_en route"
+        );
+    }
+
+    #[test]
+    fn filter_stocks_english_query_does_not_break_chinese_match() {
+        let stocks = vec![
+            TestStock::new("SH000001", "上证指数", "SH").with_name_en("SSE Composite"),
+            TestStock::new("SZ000001", "平安银行", "SZ"),
+        ];
+        // Chinese query still matches the Chinese name.
+        let result = filter_stocks(&stocks, "上证", None, &test_projection());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].symbol, "SH000001");
+    }
+
+    #[test]
+    fn filter_stocks_stock_without_name_en_stays_two_route() {
+        // A stock row without an English name must NOT match an English
+        // query — only code + name routes apply (D0-B).
+        let stocks = vec![
+            TestStock::new("SH600519", "贵州茅台", "SH"), // no name_en
+        ];
+        let result = filter_stocks(&stocks, "moutai", None, &test_projection());
+        assert!(
+            result.is_empty(),
+            "stocks without name_en never match English queries"
+        );
+        // The same row still matches its code and Chinese name.
+        assert_eq!(
+            filter_stocks(&stocks, "600519", None, &test_projection()).len(),
+            1
+        );
+        assert_eq!(
+            filter_stocks(&stocks, "茅台", None, &test_projection()).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn filter_stocks_empty_name_en_never_matches() {
+        // Some("") is an unmapped artifact — it must not act as a match
+        // route (same guard as the display helper).
+        let stocks = vec![TestStock::new("SH000001", "上证指数", "SH").with_name_en("")];
+        let result = filter_stocks(&stocks, "composite", None, &test_projection());
+        assert!(result.is_empty(), "empty name_en must not match");
     }
 
     #[test]

@@ -507,6 +507,7 @@ mod tests {
             pattern: 0.0,
             risk: 0.0,
             industry: "测试".to_string(),
+            industry_en: None,
             themes: Vec::new(),
             latest_price: 1.0,
             change_pct: 0.0,
@@ -902,8 +903,10 @@ mod tests {
         StockBasic {
             symbol: symbol.to_string(),
             name: symbol.to_string(),
+            name_en: None,
             area: None,
             industry: Some("测试".to_string()),
+            industry_en: None,
             market: Some("主板".to_string()),
             board: Some("主板".to_string()),
             full_name: Some(symbol.to_string()),

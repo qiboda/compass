@@ -1031,6 +1031,7 @@ fn score_symbol(
         pattern,
         risk,
         industry: basic.industry.clone().unwrap_or_default(),
+        industry_en: basic.industry_en.clone(),
         themes: ctx.themes.get(symbol).cloned().unwrap_or_default(),
         latest_price: latest.close,
         change_pct: day_change(series),
@@ -1499,8 +1500,10 @@ mod tests {
         let mk_basic = |symbol: &str| StockBasic {
             symbol: symbol.to_string(),
             name: "S".to_string(),
+            name_en: None,
             area: None,
             industry: None,
+            industry_en: None,
             market: None,
             board: None,
             full_name: None,

@@ -51,10 +51,20 @@ pub struct StockBasic {
     pub symbol: String,
     /// Chinese display name.
     pub name: String,
+    /// English display name (epic #266 B4). Stock rows never carry one
+    /// (stocks are not translated — D0-B); index/board rows converted to
+    /// the picker's `StockBasic` shape carry their `name_en` here so the
+    /// search can match "SSE" → 上证指数.
+    #[serde(default)]
+    pub name_en: Option<String>,
     /// Geographic area.
     pub area: Option<String>,
     /// Industry classification.
     pub industry: Option<String>,
+    /// English industry name (epic #266; `industry_en` column from the
+    /// name_en_mapping JOIN — `None` when unmapped or on legacy parquet).
+    #[serde(default)]
+    pub industry_en: Option<String>,
     /// Market segment (e.g. "主板", "创业板").
     pub market: Option<String>,
     /// Board segment (主板/创业板/科创板/北交所).
@@ -81,6 +91,10 @@ pub struct IndexBasic {
     pub symbol: String,
     /// Chinese display name (e.g. "上证指数").
     pub name: String,
+    /// English display name (epic #266; `name_en` column from the
+    /// name_en_mapping JOIN — `None` when unmapped or on legacy parquet).
+    #[serde(default)]
+    pub name_en: Option<String>,
     /// `"official"` | `"concept"` | `"industry"`.
     pub index_type: String,
 }

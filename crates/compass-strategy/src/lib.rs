@@ -139,6 +139,7 @@ fn assemble_row(basic: &StockBasic, series: &[&CrossSectionBar]) -> Option<Scree
         change_20d,
         market_cap,
         industry,
+        industry_en: basic.industry_en.clone(),
     })
 }
 

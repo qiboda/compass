@@ -251,6 +251,7 @@ fn import_stock_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
          full_name, \
          CAST(total_share AS DOUBLE) AS total_share, \
          industry, \
+         industry_en, \
          region \
          FROM stock_basic \
          WHERE symbol LIKE 'SH%' OR symbol LIKE 'SZ%' OR symbol LIKE 'BJ%' \
@@ -563,7 +564,7 @@ fn import_index_basic(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std:
     info!("Exporting index_basic...");
     let data = run_dolt_sql_parquet(
         dolt_dir,
-        "SELECT symbol, name, index_type FROM index_basic ORDER BY symbol",
+        "SELECT symbol, name, index_type, name_en FROM index_basic ORDER BY symbol",
     )?;
     let path = output.join("index_basic.parquet");
     std::fs::write(&path, &data)?;
@@ -705,7 +706,7 @@ mod tests {
             .arg("--data-dir").arg(tmp.path())
             .arg("sql").arg("-q")
             .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), \
-                  industry VARCHAR(50), list_date VARCHAR(20), delist_date DATE, board VARCHAR(50), \
+                  industry VARCHAR(50), industry_en VARCHAR(50), list_date VARCHAR(20), delist_date DATE, board VARCHAR(50), \
                   full_name VARCHAR(200), total_share DOUBLE, region VARCHAR(50))")
             .output().expect("create table");
 
@@ -714,8 +715,8 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg("INSERT INTO stock_basic (symbol, name, industry, list_date, delist_date, board, full_name, total_share, region) \
-                  VALUES ('SH600519', '贵州茅台', '白酒Ⅱ', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 12.56e8, '贵州')")
+            .arg("INSERT INTO stock_basic (symbol, name, industry, industry_en, list_date, delist_date, board, full_name, total_share, region) \
+                  VALUES ('SH600519', '贵州茅台', '白酒Ⅱ', 'Liquor', '2001-08-27', NULL, '主板', '贵州茅台酒股份有限公司', 12.56e8, '贵州')")
             .output()
             .expect("insert");
 
@@ -2045,7 +2046,7 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), industry VARCHAR(50), list_date VARCHAR(20), delist_date DATE, board VARCHAR(50), full_name VARCHAR(200), total_share DOUBLE, region VARCHAR(50))")
+            .arg("CREATE TABLE stock_basic (symbol VARCHAR(20) PRIMARY KEY, name VARCHAR(100), industry VARCHAR(50), industry_en VARCHAR(50), list_date VARCHAR(20), delist_date DATE, board VARCHAR(50), full_name VARCHAR(200), total_share DOUBLE, region VARCHAR(50))")
             .output()
             .expect("create");
         Command::new("dolt")

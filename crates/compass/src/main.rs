@@ -28,6 +28,7 @@ use compass_ui::widgets::toolbar::Toolbar;
 mod backend;
 mod citizens;
 mod dispatcher;
+mod i18n_name;
 mod llm_screener;
 mod messages;
 mod state;
@@ -85,6 +86,17 @@ fn main() -> eframe::Result {
             let index_list = load_index_list(&config.app);
             let mut picker_list = stock_list.clone();
             picker_list.extend(index_list.clone().into_iter().map(index_basic_to_stock));
+
+            // Data-name locale maps (epic #266 B3): concept zh→en from the
+            // index_basic concept rows (SEPA theme tags, D1-A); industry
+            // zh→en from stock_basic (screener dropdown labels). Filter keys
+            // stay Chinese — only the labels localize.
+            shared_state
+                .concept_names
+                .set(build_concept_names(&index_list));
+            shared_state
+                .industry_names
+                .set(build_industry_names(&stock_list));
 
             // Wire Level 3 backend (signal/slot + AsyncDispatcher)
             let (
@@ -673,6 +685,10 @@ fn stock_projection() -> StockProjection<compass_core::model::StockBasic> {
         |s: &compass_core::model::StockBasic| &s.name,
         |s: &compass_core::model::StockBasic| Some(exchange_of_symbol(&s.symbol)),
     )
+    // Epic #266 B4: index/board rows converted to the picker shape carry
+    // their English name here — search matches "SSE" → 上证指数. Stock rows
+    // have `None` and stay on the code+name routes (D0-B).
+    .name_en(|s: &compass_core::model::StockBasic| s.name_en.as_deref())
 }
 
 /// Load the stock list for the GUI picker, filtered to currently-listed
@@ -734,8 +750,10 @@ fn index_basic_to_stock(index: IndexBasic) -> compass_core::model::StockBasic {
     compass_core::model::StockBasic {
         symbol: index.symbol,
         name: index.name,
+        name_en: index.name_en,
         area: None,
         industry: None,
+        industry_en: None,
         market: None,
         board: None,
         full_name: None,
@@ -743,6 +761,39 @@ fn index_basic_to_stock(index: IndexBasic) -> compass_core::model::StockBasic {
         list_date: None,
         delist_date: None,
     }
+}
+
+/// Build the concept zh→en name map (epic #266 B3e, D1-A) from the
+/// `index_basic` concept rows: `name` → `name_en`. Concept rows without an
+/// English name are omitted — the SEPA theme renderer falls back to Chinese
+/// for unmapped concepts.
+fn build_concept_names(index_list: &[IndexBasic]) -> std::collections::HashMap<String, String> {
+    index_list
+        .iter()
+        .filter(|b| b.index_type == "concept")
+        .filter_map(|b| {
+            b.name_en
+                .as_ref()
+                .filter(|en| !en.is_empty())
+                .map(|en| (b.name.clone(), en.clone()))
+        })
+        .collect()
+}
+
+/// Build the industry zh→en name map (epic #266 B3f) from `stock_basic`:
+/// `industry` → `industry_en`. Unmapped industries are omitted — the
+/// screener dropdown falls back to Chinese labels.
+fn build_industry_names(
+    stock_list: &[compass_core::model::StockBasic],
+) -> std::collections::HashMap<String, String> {
+    stock_list
+        .iter()
+        .filter_map(|s| {
+            let zh = s.industry.as_ref()?;
+            let en = s.industry_en.as_ref().filter(|en| !en.is_empty())?;
+            Some((zh.clone(), en.clone()))
+        })
+        .collect()
 }
 
 /// Write the shared log entries to `path` in a plain-text export format
@@ -1541,8 +1592,11 @@ mod tests {
     use crate::LlmSection;
     use crate::ScreenerSection;
     use crate::messages::RunLlmRequest;
-    use compass_core::model::StockBasic;
+    use compass_core::model::{IndexBasic, StockBasic};
     use compass_types::{Filter, ScreenerQuery};
+
+    use crate::build_concept_names;
+    use crate::build_industry_names;
 
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
@@ -1552,6 +1606,68 @@ mod tests {
     use crate::timeframe_label;
     use crate::timeframe_value;
     use egui_citizen::{CitizenId, Dispatcher};
+
+    // ── data-name locale maps (epic #266 B3) ────────────────────────────
+
+    fn index_basic(
+        symbol: &str,
+        name: &str,
+        index_type: &str,
+        name_en: Option<&str>,
+    ) -> IndexBasic {
+        IndexBasic {
+            symbol: symbol.to_string(),
+            name: name.to_string(),
+            name_en: name_en.map(str::to_string),
+            index_type: index_type.to_string(),
+        }
+    }
+
+    #[test]
+    fn build_concept_names_only_concept_rows_with_en() {
+        let list = vec![
+            index_basic("SH000001", "上证指数", "official", Some("SSE Composite")),
+            index_basic("BK0475", "半导体", "concept", Some("Semiconductors")),
+            index_basic("BK0476", "白酒", "concept", None),
+            index_basic("BK0477", "未译概念", "concept", Some("")),
+        ];
+        let map = build_concept_names(&list);
+        assert_eq!(map.len(), 1, "only concept rows with non-empty name_en");
+        assert_eq!(
+            map.get("半导体").map(String::as_str),
+            Some("Semiconductors")
+        );
+        assert!(map.get("上证指数").is_none(), "official rows excluded");
+        assert!(map.get("白酒").is_none(), "None name_en excluded");
+        assert!(map.get("未译概念").is_none(), "empty name_en excluded");
+    }
+
+    #[test]
+    fn build_industry_names_skips_unmapped_and_empty() {
+        let stock = |industry: Option<&str>, en: Option<&str>| StockBasic {
+            symbol: "X".into(),
+            name: "X".into(),
+            name_en: None,
+            area: None,
+            industry: industry.map(str::to_string),
+            industry_en: en.map(str::to_string),
+            market: None,
+            board: None,
+            full_name: None,
+            total_share: None,
+            list_date: None,
+            delist_date: None,
+        };
+        let list = vec![
+            stock(Some("银行"), Some("Banks")),
+            stock(Some("白酒"), None),
+            stock(None, Some("X")),
+            stock(Some("空串"), Some("")),
+        ];
+        let map = build_industry_names(&list);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("银行").map(String::as_str), Some("Banks"));
+    }
 
     #[test]
     #[cfg(feature = "tracy")]
@@ -2480,8 +2596,10 @@ default_timeframe = "1w"
         let stocks = vec![StockBasic {
             symbol: "SH600519".to_string(),
             name: "贵州茅台".to_string(),
+            name_en: None,
             area: None,
             industry: None,
+            industry_en: None,
             market: None,
             board: None,
             full_name: None,
@@ -2518,8 +2636,10 @@ default_timeframe = "1w"
         StockBasic {
             symbol: symbol.to_string(),
             name: name.to_string(),
+            name_en: None,
             area: None,
             industry: None,
+            industry_en: None,
             market: None,
             board: None,
             full_name: None,
@@ -3172,8 +3292,10 @@ default_timeframe = "1w"
             vec![StockBasic {
                 symbol: "BK0475".into(),
                 name: "半导体".into(),
+                name_en: None,
                 area: None,
                 industry: None,
+                industry_en: None,
                 market: None,
                 board: None,
                 full_name: None,

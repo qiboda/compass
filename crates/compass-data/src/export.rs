@@ -527,6 +527,57 @@ mod tests {
         assert!((adjclose - 3001.0).abs() < 1e-9, "adjclose carried through");
     }
 
+    /// Epic #266 B2 (plan acceptance #4): the DuckDB export mirror must carry
+    /// the new `name_en` column (and its data) into the `index_basic` table.
+    ///
+    /// The mirror is `CREATE TABLE AS SELECT * FROM read_parquet(...)`, so it
+    /// is column-agnostic: this test guards that a parquet shipping `name_en`
+    /// (produced once import-compass writes it) surfaces verbatim in the
+    /// DuckDB mirror. It is expected to be GREEN even before B2 touches
+    /// export.rs — the genuine RED gap lives upstream in the import-compass
+    /// SELECT (see tests/requirement_name_en_data.rs).
+    /// Manufacturability note: `export` is private to the binary (main.rs
+    /// `mod export;`), so this must live in export.rs's unit tests rather than
+    /// an integration test.
+    #[tokio::test]
+    async fn run_export_duckdb_mirror_carries_name_en() {
+        let parquet_tmp = tempfile::tempdir().expect("tempdir");
+        write_index_parquet(
+            parquet_tmp.path(),
+            "index_basic.parquet",
+            "CREATE TABLE t (symbol VARCHAR, name VARCHAR, name_en VARCHAR, index_type VARCHAR)",
+            "INSERT INTO t VALUES ('SH000001', '上证指数', 'SSE Composite', 'official')",
+        );
+
+        let duckdb_tmp = tempfile::tempdir().expect("tempdir");
+        let duckdb_path = duckdb_tmp.path().join("export.duckdb");
+        run_export(
+            parquet_tmp.path().to_path_buf(),
+            "duckdb".to_string(),
+            duckdb_path.clone(),
+            true,
+        )
+        .await;
+
+        let out = duckdb::Connection::open(&duckdb_path).expect("open export db");
+        let basic: usize = out
+            .query_row("SELECT COUNT(*) FROM index_basic", [], |row| row.get(0))
+            .expect("index_basic count");
+        assert_eq!(basic, 1, "index_basic must be mirrored into DuckDB");
+        let name_en: Option<String> = out
+            .query_row(
+                "SELECT name_en FROM index_basic WHERE symbol = 'SH000001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("DuckDB mirror index_basic must expose the name_en column");
+        assert_eq!(
+            name_en.as_deref(),
+            Some("SSE Composite"),
+            "DuckDB mirror must carry name_en data from the parquet"
+        );
+    }
+
     #[tokio::test]
     async fn run_export_duckdb_skips_empty_index_parquet() {
         let parquet_tmp = tempfile::tempdir().expect("tempdir");

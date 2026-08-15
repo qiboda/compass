@@ -49,7 +49,7 @@ CREATE TABLE stock_basic (
     symbol VARCHAR(20) PRIMARY KEY, ts_code VARCHAR(20), code VARCHAR(20),
     name VARCHAR(100), list_date DATE, delist_date DATE, board VARCHAR(50),
     full_name VARCHAR(200), total_share DOUBLE, industry VARCHAR(100),
-    region VARCHAR(100), update_date DATE
+    region VARCHAR(100), update_date DATE, industry_en VARCHAR(100)
 )"""
 
 _DATA_UPDATES_DDL = """\
@@ -83,9 +83,7 @@ CREATE TABLE fin_indicators (
 
 
 @pytest.fixture
-def dolt_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Path, Callable[[str], str]]:
+def dolt_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Callable[[str], str]]:
     """Init temp Dolt with full 12-col stock_basic + data_updates.
 
     Unlike test_balance_sheet.py's symbol-only stock_basic, the FULL schema
@@ -94,31 +92,35 @@ def dolt_env(
     """
     subprocess.run(
         ["dolt", "config", "--global", "--add", "user.email", "ci@compass.local"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     subprocess.run(
         ["dolt", "config", "--global", "--add", "user.name", "CI"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     init = subprocess.run(
         ["dolt", "--data-dir", str(tmp_path), "init"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert init.returncode == 0, init.stderr
 
     def dolt_sql_csv(sql: str) -> str:
         return subprocess.run(
             ["dolt", "--data-dir", str(tmp_path), "sql", "-r", "csv", "-q", sql],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         ).stdout
 
     dolt_sql_csv(
         f"{_SB_DDL}; "
         "INSERT INTO stock_basic VALUES "
         "('SZ000001','000001.SZ','000001','平安银行','2024-01-01',NULL,"
-        "'主板','平安银行股份有限公司',1000000000,'银行','深圳','2024-01-01'),"
+        "'主板','平安银行股份有限公司',1000000000,'银行','深圳','2024-01-01',NULL),"
         "('SZ000002','000002.SZ','000002','万科A','2024-01-01',NULL,"
-        "'主板','万科企业股份有限公司',1000000000,'房地产','深圳','2024-01-01')"
+        "'主板','万科企业股份有限公司',1000000000,'房地产','深圳','2024-01-01',NULL)"
     )
     dolt_sql_csv(_DATA_UPDATES_DDL)
     dolt_sql_csv(_FIN_INDICATORS_DDL)
@@ -130,8 +132,18 @@ def dolt_env(
 # ── stock_basic (_import_stock_basic + stock_basic_official.csv) ──────
 
 _SB_HEADER = [
-    "symbol", "ts_code", "code", "name", "list_date", "delist_date",
-    "board", "full_name", "total_share", "industry", "region", "update_date",
+    "symbol",
+    "ts_code",
+    "code",
+    "name",
+    "list_date",
+    "delist_date",
+    "board",
+    "full_name",
+    "total_share",
+    "industry",
+    "region",
+    "update_date",
 ]
 
 
@@ -198,12 +210,14 @@ class TestStockBasicTrim:
 
         main_mod._import_stock_basic()
 
-        dirty = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM stock_basic WHERE "
-            "name <> TRIM(name) OR board <> TRIM(board) OR "
-            "full_name <> TRIM(full_name) OR industry <> TRIM(industry) OR "
-            "region <> TRIM(region)"
-        ))
+        dirty = _last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM stock_basic WHERE "
+                "name <> TRIM(name) OR board <> TRIM(board) OR "
+                "full_name <> TRIM(full_name) OR industry <> TRIM(industry) OR "
+                "region <> TRIM(region)"
+            )
+        )
         assert dirty == "0", (
             f"all 5 text columns must be trimmed of leading/trailing U+0020, "
             f"got {dirty} dirty row(s)"
@@ -211,14 +225,20 @@ class TestStockBasicTrim:
 
         # byte-exact values (HEX is immune to invisible trailing spaces in
         # dolt's CSV text output)
-        row = _last(dolt_sql_csv(
-            "SELECT HEX(name), HEX(board), HEX(full_name), HEX(industry), "
-            "HEX(region) FROM stock_basic WHERE symbol='SH600000'"
-        ))
+        row = _last(
+            dolt_sql_csv(
+                "SELECT HEX(name), HEX(board), HEX(full_name), HEX(industry), "
+                "HEX(region) FROM stock_basic WHERE symbol='SH600000'"
+            )
+        )
         assert row == ",".join(
-            _hex(v) for v in [
-                "贵州茅台", "上证50", "贵州茅台酒股份有限公司",
-                "酿酒行业", "贵州",
+            _hex(v)
+            for v in [
+                "贵州茅台",
+                "上证50",
+                "贵州茅台酒股份有限公司",
+                "酿酒行业",
+                "贵州",
             ]
         ), f"SH600000 text columns must be trimmed, got {row!r}"
 
@@ -237,10 +257,9 @@ class TestStockBasicTrim:
 
         main_mod._import_stock_basic()
 
-        row = _last(dolt_sql_csv(
-            "SELECT HEX(name), HEX(board) FROM stock_basic "
-            "WHERE symbol='SH600000'"
-        ))
+        row = _last(
+            dolt_sql_csv("SELECT HEX(name), HEX(board) FROM stock_basic WHERE symbol='SH600000'")
+        )
         name_fw, board_fw = "贵州茅台\u3000", "上证50\u3000"
         assert row == f"{_hex(name_fw)},{_hex(board_fw)}", (
             "U+3000 must NOT be stripped by the TRIM fix — got {row!r}"
@@ -265,26 +284,52 @@ class TestStockBasicTrim:
 
         main_mod._import_stock_basic()
 
-        null_rows = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM stock_basic WHERE name IS NULL"
-        ))
+        null_rows = _last(dolt_sql_csv("SELECT COUNT(*) FROM stock_basic WHERE name IS NULL"))
         assert null_rows == "2", (
-            f"empty and whitespace-only name cells must land as NULL, "
-            f"got {null_rows}"
+            f"empty and whitespace-only name cells must land as NULL, got {null_rows}"
         )
 
 
 # ── fin_indicators (_import_fin_indicators + RPT_LICO_FN_CPD.csv) ──────
 
 _FIN_HEADER = [
-    "SECUCODE", "SECURITY_CODE", "REPORTDATE", "UPDATE_DATE", "NOTICE_DATE",
-    "DATATYPE", "QDATE", "EITIME", "DATAYEAR", "DATEMMDD",
-    "SECURITY_NAME_ABBR", "TRADE_MARKET", "TRADE_MARKET_CODE", "TRADE_MARKET_ZJG",
-    "SECURITY_TYPE", "SECURITY_TYPE_CODE", "PUBLISHNAME", "BOARD_CODE",
-    "BOARD_NAME", "ORI_BOARD_CODE", "ORG_CODE", "ISNEW", "BASIC_EPS",
-    "DEDUCT_BASIC_EPS", "TOTAL_OPERATE_INCOME", "PARENT_NETPROFIT",
-    "WEIGHTAVG_ROE", "BPS", "MGJYXJJE", "XSMLL", "YSTZ", "SJLTZ", "YSHZ",
-    "SJLHZ", "ZXGXL", "ASSIGNDSCRPT", "PAYYEAR",
+    "SECUCODE",
+    "SECURITY_CODE",
+    "REPORTDATE",
+    "UPDATE_DATE",
+    "NOTICE_DATE",
+    "DATATYPE",
+    "QDATE",
+    "EITIME",
+    "DATAYEAR",
+    "DATEMMDD",
+    "SECURITY_NAME_ABBR",
+    "TRADE_MARKET",
+    "TRADE_MARKET_CODE",
+    "TRADE_MARKET_ZJG",
+    "SECURITY_TYPE",
+    "SECURITY_TYPE_CODE",
+    "PUBLISHNAME",
+    "BOARD_CODE",
+    "BOARD_NAME",
+    "ORI_BOARD_CODE",
+    "ORG_CODE",
+    "ISNEW",
+    "BASIC_EPS",
+    "DEDUCT_BASIC_EPS",
+    "TOTAL_OPERATE_INCOME",
+    "PARENT_NETPROFIT",
+    "WEIGHTAVG_ROE",
+    "BPS",
+    "MGJYXJJE",
+    "XSMLL",
+    "YSTZ",
+    "SJLTZ",
+    "YSHZ",
+    "SJLHZ",
+    "ZXGXL",
+    "ASSIGNDSCRPT",
+    "PAYYEAR",
 ]
 
 
@@ -358,20 +403,21 @@ class TestFinIndicatorsTrim:
 
         main_mod._import_fin_indicators()
 
-        dirty = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM fin_indicators WHERE "
-            "name <> TRIM(name) OR industry <> TRIM(industry) OR "
-            "board_name <> TRIM(board_name)"
-        ))
-        assert dirty == "0", (
-            "name/industry/board_name must be trimmed, "
-            f"got {dirty} dirty row(s)"
+        dirty = _last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM fin_indicators WHERE "
+                "name <> TRIM(name) OR industry <> TRIM(industry) OR "
+                "board_name <> TRIM(board_name)"
+            )
         )
+        assert dirty == "0", f"name/industry/board_name must be trimmed, got {dirty} dirty row(s)"
 
-        row = _last(dolt_sql_csv(
-            "SELECT HEX(name), HEX(industry), HEX(board_name) "
-            "FROM fin_indicators WHERE symbol='SZ000001'"
-        ))
+        row = _last(
+            dolt_sql_csv(
+                "SELECT HEX(name), HEX(industry), HEX(board_name) "
+                "FROM fin_indicators WHERE symbol='SZ000001'"
+            )
+        )
         assert row == ",".join(_hex(v) for v in ["平安银行", "银行", "主板"]), (
             f"SZ000001 text columns must be trimmed, got {row!r}"
         )
@@ -390,10 +436,11 @@ class TestFinIndicatorsTrim:
 
         main_mod._import_fin_indicators()
 
-        row = _last(dolt_sql_csv(
-            "SELECT HEX(name), HEX(industry) FROM fin_indicators "
-            "WHERE symbol='SZ000001'"
-        ))
+        row = _last(
+            dolt_sql_csv(
+                "SELECT HEX(name), HEX(industry) FROM fin_indicators WHERE symbol='SZ000001'"
+            )
+        )
         name_fw, industry_fw = "平安银行\u3000", "银行\u3000"
         assert row == f"{_hex(name_fw)},{_hex(industry_fw)}", (
             "U+3000 must NOT be stripped by the TRIM fix — got {row!r}"
@@ -416,13 +463,14 @@ class TestFinIndicatorsTrim:
 
         main_mod._import_fin_indicators()
 
-        null_rows = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM fin_indicators WHERE "
-            "name IS NULL AND industry IS NULL AND board_name IS NULL"
-        ))
+        null_rows = _last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM fin_indicators WHERE "
+                "name IS NULL AND industry IS NULL AND board_name IS NULL"
+            )
+        )
         assert null_rows == "2", (
-            f"empty/whitespace-only name/industry/board_name must land as "
-            f"NULL, got {null_rows}"
+            f"empty/whitespace-only name/industry/board_name must land as NULL, got {null_rows}"
         )
 
     def test_additional_text_columns_are_trimmed(
@@ -454,33 +502,42 @@ class TestFinIndicatorsTrim:
 
         main_mod._import_fin_indicators()
 
-        dirty = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM fin_indicators WHERE "
-            "trade_market <> TRIM(trade_market) OR "
-            "trade_market_zjg <> TRIM(trade_market_zjg) OR "
-            "security_type <> TRIM(security_type) OR "
-            "data_type <> TRIM(data_type) OR "
-            "qdate <> TRIM(qdate) OR "
-            "date_label <> TRIM(date_label) OR "
-            "dividend_plan <> TRIM(dividend_plan) OR "
-            "dividend_year <> TRIM(dividend_year)"
-        ))
-        assert dirty == "0", (
-            "8 secondary text columns must be trimmed, "
-            f"got {dirty} dirty row(s)"
+        dirty = _last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM fin_indicators WHERE "
+                "trade_market <> TRIM(trade_market) OR "
+                "trade_market_zjg <> TRIM(trade_market_zjg) OR "
+                "security_type <> TRIM(security_type) OR "
+                "data_type <> TRIM(data_type) OR "
+                "qdate <> TRIM(qdate) OR "
+                "date_label <> TRIM(date_label) OR "
+                "dividend_plan <> TRIM(dividend_plan) OR "
+                "dividend_year <> TRIM(dividend_year)"
+            )
         )
+        assert dirty == "0", f"8 secondary text columns must be trimmed, got {dirty} dirty row(s)"
 
-        row = _last(dolt_sql_csv(
-            "SELECT HEX(trade_market), HEX(trade_market_zjg), "
-            "HEX(security_type), HEX(data_type), HEX(qdate), HEX(date_label), "
-            "HEX(dividend_plan), HEX(dividend_year) "
-            "FROM fin_indicators WHERE symbol='SZ000001'"
-        ))
-        assert row == ",".join(_hex(v) for v in [
-            "上海", "沪市", "一般企业", "年报", "2024Q4", "1231", "10派2元", "2024",
-        ]), (
-            f"SZ000001 secondary text columns must be trimmed, got {row!r}"
+        row = _last(
+            dolt_sql_csv(
+                "SELECT HEX(trade_market), HEX(trade_market_zjg), "
+                "HEX(security_type), HEX(data_type), HEX(qdate), HEX(date_label), "
+                "HEX(dividend_plan), HEX(dividend_year) "
+                "FROM fin_indicators WHERE symbol='SZ000001'"
+            )
         )
+        assert row == ",".join(
+            _hex(v)
+            for v in [
+                "上海",
+                "沪市",
+                "一般企业",
+                "年报",
+                "2024Q4",
+                "1231",
+                "10派2元",
+                "2024",
+            ]
+        ), f"SZ000001 secondary text columns must be trimmed, got {row!r}"
 
 
 # ── F10 tables (fin_balance_sheet / fin_cash_flow / fin_income) ────────
@@ -488,8 +545,12 @@ class TestFinIndicatorsTrim:
 # (the temp-table DDL carries REPORT_DATE but COLS does not).
 
 _F10_TEXT_COLS = [
-    "SECURITY_NAME_ABBR", "ORG_TYPE", "REPORT_TYPE", "REPORT_DATE_NAME",
-    "CURRENCY", "OPINION_TYPE",
+    "SECURITY_NAME_ABBR",
+    "ORG_TYPE",
+    "REPORT_TYPE",
+    "REPORT_DATE_NAME",
+    "CURRENCY",
+    "OPINION_TYPE",
 ]
 
 
@@ -548,26 +609,18 @@ class _F10TrimBase:
         importlib.import_module(self.MODULE).import_to_dolt(csv_path)
 
         dirty_where = " OR ".join(f"{c} <> TRIM({c})" for c in self.TEXT_COLS)
-        dirty = _last(dolt_sql_csv(
-            f"SELECT COUNT(*) FROM {self.TABLE} WHERE {dirty_where}"
-        ))
+        dirty = _last(dolt_sql_csv(f"SELECT COUNT(*) FROM {self.TABLE} WHERE {dirty_where}"))
         assert dirty == "0", (
             f"{self.TEXT_COLS} must all be trimmed of leading/trailing "
             f"U+0020, got {dirty} dirty row(s)"
         )
 
         hex_cols = ", ".join(f"HEX({c})" for c in self.TEXT_COLS)
-        row = _last(dolt_sql_csv(
-            f"SELECT {hex_cols} FROM {self.TABLE} WHERE symbol='SZ000001'"
-        ))
+        row = _last(dolt_sql_csv(f"SELECT {hex_cols} FROM {self.TABLE} WHERE symbol='SZ000001'"))
         # TRIM_EXPECTED values are the PADDED inputs; the assertion target is
         # the trimmed form (TRIM() strips U+0020 from both ends).
-        expected = ",".join(
-            _hex(self.TRIM_EXPECTED[c].strip()) for c in self.TEXT_COLS
-        )
-        assert row == expected, (
-            f"byte-exact trimmed values expected {expected!r}, got {row!r}"
-        )
+        expected = ",".join(_hex(self.TRIM_EXPECTED[c].strip()) for c in self.TEXT_COLS)
+        assert row == expected, f"byte-exact trimmed values expected {expected!r}, got {row!r}"
 
     def test_fullwidth_space_is_preserved(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -590,10 +643,12 @@ class _F10TrimBase:
 
         importlib.import_module(self.MODULE).import_to_dolt(csv_path)
 
-        row = _last(dolt_sql_csv(
-            f"SELECT HEX(SECURITY_NAME_ABBR), HEX(OPINION_TYPE) "
-            f"FROM {self.TABLE} WHERE symbol='SZ000001'"
-        ))
+        row = _last(
+            dolt_sql_csv(
+                f"SELECT HEX(SECURITY_NAME_ABBR), HEX(OPINION_TYPE) "
+                f"FROM {self.TABLE} WHERE symbol='SZ000001'"
+            )
+        )
         name_fw, opinion_fw = "平安银行\u3000", "标准无保留意见\u3000"
         assert row == f"{_hex(name_fw)},{_hex(opinion_fw)}", (
             "U+3000 must NOT be stripped by the TRIM fix — got {row!r}"
@@ -612,20 +667,16 @@ class _F10TrimBase:
             csv_path,
             [
                 _f10_row(self._header),
-                _f10_row(self._header, report_date="2023-12-31",
-                         SECURITY_NAME_ABBR="   "),
+                _f10_row(self._header, report_date="2023-12-31", SECURITY_NAME_ABBR="   "),
             ],
         )
 
         importlib.import_module(self.MODULE).import_to_dolt(csv_path)
 
         null_where = " AND ".join(f"{c} IS NULL" for c in self.TEXT_COLS)
-        null_rows = _last(dolt_sql_csv(
-            f"SELECT COUNT(*) FROM {self.TABLE} WHERE {null_where}"
-        ))
+        null_rows = _last(dolt_sql_csv(f"SELECT COUNT(*) FROM {self.TABLE} WHERE {null_where}"))
         assert null_rows == "2", (
-            f"empty/whitespace-only {self.TEXT_COLS} must land as NULL, "
-            f"got {null_rows}"
+            f"empty/whitespace-only {self.TEXT_COLS} must land as NULL, got {null_rows}"
         )
 
 
@@ -675,7 +726,10 @@ class TestIncomeTrim(_F10TrimBase):
 # ── institution_survey (gk-keyed dedup + TRIM) ─────────────────────────
 
 _SVY_HEADER = [
-    "SECUCODE", "SECURITY_CODE", "RECEIVE_START_DATE", "RECEIVE_OBJECT",
+    "SECUCODE",
+    "SECURITY_CODE",
+    "RECEIVE_START_DATE",
+    "RECEIVE_OBJECT",
     "RECEIVE_WAY_EXPLAIN",
 ]
 
@@ -720,16 +774,13 @@ class TestInstitutionSurveyTrim:
 
         import_to_dolt(csv_path)
 
-        count = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM institution_survey WHERE symbol='SZ000001'"
-        ))
-        assert count == "1", (
-            "'机构专用' and '机构专用 ' (U+0020) must collapse into one "
-            f"group, got {count} rows"
+        count = _last(
+            dolt_sql_csv("SELECT COUNT(*) FROM institution_survey WHERE symbol='SZ000001'")
         )
-        row = _last(dolt_sql_csv(
-            "SELECT HEX(org_name), HEX(survey_type) FROM institution_survey"
-        ))
+        assert count == "1", (
+            f"'机构专用' and '机构专用 ' (U+0020) must collapse into one group, got {count} rows"
+        )
+        row = _last(dolt_sql_csv("SELECT HEX(org_name), HEX(survey_type) FROM institution_survey"))
         assert row == f"{_hex('机构专用')},{_hex('电话会议')}", (
             f"merged row must be byte-exact trimmed, got {row!r}"
         )
@@ -754,22 +805,21 @@ class TestInstitutionSurveyTrim:
 
         import_to_dolt(csv_path)
 
-        count = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM institution_survey WHERE symbol='SZ000001'"
-        ))
+        count = _last(
+            dolt_sql_csv("SELECT COUNT(*) FROM institution_survey WHERE symbol='SZ000001'")
+        )
         assert count == "2", (
-            "U+3000 variants must NOT be merged by a pure-TRIM fix, "
-            f"got {count} rows"
+            f"U+3000 variants must NOT be merged by a pure-TRIM fix, got {count} rows"
         )
         org_hexes = sorted(
             row["org_hex"]
-            for row in csv.DictReader(io.StringIO(dolt_sql_csv(
-                "SELECT HEX(org_name) AS org_hex FROM institution_survey"
-            )))
+            for row in csv.DictReader(
+                io.StringIO(dolt_sql_csv("SELECT HEX(org_name) AS org_hex FROM institution_survey"))
+            )
         )
-        assert org_hexes == sorted(
-            [_hex("机构专用\u3000"), _hex("机构专用")]
-        ), f"both org_name variants must be preserved verbatim, got {org_hexes!r}"
+        assert org_hexes == sorted([_hex("机构专用\u3000"), _hex("机构专用")]), (
+            f"both org_name variants must be preserved verbatim, got {org_hexes!r}"
+        )
 
     def test_empty_receive_object_lands_empty_string(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -798,10 +848,12 @@ class TestInstitutionSurveyTrim:
             "both NULL-org rows share one (symbol, date, HEX(NULL)) group — "
             f"must land as a single row, got {count}"
         )
-        empty = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM institution_survey "
-            "WHERE org_name = '' AND org_name IS NOT NULL"
-        ))
+        empty = _last(
+            dolt_sql_csv(
+                "SELECT COUNT(*) FROM institution_survey "
+                "WHERE org_name = '' AND org_name IS NOT NULL"
+            )
+        )
         assert empty == "1", (
             "empty/whitespace-only RECEIVE_OBJECT must land as org_name='' "
             f"(Dolt MAX-over-NULL quirk), got {empty} row(s) matching"
@@ -811,9 +863,15 @@ class TestInstitutionSurveyTrim:
 # ── block_trade (SELECT DISTINCT + TRIM) ───────────────────────────────
 
 _BT_HEADER = [
-    "SECUCODE", "SECURITY_CODE", "TRADE_DATE",
-    "DEAL_PRICE", "DEAL_VOLUME", "DEAL_AMT",
-    "BUYER_NAME", "SELLER_NAME", "PREMIUM_RATIO",
+    "SECUCODE",
+    "SECURITY_CODE",
+    "TRADE_DATE",
+    "DEAL_PRICE",
+    "DEAL_VOLUME",
+    "DEAL_AMT",
+    "BUYER_NAME",
+    "SELLER_NAME",
+    "PREMIUM_RATIO",
 ]
 
 
@@ -822,8 +880,15 @@ def _bt_row(
     seller: str = "国泰君安",
 ) -> list[str]:
     return [
-        "000001.SZ", "000001", "2024-12-31 00:00:00",
-        "12.5", "240000", "3000000", buyer, seller, "0.06",
+        "000001.SZ",
+        "000001",
+        "2024-12-31 00:00:00",
+        "12.5",
+        "240000",
+        "3000000",
+        buyer,
+        seller,
+        "0.06",
     ]
 
 
@@ -856,8 +921,7 @@ class TestBlockTradeTrim:
 
         count = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade"))
         assert count == "1", (
-            "rows differing only in buyer U+0020 padding must merge into "
-            f"one, got {count} rows"
+            f"rows differing only in buyer U+0020 padding must merge into one, got {count} rows"
         )
         row = _last(dolt_sql_csv("SELECT HEX(buyer), HEX(seller) FROM block_trade"))
         assert row == f"{_hex('华泰证券')},{_hex('国泰君安')}", (
@@ -881,8 +945,7 @@ class TestBlockTradeTrim:
 
         count = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade"))
         assert count == "1", (
-            f"rows differing only in seller U+0020 padding must merge into "
-            f"one, got {count} rows"
+            f"rows differing only in seller U+0020 padding must merge into one, got {count} rows"
         )
         row = _last(dolt_sql_csv("SELECT HEX(buyer), HEX(seller) FROM block_trade"))
         assert row == f"{_hex('华泰证券')},{_hex('国泰君安')}", (
@@ -907,18 +970,17 @@ class TestBlockTradeTrim:
 
         count = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade"))
         assert count == "2", (
-            "U+3000 buyer variants must NOT be merged by a pure-TRIM fix, "
-            f"got {count} rows"
+            f"U+3000 buyer variants must NOT be merged by a pure-TRIM fix, got {count} rows"
         )
         buyer_hexes = sorted(
             row["buyer_hex"]
-            for row in csv.DictReader(io.StringIO(dolt_sql_csv(
-                "SELECT HEX(buyer) AS buyer_hex FROM block_trade"
-            )))
+            for row in csv.DictReader(
+                io.StringIO(dolt_sql_csv("SELECT HEX(buyer) AS buyer_hex FROM block_trade"))
+            )
         )
-        assert buyer_hexes == sorted(
-            [_hex("华泰证券\u3000"), _hex("华泰证券")]
-        ), f"both buyer variants must be preserved verbatim, got {buyer_hexes!r}"
+        assert buyer_hexes == sorted([_hex("华泰证券\u3000"), _hex("华泰证券")]), (
+            f"both buyer variants must be preserved verbatim, got {buyer_hexes!r}"
+        )
 
     def test_empty_buyer_lands_single_empty_string(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -937,12 +999,9 @@ class TestBlockTradeTrim:
 
         count = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade"))
         assert count == "1", (
-            "NULL buyers must collapse via SELECT DISTINCT into one row — "
-            f"got {count} rows"
+            f"NULL buyers must collapse via SELECT DISTINCT into one row — got {count} rows"
         )
-        empty = _last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM block_trade WHERE buyer = ''"
-        ))
+        empty = _last(dolt_sql_csv("SELECT COUNT(*) FROM block_trade WHERE buyer = ''"))
         assert empty == "1", (
             "empty/whitespace-only BUYER_NAME must land as buyer='' "
             f"(no whitespace, no NULL), got {empty} row(s) matching"

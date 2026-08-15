@@ -39,6 +39,9 @@ __all__ = [
     "dolt_sql",
     "dolt_sql_csv",
     "dolt_table_import",
+    "drop_name_en_mapping",
+    "load_name_en_mapping",
+    "name_en_mapping_path",
     "fetch_paginated",
     "flatten_record",
     "Progress",
@@ -341,6 +344,51 @@ def dolt_table_import(
     if result.returncode != 0:
         print(f"  dolt import error: {result.stderr.strip()}", file=sys.stderr)
     return result.returncode == 0
+
+
+# Name-en mapping CSV (epic #266 B1): section,key,value three-section table
+# (index symbol → name_en / industry zh → industry_en / concept zh → name_en).
+# Path injection hook honoured by tests (ref #236): COMPASS_NAME_EN_MAPPING.
+NAME_EN_MAPPING_ENV = "COMPASS_NAME_EN_MAPPING"
+NAME_EN_MAPPING_TMP = "_tmp_name_en"
+NAME_EN_MAPPING_DDL = (
+    "CREATE TABLE _tmp_name_en (section VARCHAR(20), `key` VARCHAR(100), value VARCHAR(100))"
+)
+
+
+def name_en_mapping_path() -> Path:
+    """Resolve the name-en mapping CSV path (env hook or checked-in default)."""
+    env = os.environ.get(NAME_EN_MAPPING_ENV)
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parent / "name_en_mapping.csv"
+
+
+def load_name_en_mapping(tmp_name: str = NAME_EN_MAPPING_TMP) -> bool:
+    """Stage the name-en mapping CSV into a Dolt temp table; True when loaded.
+
+    Reads ``COMPASS_NAME_EN_MAPPING`` (tests) or the checked-in
+    ``collectors/name_en_mapping.csv``; a missing file degrades to False and
+    importers proceed with every en column NULL (epic #266 decision 4). The
+    staging table ``_tmp_name_en`` carries ``(section, key, value)`` and is
+    dropped by the caller after the JOIN. A stale staging table from a
+    previous failed run is dropped first — otherwise the CREATE would fail
+    and every en column would silently degrade to NULL (review P1-1).
+    """
+    path = name_en_mapping_path()
+    if not path.exists():
+        print(f"  name_en_mapping not found ({path}); en columns stay NULL", file=sys.stderr)
+        return False
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
+    if not dolt_table_import(tmp_name, path, create_sql=NAME_EN_MAPPING_DDL):
+        print("  name_en_mapping import failed; en columns stay NULL", file=sys.stderr)
+        return False
+    return True
+
+
+def drop_name_en_mapping(tmp_name: str = NAME_EN_MAPPING_TMP) -> None:
+    """Drop the name-en mapping staging table (caller cleanup)."""
+    dolt_sql(f"DROP TABLE IF EXISTS {tmp_name}")
 
 
 def last_report_date(dolt_table: str) -> str:

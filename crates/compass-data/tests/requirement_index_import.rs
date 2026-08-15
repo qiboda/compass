@@ -34,7 +34,7 @@ const INDEX_DAILY_DDL: &str = "CREATE TABLE index_daily (\
 
 const INDEX_BASIC_DDL: &str = "CREATE TABLE index_basic (\
      symbol VARCHAR(20) NOT NULL PRIMARY KEY, \
-     name VARCHAR(100), index_type VARCHAR(20))";
+     name VARCHAR(100), name_en VARCHAR(100), index_type VARCHAR(20))";
 
 fn setup_dolt(dir: &Path) {
     for (key, val) in [

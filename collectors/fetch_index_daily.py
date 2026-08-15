@@ -44,8 +44,10 @@ from common import (
     Throttle,
     csv_dir,
     dolt_sql_csv,
+    drop_name_en_mapping,
     import_replace_table,
     last_report_date,
+    load_name_en_mapping,
     write_csv,
 )
 
@@ -84,7 +86,13 @@ _MAX_ATTEMPTS = 3
 
 # kline 11 fields: 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
 _KLINE_FIELDS = (
-    "trade_date", "open", "close", "high", "low", "volume", "amount",
+    "trade_date",
+    "open",
+    "close",
+    "high",
+    "low",
+    "volume",
+    "amount",
 )
 
 # Hardcoded mainstream official index whitelist (akshare index_zh_em style,
@@ -142,7 +150,8 @@ BASIC_DDL = """\
 CREATE TABLE IF NOT EXISTS index_basic (
     symbol      VARCHAR(20) NOT NULL PRIMARY KEY,
     name        VARCHAR(100),
-    index_type  VARCHAR(20)
+    index_type  VARCHAR(20),
+    name_en     VARCHAR(100)
 )"""
 
 DAILY_INSERT_COLS = (
@@ -176,7 +185,10 @@ def _num(value: str) -> int | float | str:
 
 
 def _kline_records(
-    symbol: str, index_type: str, klines: list[str], today: date,
+    symbol: str,
+    index_type: str,
+    klines: list[str],
+    today: date,
 ) -> list[dict[str, object]]:
     """Map kline CSV rows (date,o,c,h,l,vol,amt,...) to daily records.
 
@@ -194,7 +206,9 @@ def _kline_records(
         if trade_date > today_iso:
             continue
         record: dict[str, object] = {
-            "symbol": symbol, "trade_date": trade_date, "index_type": index_type,
+            "symbol": symbol,
+            "trade_date": trade_date,
+            "index_type": index_type,
         }
         for i, field in enumerate(_KLINE_FIELDS[1:], start=1):
             record[field] = _num(parts[i])
@@ -283,8 +297,12 @@ async def fetch_board_list(session: AsyncSession, throttle: Throttle) -> list[tu
             collected += len(diff)
             for item in diff:
                 code = item.get("f12")
-                if not isinstance(code, str) or len(code) != 6 or not code.startswith("BK") \
-                        or not code[2:].isdigit():
+                if (
+                    not isinstance(code, str)
+                    or len(code) != 6
+                    or not code.startswith("BK")
+                    or not code[2:].isdigit()
+                ):
                     continue
                 if code in seen:
                     continue
@@ -298,7 +316,9 @@ async def fetch_board_list(session: AsyncSession, throttle: Throttle) -> list[tu
 
 
 async def fetch_kline(
-    session: AsyncSession, throttle: Throttle, secid: str,
+    session: AsyncSession,
+    throttle: Throttle,
+    secid: str,
 ) -> tuple[list[str], str] | None:
     """Fetch full-history daily klines for one secid.
 
@@ -497,22 +517,52 @@ def _import_index_daily(csv_path: Path) -> int:
 
 
 def _import_index_basic(csv_path: Path) -> int:
-    """Merge-import the index_basic CSV (PK symbol, names for the picker)."""
+    """Merge-import the index_basic CSV (PK symbol, names for the picker).
+
+    Epic #266 B1 + review P1-1: when the name-en mapping is available the
+    INSERT LEFT-JOINs it twice — by ``symbol`` against the ``index`` section
+    (official indexes) and by ``name`` against the ``concept`` section
+    (concept/industry boards, which carry BK symbols the index section does
+    not cover). The symbol hit wins via COALESCE; a double LEFT JOIN keeps
+    one row per CSV row (no inflation). Unmapped rows → NULL (GUI falls back
+    to Chinese). A missing mapping degrades gracefully — the base import
+    always lands.
+    """
     print("[import index_basic]", file=sys.stderr)
-    return import_replace_table(
-        csv_path=csv_path,
-        tmp_name="_tmp_ixb",
-        ddl=BASIC_DDL,
-        insert_sql="""
-            INSERT IGNORE INTO index_basic (symbol, name, index_type)
-            SELECT symbol, name, index_type
-            FROM _tmp_ixb
-        """,
-        merge=True,
-        dolt_table="index_basic",
-        source_label=SOURCE,
-        last_report_expr="CURDATE()",
-    )
+    mapping = load_name_en_mapping()
+    try:
+        if mapping:
+            joins = """
+                LEFT JOIN _tmp_name_en m1
+                  ON m1.section = 'index' AND m1.`key` = t.symbol
+                LEFT JOIN _tmp_name_en m2
+                  ON m2.section = 'concept' AND m2.`key` = t.name
+            """
+            insert_cols = "(symbol, name, index_type, name_en)"
+            select_cols = (
+                "t.symbol, t.name, t.index_type, COALESCE(m1.value, m2.value)"
+            )
+        else:
+            joins = ""
+            insert_cols = "(symbol, name, index_type)"
+            select_cols = "t.symbol, t.name, t.index_type"
+        return import_replace_table(
+            csv_path=csv_path,
+            tmp_name="_tmp_ixb",
+            ddl=BASIC_DDL,
+            insert_sql=f"""
+                INSERT IGNORE INTO index_basic {insert_cols}
+                SELECT {select_cols}
+                FROM _tmp_ixb t
+                {joins}
+            """,
+            merge=True,
+            dolt_table="index_basic",
+            source_label=SOURCE,
+            last_report_expr="CURDATE()",
+        )
+    finally:
+        drop_name_en_mapping()
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
@@ -611,6 +661,7 @@ def _dolt_close(dolt_dir: Path, symbol: str, trade_date: str) -> float | None:
 
 
 if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest
+
     async def _main() -> None:
         p = argparse.ArgumentParser(description="Fetch A-share index daily bars")
         p.add_argument("--import-after", action="store_true", help="import into Dolt after fetch")

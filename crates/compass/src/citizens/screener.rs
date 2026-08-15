@@ -261,7 +261,12 @@ impl ScreenerPanel {
                 change: Some(row.change_20d as f32),
             },
             DataCell::Count(row.market_cap.round() as usize),
-            DataCell::Text(row.industry.clone()),
+            // Industry text resolves the locale display name (epic #266 B3f).
+            DataCell::Text(crate::i18n_name::display_name(
+                &compass_i18n::locale(),
+                &row.industry,
+                row.industry_en.as_deref(),
+            )),
         ]
     }
 
@@ -305,6 +310,7 @@ impl ScreenerPanel {
                         .description(&compass_i18n::t!("screener.builder.empty_desc"))
                         .show(ui);
                     } else {
+                        let industry_names = shared_state.industry_names.get();
                         render_group_items(
                             ui,
                             &tokens,
@@ -313,6 +319,7 @@ impl ScreenerPanel {
                             &mut self.builder_multi_selects,
                             industries,
                             boards,
+                            &industry_names,
                         );
                     }
                     ui.add_space(tokens.spacing.sm);
@@ -489,6 +496,7 @@ fn render_root_header(
 /// pattern (ref #220 — label+control never split across rows), nested group
 /// frames occupy full-width rows and recurse. Removals are collected and
 /// applied after the loop (borrow-safe with the `iter_mut` walk).
+#[allow(clippy::too_many_arguments)]
 fn render_group_items(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -497,6 +505,7 @@ fn render_group_items(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) {
     let mut to_remove: Vec<usize> = Vec::new();
     ui.horizontal_wrapped(|ui| {
@@ -504,9 +513,16 @@ fn render_group_items(
         for (index, item) in items.iter_mut().enumerate() {
             let item_path = format!("{path}_{index}");
             let remove = match item {
-                CondItem::Leaf(leaf) => {
-                    render_leaf_row(ui, tokens, &item_path, leaf, ms_map, industries, boards)
-                }
+                CondItem::Leaf(leaf) => render_leaf_row(
+                    ui,
+                    tokens,
+                    &item_path,
+                    leaf,
+                    ms_map,
+                    industries,
+                    boards,
+                    industry_names,
+                ),
                 CondItem::Group(group) => {
                     // Full-width nested container: start on a fresh row so the
                     // frame does not begin mid-row after preceding cards. The
@@ -526,7 +542,14 @@ fn render_group_items(
                         )),
                         |ui| {
                             render_sub_group(
-                                ui, tokens, &item_path, group, ms_map, industries, boards,
+                                ui,
+                                tokens,
+                                &item_path,
+                                group,
+                                ms_map,
+                                industries,
+                                boards,
+                                industry_names,
                             )
                         },
                     )
@@ -546,6 +569,7 @@ fn render_group_items(
 
 /// One leaf card row: type dropdown + kind parameters + negate + delete as a
 /// single atomic group (ref #220). Returns whether the card was deleted.
+#[allow(clippy::too_many_arguments)]
 fn render_leaf_row(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -554,6 +578,7 @@ fn render_leaf_row(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) -> bool {
     if leaf.kind == LeafKind::Unknown {
         return render_unknown_row(ui, tokens, leaf);
@@ -589,7 +614,16 @@ fn render_leaf_row(
                 leaf.negated = false;
                 prune_ms_prefix(ms_map, &format!("{path}_"));
             }
-            remove |= render_leaf_params(ui, tokens, path, leaf, ms_map, industries, boards);
+            remove |= render_leaf_params(
+                ui,
+                tokens,
+                path,
+                leaf,
+                ms_map,
+                industries,
+                boards,
+                industry_names,
+            );
             if IconButton::new(tokens, egui_phosphor::regular::EXCLUDE)
                 .tooltip(&compass_i18n::t!("screener.builder.negate_tooltip"))
                 .small()
@@ -652,6 +686,7 @@ fn render_unknown_row(ui: &mut egui::Ui, tokens: &ThemeTokens, leaf: &mut CondLe
 
 /// Kind parameter controls (design §3-5). Returns whether the card was
 /// deleted (only the Delisted checkbox can remove its card, by unchecking).
+#[allow(clippy::too_many_arguments)]
 fn render_leaf_params(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -660,13 +695,21 @@ fn render_leaf_params(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) -> bool {
     let mut remove = false;
     match &mut leaf.params {
         LeafParams::MultiSelect(v) => match leaf.kind {
-            LeafKind::Industry => {
-                render_multi_select(ui, tokens, path, "industry", v, ms_map, industries)
-            }
+            LeafKind::Industry => render_multi_select_localized(
+                ui,
+                tokens,
+                path,
+                "industry",
+                v,
+                ms_map,
+                industries,
+                industry_names,
+            ),
             LeafKind::Exchange => {
                 let exchanges = ["SH", "SZ", "BJ"].map(String::from);
                 render_multi_select(ui, tokens, path, "exchange", v, ms_map, &exchanges)
@@ -828,9 +871,87 @@ fn render_multi_select(
     false
 }
 
+/// Locale-aware industry multi-select (epic #266 B3f, SC1/SC2): in the
+/// English locale the option *labels* resolve through the industry zh→en map
+/// while the *stored values* stay the Chinese keys the engine filter matches
+/// on. Selected labels are mapped back to their zh keys after a change, so
+/// the selection anchor survives locale flips. Unmapped industries keep
+/// their Chinese label end-to-end (label == key, reverse lookup passes
+/// through).
+#[allow(clippy::too_many_arguments)]
+fn render_multi_select_localized(
+    ui: &mut egui::Ui,
+    tokens: &ThemeTokens,
+    path: &str,
+    slug: &str,
+    values: &mut Vec<String>,
+    ms_map: &mut HashMap<String, MultiSelect>,
+    options: &[String],
+    en_map: &std::collections::HashMap<String, String>,
+) -> bool {
+    let locale: &str = &compass_i18n::locale();
+    let key = format!("{path}_{slug}");
+    let entry = ms_map
+        .entry(key.clone())
+        .or_insert_with(|| MultiSelect::new(tokens, std::iter::empty::<&str>()).id_salt(&key));
+    // An English label shared by several zh keys (e.g. Mining ← {B 采矿业,
+    // 采矿业}, review P1-1) cannot round-trip uniquely — such labels fall
+    // back to their zh form so the stored filter keys stay exact.
+    let shared_en: std::collections::HashSet<&str> = {
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for en in en_map.values() {
+            *counts.entry(en.as_str()).or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .filter(|(_, c)| *c > 1)
+            .map(|(en, _)| en)
+            .collect()
+    };
+    let label_of = |zh: &str| -> String {
+        match en_map.get(zh) {
+            Some(en) if !shared_en.contains(en.as_str()) => en.clone(),
+            _ => zh.to_string(),
+        }
+    };
+    if locale == "en" {
+        entry.options = options.iter().map(|zh| label_of(zh)).collect();
+        entry.selected = values.iter().map(|zh| label_of(zh)).collect();
+    } else {
+        entry.options = options.to_vec();
+        entry.selected = values.clone();
+    }
+    let changed = entry.show(ui);
+    if changed {
+        if locale == "en" {
+            // Only non-conflicting labels appear as English — the reverse
+            // map is therefore one-to-one for everything the user can see.
+            let reverse: std::collections::HashMap<&str, &str> = en_map
+                .iter()
+                .filter(|(_, en)| !shared_en.contains(en.as_str()))
+                .map(|(k, v)| (v.as_str(), k.as_str()))
+                .collect();
+            *values = entry
+                .selected
+                .iter()
+                .map(|label| {
+                    reverse
+                        .get(label.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| label.clone())
+                })
+                .collect();
+        } else {
+            *values = entry.selected.clone();
+        }
+    }
+    false
+}
+
 /// Nested AND/OR group container (design §3): lightweight `Frame` (never a
 /// Card-in-Card) with a header row (segmented + delete) and a recursive item
 /// list. Returns whether the group was deleted.
+#[allow(clippy::too_many_arguments)]
 fn render_sub_group(
     ui: &mut egui::Ui,
     tokens: &ThemeTokens,
@@ -839,6 +960,7 @@ fn render_sub_group(
     ms_map: &mut HashMap<String, MultiSelect>,
     industries: &[String],
     boards: &[String],
+    industry_names: &std::collections::HashMap<String, String>,
 ) -> bool {
     let c = &tokens.color;
     let mut remove = false;
@@ -886,6 +1008,7 @@ fn render_sub_group(
                 ms_map,
                 industries,
                 boards,
+                industry_names,
             );
         }
         ui.add_space(tokens.spacing.xs);
@@ -1464,6 +1587,7 @@ mod tests {
 
     fn sample_row(symbol: &str, name: &str, cap: f64) -> compass_types::ScreenerRow {
         compass_types::ScreenerRow {
+            industry_en: None,
             symbol: symbol.to_string(),
             name: name.to_string(),
             latest_price: 10.0,
@@ -2730,5 +2854,259 @@ mod tests {
             root.is_empty(),
             "empty And merges to nothing without panicking"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // epic #266 B3f — adversarial (subagent): industry multi-select locale
+    // display + zh-key storage stability (SC1/SC2), and the results-table
+    // industry column (SC3/SC4). The multi-select lifecycle is asserted at
+    // the frame level: en locale maps option/selected labels to English while
+    // the ZH KEY stored in `values` must survive a locale frame untouched
+    // (egui_kittest cannot click inside the popup Area, per compass-ui
+    // multi_select.rs, so only the no-changed frame — the selection anchor —
+    // is verifiable here).
+    // ------------------------------------------------------------------
+
+    fn render_industry_ms(
+        ui: &mut egui::Ui,
+        values: &mut Vec<String>,
+        ms_map: &mut HashMap<String, MultiSelect>,
+        options: &[String],
+        en_map: &std::collections::HashMap<String, String>,
+    ) {
+        let tokens = ThemeTokens::dark();
+        let _ = render_multi_select_localized(
+            ui,
+            &tokens,
+            "cond_root",
+            "industry",
+            values,
+            ms_map,
+            options,
+            en_map,
+        );
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_maps_zh_to_en_labels_and_keeps_zh_key() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec!["白酒".to_string(), "银行".to_string()];
+        let en_map = std::collections::HashMap::from([
+            ("白酒".to_string(), "Alcohol".to_string()),
+            ("银行".to_string(), "Banks".to_string()),
+        ]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["白酒".to_string()];
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS must be created");
+        assert_eq!(
+            entry.options,
+            vec!["Alcohol".to_string(), "Banks".to_string()],
+            "SC1: en locale must render an en label for every mapped industry key"
+        );
+        assert_eq!(
+            entry.selected,
+            vec!["Alcohol".to_string()],
+            "SC2: the stored zh key must display as its en label in en locale"
+        );
+        assert_eq!(
+            values,
+            vec!["白酒".to_string()],
+            "SC2: a no-change en frame must leave the stored zh key untouched"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_anchor_survives_locale_flip() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec!["白酒".to_string(), "银行".to_string()];
+        let en_map = std::collections::HashMap::from([("白酒".to_string(), "Alcohol".to_string())]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["白酒".to_string()];
+
+        // Frame 1: en locale — values shown as en labels, zh key retained.
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+        assert_eq!(values, vec!["白酒".to_string()]);
+
+        // Frame 2: flip to zh and render again — the selection anchor "白酒"
+        // must survive; the zh branch re-seeds options/selected from zh keys.
+        compass_i18n::set_locale("zh");
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+        assert_eq!(
+            values,
+            vec!["白酒".to_string()],
+            "SC2: the zh-key selection anchor must survive a locale flip"
+        );
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS persists");
+        assert_eq!(
+            entry.options,
+            vec!["白酒".to_string(), "银行".to_string()],
+            "SC2/zh: non-en renders the raw zh option labels"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_unmapped_stays_zh_in_en_locale() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec!["白酒".to_string(), "未收录行业".to_string()];
+        let en_map = std::collections::HashMap::from([("白酒".to_string(), "Alcohol".to_string())]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["未收录行业".to_string()];
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS must be created");
+        assert_eq!(
+            entry.options,
+            vec!["Alcohol".to_string(), "未收录行业".to_string()],
+            "SC1/SC4: an unmapped industry keeps its Chinese label in en locale"
+        );
+        assert_eq!(
+            entry.selected,
+            vec!["未收录行业".to_string()],
+            "SC4: an unmapped selected value stays Chinese (label == key, reverse map passes through)"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_dropdown_shared_en_label_falls_back_to_zh() {
+        // P1-1 regression (review): two zh keys mapping to ONE English label
+        // (real data: Mining <- {B 采矿业, 采矿业}) must BOTH display their
+        // Chinese labels — the shared English label cannot round-trip to a
+        // unique zh key, so it is excluded from the display and the reverse map.
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+        let options: Vec<String> = vec![
+            "B 采矿业".to_string(),
+            "采矿业".to_string(),
+            "银行".to_string(),
+        ];
+        let en_map = std::collections::HashMap::from([
+            ("B 采矿业".to_string(), "Mining".to_string()),
+            ("采矿业".to_string(), "Mining".to_string()),
+            ("银行".to_string(), "Banks".to_string()),
+        ]);
+        let mut ms_map: HashMap<String, MultiSelect> = HashMap::new();
+        let mut values = vec!["B 采矿业".to_string()];
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                render_industry_ms(ui, &mut values, &mut ms_map, &options, &en_map);
+            });
+            harness.fit_contents();
+            harness.step();
+        }
+
+        let entry = ms_map
+            .get("cond_root_industry")
+            .expect("localized industry MS must be created");
+        assert_eq!(
+            entry.options,
+            vec![
+                "B 采矿业".to_string(),
+                "采矿业".to_string(),
+                "Banks".to_string(),
+            ],
+            "P1-1: shared-English zh keys must display zh (Mining excluded); \
+             one-to-one keys still display en"
+        );
+        assert_eq!(
+            entry.selected,
+            vec!["B 采矿业".to_string()],
+            "P1-1: a shared-English selected value displays zh"
+        );
+        assert_eq!(
+            values,
+            vec!["B 采矿业".to_string()],
+            "P1-1: no-change frame must leave the stored zh key untouched"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
+    #[test]
+    fn adversarial_270_screener_table_industry_column_resolves_locale() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("en");
+
+        // SC3: en locale + mapped industry → English column text.
+        let mapped = compass_types::ScreenerRow {
+            industry_en: Some("Banks".to_string()),
+            symbol: "SH600000".to_string(),
+            name: "浦发银行".to_string(),
+            latest_price: 10.0,
+            change_20d: 5.0,
+            market_cap: 100.0,
+            industry: "银行".to_string(),
+        };
+        assert_eq!(
+            ScreenerPanel::row_cells(&mapped)[5],
+            DataCell::Text("Banks".to_string()),
+            "SC3: en locale must render the mapped English industry in the table column"
+        );
+
+        // SC4: unmapped industry (None) → Chinese, never blank/panic.
+        let unmapped = compass_types::ScreenerRow {
+            industry_en: None,
+            symbol: "SH600000".to_string(),
+            name: "浦发银行".to_string(),
+            latest_price: 10.0,
+            change_20d: 5.0,
+            market_cap: 100.0,
+            industry: "银行".to_string(),
+        };
+        assert_eq!(
+            ScreenerPanel::row_cells(&unmapped)[5],
+            DataCell::Text("银行".to_string()),
+            "SC4: an unmapped industry stays Chinese in the table column"
+        );
+        compass_i18n::set_locale("zh");
     }
 }
