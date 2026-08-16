@@ -589,7 +589,7 @@ fn rs_score_from_percentile(pct: f64) -> f64 {
     (pct / 0.9).min(1.0) * 35.0
 }
 
-/// Score the theme module (locked formula, `None` = no concept membership).
+/// Score the theme module (locked formula, `None` = no industry classification).
 fn score_theme(best: Option<&ThemeComponents>) -> (f64, Vec<SepaFactor>) {
     let Some(c) = best else {
         return (
@@ -998,7 +998,7 @@ fn score_symbol(
 }
 
 /// RS percentile for one symbol: sector ranking when its most-representative
-/// concept has ≥5 members with computable peers, whole-market ranking
+/// industry has ≥5 members with computable peers, whole-market ranking
 /// otherwise (locked rule).
 fn rs_percentile(symbol: &str, series: &[&CrossSectionBar], ctx: &MarketContext) -> f64 {
     rs_score(series, &rs_peers_for(symbol, ctx))

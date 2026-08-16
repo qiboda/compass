@@ -84,7 +84,7 @@ pub struct StockBasic {
 /// Read from `index_basic.parquet` (symbol/name/index_type) by
 /// [`crate::data::parquet::ParquetReader::load_all_index_basics`]; feeds the
 /// GUI toolbar picker and the market tab's name lookup. `index_type` is one
-/// of `"official"` / `"concept"` / `"industry"`.
+/// of `"official"` / `"industry"` (concept removed, #283).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexBasic {
     /// Exchange-prefixed symbol (e.g. "SH000001", "BK0475").
@@ -95,7 +95,7 @@ pub struct IndexBasic {
     /// name_en_mapping JOIN — `None` when unmapped or on legacy parquet).
     #[serde(default)]
     pub name_en: Option<String>,
-    /// `"official"` | `"concept"` | `"industry"`.
+    /// `"official"` | `"industry"`.
     pub index_type: String,
 }
 
@@ -109,7 +109,7 @@ pub struct IndexBasic {
 pub struct IndexDailyRow {
     /// Exchange-prefixed symbol (e.g. "SH000001", "BK0475").
     pub symbol: String,
-    /// `"official"` | `"concept"` | `"industry"`.
+    /// `"official"` | `"industry"`.
     pub index_type: String,
     /// Trading date.
     pub trade_date: chrono::NaiveDate,
