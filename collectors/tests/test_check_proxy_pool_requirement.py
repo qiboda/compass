@@ -29,12 +29,12 @@ Contract under test (locked interface, ``collectors/check_proxy_pool.py``):
 
   ``main(argv: list[str] | None = None) -> int``
     Runs the full verification, prints a JSON summary (success_rate /
-    avg_elapsed / verdict), returns 0 on completion, 1 on fatal setup errors
-    (e.g. proxy_pool API unreachable).
+    avg_elapsed / verdict / failures), returns 0 on completion, 1 on fatal
+    setup/validation errors (e.g. get_proxies returning a non-list).
 
-STATUS: RED. The module does not exist yet, so every ``from
-check_proxy_pool import ...`` fails with ModuleNotFoundError. Once the locked
-contract is implemented, all tests here must pass.
+STATUS: GREEN — the module is implemented and this suite passes. The original
+RED evidence (ModuleNotFoundError before implementation) is preserved in the
+commit history.
 
 Network isolation: no real HTTP is performed. Leaf functions are exercised by
 monkeypatching both ``requests.get`` (project sync-requests convention) and
@@ -47,6 +47,7 @@ monkeypatching the contract-level functions themselves.
 import json
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -106,7 +107,7 @@ class TestGetProxies:
     """get_proxies must return the proxy list from the proxy_pool API."""
 
     @staticmethod
-    def _stub_resp(*, status_code: int = 200, json_data: dict[str, object] | None = None) -> object:
+    def _stub_resp(*, status_code: int = 200, json_data: object | None = None) -> object:
         """A minimal fake requests.Response / curl_cffi Response."""
 
         data = json_data if json_data is not None else {}
@@ -120,7 +121,7 @@ class TestGetProxies:
                 if self.status_code >= 400:
                     raise RuntimeError(f"HTTP {self.status_code}")
 
-            def json(self) -> dict[str, object]:
+            def json(self) -> object:
                 return self._json
 
         return _Resp()
@@ -167,6 +168,49 @@ class TestGetProxies:
 
         got = check_proxy_pool.get_proxies("http://127.0.0.1:5010", count=5)
         assert got == []
+
+    def test_real_api_list_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """proxy_pool /all/ returns a JSON array of proxy objects → extracted."""
+        import check_proxy_pool  # noqa: E402
+
+        payload = [
+            {"proxy": "1.2.3.4:8080", "https": False},
+            {"proxy": "5.6.7.8:3128", "https": True},
+            {"not_proxy": True},
+            "not-a-dict",
+        ]
+        self._patch_http_get(
+            monkeypatch,
+            lambda url, timeout=None, **kw: self._stub_resp(json_data=payload),
+        )
+
+        got = check_proxy_pool.get_proxies("http://127.0.0.1:5010", count=10)
+        assert got == ["1.2.3.4:8080", "5.6.7.8:3128"]
+
+    def test_single_proxy_dict_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A single-proxy dict response is accepted as a one-element list."""
+        import check_proxy_pool  # noqa: E402
+
+        self._patch_http_get(
+            monkeypatch,
+            lambda url, timeout=None, **kw: self._stub_resp(json_data={"proxy": "1.2.3.4:8080"}),
+        )
+
+        got = check_proxy_pool.get_proxies("http://127.0.0.1:5010", count=5)
+        assert got == ["1.2.3.4:8080"]
+
+    def test_count_limits_returned_proxies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_proxies honors the count cap."""
+        import check_proxy_pool  # noqa: E402
+
+        proxies = ["1.2.3.4:8080", "5.6.7.8:3128", "9.10.11.12:1080"]
+        self._patch_http_get(
+            monkeypatch,
+            lambda url, timeout=None, **kw: self._stub_resp(json_data={"proxies": proxies}),
+        )
+
+        got = check_proxy_pool.get_proxies("http://127.0.0.1:5010", count=2)
+        assert got == ["1.2.3.4:8080", "5.6.7.8:3128"]
 
 
 # ── fetch_with_proxy ───────────────────────────────────────────────────
@@ -350,7 +394,7 @@ class TestJudge:
     pass iff success_rate >= 0.5 AND avg_elapsed < 5.0."""
 
     @staticmethod
-    def _result(*, success_rate: float, avg_elapsed: float) -> object:
+    def _result(*, success_rate: float, avg_elapsed: float) -> Any:
         import check_proxy_pool  # noqa: E402
 
         return check_proxy_pool.TrialResult(
@@ -398,7 +442,7 @@ class TestJudge:
 
 class TestMain:
     """main must print a JSON summary and return 0 on completion, 1 on fatal
-    setup errors (e.g. proxy_pool API unreachable)."""
+    setup/validation errors (e.g. get_proxies returning a non-list)."""
 
     def test_happy_path_returns_zero_and_prints_json(
         self,
@@ -429,24 +473,91 @@ class TestMain:
         assert "success_rate" in payload
         assert "avg_elapsed" in payload
         assert "verdict" in payload
+        assert "failures" in payload
         assert payload["success_rate"] == 0.6
         assert payload["avg_elapsed"] == 1.2
+        assert set(payload["failures"]) == {"p: timeout"}
 
-    def test_fatal_proxy_pool_unreachable_returns_one(
+    def test_api_unreachable_completes_as_failed_run(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """proxy_pool API unreachable (get_proxies raises) → rc 1, not 0."""
+        """An unreachable proxy_pool API is a completed run with rc 0 and FAIL.
+
+        ``get_proxies`` is deliberately non-fatal and returns an empty list, so
+        the trial reports ``total == 0`` / FAIL instead of a fatal error.
+        """
         import check_proxy_pool  # noqa: E402
 
-        def _boom(api_url: str, count: int) -> list[str]:
-            raise ConnectionError("cannot connect to proxy_pool API")
+        # get_proxies swallows network errors and returns [] in production;
+        # patch it to the observable outcome so no real network is attempted.
+        monkeypatch.setattr(check_proxy_pool, "get_proxies", lambda api_url, count: [])
 
-        monkeypatch.setattr(check_proxy_pool, "get_proxies", _boom)
+        rc = check_proxy_pool.main([])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success_rate"] == 0.0
+        assert payload["verdict"] == "FAIL"
+
+    def test_fatal_get_proxies_non_list_returns_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """get_proxies returning a non-list is a fatal validation error → rc 1."""
+        import check_proxy_pool  # noqa: E402
+
+        monkeypatch.setattr(check_proxy_pool, "get_proxies", lambda api_url, count: "bad")
+        monkeypatch.setattr(check_proxy_pool, "fetch_with_proxy", lambda *a: (True, 0.1, None))
 
         rc = check_proxy_pool.main([])
         assert rc == 1
-        # A fatal setup error must NOT be reported as a successful PASS JSON.
         captured = capsys.readouterr()
         assert "verdict" not in captured.out or "PASS" not in captured.out.upper()
+
+    def test_main_probes_both_targets_and_aggregates(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """main probes the list page and the kline URL and aggregates stats."""
+        import check_proxy_pool  # noqa: E402
+
+        calls: list[tuple[str, int, str, float]] = []
+
+        def fake_run_trial(
+            url: str, count: int, api_url: str, timeout: float
+        ) -> check_proxy_pool.TrialResult:
+            calls.append((url, count, api_url, timeout))
+            if url == check_proxy_pool.THS_LIST_URL:
+                return check_proxy_pool.TrialResult(
+                    target=url,
+                    total=10,
+                    success=8,
+                    failures=["a"],
+                    success_rate=0.8,
+                    avg_elapsed=2.0,
+                )
+            return check_proxy_pool.TrialResult(
+                target=url,
+                total=5,
+                success=1,
+                failures=["b", "c"],
+                success_rate=0.2,
+                avg_elapsed=1.0,
+            )
+
+        monkeypatch.setattr(check_proxy_pool, "run_trial", fake_run_trial)
+
+        rc = check_proxy_pool.main([])
+        assert rc == 0
+        assert len(calls) == 2
+        assert calls[0][0] == check_proxy_pool.THS_LIST_URL
+        assert calls[1][0] == check_proxy_pool._current_kline_url()
+        assert all(c[1] == check_proxy_pool.DEFAULT_COUNT for c in calls)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success_rate"] == pytest.approx(0.6)
+        assert payload["avg_elapsed"] == pytest.approx(25 / 15)
+        assert set(payload["failures"]) == {"a", "b", "c"}

@@ -10,15 +10,21 @@ services:
     container_name: proxy_redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   proxy_pool:
     image: jhao104/proxy_pool:latest
     container_name: proxy_pool
     restart: unless-stopped
     depends_on:
-      - proxy_redis
+      proxy_redis:
+        condition: service_healthy
     ports:
-      - "5010:5010"
+      - "127.0.0.1:5010:5010"
     # The published image's default ENTRYPOINT invokes `bash`, but the image
     # (Alpine-based) does not contain bash.  Start the Python server/scheduler
     # directly with `sh` instead.

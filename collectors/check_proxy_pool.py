@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from curl_cffi import requests as _curl_requests
 
@@ -29,7 +29,7 @@ DEFAULT_TIMEOUT = 10.0
 THS_LIST_URL = "https://q.10jqka.com.cn/thshy/"
 THS_KLINE_URL_TEMPLATE = "https://d.10jqka.com.cn/v4/line/bk_881101/01/{year}.js"
 
-_IMPERSONATE = "chrome142"
+_IMPERSONATE: Literal["chrome142"] = "chrome142"
 
 
 @dataclass
@@ -64,7 +64,6 @@ def get_proxies(api_url: str, count: int) -> list[str]:
     The locked test contract also accepts the ``{"proxies": [...]}`` shape, so
     both are handled here.
     """
-    del count  # proxy_pool returns whatever the pool currently has; slicing happens in run_trial
     try:
         resp = _curl_requests.get(
             _proxy_pool_all_url(api_url),
@@ -72,20 +71,23 @@ def get_proxies(api_url: str, count: int) -> list[str]:
         )
         resp.raise_for_status()
         data = resp.json()
+        proxies: list[str]
         if isinstance(data, list):
-            return [
+            proxies = [
                 item["proxy"]
                 for item in data
                 if isinstance(item, dict) and isinstance(item.get("proxy"), str)
             ]
-        if isinstance(data, dict):
-            proxies = data.get("proxies")
-            if isinstance(proxies, list):
-                return proxies
-            single = data.get("proxy")
-            if isinstance(single, str):
-                return [single]
-        return []
+        elif isinstance(data, dict):
+            pool = data.get("proxies")
+            if isinstance(pool, list):
+                proxies = [p for p in pool if isinstance(p, str)]
+            else:
+                single = data.get("proxy")
+                proxies = [single] if isinstance(single, str) else []
+        else:
+            proxies = []
+        return proxies[:count]
     except Exception:
         return []
 
@@ -206,8 +208,10 @@ def _current_kline_url() -> str:
 def main(argv: list[str] | None = None) -> int:
     """Run the full THS proxy trial and print a JSON summary.
 
-    Returns 0 when the trial completes (even if it fails the pass criteria);
-    returns 1 for fatal setup errors such as an unreachable proxy_pool API.
+    Returns 0 when the trial completes (even if it fails the pass criteria).
+    An unreachable or empty proxy_pool is a completed run (rc=0, FAIL verdict);
+    returns 1 only for fatal setup/validation errors (for example
+    ``get_proxies`` returning a non-list or ``run_trial`` raising).
     """
     parser = argparse.ArgumentParser(description="Verify proxy_pool against THS board endpoints")
     parser.add_argument("--api-url", default=DEFAULT_API_URL, help="proxy_pool API base URL")
@@ -250,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         "avg_elapsed": combined.avg_elapsed,
         "verdict": "PASS" if passed else "FAIL",
         "judge_reason": reason,
+        "failures": combined.failures,
         "targets": [
             {
                 "target": list_result.target,

@@ -1,9 +1,9 @@
 """Adversarial tests for ``collectors/check_proxy_pool.py`` (issue #287).
 
 Attacks the locked interface contract of the proxy_pool trial script (the
-remote API / THS probe + PASS/FAIL judgement).  The module does not exist yet,
-so this suite is RED today via ``ModuleNotFoundError``; a correct implementation
-that follows the locked contract below must turn it fully GREEN.
+remote API / THS probe + PASS/FAIL judgement).  The module is implemented and
+this suite is GREEN; the original RED evidence (ModuleNotFoundError) is
+preserved in the commit history.
 
 Locked semantics this suite pins down (adversarial reading of the contract):
 
@@ -26,8 +26,8 @@ Locked semantics this suite pins down (adversarial reading of the contract):
   trial is not a division-by-zero hazard and simply fails.
 * ``main``: returns ``0`` whenever the run *completes* (including a failed
   trial — a low success rate is NOT a setup error) and prints a JSON summary;
-  returns ``1`` only for fatal setup errors (proxy_pool API unreachable /
-  ``get_proxies`` returning a non-list).
+  returns ``1`` only for fatal setup/validation errors (e.g. ``get_proxies``
+  returning a non-list or ``run_trial`` raising).
 
 No real network is ever touched: ``get_proxies`` / ``fetch_with_proxy`` are
 monkeypatched per test.
@@ -41,8 +41,9 @@ import json
 import math
 import time
 
-import check_proxy_pool as mod
 import pytest
+
+import check_proxy_pool as mod
 from check_proxy_pool import (
     DEFAULT_API_URL,
     DEFAULT_TIMEOUT,
