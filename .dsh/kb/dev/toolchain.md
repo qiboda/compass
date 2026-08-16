@@ -642,3 +642,24 @@
 - **验证**: 容器 Up，`curl http://127.0.0.1:5010/all/` 返回 JSON 代理列表。
 - **教训**: 第三方镜像的 ENTRYPOINT 可能与其实际镜像内容不一致；交付 compose 时
   应在目标镜像上实测，不能只照官方 docker-compose 抄。
+
+### [容器] jhao104/proxy_pool:2.4.2 缺少 patch；沙箱 build RUN 需 --network=host
+
+- **症状**: 本地 Dockerfile `RUN patch -p1 < validator.patch` 构建失败：先报
+  `failed to set up container networking: ... operation not supported`（bridge veth），
+  改用 `docker build --network=host` 后报 `/bin/sh: patch: not found`。
+- **根因**: ① 沙箱不允许 bridge 网络创建 veth，build 的 RUN 阶段默认 bridge 也失败；
+  ② 上游 `jhao104/proxy_pool:2.4.2`（Alpine）未安装 `patch`，补丁镜像需先
+  `apk add --no-cache patch`。
+- **排查路径**:
+  1. `docker build -t ... scripts/proxy_pool` → 看到 bridge veth 错误（与运行容器同因）
+  2. `docker build --network=host -t ... scripts/proxy_pool` → 网络错误消失，暴露 `patch: not found`
+  3. `docker run --rm --network host --entrypoint sh <image> -c 'which patch || echo no-patch; cat /etc/os-release'`
+     确认 Alpine 且无 patch
+- **修复**: Dockerfile 在 `RUN patch` 前增加 `RUN apk add --no-cache patch`；受限沙箱
+  构建/运行使用 `--network=host`（交付的 compose 保留标准配置，受限环境用临时
+  host override）。
+- **验证**: `docker build --network=host -t proxy_pool_https_validator:local scripts/proxy_pool`
+  成功；容器内 `sed -n '71,77p' /app/helper/validator.py` 显示 https key 已改为 `http://`。
+- **教训**: 对第三方 Alpine 镜像打补丁前先确认基础工具是否安装；沙箱网络限制同时
+  影响 build RUN 与容器运行，统一用 host network 验证。
