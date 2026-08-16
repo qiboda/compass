@@ -10,7 +10,7 @@
 |---|---|---|
 | D1 | 行业源 | **同花顺 90 个唯一**（申万一级，881xxx）替代东财 496 自编细分；列表实时抓 `q.10jqka.com.cn/thshy/`（GBK，href 提取） |
 | D2 | K 线接口 | `https://d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`，按年分页（2007→当前年），7 字段 CSV 复用 `_kline_records` |
-| D3 | 旧行业数据 | ~~Dolt 中东财 BK 行业行一并删除~~ **修正（2026-08-16 用户确认）**：保留东财 BK 行业名称行（index_basic 496 行，无行情数据）；仅删 concept 行 + concept_member 表 |
+| D3 | 旧行业数据 | 删除东财 BK 行业行（index_basic 496 名称行，无行情数据；index_daily industry 行本就为 0）。2026-08-16 用户两次确认后定稿：保留会致 picker 双名称重复（如两个半导体），删除不损失行情 |
 | D4 | 概念全链路 | `index_*` concept 行、`concept_member` 表、`fetch_concept_member.py`、`ConceptMember` 模型、reader、import/export、GUI 概念段 + SEPA 主题标签（`themes`）、`concept_names` map —— **全部移除** |
 | D5 | SEPA 题材 | 题材模块 25% 权重**保留**，数据源改用行业板块（按 `stock_basic.industry` 分组聚合替代 concept_member 分组）；GUI 题材列/题材卡保留 |
 | D6 | backtest | `backtest_result` 表删除 `theme_score` 列 |

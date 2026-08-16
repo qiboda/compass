@@ -10,7 +10,7 @@
 
 > 2026-08-15 23:58 更新：grill-me 延续锁定 D3（BK 行业历史数据一并删除）、D4（SEPA 概念全移除）、D5（题材改行业板块聚合）、D6（theme_score 列删除）、D7（BK 前缀 4-6 位）、D8（thshy 实时抓取）。Plan 已批准：`.dsh/plans/industry-ths.md`（B1 数据清理 → B2 采集器 → B3 Rust 数据层 → B4 SEPA 引擎 → B5 GUI → B6 docs）。issue #283 验收标准已更新。
 >
-> 2026-08-16 09:15 修正 D3：用户确认**保留**东财 BK 行业名称行（index_basic 496 行，无行情数据），仅删除 concept 行 + concept_member 表 + theme_score 列。
+> 2026-08-16 09:15 D3 两次修正后定稿：用户确认**删除**东财 BK 行业名称行（496 行无行情数据，删除不损失行情；避免 picker 双名称重复），恢复原计划。
 
 **Issue**: https://github.com/qiboda/compass/issues/283（OPEN）
 **分支**: feat/industry-ths（基于 master 3fd7248）
