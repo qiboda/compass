@@ -1,4 +1,4 @@
-"""Adversarial tests for issue #278 — Tencent fallback for official indices.
+"""Adversarial tests for issue #278 + #286 — Tencent fallback for official indices.
 
 Complement (not a duplicate) of test_tencent_fallback_requirement.py. That
 file owns the declared happy paths (mapping, basic pagination, basic
@@ -27,15 +27,29 @@ declares but does not nail down:
       an EastMoney failure or EMPTY list may fall back.
   A5. Fast-fail through the fallback: 5 consecutive double-fails (EastMoney +
       Tencent both fail) terminate AND stop issuing further Tencent requests;
-      a Tencent success mid-streak RESETS the counter so a fresh streak starts;
-      the amount of a Tencent-written official row is 0/empty.
+      a Tencent success mid-streak RESETS the counter so a fresh streak starts.
 
-STATUS: RED — issue #278 (Tencent source) is not implemented, so every test
-below hits AttributeError/ImportError before any assertion can run. That IS
-the expected RED: the contract symbols do not exist yet.
+#286 extensions (newfqkline/get + real amount): the Tencent index fallback must
+switch to newfqkline/get, whose 11-field day rows carry 成交额 in 万元 at index 8,
+and write NON-ZERO amount (万元×10000 = yuan) for valid rows. These go RED
+against the current (issue #278) implementation which writes amount 0.
+  N1. Short/missing rows (fewer than 9 fields) degrade gracefully: amount
+      0/empty, no crash, other fields still parsed.
+  N2. Malformed amount cell (empty, "-", non-numeric, "NaN", whitespace)
+      degrades consistently (amount 0/empty or skipped) with valid siblings
+      still writing non-zero amount.
+  N3. Pagination boundary: a page with exactly _TENCENT_PAGE_SIZE rows plus a
+      short final page still paginates and PRESERVES amount across pages.
+  N4. Tencent success resets the fast-fail counter AND writes a NON-ZERO amount.
+  N6. Very large amount (999999999999.99 万元) parses without float overflow;
+      "0" amount stays 0.
+
+STATUS: RED for #286 — the current implementation uses fqkline/get and writes
+amount 0, so every non-zero-amount assertion below fails (amount is "0").
 """
 
 import asyncio
+import math
 import sys
 from datetime import date
 from pathlib import Path
@@ -54,16 +68,41 @@ _TENCENT_PAGE_SIZE = 2000
 # ── payload / stub builders re-used across test classes ──────────────────────
 
 
-def _tencent_row(day: str, close: float = 3000.0) -> list[str]:
-    """A valid 6-field Tencent day row (NO amount field)."""
-    return [
+def _tencent_row(
+    day: str, close: float = 3000.0, amount: str | None = None
+) -> list[object]:
+    """A Tencent day row for the fallback helper.
+
+    ``amount`` (成交额, 万元) produces the newfqkline/get 11-field index shape
+    with the amount at index 8 (万元 ~ 10000 yuan). ``amount=None`` yields the
+    legacy 6-field fqkline/get shape (no amount) so the original #278 tests
+    keep exercising the amount-less code path.
+    """
+    base = [
         day,
-        f"{close - 1}",
-        f"{close}",
-        f"{close + 1}",
-        f"{close - 2}",
-        "120000000",  # volume
+        f"{close - 1}",  # open
+        f"{close}",      # close
+        f"{close + 1}",  # high
+        f"{close - 2}",  # low
+        "120000000",     # volume
     ]
+    if amount is None:
+        return base
+    # newfqkline index day row — index 8 is 成交额 in 万元:
+    # date, open, close, high, low, volume, {}, 振幅, 万元成交额, 涨跌幅, 涨跌额
+    return [
+        *base,
+        {},                  # index 6 (empty dict in the real shape)
+        "1.03",              # index 7 振幅
+        str(amount),         # index 8 成交额 (万元)
+        "0.00",              # index 9
+        "0.00",              # index 10
+    ]
+
+
+def _amount_yuan(wanyi: str) -> float:
+    """Local oracle: newfqkline index-8 amount (万元) → yuan (×10000)."""
+    return float(wanyi) * 10000.0
 
 
 def _tencent_payload(code: str, rows: list[list[str]]) -> dict:
@@ -307,9 +346,10 @@ class TestTencentMalformedPayloads:
     async def test_day_row_fewer_than_six_fields_skipped_safely(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: a short day row (fewer than 6 fields) inside an otherwise valid
-        ``day`` list must not crash the row builder and must not emit a broken
-        record — the row is skipped, valid siblings survive, amount is 0."""
+        """RED (N1): a short day row (fewer than 9 fields — missing the index-8
+        amount) inside an otherwise valid ``day`` list must not crash the row
+        builder; short siblings degrade to amount 0/empty while a valid 11-field
+        sibling writes its NON-ZERO amount (RED vs the current amount-0 impl)."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -319,9 +359,12 @@ class TestTencentMalformedPayloads:
             ({"secid": "1.000001", "code": "000001", "name": "上证指数"},),
         )
 
-        good = _tencent_row("2026-07-30", 3000.0)
+        valid = _tencent_row("2026-07-30", 3000.0, amount="499525613.00")
         bad = ["2026-07-31"]  # only the date — 1 field, must be skipped
-        rows = [good, bad, _tencent_row("2026-07-29", 2900.0)]
+        # 6-field row: has prices but NO index-8 amount → amount must degrade
+        # to 0/empty, never crash.
+        short6 = _tencent_row("2026-07-29", 2900.0)
+        rows = [valid, bad, short6]
 
         stub = make_stub_session()
 
@@ -347,13 +390,24 @@ class TestTencentMalformedPayloads:
         with open(tmp_path_ok, newline="", encoding="utf-8-sig") as f:
             records = list(csv.DictReader(f))
         official = [r for r in records if r["symbol"] == "SH000001"]
-        # The 2 valid rows survived; the 1-field row was skipped.
+        # The 1-field row was skipped; the valid 11-field and 6-field rows survived.
         assert len(official) == 2, (
-            f"only valid sibling rows may be written, got {official!r}"
+            f"only parseable rows may be written, got {official!r}"
         )
         assert all(r["trade_date"] in {"2026-07-30", "2026-07-29"} for r in official)
-        assert all(r["amount"] in {"0", ""} for r in official), (
-            "Tencent rows carry no amount → amount must be 0/empty"
+
+        by_date = {r["trade_date"]: r for r in official}
+        # Valid 11-field row carries its real (non-zero) amount — RED today.
+        assert float(by_date["2026-07-30"]["amount"]) == pytest.approx(
+            _amount_yuan("499525613.00")
+        ), (
+            "valid newfqkline row must write non-zero amount (万元×10000), "
+            f"got {by_date['2026-07-30']['amount']!r}"
+        )
+        # Short row (missing index 8) degrades gracefully to 0/empty.
+        assert by_date["2026-07-29"]["amount"] in {"0", ""}, (
+            "a row with no index-8 amount must degrade to 0/empty, "
+            f"got {by_date['2026-07-29']['amount']!r}"
         )
 
 
@@ -510,15 +564,15 @@ class TestTencentFastFailAdversarial:
             "the 6th target must not receive a Tencent fallback request"
         )
 
-    async def test_tencent_success_resets_counter_and_writes_zero_amount(
+    async def test_tencent_success_resets_counter_and_writes_nonzero_amount(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED (semantics + amount): officials O1,O2,E,F: E fails on EastMoney +
-        Tencent, F fails on EastMoney but SUCCEEDS on Tencent. Then 5 more
-        officials double-fail → the streak restarts AFTER F's success: the 5
-        double-fails FOLLOWING F must terminate only at their own 5th (O7). If
-        F's Tencent success had NOT cleared the counter the run would have
-        aborted earlier. F's written row has amount 0/empty."""
+        """RED (N4): officials O1,O2,E,F: E fails on EastMoney + Tencent, F fails
+        on EastMoney but SUCCEEDS on Tencent. Then 5 more officials double-fail →
+        the streak restarts AFTER F's success: the 5 double-fails FOLLOWING F
+        must terminate only at their own 5th (O7). If F's Tencent success had NOT
+        cleared the counter the run would have aborted earlier. F's written row
+        must carry a NON-ZERO amount (万元×10000) — RED vs the amount-0 impl."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -549,7 +603,10 @@ class TestTencentFastFailAdversarial:
                 target_symbol = _tencent_symbol(targets[1]["secid"], targets[1]["code"])
                 if code == target_symbol:
                     return StubResponse(
-                        json_data=_tencent_payload(code, [_tencent_row("2026-07-31", 3100.0)])
+                        json_data=_tencent_payload(
+                            code,
+                            [_tencent_row("2026-07-31", 3100.0, amount="99037192.42")],
+                        )
                     )
                 return StubResponse(status_code=500, json_data={})
             if "kline/get" in url:
@@ -583,8 +640,9 @@ class TestTencentFastFailAdversarial:
         f_symbol = f"{'SH' if targets[1]['secid'].startswith('1.') else 'SZ'}{targets[1]['code']}"
         row = [r for r in records if r["symbol"] == f_symbol]
         assert row, f"the Tencent-success official must write a row ({f_symbol})"
-        assert row[0]["amount"] in {"0", ""}, (
-            f"Tencent rows carry no amount → amount must be 0/empty, got {row[0]['amount']!r}"
+        assert float(row[0]["amount"]) == pytest.approx(_amount_yuan("99037192.42")), (
+            "Tencent success must write the real NON-ZERO amount (万元×10000), "
+            f"got {row[0]['amount']!r}"
         )
 
 
@@ -592,3 +650,213 @@ def _tencent_symbol(secid: str, code: str) -> str:
     """Local oracle for the fallback symbol: sh for 1., sz for 0. (matches the
     #278 plan). NOT the implementation under test — this is the asserting side."""
     return ("sh" if secid.startswith("1.") else "sz") + code.lower()
+
+
+# ── N: newfqkline/get amount handling (issue #286) ───────────────────────────
+
+
+class TestNewFqKlineAmountAdversarial:
+    """RED for #286: the Tencent index fallback must write NON-ZERO amount
+    (index-8 成交额 in 万元 ×10000 = yuan) for valid rows, degrade gracefully on
+    missing/malformed amounts, preserve amount across pagination, and handle
+    very large/small values without float overflow."""
+
+    @staticmethod
+    def _splits(klines: list[str]) -> list[list[str]]:
+        return [k.split(",") for k in klines]
+
+    @staticmethod
+    def _days(n: int, start: str) -> list[str]:
+        from datetime import timedelta
+
+        d = date.fromisoformat(start)
+        return [(d + timedelta(days=i)).isoformat() for i in range(n)]
+
+    # N_endpoint ── the fallback must hit newfqkline/get, not fqkline/get ─────
+
+    async def test_hits_newfqkline_endpoint(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RED (#286 N_endpoint): the Tencent fallback must target
+        ``newfqkline/get`` (whose day rows carry 成交额 in 万元 at index 8). The
+        current implementation still requests ``fqkline/get`` → this fails."""
+        from fetch_index_daily import (
+            Throttle,  # noqa: E402
+            _fetch_tencent_kline,  # noqa: E402
+        )
+
+        urls: list[str] = []
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            urls.append(url)
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                return StubResponse(
+                    json_data=_tencent_payload(
+                        param.split(",")[0],
+                        [_tencent_row("2026-08-14", 3930.0, amount="99037192.42")],
+                    )
+                )
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
+        assert klines is not None
+        tencent = [u for u in urls if "ifzq.gtimg.cn" in u]
+        assert tencent, "must issue a Tencent request"
+        assert all("newfqkline/get" in u for u in tencent), (
+            "the #286 fix must switch the fallback to newfqkline/get, "
+            f"got urls {tencent!r}"
+        )
+
+    # N2 ── malformed amount cells degrade, valid sibling keeps amount ─────────
+
+    @pytest.mark.parametrize(
+        "bad_amount",
+        ["", "-", "NaN", "not-a-number", "  ", "abc123"],
+    )
+    async def test_malformed_amount_cell_degrades_gracefully(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch,
+        bad_amount: str,
+    ) -> None:
+        """RED (N2): an 11-field row whose index-8 amount is malformed must not
+        crash the helper; it degrades to amount 0/empty, while a valid 11-field
+        sibling row still writes its NON-ZERO amount (RED today: amount is 0)."""
+        from fetch_index_daily import (
+            Throttle,  # noqa: E402
+            _fetch_tencent_kline,  # noqa: E402
+        )
+
+        valid = _tencent_row("2026-08-14", 3930.0, amount="499525613.00")
+        # Build a full 11-field row then corrupt index 8.
+        malformed = _tencent_row("2026-08-13", 3900.0, amount="1")
+        malformed[8] = bad_amount
+        rows = [valid, malformed]
+
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                return StubResponse(
+                    json_data=_tencent_payload(param.split(",")[0], rows)
+                )
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
+        assert klines is not None, "malformed amount must not crash the helper"
+
+        by_date = {s[0]: s for s in self._splits(klines)}
+        # Valid row keeps its real non-zero amount — RED today.
+        assert float(by_date["2026-08-14"][6]) == pytest.approx(
+            _amount_yuan("499525613.00")
+        ), (
+            "valid sibling must keep non-zero amount, got "
+            f"{by_date['2026-08-14'][6]!r}"
+        )
+        # Malformed row degrades to 0/empty (consistent, no exception).
+        assert by_date["2026-08-13"][6] in {"0", ""}, (
+            "malformed amount must degrade to 0/empty, got "
+            f"{by_date['2026-08-13'][6]!r}"
+        )
+
+    # N3 ── pagination boundary: exactly _TENCENT_PAGE_SIZE rows + short page ──
+
+    async def test_pagination_boundary_preserves_amount_across_pages(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RED (N3): page 1 answers EXACTLY _TENCENT_PAGE_SIZE rows (full), page 2
+        is a short final page. The helper must paginate (2 requests) and MERGE
+        the full page + short page, preserving each row's NON-ZERO amount across
+        the page boundary — RED today because every amount is written 0."""
+        from fetch_index_daily import (
+            Throttle,  # noqa: E402
+            _fetch_tencent_kline,  # noqa: E402
+        )
+
+        page1 = [_tencent_row(d, 3000.0, amount="100.00")
+                 for d in self._days(_TENCENT_PAGE_SIZE, "2026-01-01")]
+        page2 = [_tencent_row(d, 2000.0, amount="200.00")
+                 for d in self._days(50, "2025-01-01")]
+
+        n_requests = {"n": 0}
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "ifzq.gtimg.cn" in url:
+                n_requests["n"] += 1
+                param = (params or {}).get("param", "")
+                code = param.split(",")[0]
+                parts = param.split(",")
+                end = parts[3] if len(parts) > 3 else ""
+                if end == "":
+                    return StubResponse(json_data=_tencent_payload(code, page1))
+                return StubResponse(json_data=_tencent_payload(code, page2))
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
+        assert klines is not None
+        assert len(klines) == _TENCENT_PAGE_SIZE + 50, (
+            "must merge the full page and the short final page"
+        )
+        # Two requests: first page empty end date, second advances it.
+        assert n_requests["n"] == 2, "full page + short page must paginate once"
+        # Amount preserved on BOTH pages (non-zero) — RED today (all zeros).
+        splits = self._splits(klines)
+        # page1 rows: first 2000 in chronological order (reversed merge).
+        non_zero = {s[6] for s in splits}
+        assert all(float(a) > 0 for a in non_zero), (
+            "amount must be preserved and non-zero across the page boundary, "
+            f"got {sorted(non_zero)!r}"
+        )
+
+    # N6 ── very large / very small amount values ──────────────────────────────
+
+    async def test_very_large_amount_parses_without_overflow(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RED (N6): a huge 成交额 (999999999999.99 万元 → 9.99e15 yuan) must parse
+        into a Python float without overflow, and a "0" 万元 stays exactly 0."""
+        from fetch_index_daily import (
+            Throttle,  # noqa: E402
+            _fetch_tencent_kline,  # noqa: E402
+        )
+
+        rows = [
+            _tencent_row("2026-08-14", 3930.0, amount="999999999999.99"),
+            _tencent_row("2026-08-13", 3900.0, amount="0"),
+        ]
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            if "ifzq.gtimg.cn" in url:
+                param = (params or {}).get("param", "")
+                return StubResponse(
+                    json_data=_tencent_payload(param.split(",")[0], rows)
+                )
+            return StubResponse(status_code=200, json_data={})
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(stub, Throttle(min_interval=0), "1.000001")
+        assert klines is not None
+        by_date = {s[0]: s for s in self._splits(klines)}
+
+        # Huge amount: finite and exactly 万元×10000 — RED today (amount is "0").
+        huge = float(by_date["2026-08-14"][6])
+        assert math.isfinite(huge), f"huge amount overflowed to {huge}"
+        assert huge == pytest.approx(_amount_yuan("999999999999.99")), (
+            f"999999999999.99 万元 must be {_amount_yuan('999999999999.99')}, "
+            f"got {by_date['2026-08-14'][6]!r}"
+        )
+        # Zero amount stays zero.
+        assert by_date["2026-08-13"][6] == "0", (
+            "a '0' 万元 amount must stay 0, got "
+            f"{by_date['2026-08-13'][6]!r}"
+        )

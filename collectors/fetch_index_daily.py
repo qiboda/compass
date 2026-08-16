@@ -5,8 +5,10 @@ Independent module — uses common.py for shared infrastructure.
 
 Sources:
 - Official indices: EastMoney push2his ``kline/get`` (``klt=101``,
-  ``fqt=0``, ``beg=0&end=20500000`` full history); a Tencent ``fqkline/get``
-  fallback covers EastMoney failure/empty klines (issue #278).
+  ``fqt=0``, ``beg=0&end=20500000`` full history); a Tencent
+  ``newfqkline/get`` fallback covers EastMoney failure/empty klines and
+  supplies 成交额 (index 8, 万元 → 元) for official index rows (issue
+  #278/#286).
 - Industry boards: 同花顺 (THS) 90 申万一级 industries (881xxx) — the list
   page ``q.10jqka.com.cn/thshy/`` (GBK) and per-year daily klines from
   ``d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`` (issue #283).
@@ -37,6 +39,7 @@ import argparse
 import asyncio
 import csv
 import json
+import math
 import random
 import re
 import sys
@@ -68,10 +71,13 @@ PUSH2HIS_MIRRORS = (
 )
 KLINE_HOSTS = (PUSH2HIS, *PUSH2HIS_MIRRORS)
 
-# Tencent fallback for official indices (issue #278): web.ifzq.gtimg.cn
-# fqkline/get supports count<=2000 and start-date pagination. Used when
-# EastMoney fails or returns empty klines for an official whitelist target.
-TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+# Tencent fallback for official indices (issue #278/#286):
+# web.ifzq.gtimg.cn/appstock/app/newfqkline/get supports count<=2000 and
+# start-date pagination, and its 11-field day rows include 成交额 in 万元 at
+# index 8 (the old fqkline/get rows have only 6 fields and no amount).
+# Used when EastMoney fails or returns empty klines for an official whitelist
+# target.
+TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get"
 _TENCENT_PAGE_SIZE = 2000
 # 10 pages * 2000 bars ≈ 20k rows ceiling; A-share index full history is
 # ~8.5k bars, so this is a generous safety cap against API misbehavior.
@@ -515,6 +521,30 @@ def _tencent_code(secid: str) -> str:
     return ("sh" if market == "1" else "sz") + code.lower()
 
 
+def _tencent_amount_yuan(row: list | tuple) -> str:
+    """Extract the 成交额 from a newfqkline/get day row as a yuan CSV cell.
+
+    ``row[8]`` is 成交额 in 万元 (0-based); convert to yuan (×10000). Missing,
+    empty, non-numeric or non-finite values degrade to ``"0"`` so the merge
+    import never crashes on a malformed Tencent payload.
+    """
+    if len(row) <= 8:
+        return "0"
+    raw = str(row[8]).strip()
+    if raw == "" or raw == "-":
+        return "0"
+    try:
+        amount_wan = float(raw)
+    except (TypeError, ValueError):
+        return "0"
+    if not math.isfinite(amount_wan):
+        return "0"
+    yuan = amount_wan * 10000.0
+    if yuan.is_integer():
+        return str(int(yuan))
+    return str(yuan)
+
+
 async def _fetch_tencent_kline(
     session: AsyncSession,
     throttle: Throttle,
@@ -524,7 +554,9 @@ async def _fetch_tencent_kline(
 
     Paginates with count=2000, advancing the end date backwards until a
     short page or a bounded page cap. Returns klines in the same 7-field CSV
-    format as EastMoney (amount filled with 0), or None on any failure.
+    format as EastMoney (date,open,close,high,low,volume,amount) with amount
+    in yuan taken from newfqkline/get's 成交额 field (万元 × 10000), or None
+    on any failure.
     """
     try:
         tcode = _tencent_code(secid)
@@ -562,7 +594,7 @@ async def _fetch_tencent_kline(
                 continue
             if min_date is None or date_cell < min_date:
                 min_date = date_cell
-            page_klines.append(",".join([*cells, "0"]))
+            page_klines.append(",".join([*cells, _tencent_amount_yuan(row)]))
 
         if not page_klines:
             # Empty or all-invalid page: no more data.

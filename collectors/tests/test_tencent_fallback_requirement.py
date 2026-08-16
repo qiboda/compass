@@ -1,6 +1,6 @@
-"""Requirement acceptance tests for issue #278 — Tencent fallback for official indices.
+"""Requirement acceptance tests for issue #278/#286 — Tencent fallback for official indices.
 
-Contract under test (issue #278 acceptance criteria, fetch_index_daily.py):
+Contract under test (fetch_index_daily.py):
 
   C1. ``_tencent_code(secid)`` maps an EastMoney secid to the Tencent symbol:
       prefix ``1.`` → ``sh``, ``0.`` → ``sz`` + lowercase code
@@ -11,16 +11,29 @@ Contract under test (issue #278 acceptance criteria, fetch_index_daily.py):
       seen and returns the merged round bars.
   C3. ``run()`` fetches official indices from EastMoney first; when a target's
       EastMoney kline fails or is empty it automatically falls back to Tencent.
-      The CSV output format is unchanged — a Tencent bar (which carries no
-      amount) is written with ``amount == 0``.
+      The CSV output format is unchanged — ``date,open,close,high,low,volume,
+      amount`` matching the EastMoney order.
   C4. ``run()``'s Tencent segment is protected by the #277 consecutive-failure
       fast fail: 5 consecutive official indices failing on BOTH sources raise a
       ``RuntimeError`` mentioning "连续" and never request the remaining target.
 
-The #277 machinery (``run()``, ``_bump_failure``, ``_MAX_CONSECUTIVE_FAILURES``,
-``common.EM_MIN_INTERVAL``) is already GREEN. Issue #278 (Tencent source) is NOT
-implemented yet, so every helper / fallback / amount test below fails with
-AttributeError until GREEN.
+Issue #286 contract (the RED under test — NOT yet implemented):
+
+  R1. The Tencent fallback switches from ``fqkline/get`` to
+      ``newfqkline/get``, whose ``day`` rows are 11 fields with 成交额 in
+      **万元** at 0-based index 8.
+  R2. ``_fetch_tencent_kline`` converts that 万元 figure to **yuan**
+      (万元 × 10000) and emits the same 7-field CSV row
+      ``date,open,close,high,low,volume,amount`` consumed by
+      ``_kline_records`` — so a valid Tencent-sourced official row has a
+      NON-ZERO amount.
+  R3. A ``newfqkline`` day row with fewer than 9 fields (no 成交额) degrades
+      gracefully — amount 0/empty, never a crash (fallback safety net).
+
+The #277/#278 machinery is already GREEN, so the legacy 6-field-amount-0
+assertions have been replaced by the #286 non-zero-yuan expectations below.
+The tests marked RED fail on the current production code because it still
+hardcodes amount to 0 and talks to ``fqkline/get``.
 
 STATUS: RED.
 """
@@ -41,13 +54,24 @@ from conftest import StubResponse  # noqa: E402
 # Handoff-verified endpoints.
 KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
-TENCENT_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+# Issue #286: the fallback switched to newfqkline/get, whose day rows are 11
+# fields with 成交额 in 万元 at index 8.
+TENCENT_URL = "https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get"
 
-# Tencent bars are 6 fields: date, open, close, high, low, volume (NO amount).
 _TENCENT_PAGE_SIZE = 2000
+
+# Example newfqkline/get day row (0-based):
+#  0        1        2        3        4        5             6   7     8             9    10
+#  date    open    close    high     low     volume        pre 振幅  成交额(万元)   ...
+_DAY10 = {}  # the pre/post marker column (empty dict in the real payload)
 
 
 def _tencent_row(day: str, close: float = 3000.0) -> list[str]:
+    """Legacy 6-field Tencent day row (date,open,close,high,low,volume).
+
+    Kept for tests that exercise pagination / degradation with NO 成交额 field;
+    a len<9 row must still degrade gracefully to amount 0/empty (R3).
+    """
     return [
         day,
         f"{close - 1}",
@@ -55,6 +79,35 @@ def _tencent_row(day: str, close: float = 3000.0) -> list[str]:
         f"{close + 1}",
         f"{close - 2}",
         "120000000",  # volume
+    ]
+
+
+def _tencent_row_new(
+    day: str,
+    open_: str = "3930.02",
+    close: str = "3927.18",
+    high: str = "3932.64",
+    low: str = "3903.70",
+    volume: str = "499525613.00",
+    amount_wan: str = "99037192.42",
+) -> list[object]:
+    """11-field newfqkline/get day row with 成交额 (万元) at index 8.
+
+    Mirrors the real payload shape from the issue:
+    ``[date, open, close, high, low, volume, {}, 振幅, 成交额(万元), ...]``.
+    """
+    return [
+        day,
+        open_,
+        close,
+        high,
+        low,
+        volume,
+        _DAY10,
+        "1.03",           # 振幅 — index 7
+        amount_wan,       # 成交额 in 万元 — index 8
+        "0.00",           # index 9
+        "0.00",           # index 10
     ]
 
 
@@ -216,18 +269,152 @@ class TestTencentPagination:
         assert len(calls) == 1, "a short first page must not page again"
 
 
+# ── R1/R2: newfqkline/get → 7-field CSV with NON-ZERO yuan amount ────────────
+
+
+class TestTencentNewFqKlineAmount:
+    """R1/R2: the fallback hits ``newfqkline/get`` and the 11-field day row's
+    成交额 (万元, index 8) is converted to yuan (× 10000) in the emitted
+    7-field CSV row, preserving the EastMoney field order.
+
+    RED on current code: it talks to ``fqkline/get`` and hardcodes amount to 0.
+    """
+
+    # Example from the issue:
+    # ["2026-08-14","3930.02","3927.18","3932.64","3903.70","499525613.00",
+    #  {},"1.03","99037192.42","0.00","0.00"] → amount = 99037192.42万 × 10000
+    # = 990371924200.0 元.
+
+    async def test_newfqkline_row_returns_nonzero_yuan_amount(
+        self, make_stub_session
+    ) -> None:
+        """RED: an 11-field newfqkline day row (成交额 万元 at index 8) must come
+        back as a 7-field kline whose amount (index 6) is yuan = 万元 × 10000.
+        The request must target the NEW endpoint (newfqkline/get), not the old
+        fqkline/get."""
+        from fetch_index_daily import (  # noqa: E402
+            Throttle,
+            _fetch_tencent_kline,
+        )
+
+        row = _tencent_row_new("2026-08-14")  # amount_wan default 99037192.42
+        stub = make_stub_session()
+        urls: list[str] = []
+
+        async def _get(url, params=None, headers=None):
+            urls.append(url)
+            assert "ifzq.gtimg.cn" in url, f"unexpected Tencent URL {url!r}"
+            return StubResponse(
+                json_data=_tencent_payload("sh000001", [row])
+            )
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(
+            stub, Throttle(min_interval=0), "1.000001"
+        )
+        assert len(klines) == 1, f"expected exactly one kline, got {klines!r}"
+        # The fallback must hit the NEW endpoint.
+        assert urls and urls[0].endswith("newfqkline/get"), (
+            f"must call newfqkline/get, got {urls[0]!r}"
+        )
+        fields = klines[0].split(",")
+        assert len(fields) == 7, (
+            f"must emit 7-field CSV row date,open,close,high,low,volume,amount; "
+            f"got {fields!r}"
+        )
+        # amount = 99037192.42 万元 × 10000 = 990371924200.0 yuan.
+        assert float(fields[6]) == 990371924200.0, (
+            f"amount must be 万元×10000 (yuan), got {fields[6]!r}"
+        )
+
+    async def test_newfqkline_row_preserves_eastmoney_field_order(
+        self, make_stub_session
+    ) -> None:
+        """RED: the emitted 7-field row keeps the EastMoney column order
+        date,open,close,high,low,volume,amount — the 11-field Tencent row must
+        be mapped (not naively truncated), so close/high/low are not swapped."""
+        from fetch_index_daily import (  # noqa: E402
+            Throttle,
+            _fetch_tencent_kline,
+        )
+
+        row = _tencent_row_new(
+            "2026-08-14",
+            open_="3930.02",
+            close="3927.18",
+            high="3932.64",
+            low="3903.70",
+            volume="499525613.00",
+            amount_wan="99037192.42",
+        )
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            return StubResponse(
+                json_data=_tencent_payload("sh000001", [row])
+            )
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(
+            stub, Throttle(min_interval=0), "1.000001"
+        )
+        fields = klines[0].split(",")
+        assert fields[0] == "2026-08-14", f"date field got {fields[0]!r}"
+        assert fields[1] == "3930.02", f"open field got {fields[1]!r}"
+        assert fields[2] == "3927.18", f"close field got {fields[2]!r}"
+        assert fields[3] == "3932.64", f"high field got {fields[3]!r}"
+        assert fields[4] == "3903.70", f"low field got {fields[4]!r}"
+        assert fields[5] == "499525613.00", f"volume field got {fields[5]!r}"
+        assert float(fields[6]) == 990371924200.0, f"amount field got {fields[6]!r}"
+
+    async def test_missing_amount_field_degrades_gracefully(
+        self, make_stub_session
+    ) -> None:
+        """R3: a day row with fewer than 9 fields (no 成交额) must still degrade
+        gracefully — amount 0/empty, never a crash (fallback safety net)."""
+        from fetch_index_daily import (  # noqa: E402
+            Throttle,
+            _fetch_tencent_kline,
+        )
+
+        row = _tencent_row("2026-08-14", 3000.0)  # legacy 6-field, no amount
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            return StubResponse(
+                json_data=_tencent_payload("sh000001", [row])
+            )
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(
+            stub, Throttle(min_interval=0), "1.000001"
+        )
+        # Must not raise; if a row is produced its amount is 0/empty.
+        assert isinstance(klines, list), f"expected a list, got {klines!r}"
+        if klines:
+            fields = klines[0].split(",")
+            assert fields[6] in {"0", ""}, (
+                f"a row without 成交额 must keep amount 0/empty, got {fields[6]!r}"
+            )
+
+
 # ── C3: EastMoney-fails → automatic Tencent fallback + amount default ────────
 
 
 class TestTencentFallbackAndAmount:
-    """C3: run() falls back to Tencent and writes amount 0 for official rows."""
+    """C3: run() falls back to Tencent and writes NON-ZERO yuan amount for
+    official rows (issue #286)."""
 
-    async def test_official_falls_back_to_tencent_writes_zero_amount(
+    async def test_official_falls_back_to_tencent_writes_nonzero_amount(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """RED: ONLY 1.000001 is in the whitelist via monkeypatch, its EastMoney
-        kline fails, so the run must fetch from Tencent and write an official
-        row whose amount is 0/empty and whose symbol is SH000001."""
+        kline fails, so the run must fetch from Tencent (newfqkline/get) and
+        write an official row whose amount (yuan = 成交额 万元 × 10000) is
+        NON-ZERO and whose symbol is SH000001."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -246,10 +433,14 @@ class TestTencentFallbackAndAmount:
                 return StubResponse(
                     json_data=_clist_payload([{"f12": "BK0475", "f14": "半导体"}])
                 )
-            if "ifzq.gtimg.cn" in url:  # Tencent → success
+            if "ifzq.gtimg.cn" in url:  # Tencent → success (newfqkline row)
                 param = (params or {}).get("param", "")
                 code = param.split(",")[0]
-                return StubResponse(json_data=_tencent_payload(code, [_tencent_row("2026-07-31", 3000.0)]))
+                return StubResponse(
+                    json_data=_tencent_payload(
+                        code, [_tencent_row_new("2026-07-31")]
+                    )
+                )
             if "kline/get" in url:  # EastMoney push2his → fail (500)
                 return StubResponse(status_code=500, json_data={})
             return StubResponse(status_code=200, json_data={})
@@ -259,12 +450,12 @@ class TestTencentFallbackAndAmount:
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             await run()
 
-        # Official row landed in index_daily.csv with amount 0 and correct symbol.
+        # Official row landed in index_daily.csv with NON-ZERO yuan amount.
         rows = _read_rows(tmp_path / "index_daily.csv")
         official = [r for r in rows if r["symbol"] == "SH000001"]
         assert official, f"SH000001 row must be written from the Tencent fallback, got {rows!r}"
-        assert official[0]["amount"] in {"0", ""}, (
-            f"Tencent rows carry no amount → must default to 0; got {official[0]['amount']!r}"
+        assert float(official[0]["amount"]) == 990371924200.0, (
+            f"amount must equal 成交额(万元)×10000; got {official[0]['amount']!r}"
         )
         assert official[0]["trade_date"] == "2026-07-31"
         # index_basic must have the official entry.
@@ -292,10 +483,14 @@ class TestTencentFallbackAndAmount:
         async def _get(url, params=None, headers=None):
             if "clist/get" in url:
                 return StubResponse(json_data=_clist_payload([]))
-            if "ifzq.gtimg.cn" in url:  # Tencent success
+            if "ifzq.gtimg.cn" in url:  # Tencent success (newfqkline row)
                 param = (params or {}).get("param", "")
                 code = param.split(",")[0]
-                return StubResponse(json_data=_tencent_payload(code, [_tencent_row("2026-07-31", 9000.0)]))
+                return StubResponse(
+                    json_data=_tencent_payload(
+                        code, [_tencent_row_new("2026-07-31")]
+                    )
+                )
             if "kline/get" in url:  # EastMoney empty klines
                 return StubResponse(json_data=_kline_payload("399001", []))
             return StubResponse(status_code=200, json_data={})
@@ -307,7 +502,9 @@ class TestTencentFallbackAndAmount:
         rows = _read_rows(tmp_path / "index_daily.csv")
         official = [r for r in rows if r["symbol"] == "SZ399001"]
         assert official, "empty EastMoney must trigger Tencent fallback for SZ399001"
-        assert official[0]["amount"] in {"0", ""}, "amount must default to 0/empty"
+        assert float(official[0]["amount"]) == 990371924200.0, (
+            f"amount must be 成交额(万元)×10000; got {official[0]['amount']!r}"
+        )
 
 
 # ── C4: Tencent segment protected by #277 fast-fail ───────────────────────────
