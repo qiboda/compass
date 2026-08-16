@@ -17,7 +17,7 @@ services:
       retries: 10
 
   proxy_pool:
-    image: jhao104/proxy_pool:latest
+    image: jhao104/proxy_pool:2.4.2
     container_name: proxy_pool
     restart: unless-stopped
     depends_on:
