@@ -3,8 +3,8 @@
 - Date: 2026-08-16 (Asia/Shanghai)
 - Worktree: `proxy-pool-https-validator`, branch `feat/proxy-pool-https-validator`
 - Issue: https://github.com/qiboda/compass/issues/290
-- Image: `proxy_pool_https_validator:local` (docker build ID `686c96649d1c`)
-- Dockerfile: `scripts/proxy_pool/Dockerfile`（基于 `jhao104/proxy_pool:2.4.2`，`apk add patch` + `RUN patch -p1 < validator.patch`）
+- Image: `proxy_pool_https_validator:local` (docker build ID `ad3cc044c1d0`)
+- Dockerfile: `scripts/proxy_pool/Dockerfile`（多阶段构建：基于 `jhao104/proxy_pool:2.4.2` 的 build 阶段 `apk add patch` + `RUN patch -p1 < validator.patch`，final 阶段复制补丁后的 `helper/validator.py`，运行时镜像不含 patch/补丁文件）
 - Patch: `scripts/proxy_pool/validator.patch`（仅改 `httpsTimeOutValidator` 的 https key 为 `http://`）
 
 ## 构建与运行环境
@@ -17,6 +17,7 @@
 - 已确认运行容器内补丁生效：
   `/app/helper/validator.py` 第 75 行为
   `proxies = {"http": "http://{proxy}".format(proxy=proxy), "https": "http://{proxy}".format(proxy=proxy)}`
+- 多阶段 final 镜像已确认不含 `patch` 二进制（`which patch` → no-patch-in-final）。
 
 ## 代理池状态
 

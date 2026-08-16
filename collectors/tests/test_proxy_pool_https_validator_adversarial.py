@@ -22,9 +22,14 @@ wrong function first, leaving ``httpsTimeOutValidator`` untouched — exactly th
 bug issue #290 exists to fix.  These tests pin the patch to the correct function
 and to the correct ``-p1``/``/app`` path handling.
 
-This suite is deliberately RED until the implementation artifacts land: it never
-requires Docker, a network, or a running proxy_pool, and it never touches
-production code.
+STATUS: GREEN — the implementation artifacts are in place; the original RED
+evidence (13 failing tests before implementation) is preserved in the commit
+history.
+
+The suite never requires Docker, a network, or a running proxy_pool, and it
+never touches production code.  It does require the system ``patch`` binary
+(GNU/BSD); if ``patch`` is absent the suite fails deliberately rather than
+silently skipping the patch-application contract.
 """
 
 from __future__ import annotations
@@ -47,6 +52,8 @@ COMPOSE_PATH = PROXY_POOL_DIR / "docker-compose.yml"
 # (fetched 2026-08-16 from the upstream tag).  The two `proxies` lines in
 # httpTimeOutValidator (line ~62) and httpsTimeOutValidator (line ~75) are
 # byte-identical — the crux of the adversarial scope attack.
+# Keep this fixture in sync with the pinned upstream tag `2.4.2` (the Docker
+# base image uses the same tag).
 UPSTREAM_VALIDATOR = r'''# -*- coding: utf-8 -*-
 """
 -------------------------------------------------
@@ -250,7 +257,7 @@ def test_patch_headers_target_helper_with_p1_strippable_path() -> None:
         assert match, f"patch has no {marker} path header"
         path = match.group(1)
         assert path.rsplit("/", 1)[-1] == "validator.py", f"patch targets wrong file: {path!r}"
-        assert path.lstrip("ab/") == UPSTREAM_ARTICLE_PATH, (
+        assert path in {"a/helper/validator.py", "b/helper/validator.py"}, (
             f"patch path {path!r} is not consistent with `patch -p1` on "
             f"{UPSTREAM_ARTICLE_PATH!r} under WORKDIR /app"
         )
