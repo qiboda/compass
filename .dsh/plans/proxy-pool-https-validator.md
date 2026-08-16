@@ -36,9 +36,11 @@
   使用 `build: .`。
 - 文档同步：`.dsh/kb/dev/process.md` 的 proxy_pool 章节。
 - 真实验证证据：`.dsh/evidence/proxy-pool-https-validator.md`。
+- freeproxy 集成：`collectors/fetch_freeproxy.py`（`--source json` / `--source
+  realtime`），新增 `pyfreeproxy` + `redis` 依赖，写入 proxy_pool Redis。
 
 不在范围：切换到 Vultr 单 IP / 付费代理 API；正式接入 `fetch_index_daily.py` 等
-collectors 采集逻辑。
+collectors 采集逻辑（代理供给集成除外）。
 
 ## Tasks
 
@@ -52,6 +54,11 @@ collectors 采集逻辑。
 | done | #290 | 运行 Python 测试 + 覆盖率门禁 | 实现 |
 | done | #290 | 真实重建 proxy_pool 容器并重跑验证脚本，写入 `.dsh/evidence/` | 实现 |
 | done | #290 | 文档同步（`.dsh/kb/dev/process.md` + `toolchain.md`） | 实现 |
+| done | #290 | 新增 `pyfreeproxy` + `redis` 依赖并更新 uv.lock | 实现 |
+| done | #290 | 实现 `collectors/fetch_freeproxy.py`（json/realtime 双模式） | 依赖 |
+| done | #290 | 新增 fetch_freeproxy 需求测试 | 实现 |
+| done | #290 | 文档同步 freeproxy 集成与运维 Runbook（`.dsh/kb/dev/process.md`） | 实现 |
+| pending | #290 | 运行全套件 + 覆盖率门禁 | 实现 |
 | pending | #290 | commit → review →（用户确认后）push → PR | 全部 |
 
 ## 验收标准

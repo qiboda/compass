@@ -494,6 +494,26 @@ THS 板块接口（10jqka）的代理验证工具：
 - 验证脚本：`collectors/check_proxy_pool.py` 从 proxy_pool API 取代理，用 `curl_cffi`（`chrome142` 指纹）打 THS 行业列表页 + 一个板块 kline，各 15 次共 30 次，输出成功率/平均耗时并判定（成功率 ≥50% 且平均耗时 <5s）。
 - 运行：`docker compose -f scripts/proxy_pool/docker-compose.yml up -d --build` 后执行 `uv run --project collectors python collectors/check_proxy_pool.py`。
 
+#### freeproxy 代理源集成（#290）
+
+用 [CharlesPikachu/freeproxy](https://github.com/CharlesPikachu/freeproxy) 作为
+proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
+
+- 灌库脚本：`collectors/fetch_freeproxy.py`
+  - `--source json`（默认）：下载 freeproxy 每日更新的 `proxies.json` 快照。
+  - `--source realtime`：调用 `pyfreeproxy` 实时抓取多个免费源。
+  - 默认写入 proxy_pool Redis 的 `use_proxy` 表；proxy_pool 调度器会自动校验
+    http/https（含 #290 的 HTTPS 验证补丁）。
+- 示例：
+  ```bash
+  uv run --project collectors python collectors/fetch_freeproxy.py --source json --limit 500
+  uv run --project collectors python collectors/fetch_freeproxy.py --source realtime --limit 500
+  ```
+- 运维节奏：建议每 6 小时跑一次灌库，保持池子新鲜；监控
+  `curl http://127.0.0.1:5010/count/` 的 `https` 数量，并定期跑
+  `collectors/check_proxy_pool.py` 验证 THS 成功率（≥50% 为达标）。
+- 完整运维 Runbook 见 `.dsh/evidence/proxy-pool-https-validator.md` 与本节命令。
+
 ### 百度云备份
 
 `compass-data backup` 将 `parquet_data/` 打包为 zip 并通过 `baidupcs`
