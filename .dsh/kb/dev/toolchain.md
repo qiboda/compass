@@ -604,3 +604,41 @@
   抽样核对。
 - **教训**: 「同构」类复用必须先验证**列序**而非仅字段集合；JSONP/裸 JSON 双形态
   解析要兼容（真实 API 与测试 fixture 可能不同）。
+
+---
+
+## 容器 / Docker
+
+### [容器] Docker bridge 网络创建 veth 失败 "operation not supported"
+
+- **症状**: `docker compose up -d` 创建默认 bridge 网络成功，但启动容器时报
+  `failed to add the host (veth...) <=> sandbox (veth...) pair interfaces: operation not supported`；容器反复 Restarting。
+- **根因**: 当前 DSH sandbox/运行环境不允许创建 bridge veth 对（缺少相应
+  CAP_NET_ADMIN 或沙箱网络限制）；host 网络可正常创建容器。
+- **排查路径**:
+  1. `docker info` 看网络驱动（bridge/host 均列示）——驱动存在不代表可用
+  2. `docker network ls` 确认网络已创建但容器无法挂接
+  3. `docker run --rm --network host <image> ...` 验证 host 网络可用
+- **修复**: 本次验证使用临时 host-network compose override
+  （`/tmp/proxy_pool-host-compose.yml`），提交的 compose 保留标准 bridge 配置
+  以兼容正常 Docker 主机；在受限环境验证时用 override。
+- **验证**: host override 下 `docker compose up -d` 容器 Up，API 可访问。
+- **教训**: 沙箱环境网络能力与用户真实主机可能不同；环境相关 workaround 不要
+  静默写进交付物，用临时 override 并记录。
+
+### [容器] jhao104/proxy_pool 官方镜像缺少 bash，默认 ENTRYPOINT 崩溃
+
+- **症状**: `docker compose up` 后 proxy_pool 容器反复
+  `[FATAL tini (7)] exec bash failed: No such file or directory`。
+- **根因**: `jhao104/proxy_pool:latest` 是 Alpine 镜像，未安装 bash，但镜像
+  Dockerfile 的 ENTRYPOINT 是 `tini -- bash proxy_pool.sh ...`；官方镜像开箱即坏。
+- **排查路径**:
+  1. `docker logs <container>` 看到 `exec bash failed`
+  2. `docker run --rm --network host --entrypoint sh jhao104/proxy_pool:latest -c 'which bash || echo no-bash; cat /etc/os-release'`
+     确认 Alpine 且无 bash
+  3. 读官方仓库 `Dockerfile` / `proxy_pool.sh` 确认 ENTRYPOINT 与脚本依赖 bash
+- **修复**: compose 中覆盖 entrypoint 为 `["/bin/sh","-c"]`，直接启动
+  `python proxyPool.py server & python proxyPool.py schedule & wait`（绕过 bash 脚本）。
+- **验证**: 容器 Up，`curl http://127.0.0.1:5010/all/` 返回 JSON 代理列表。
+- **教训**: 第三方镜像的 ENTRYPOINT 可能与其实际镜像内容不一致；交付 compose 时
+  应在目标镜像上实测，不能只照官方 docker-compose 抄。
