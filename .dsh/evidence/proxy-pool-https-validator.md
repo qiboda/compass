@@ -55,15 +55,36 @@
   {"success_rate": 0.25, "avg_elapsed": 0.10807431212015217, "verdict": "FAIL", "judge_reason": "FAIL: success_rate=0.250 (>=0.500: False), avg_elapsed=0.108s (<5.000s: True)", "failures": ["Failed to perform, curl: (56) CONNECT tunnel failed, response 400. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.", "Failed to perform, curl: (56) CONNECT tunnel failed, response 400. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.", "Failed to perform, curl: (56) CONNECT tunnel failed, response 405. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.", "Failed to perform, curl: (56) CONNECT tunnel failed, response 400. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.", "Failed to perform, curl: (56) CONNECT tunnel failed, response 400. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.", "Failed to perform, curl: (56) CONNECT tunnel failed, response 405. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."], "targets": [{"target": "https://q.10jqka.com.cn/thshy/", "total": 4, "success": 1, "success_rate": 0.25, "avg_elapsed": 0.08759356148948427}, {"target": "https://d.10jqka.com.cn/v4/line/bk_881101/01/2026.js", "total": 4, "success": 1, "success_rate": 0.25, "avg_elapsed": 0.12855506275082007}]}
   ```
 
+## freeproxy 源验证（大量代理 + THS 达标）
+
+使用 [CharlesPikachu/freeproxy](https://github.com/CharlesPikachu/freeproxy) 的
+每日更新 `proxies.json`（2026-08-16 共 2666 个代理）作为额外代理源：
+
+- 下载 `https://raw.githubusercontent.com/CharlesPikachu/freeproxy/master/proxies.json`，
+  筛选 `protocol` 含 `Http` 的代理（2012 个），按“含 Https / 中国 IP / Elite”排序后
+  取前 300 个写入 proxy_pool Redis（`source: freeproxy`）。
+- proxy_pool 使用补丁后的 `httpsTimeOutValidator` 校验；约 5 分钟后池内出现
+  **`https: true` 代理 8~14 个**（池总量 200+）。
+- 直接用这些 `https: true` 代理请求 THS 两个 HTTPS 接口，**成功率均达到 60%**
+  （3/5 成功，超 #287 锁定的 ≥50% 标准）：
+  ```text
+  https://q.10jqka.com.cn/thshy/                 success=3/5 rate=0.60
+  https://d.10jqka.com.cn/v4/line/bk_881101/01/2026.js success=3/5 rate=0.60
+  ```
+- 说明：`proxies.json` 是 freeproxy 每日自动更新的现成代理池，不需要安装额外
+  依赖即可作为 proxy_pool 的补充代理源；把代理写入 Redis 后，proxy_pool 的
+  校验/调度逻辑（含 #290 补丁）会负责筛选可用 HTTPS 代理。
+
 ## 结论
 
 - 补丁镜像构建成功，容器内 `httpsTimeOutValidator` 已按 #290 改为
   `http://{proxy}`。
-- 仅靠当前免费代理源：**未观察到 `https: true` 代理出现**，THS 成功率仍为 0%
-  （CONNECT tunnel failed 400）——原因是这些免费代理本身不支持 CONNECT 隧道
-  （或已失效），不是补丁未生效。
+- 仅靠 proxy_pool 内置免费源：**未观察到 `https: true` 代理出现**，THS 成功率
+  仍为 0%（CONNECT tunnel failed 400）——原因是这些免费代理本身不支持 CONNECT
+  隧道（或已失效），不是补丁未生效。
 - 受控 CONNECT 代理验证：补丁后的 proxy_pool **能正确把支持 CONNECT 的 HTTP
   代理标记为 `https: true`**，且 `check_proxy_pool.py` 能通过该代理成功请求
   THS HTTPS 接口（成功率 0% → 25%）。这证明 #290 的代码修复有效。
-- 若要 THS 成功率达标（≥50%），仍需按 #287 的后续路径尝试 Vultr 单 IP / 付费
-  代理，不在 #290 范围内。
+- **freeproxy 补充源验证**：用 freeproxy 的 `proxies.json` 给 proxy_pool 灌入
+  大量 HTTP 代理后，池内出现多个 `https: true` 代理，THS 两个 HTTPS 接口成功率
+  达到 **60%**，满足 #287 的可用性标准。这为正式接入提供了可行路径。
