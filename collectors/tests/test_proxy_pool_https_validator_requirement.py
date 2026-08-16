@@ -74,8 +74,7 @@ class TestValidatorPatchExists:
 
     def test_patch_file_exists(self) -> None:
         assert PATCH_PATH.is_file(), (
-            f"{PATCH_PATH.relative_to(REPO_ROOT)} must exist (RED: patch not "
-            f"implemented yet)"
+            f"{PATCH_PATH.relative_to(REPO_ROOT)} must exist (patch file is missing)"
         )
 
     def test_patch_is_unified_diff_with_p1_target(self) -> None:
@@ -127,8 +126,7 @@ class TestDockerfileAppliesPatch:
 
     def test_dockerfile_exists(self) -> None:
         assert DOCKERFILE_PATH.is_file(), (
-            f"{DOCKERFILE_PATH.relative_to(REPO_ROOT)} must exist (RED: "
-            f"Dockerfile not implemented yet)"
+            f"{DOCKERFILE_PATH.relative_to(REPO_ROOT)} must exist (Dockerfile is missing)"
         )
 
     def test_dockerfile_starts_with_upstream_base(self) -> None:
@@ -168,19 +166,7 @@ class TestComposeUsesBuild:
         )
 
     def test_compose_proxy_pool_service_has_no_upstream_image(self) -> None:
-        text = COMPOSE_PATH.read_text(encoding="utf-8")
-        # The upstream image tag must not be referenced for the proxy_pool
-        # service. (The redis service legitimately has its own image.)
-        lines = text.splitlines()
-        service_block_started = False
-        for ln in lines:
-            if ln.strip() == "proxy_pool:":
-                service_block_started = True
-                continue
-            if service_block_started and ln.strip() and not ln.startswith((" ", "\t")):
-                break  # next top-level key -> proxy_pool block ended
-            if service_block_started:
-                assert "image: jhao104/proxy_pool:2.4.2" not in ln, (
-                    "the proxy_pool service must not reference "
-                    "image: jhao104/proxy_pool:2.4.2"
-                )
+        members = _proxy_pool_service_members(COMPOSE_PATH.read_text(encoding="utf-8"))
+        assert not re.search(r"image:\s*jhao104/proxy_pool\b", members, re.MULTILINE), (
+            "the proxy_pool service must not reference image: jhao104/proxy_pool"
+        )

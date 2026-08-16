@@ -656,10 +656,14 @@
   2. `docker build --network=host -t ... scripts/proxy_pool` → 网络错误消失，暴露 `patch: not found`
   3. `docker run --rm --network host --entrypoint sh <image> -c 'which patch || echo no-patch; cat /etc/os-release'`
      确认 Alpine 且无 patch
-- **修复**: Dockerfile 在 `RUN patch` 前增加 `RUN apk add --no-cache patch`；受限沙箱
+- **修复**: Dockerfile 采用多阶段构建——build 阶段在 `RUN patch` 前增加
+  `RUN apk add --no-cache patch` 并应用补丁；final 阶段从上游基础镜像复制补丁后的
+  `/app/helper/validator.py`，运行时镜像不包含 patch 二进制与补丁文件。受限沙箱
   构建/运行使用 `--network=host`（交付的 compose 保留标准配置，受限环境用临时
   host override）。
 - **验证**: `docker build --network=host -t proxy_pool_https_validator:local scripts/proxy_pool`
-  成功；容器内 `sed -n '71,77p' /app/helper/validator.py` 显示 https key 已改为 `http://`。
+  成功（多阶段 build ID `ad3cc044c1d0`）；final 镜像内 `which patch` 不存在、
+  `/app/validator.patch` 不存在，`sed -n '71,77p' /app/helper/validator.py` 显示
+  https key 已改为 `http://`。
 - **教训**: 对第三方 Alpine 镜像打补丁前先确认基础工具是否安装；沙箱网络限制同时
   影响 build RUN 与容器运行，统一用 host network 验证。
