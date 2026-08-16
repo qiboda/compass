@@ -9,6 +9,9 @@
 #   4. concept_member 表（SEPA 概念主题数据源，70460 行；题材已改行业板块聚合）
 #   5. _tmp_name_en 残留临时表（#266 name_en 导入遗留，import 会重建）
 #   6. final_score.theme_score 列（issue #283 D6）
+#   7. csv/index_basic.csv 旧镜像（含已删的东财 BK/concept 名称行；不删会让
+#      下一次增量 import 用 INSERT IGNORE merge 把已删行全部复活 —— 已发生
+#      一次，见 fetch_index_daily._persist_outputs 注释。fetch 现已每次重建）
 #
 # 用法：scripts/cleanup-concept-data.sh
 # 前置：/data/compass-data/compass_data 仓库存在；执行后 dolt commit + push（见末尾）。
@@ -29,6 +32,8 @@ dolt sql -q "DELETE FROM index_basic WHERE index_type = 'industry' AND symbol LI
 dolt sql -q "DROP TABLE IF EXISTS concept_member"
 dolt sql -q "DROP TABLE IF EXISTS _tmp_name_en"
 dolt sql -q "ALTER TABLE final_score DROP COLUMN theme_score"
+# CSV 镜像同步清理：旧 index_basic.csv 含已删名称行，残留会让下次 import 复活
+rm -f "${COMPASS_DATA_DIR:-/data/compass-data}/csv/index_basic.csv"
 
 echo "== 清理后验证 =="
 dolt sql -q "SELECT index_type, COUNT(*) c FROM index_basic GROUP BY index_type"

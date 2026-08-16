@@ -471,7 +471,7 @@ def import_replace_table(
             else 0
         )
         created = dolt_sql(ddl).returncode == 0
-        result = dolt_sql(insert_sql, timeout=600) if created else None
+        result = dolt_sql(insert_sql, timeout=3600) if created else None
         if result is None or result.returncode != 0:
             if result is not None and result.stderr:
                 logger.error("  SQL error: %s", result.stderr.strip())
@@ -485,7 +485,7 @@ def import_replace_table(
             dolt_sql(f"RENAME TABLE {dolt_table} TO {old_name}")
 
         created = dolt_sql(ddl).returncode == 0
-        result = dolt_sql(insert_sql, timeout=600) if created else None
+        result = dolt_sql(insert_sql, timeout=3600) if created else None
         if result is None or result.returncode != 0:
             if created:
                 dolt_sql(f"DROP TABLE IF EXISTS {dolt_table}")
