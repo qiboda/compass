@@ -72,6 +72,11 @@ collectors 采集逻辑（代理供给集成除外）。
    （`uv run pytest collectors/tests/ --cov=. --cov-fail-under=95 -q`）。
 5. 真实重建后重跑验证脚本，记录 `https: true` 代理是否出现、THS 成功率是否
    变化。
+6. `collectors/fetch_freeproxy.py` 支持 `--source json`（默认）和
+   `--source realtime`，能把 freeproxy 代理写入 proxy_pool Redis。
+7. fetch_freeproxy 对代理 IP/端口做安全校验（公网 IP、端口 1-65535、拒绝
+   CRLF/空白/scheme/@），并跳过畸形条目。
+8. fetch_freeproxy 有测试覆盖（解析/过滤/CLI/Redis 写入/畸形输入），全套件绿。
 
 ## 决策记录
 

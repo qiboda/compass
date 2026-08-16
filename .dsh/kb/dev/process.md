@@ -512,6 +512,8 @@ proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
 - 运维节奏：建议每 6 小时跑一次灌库，保持池子新鲜；监控
   `curl http://127.0.0.1:5010/count/` 的 `https` 数量，并定期跑
   `collectors/check_proxy_pool.py` 验证 THS 成功率（≥50% 为达标）。
+- 安全注意：`--source realtime` 会向不可信的第三方源发起外连，应在沙箱/隔离
+  网络运行；Redis 默认只应在本机/容器网络内访问，若需跨机请加密码/ACL/TLS。
 - 完整运维 Runbook 见 `.dsh/evidence/proxy-pool-https-validator.md` 与本节命令。
 
 ### 百度云备份
