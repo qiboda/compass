@@ -37,7 +37,6 @@ CONNECTED = [
     "block_trade",
     "index_daily",
     "institution_survey",
-    "concept_member",
     "dragon",
 ]
 # The 5 un-wired, append-type collectors currently in the hard-coded choices.

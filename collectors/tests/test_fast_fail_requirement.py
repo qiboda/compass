@@ -26,6 +26,7 @@ Every terminating/raising/interval test below therefore fails until GREEN.
 
 import asyncio
 import csv
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -67,14 +68,15 @@ _FAIL = "fail"   # HTTP 500 → _get_json returns None (all hosts×attempts exha
 _EMPTY = "empty"  # non-error but empty klines → counted as a failure too
 
 
-def _make_stub(make_stub_session, boards: list[dict[str, object]], kline: dict[str, str]):
+def _make_stub(make_stub_session, boards: list[tuple[str, str]], kline: dict[str, str]):
     """Build an AsyncSession stub whose ``get`` dispatches per target.
 
-    ``kline`` maps ``secid → {_OK, _FAIL, _EMPTY}``. Unknown secids (e.g. the
-    official indices in scenarios with no early terminate) default to ``_OK`` so
-    they never contribute a spurious failure. ``tracked`` records every secid
-    that was actually requested (in request order, including host/retry repeats)
-    so tests can assert a remaining target was never reached.
+    ``boards`` is the THS list page content (881xxx code, name) and ``kline``
+    maps a bare 881xxx code → {_OK, _FAIL, _EMPTY}. Unknown codes (e.g. the
+    official indices in scenarios with no early terminate) default to _OK so
+    they never contribute a spurious failure. ``tracked`` records every THS
+    code that was actually requested (in request order, including retry
+    repeats) so tests can assert a remaining target was never reached.
 
     Returns ``(stub, tracked)``.
     """
@@ -82,23 +84,50 @@ def _make_stub(make_stub_session, boards: list[dict[str, object]], kline: dict[s
     stub = make_stub_session()
 
     async def _get(url, params=None, headers=None):
-        if "kline/get" in url:
-            secid = (params or {}).get("secid", "")
-            if secid:
-                tracked.append(secid)
-            kind = kline.get(secid, _OK)
-            code = secid.split(".")[-1]
+        if "d.10jqka.com.cn" in url:  # THS per-year kline
+            m = re.search(r"bk_(\d+)/01/", url)
+            code = m.group(1) if m else ""
+            if code:
+                tracked.append(code)
+            kind = kline.get(code, _OK)
             if kind == _FAIL:
                 return StubResponse(status_code=500, json_data={})
             if kind == _EMPTY:
-                return StubResponse(json_data=_kline_payload(code, []))
+                return _ths_empty_response()
+            return _ths_kline_response(code, 2026, [_ths_kline_row()])
+        if "thshy" in url:
+            anchors = "\n".join(
+                f'<a href="http://q.10jqka.com.cn/thshy/{code}/">{name}</a>'
+                for code, name in boards
+            )
+            resp = StubResponse(status_code=200)
+            resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
+            return resp
+        if "kline/get" in url:
+            secid = (params or {}).get("secid", "")
+            code = secid.split(".")[-1]
             return StubResponse(json_data=_kline_payload(code, [_kline_row()]))
-        if "clist/get" in url:
-            return StubResponse(json_data=_clist_payload(boards))
         return StubResponse(status_code=200, json_data={})
 
     stub.get = _get  # type: ignore[method-assign]
     return stub, tracked
+
+
+def _ths_kline_row(day: str = "2026-07-31", close: float = 3000.0) -> str:
+    """One 7-field THS row: date,open,high,low,close,volume,amount."""
+    return f"{day},{close - 1},{close + 1},{close - 2},{close},120000000,52000000000"
+
+
+def _ths_kline_response(code: str, year: int, rows: list[str]) -> StubResponse:
+    """JSONP per-year THS kline body."""
+    resp = StubResponse(status_code=200)
+    data = ";".join(rows)
+    resp._text = f'quotebridge_v4_line_bk_{code}_01_{year}({{"data":"{data}"}})'
+    return resp
+
+
+def _ths_empty_response() -> StubResponse:
+    return _ths_kline_response("000000", 2026, [])
 
 
 def _pin_today(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,9 +163,9 @@ class TestConsecutiveFailureTerminates:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board(f"BK{i:04d}", f"B{i}") for i in range(1101, 1107)]  # BK1101..BK1106
+        boards = [(f"881{i:03d}", f"B{i}") for i in range(101, 107)]  # BK1101..BK1106
         kline = {
-            f"90.BK{i:04d}": (_FAIL if i <= 1105 else _OK) for i in range(1101, 1107)
+            f"881{i:03d}": (_FAIL if i <= 105 else _OK) for i in range(101, 107)
         }
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
@@ -146,10 +175,10 @@ class TestConsecutiveFailureTerminates:
         assert "连续" in str(e.value), f"message must mention 连续, got {str(e.value)!r}"
         assert "疑似反爬" in str(e.value), "message must hint anti-bot, got {str(e.value)!r}"
         # The remaining (would-succeed) target after the 5th failure is never fetched.
-        assert "90.BK1106" not in tracked, (
+        assert "881106" not in tracked, (
             "after 5 consecutive failures run() must stop before the remaining target"
         )
-        assert "90.BK1101" in tracked, "the failing targets must themselves be requested"
+        assert "881101" in tracked, "the failing targets must themselves be requested"
 
     async def test_five_empty_klines_failures_terminate_before_remaining_target(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -161,9 +190,9 @@ class TestConsecutiveFailureTerminates:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board(f"BK{i:04d}", f"B{i}") for i in range(1111, 1117)]  # BK1111..BK1116
+        boards = [(f"881{i:03d}", f"B{i}") for i in range(111, 117)]  # BK1111..BK1116
         kline = {
-            f"90.BK{i:04d}": (_EMPTY if i <= 1115 else _OK) for i in range(1111, 1117)
+            f"881{i:03d}": (_EMPTY if i <= 115 else _OK) for i in range(111, 117)
         }
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
@@ -171,7 +200,7 @@ class TestConsecutiveFailureTerminates:
             await run()
 
         assert "连续" in str(e.value), "empty klines failures must also fast-fail"
-        assert "90.BK1116" not in tracked, (
+        assert "881116" not in tracked, (
             "5 empty-klines failures must stop before the remaining target"
         )
 
@@ -195,12 +224,12 @@ class TestCsvPreservedOnTerminate:
         _pin_today(monkeypatch)
 
         # First board succeeds, the next 5 fail consecutively.
-        ok = _board("BK1201", "赢家板")
-        fail_boards = [_board(f"BK{i:04d}", f"F{i}") for i in range(1202, 1207)]  # BK1202..BK1206
+        ok = ("881201", "赢家板")
+        fail_boards = [(f"881{i:03d}", f"F{i}") for i in range(202, 207)]  # BK1202..BK1206
         boards = [ok, *fail_boards]
         kline = {
-            "90.BK1201": _OK,
-            **{f"90.BK{i:04d}": _FAIL for i in range(1202, 1207)},
+            "881201": _OK,
+            **{f"881{i:03d}": _FAIL for i in range(202, 207)},
         }
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
@@ -214,23 +243,27 @@ class TestCsvPreservedOnTerminate:
         assert daily_path.exists(), "index_daily.csv must exist even though run() raised"
         rows = _read_rows(daily_path)
         symbols = {r["symbol"] for r in rows}
-        assert "BK1201" in symbols, (
+        assert "BK881201" in symbols, (
             f"records fetched before termination must be written to CSV; got symbols {symbols}"
         )
         # index_basic keeps the discovered boards (including the failed streak).
         basic_path = tmp_path / "index_basic.csv"
         assert basic_path.exists(), "index_basic.csv must be preserved for resumability"
         basic_symbols = {r["symbol"] for r in _read_rows(basic_path)}
-        assert "BK1201" in basic_symbols and "BK1205" in basic_symbols, (
+        assert "BK881201" in basic_symbols and "BK881205" in basic_symbols, (
             "index_basic must retain discovered boards past the abort point"
         )
 
-    async def test_incremental_abort_writes_daily_but_not_basic(
+    async def test_incremental_abort_writes_daily_and_basic(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Incremental run (last_report_date non-empty) + 5 consecutive failures:
-        abort still writes the fetched daily CSV, but does NOT rebuild
-        index_basic (same gate as the normal incremental path)."""
+        abort writes both the fetched daily CSV and the rebuilt index_basic CSV.
+
+        index_basic is rebuilt on every non-short-circuited run (issue #283:
+        the B1 cleanup dropped EastMoney BK/concept rows from Dolt while a
+        stale CSV still listed them; an incremental run that did NOT rebuild
+        the CSV let the next import resurrect all deleted rows)."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -239,12 +272,12 @@ class TestCsvPreservedOnTerminate:
             "fetch_index_daily.last_report_date", lambda _tbl: "2026-07-31"
         )
 
-        ok = _board("BK1201", "赢家板")
-        fail_boards = [_board(f"BK{i:04d}", f"F{i}") for i in range(1202, 1207)]
+        ok = ("881201", "赢家板")
+        fail_boards = [(f"881{i:03d}", f"F{i}") for i in range(202, 207)]
         boards = [ok, *fail_boards]
         kline = {
-            "90.BK1201": _OK,
-            **{f"90.BK{i:04d}": _FAIL for i in range(1202, 1207)},
+            "881201": _OK,
+            **{f"881{i:03d}": _FAIL for i in range(202, 207)},
         }
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
@@ -255,10 +288,15 @@ class TestCsvPreservedOnTerminate:
         daily_path = tmp_path / "index_daily.csv"
         assert daily_path.exists(), "incremental abort must keep the fetched daily CSV"
         symbols = {r["symbol"] for r in _read_rows(daily_path)}
-        assert "BK1201" in symbols, "daily rows fetched before the streak must be persisted"
+        assert "BK881201" in symbols, "daily rows fetched before the streak must be persisted"
         basic_path = tmp_path / "index_basic.csv"
-        assert not basic_path.exists(), (
-            "incremental abort must not rebuild index_basic (same gate as normal incremental path)"
+        assert basic_path.exists(), (
+            "incremental abort must rebuild index_basic so the CSV mirror stays "
+            "in sync with Dolt (issue #283 resurrection bug)"
+        )
+        basic_symbols = {r["symbol"] for r in _read_rows(basic_path)}
+        assert "BK881201" in basic_symbols, (
+            "discovered boards must land in the rebuilt basic CSV"
         )
 
 
@@ -281,8 +319,8 @@ class TestInterleaveAndBoundary:
 
         # B1,F B2,F B3,S B4,F B5,F B6,F B7,S B8,S  → max consecutive streak = 3.
         order = [_FAIL, _FAIL, _OK, _FAIL, _FAIL, _FAIL, _OK, _OK]
-        boards = [_board(f"BK{i:04d}", f"B{i}") for i in range(1301, 1309)]  # BK1301..BK1308
-        kline = {f"90.BK{i:04d}": order[i - 1301] for i in range(1301, 1309)}
+        boards = [(f"881{i:03d}", f"B{i}") for i in range(301, 309)]  # BK1301..BK1308
+        kline = {f"881{i:03d}": order[i - 301] for i in range(301, 309)}
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
         daily_path = None
@@ -290,8 +328,8 @@ class TestInterleaveAndBoundary:
             daily_path = await run()  # must NOT raise
 
         # All boards fetched — no early termination despite 5 total failures.
-        for i in range(1301, 1309):
-            assert f"90.BK{i:04d}" in tracked, (
+        for i in range(301, 309):
+            assert f"881{i:03d}" in tracked, (
                 "interleaved failures must never stop the run (success resets counter)"
             )
         assert daily_path.exists(), "a completed run must materialize the daily CSV"
@@ -307,16 +345,16 @@ class TestInterleaveAndBoundary:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board(f"BK{i:04d}", f"B{i}") for i in range(1401, 1407)]  # BK1401..BK1406
+        boards = [(f"881{i:03d}", f"B{i}") for i in range(401, 407)]  # BK1401..BK1406
         kline = {
-            f"90.BK{i:04d}": (_FAIL if i <= 1404 else _OK) for i in range(1401, 1407)
+            f"881{i:03d}": (_FAIL if i <= 404 else _OK) for i in range(401, 407)
         }
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             daily_path = await run()  # must NOT raise at 4 consecutive failures
 
-        assert "90.BK1405" in tracked, (
+        assert "881405" in tracked, (
             "the counter must not trigger at 4 — the 5th target still gets fetched"
         )
         assert daily_path.exists(), "run() completes and writes the daily CSV"
@@ -330,9 +368,9 @@ class TestInterleaveAndBoundary:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board(f"BK{i:04d}", f"B{i}") for i in range(1501, 1507)]  # BK1501..BK1506
+        boards = [(f"881{i:03d}", f"B{i}") for i in range(501, 507)]  # BK1501..BK1506
         kline = {
-            f"90.BK{i:04d}": (_FAIL if i <= 1505 else _OK) for i in range(1501, 1507)
+            f"881{i:03d}": (_FAIL if i <= 505 else _OK) for i in range(501, 507)
         }
         stub, tracked = _make_stub(make_stub_session, boards, kline)
 
@@ -340,7 +378,7 @@ class TestInterleaveAndBoundary:
             await run()
 
         assert "连续" in str(e.value), "5th consecutive failure must raise 连续... RuntimeError"
-        assert "90.BK1506" not in tracked, (
+        assert "881506" not in tracked, (
             "the 5th failure stops the run before the remaining (success) target"
         )
 

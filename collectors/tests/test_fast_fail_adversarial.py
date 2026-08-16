@@ -94,26 +94,46 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
 
 
-def _make_stub(make_stub_session, boards: list[dict], kline: dict[str, str],
+def _make_stub(make_stub_session, boards: list[tuple[str, str]], kline: dict[str, str],
                default: str = _OK):
-    """Stub whose get() dispatches per secid; ``official_reqs`` captures each
-    official secid actually asked for (in order), boards via ``tracked``.
-
-    ``kline`` maps ``secid → {_OK,_FAIL,_EMPTY,_MISMATCH}``.
-
-    Returns (stub, tracked_secids, official_reqs).
-    """
+    """Stub whose get() dispatches per target: THS industries (bare 881xxx
+    code, per-year kline URL) and official indices (secid, kline/get URL).
+    ``official_reqs`` captures each official secid asked for (in order);
+    THS codes via ``tracked``. ``kline`` maps bare THS code OR official secid
+    → {_OK,_FAIL,_EMPTY,_MISMATCH}. Returns (stub, tracked, official_reqs)."""
     tracked: list[str] = []
     official_reqs: list[str] = []
     stub = make_stub_session()
 
     async def _get(url, params=None, headers=None):
+        if "d.10jqka.com.cn" in url:  # THS per-year kline
+            m = __import__("re").search(r"bk_(\d+)/01/", url)
+            code = m.group(1) if m else ""
+            if code:
+                tracked.append(code)
+            kind = kline.get(code, default)
+            if kind == _FAIL:
+                return StubResponse(status_code=500, json_data={})
+            if kind == _EMPTY:
+                resp = StubResponse(status_code=200)
+                resp._text = f'quotebridge_v4_line_bk_{code}_01_2026({{"data":""}})'
+                return resp
+            resp = StubResponse(status_code=200)
+            resp._text = f'quotebridge_v4_line_bk_{code}_01_2026({{"data":"2026-07-31,2999,3001,2998,3000,120000000,50000000000"}})'
+            return resp
+        if "thshy" in url:
+            anchors = "\n".join(
+                f'<a href="http://q.10jqka.com.cn/thshy/{code}/">{name}</a>'
+                for code, name in boards
+            )
+            resp = StubResponse(status_code=200)
+            resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
+            return resp
         if "kline/get" in url:
             secid = (params or {}).get("secid", "")
             if secid:
                 tracked.append(secid)
-                if not secid.startswith("90."):
-                    official_reqs.append(secid)
+                official_reqs.append(secid)
             kind = kline.get(secid, default)
             bare = secid.rsplit(".", 1)[-1]
             if kind == _FAIL:
@@ -125,8 +145,6 @@ def _make_stub(make_stub_session, boards: list[dict], kline: dict[str, str],
                 # neither failure nor success (no kline rows, no reset).
                 return StubResponse(json_data=_kline_payload(f"99{bare}", [_kline_row()]))
             return StubResponse(json_data=_kline_payload(bare, [_kline_row()]))
-        if _CLIST in url:
-            return StubResponse(json_data=_clist_payload(boards))
         return StubResponse(status_code=200, json_data={})
 
     stub.get = _get  # type: ignore[method-assign]
@@ -155,14 +173,14 @@ class TestBoundaryLoops:
         _pin_today(monkeypatch)
 
         boards = [
-            _board("BK2101", "B1"), _board("BK2102", "B2"),
-            _board("BK2103", "B3"), _board("BK2104", "B4"),
+            ("881201", "B1"), ("881202", "B2"),
+            ("881203", "B3"), ("881204", "B4"),
         ]
         kline = {
-            "90.BK2101": _FAIL,
-            "90.BK2102": _OK,
-            "90.BK2103": _FAIL,
-            "90.BK2104": _FAIL,
+            "881201": _FAIL,
+            "881202": _OK,
+            "881203": _FAIL,
+            "881204": _FAIL,
         }
         # Officials 1-3 fail consecutively.
         o1, o2, o3 = OFFICIAL_INDICES[0]["secid"], OFFICIAL_INDICES[1]["secid"], OFFICIAL_INDICES[2]["secid"]
@@ -201,8 +219,8 @@ class TestBoundaryLoops:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board(f"BK22{i:02d}", f"B{i}") for i in range(1, 5)]  # BK2201..BK2204
-        kline = {f"90.BK22{i:02d}": _FAIL for i in range(1, 5)}
+        boards = [(f"8812{i:02d}", f"B{i}") for i in range(1, 5)]  # 881201..881204
+        kline = {f"8812{i:02d}": _FAIL for i in range(1, 5)}
         o1, o2 = OFFICIAL_INDICES[0]["secid"], OFFICIAL_INDICES[1]["secid"]
         kline[o1] = _MISMATCH   # skip — neither fail nor success
         kline[o2] = _FAIL       # 5th true failure → terminates here
@@ -249,8 +267,8 @@ class TestMixedStreakAndResource:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board("BK2301", "B1"), _board("BK2302", "B2")]
-        kline = {"90.BK2301": _EMPTY, "90.BK2302": _FAIL}
+        boards = [("881301", "B1"), ("881302", "B2")]
+        kline = {"881301": _EMPTY, "881302": _FAIL}
         o1, o2, o3 = (OFFICIAL_INDICES[i]["secid"] for i in (0, 1, 2))
         kline.update({o1: _EMPTY, o2: _FAIL, o3: _EMPTY})
         o4 = OFFICIAL_INDICES[3]["secid"]
@@ -265,7 +283,7 @@ class TestMixedStreakAndResource:
         assert o4 not in official_reqs, "no requests may be issued after the 5th failure"
         # The 5 failures themselves were each requested exactly once (no phantom
         # requests to already-aborted targets beyond the streak).
-        expected_requested = {"90.BK2301", "90.BK2302", o1, o2, o3}
+        expected_requested = {"881301", "881302", o1, o2, o3}
         assert expected_requested <= set(tracked), (
             f"each streaked target must be requested once; got {tracked}"
         )
@@ -282,8 +300,8 @@ class TestMixedStreakAndResource:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board("BK2401", "B1"), _board("BK2402", "B2")]
-        kline = {f"90.BK24{i:02d}": _FAIL for i in range(1, 3)}
+        boards = [("881401", "B1"), ("881402", "B2")]
+        kline = {f"8814{i:02d}": _FAIL for i in range(1, 3)}
         o1, o2, o3 = (OFFICIAL_INDICES[i]["secid"] for i in (0, 1, 2))
         kline.update({o1: _FAIL, o2: _FAIL, o3: _FAIL})
 
@@ -310,8 +328,8 @@ class TestMixedStreakAndResource:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board("BK2501", "B1")]
-        kline = {"90.BK2501": _FAIL}
+        boards = [("881501", "B1")]
+        kline = {"881501": _FAIL}
         o1, o2, o3, o4, o5 = (OFFICIAL_INDICES[i]["secid"] for i in range(5))
         kline.update({o1: _FAIL, o2: _FAIL, o3: _FAIL, o4: _FAIL, o5: _FAIL})
 
@@ -344,9 +362,9 @@ class TestPartialSuccessCsv:
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        ok = _board("BK2601", "赢家板")
-        boards = [ok, *[_board(f"BK26{i:02d}", f"F{i}") for i in range(2, 7)]]  # BK2602..BK2606
-        kline = {"90.BK2601": _OK, **{f"90.BK26{i:02d}": _FAIL for i in range(2, 7)}}
+        ok = ("881601", "赢家板")
+        boards = [ok, *[(f"8816{i:02d}", f"F{i}") for i in range(2, 7)]]  # 881602..881606
+        kline = {"881601": _OK, **{f"8816{i:02d}": _FAIL for i in range(2, 7)}}
 
         stub, _, _ = _make_stub(make_stub_session, boards, kline)
 
@@ -357,12 +375,12 @@ class TestPartialSuccessCsv:
         daily = tmp_path / "index_daily.csv"
         assert daily.exists(), "daily CSV must exist despite the abort (keep-resumable)"
         symbols = {r["symbol"] for r in _read_rows(daily)}
-        assert "BK2601" in symbols, (
+        assert "BK881601" in symbols, (
             f"rows fetched before the streak must be persisted on disk; got symbols {symbols}"
         )
         # The 5 failed boards contributed no rows.
         for i in range(2, 7):
-            assert f"BK26{i:02d}" not in symbols, "failed targets must not leak rows"
+            assert f"BK8816{i:02d}" not in symbols, "failed targets must not leak rows"
 
 
 # ── 6: zero success + streak → no half-written daily CSV ─────────────────────

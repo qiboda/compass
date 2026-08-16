@@ -38,13 +38,13 @@ const TECH_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS technical_factor (\
     PRIMARY KEY (symbol, trade_date))";
 
 const INDUSTRY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS industry_factor (\
-    concept_name VARCHAR(50) NOT NULL, \
+    industry_name VARCHAR(50) NOT NULL, \
     trade_date DATE NOT NULL, \
     stock_count INTEGER, \
     gain_score DOUBLE, amount_score DOUBLE, diffusion_score DOUBLE, \
     heat_score DOUBLE, news_score DOUBLE, \
     update_date DATE, \
-    PRIMARY KEY (concept_name, trade_date))";
+    PRIMARY KEY (industry_name, trade_date))";
 
 const CAPITAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS capital_factor (\
     symbol VARCHAR(20) NOT NULL, \
@@ -56,7 +56,7 @@ const CAPITAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS capital_factor (\
 const FINAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS final_score (\
     symbol VARCHAR(20) NOT NULL, \
     trade_date DATE NOT NULL, \
-    trend_score DOUBLE, theme_score DOUBLE, money_score DOUBLE, \
+    trend_score DOUBLE, money_score DOUBLE, \
     pattern_score DOUBLE, risk_score DOUBLE, total_score DOUBLE, \
     `rank` INTEGER, update_date DATE, \
     PRIMARY KEY (symbol, trade_date))";
@@ -276,16 +276,17 @@ fn write_back(dolt_dir: &Path, data: &SepaData, tables: &[&str]) -> Result<(), B
         csv
     };
 
-    // industry_factor: concept-level aggregation over the ranked rows.
+    // industry_factor: industry-level aggregation over the ranked rows
+    // (issue #283 D5 — the theme module groups by stock_basic.industry).
     let ind_csv: String = {
         let mut agg: HashMap<&str, Vec<&SepaRow>> = HashMap::new();
         for row in &data.rows {
-            for theme in &row.themes {
-                agg.entry(theme.as_str()).or_default().push(row);
+            if !row.industry.is_empty() {
+                agg.entry(row.industry.as_str()).or_default().push(row);
             }
         }
         let mut csv = String::from(
-            "concept_name,trade_date,stock_count,gain_score,amount_score,diffusion_score,heat_score,news_score,update_date\n",
+            "industry_name,trade_date,stock_count,gain_score,amount_score,diffusion_score,heat_score,news_score,update_date\n",
         );
         let mut names: Vec<&&str> = agg.keys().collect();
         names.sort();
@@ -338,14 +339,13 @@ fn write_back(dolt_dir: &Path, data: &SepaData, tables: &[&str]) -> Result<(), B
     // final_score: the ranked TOP-N rows as-is.
     let final_csv: String = {
         let mut csv = String::from(
-            "symbol,trade_date,trend_score,theme_score,money_score,pattern_score,risk_score,total_score,rank,update_date\n",
+            "symbol,trade_date,trend_score,money_score,pattern_score,risk_score,total_score,rank,update_date\n",
         );
         for row in &data.rows {
             csv.push_str(&format!(
-                "{},{date},{},{},{},{},{},{},{},{}\n",
+                "{},{date},{},{},{},{},{},{},{}\n",
                 csv_field(&symbol_csv(&row.symbol)),
                 fmt_double(row.trend),
-                fmt_double(row.theme),
                 fmt_double(row.capital),
                 fmt_double(row.pattern),
                 fmt_double(row.risk),
@@ -697,21 +697,6 @@ mod tests {
             dir.join("stock_basic.parquet").display()
         ))
         .expect("copy basic");
-
-        conn.execute_batch(
-            "CREATE TABLE concept_member (concept_code VARCHAR, symbol VARCHAR, concept_name VARCHAR, update_date DATE);",
-        )
-        .expect("create concept_member");
-        conn.execute(
-            "INSERT INTO concept_member VALUES ('BK1000', 'SZ000001', 'AI概念', '2026-07-31')",
-            [],
-        )
-        .expect("insert concept_member");
-        conn.execute_batch(&format!(
-            "COPY concept_member TO '{}' (FORMAT PARQUET)",
-            dir.join("concept_member.parquet").display()
-        ))
-        .expect("copy concept_member");
     }
 
     // -----------------------------------------------------------------------
@@ -733,7 +718,6 @@ mod tests {
                 risk: -1.5,
                 industry: "测试".to_string(),
                 industry_en: None,
-                themes: vec!["AI概念".to_string()],
                 latest_price: 25.0,
                 change_pct: 2.3,
                 details: compass_types::SepaDetails {
@@ -756,7 +740,6 @@ mod tests {
                 risk: 0.0,
                 industry: "测试".to_string(),
                 industry_en: None,
-                themes: vec![],
                 latest_price: 15.3,
                 change_pct: 2.0,
                 details: compass_types::SepaDetails {
@@ -1185,6 +1168,35 @@ mod tests {
         assert_eq!(
             dolt_count(dolt_tmp.path(), "market_temperature", "2026-07-31"),
             1
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // issue #283 D6: the SEPA theme_score column is removed from the write-back
+    // (final_score table DDL + its CSV export header). Today FINAL_SCHEMA still
+    // declares theme_score and the final_score export still emits a theme_score
+    // header, so these assertions are RED until B3 drops the column.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn final_score_schema_has_no_theme_score_column() {
+        assert!(
+            !FINAL_SCHEMA.contains("theme_score"),
+            "final_score DDL must not declare theme_score (issue #283 D6)"
+        );
+    }
+
+    #[test]
+    fn final_score_export_header_has_no_theme_score() {
+        // Probe the ACTUAL production export header for the final-score CSV
+        // (the inline string in write_back). The removed column's exact
+        // header fragment can only appear in the production header, never in
+        // this test's own text.
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sepa.rs"));
+        let old_header_fragment = format!("trend_{},{}", "score", "theme_score");
+        assert!(
+            !src.contains(&old_header_fragment),
+            "final_score write-back export must no longer emit the removed column"
         );
     }
 }

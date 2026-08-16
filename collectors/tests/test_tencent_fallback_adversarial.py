@@ -371,17 +371,18 @@ class TestTencentNoFallbackOnCodeMismatch:
     async def test_code_mismatch_skips_fallback_and_preserves_counter(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: 4 boards fail (counter=4). O1 mismatches on EastMoney (skip →
-        counter stays 4, NO Tencent request). O2 then double-fails → counter=5
-        → abort on O2. If O1 wrongly reset the counter (mismatch-as-success)
-        there would be no abort; if O1 wrongly triggered Tencent fallback that
-        fallback's success/failure would corrupt the streak. Both are pinned."""
+        """RED: 4 THS industries fail (counter=4). O1 mismatches on EastMoney
+        (skip → counter stays 4, NO Tencent request). O2 then double-fails →
+        counter=5 → abort on O2. If O1 wrongly reset the counter
+        (mismatch-as-success) there would be no abort; if O1 wrongly triggered
+        Tencent fallback that fallback's success/failure would corrupt the
+        streak. Both are pinned."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
         _pin_today(monkeypatch)
 
-        boards = [_board(f"BK41{i:02d}", f"B{i}") for i in range(1, 5)]
+        ths_codes = [f"8814{i:02d}" for i in range(1, 5)]
         o1 = {"secid": "1.000001", "code": "000001", "name": "上证指数"}
         o2 = {"secid": "1.000016", "code": "000016", "name": "上证50"}
         monkeypatch.setattr("fetch_index_daily.OFFICIAL_INDICES", (o1, o2))
@@ -390,17 +391,24 @@ class TestTencentNoFallbackOnCodeMismatch:
         stub = make_stub_session()
 
         async def _get(url, params=None, headers=None):
-            if "clist/get" in url:
-                return StubResponse(json_data=_clist_payload(boards))
+            if "thshy" in url:
+                # THS list yields the 4 industries whose klines all fail.
+                anchors = "\n".join(
+                    f'<a href="http://q.10jqka.com.cn/thshy/{code}/">{code}</a>'
+                    for code in ths_codes
+                )
+                resp = StubResponse(status_code=200)
+                resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
+                return resp
             if "ifzq.gtimg.cn" in url:
                 param = (params or {}).get("param", "")
                 tencent_reqs.append(param)
                 return StubResponse(status_code=500, json_data={})  # Tencent fail
+            if "d.10jqka.com.cn" in url:
+                return StubResponse(status_code=500, json_data={})  # THS klines fail
             if "kline/get" in url:
                 secid = (params or {}).get("secid", "")
                 bare = secid.rsplit(".", 1)[-1]
-                if secid.startswith("90."):  # boards fail
-                    return StubResponse(status_code=500, json_data={})
                 if secid == "1.000001":
                     # mismatch: non-empty klines echo a DIFFERENT code
                     return StubResponse(
@@ -419,9 +427,9 @@ class TestTencentNoFallbackOnCodeMismatch:
             await run()
 
         assert "连续" in str(e.value), (
-            "4 board fails + O1 mismatch (skip) + O2 double-fail = 5 consecutive "
-            "failures → abort; the mismatch must NOT reset the counter. "
-            f"got {str(e.value)!r}"
+            "4 THS industry fails + O1 mismatch (skip) + O2 double-fail = 5 "
+            "consecutive failures → abort; the mismatch must NOT reset the "
+            f"counter. got {str(e.value)!r}"
         )
         # The mismatch (O1) must never have been routed to Tencent; O2's
         # double-fail may still have one Tencent attempt.

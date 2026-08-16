@@ -35,11 +35,12 @@ import pytest
 # Reuse the existing kline-row / payload helpers from the primary test module
 # so the fixtures are identical to the current convention.
 from test_index_daily import (  # noqa: E402
-    CLIST_URL,
     KLINE_URL,
-    _clist_payload,
+    THS_LIST_URL,
     _kline_payload,
     _kline_row,
+    _ths_kline_getter,
+    _ths_list_response,
 )
 
 PINNED_TODAY = datetime.date(2026, 8, 15)  # the 2026-08-15 real failure day
@@ -59,7 +60,7 @@ class TestKlineRecordsUpdateDate:
         from fetch_index_daily import _kline_records  # noqa: E402
 
         records = _kline_records(
-            "BK0475", "concept", [_kline_row("2026-07-31")], PINNED_TODAY
+            "BK881101", "industry", [_kline_row("2026-07-31")], PINNED_TODAY
         )
         assert records, "a populated kline must yield at least one record"
         assert "update_date" in records[0], (
@@ -132,18 +133,17 @@ class TestEndToEndRunImport:
         monkeypatch.setattr("fetch_index_daily._today", lambda: PINNED_TODAY)
         monkeypatch.setattr(asyncio, "sleep", AsyncMock())
 
-        # Official index SH000001 (code match "000001") + one concept board.
+        # Official index SH000001 (code match "000001") + one THS industry.
         klines = [_kline_row("2026-07-31"), _kline_row("2026-08-14")]
         stub = make_stub_session(
             canned_responses={
                 KLINE_URL: {
                     "json_data": _kline_payload("000001", klines),
                 },
-                CLIST_URL: {
-                    "json_data": _clist_payload([{"f12": "BK0475", "f14": "半导体"}]),
-                },
+                THS_LIST_URL: _ths_list_response([("881101", "半导体")]),
             }
         )
+        stub.get = _ths_kline_getter(stub, ["881101"], ["2026"])
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
             daily_path = await run()
 

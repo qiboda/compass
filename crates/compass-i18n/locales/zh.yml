@@ -225,7 +225,6 @@ index:
   empty_desc: 请先导入 index_daily 数据，再点击刷新
   segment:
     industry: 行业板块
-    concept: 概念板块
     official: 官方指数
   table:
     name: 名称

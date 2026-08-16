@@ -157,24 +157,22 @@ run_script "$T1"
 assert_true "exit 0 on happy path" 'test "$(cat "$T1/exit.code")" = 0'
 assert_true "step 1: import market data" \
     'grep -qx "cargo run --bin compass-data -- import" "$T1/calls.log"'
-assert_true "step 2: fetch AND import 5 collector sources, one call each" \
+assert_true "step 2: fetch AND import 4 collector sources, one call each" \
     'grep -qx "uv run python main.py fetch main_flow" "$T1/calls.log" &&
      grep -qx "uv run python main.py fetch dragon" "$T1/calls.log" &&
      grep -qx "uv run python main.py fetch block_trade" "$T1/calls.log" &&
      grep -qx "uv run python main.py fetch institution_survey" "$T1/calls.log" &&
-     grep -qx "uv run python main.py fetch concept_member" "$T1/calls.log" &&
      grep -qx "uv run python main.py import main_flow" "$T1/calls.log" &&
      grep -qx "uv run python main.py import dragon" "$T1/calls.log" &&
      grep -qx "uv run python main.py import block_trade" "$T1/calls.log" &&
-     grep -qx "uv run python main.py import institution_survey" "$T1/calls.log" &&
-     grep -qx "uv run python main.py import concept_member" "$T1/calls.log"'
+     grep -qx "uv run python main.py import institution_survey" "$T1/calls.log"'
+
 assert_true "step 4: 4 append tables with since anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-07-31" "$T1/calls.log"'
-assert_true "step 4: concept_member full overwrite" \
-    'grep -qx "cargo run --bin compass-data -- import-compass --table concept_member --overwrite" "$T1/calls.log"'
+
 assert_true "step 5: temperature before score" \
     'grep -qx "cargo run --bin compass-data -- sepa temperature" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- sepa score --top 50" "$T1/calls.log"'
@@ -198,7 +196,6 @@ cat > "$T2/status.seq" <<'EOF'
 On branch main
 Changes not staged for commit:
 	modified:         capital_main_flow
-	new table:        concept_member
 	new table:        some_unrelated_table
 ===
 On branch main
@@ -208,7 +205,7 @@ EOF
 run_script "$T2"
 assert_true "exit 0" 'test "$(cat "$T2/exit.code")" = 0'
 assert_true "add limited to changed collector tables (no add .)" \
-    'grep -qx "dolt --data-dir $T2/repos/compass_data add capital_main_flow concept_member" "$T2/calls.log"'
+    'grep -qx "dolt --data-dir $T2/repos/compass_data add capital_main_flow" "$T2/calls.log"'
 assert_false "unrelated/new table never staged" \
     'grep -q "some_unrelated_table" "$T2/calls.log"'
 assert_true "collector commit message with ref" \

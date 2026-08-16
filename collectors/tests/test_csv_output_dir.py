@@ -113,39 +113,6 @@ class TestRunDefaultOutputInCsvDir:
 
         assert result == csv_dir / f"{report_name}.csv"
 
-    async def test_concept_member_default_output_in_csv_dir(
-        self, make_stub_session, monkeypatch, tmp_path: Path
-    ) -> None:
-        """concept_member has no watermark check — full run with a stubbed session.
-
-        One board with zero members makes write_csv([]) a no-op, and run()
-        returns its output_path without writing anything.
-        """
-        import fetch_concept_member as mod
-
-        csv_dir = tmp_path / "csv"
-        monkeypatch.setenv("COMPASS_CSV_DIR", str(csv_dir))
-        mock_sleep = AsyncMock()
-        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
-
-        stub = make_stub_session(
-            canned_responses={
-                mod.BOARD_LIST_URL: {
-                    "json_data": {
-                        "data": {"total": 1, "diff": [{"f12": "BK0001", "f14": "测试板块"}]},
-                    }
-                },
-                mod.EM_BASE: {
-                    "json_data": {"success": True, "result": {"data": [], "pages": 1}},
-                },
-            }
-        )
-        with patch("fetch_concept_member.AsyncSession", return_value=stub):
-            result = await mod.run(page_size=100)
-
-        assert result == csv_dir / f"{mod.REPORT_NAME}.csv"
-
-
 class TestArgparseDefaultOutputInCsvDir:
     """argparse-based collectors: default output (no -o/--output) lands in csv_dir()."""
 

@@ -25,8 +25,6 @@ pub enum CompassTable {
     FinBalanceSheet,
     FinIncome,
     FinCashFlow,
-    /// Concept board members (full-overwrite import, DELETE+rewrite semantics).
-    ConceptMember,
     /// Capital main flow (主力资金流), incremental merge on (symbol, trade_date).
     MainFlow,
     /// Dragon list (龙虎榜), incremental merge on (symbol, trade_date, seat_type).
@@ -42,7 +40,7 @@ pub enum CompassTable {
     /// queries work unchanged on index data (plan T3 column contract).
     IndexDaily,
     /// Index/board name table (指数/板块名称), full-overwrite import
-    /// (mirrors Dolt state, DELETE+rewrite semantics like ConceptMember).
+    /// (mirrors Dolt state, DELETE+rewrite semantics).
     IndexBasic,
 }
 
@@ -55,7 +53,6 @@ impl std::str::FromStr for CompassTable {
             "fin_balance_sheet" => Ok(CompassTable::FinBalanceSheet),
             "fin_income" => Ok(CompassTable::FinIncome),
             "fin_cash_flow" => Ok(CompassTable::FinCashFlow),
-            "concept_member" => Ok(CompassTable::ConceptMember),
             "capital_main_flow" => Ok(CompassTable::MainFlow),
             "dragon_list" => Ok(CompassTable::DragonList),
             "block_trade" => Ok(CompassTable::BlockTrade),
@@ -96,7 +93,6 @@ pub fn run(
         CompassTable::FinCashFlow => {
             import_financial_table("fin_cash_flow", &dolt_dir, &output, overwrite, since)
         }
-        CompassTable::ConceptMember => import_concept_member(&dolt_dir, &output),
         CompassTable::MainFlow => {
             import_append_table(
                 AppendTableSpec {
@@ -221,7 +217,7 @@ fn validate_since_arg(flag: &str, value: &str) -> Result<(), Box<dyn std::error:
 
 /// Warn when the source data is stale (issue #136, Q5: warn-only).
 /// Thresholds: fin_* tables 120 days (quarterly reports), market tables
-/// (main_flow/dragon_list/block_trade/institution_survey/concept_member/
+/// (main_flow/dragon_list/block_trade/institution_survey/
 /// index_daily/index_basic) 7 days. `stock_basic` is skipped: its
 /// data_updates row has a NULL last_report_date (collectors write only
 /// 4 columns, main.py:79-85).
@@ -530,32 +526,9 @@ fn import_append_table<'a>(
     Ok(())
 }
 
-/// Import concept board members as a full overwrite.
-///
-/// Unlike the append-style tables, `concept_member` is version-tracked
-/// (collectors DELETE + rewrite the whole table each run), so an incremental
-/// ROW_NUMBER merge would leave removed members lingering in the parquet and
-/// stale concepts would keep scoring. Always write the full Dolt state,
-/// equivalent to `--overwrite` regardless of the flag.
-fn import_concept_member(dolt_dir: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Exporting concept_member...");
-    let data = run_dolt_sql_parquet(
-        dolt_dir,
-        "SELECT * FROM concept_member ORDER BY concept_code, symbol",
-    )?;
-    let path = output.join("concept_member.parquet");
-    std::fs::write(&path, &data)?;
-    let src_count = crate::validate::dolt_count(dolt_dir, "concept_member", "")?;
-    let parquet_count = crate::validate::parquet_row_count(&path)?;
-    crate::validate::verify_row_count(src_count, parquet_count, "concept_member")?;
-    info!("  → {}", path.display());
-    warn_if_stale(dolt_dir, "concept_member", MARKET_FRESHNESS_DAYS);
-    Ok(())
-}
-
 /// Import index_basic as a full overwrite.
 ///
-/// Like `concept_member`, `index_basic` is a version-tracked name table
+/// `index_basic` is a version-tracked name table
 /// (collectors rewrite the whole Dolt table on each full run), so the export
 /// must always mirror the current Dolt state — boards/indices deleted
 /// upstream must disappear from the parquet. No incremental merge, regardless
@@ -593,14 +566,6 @@ mod tests {
         revenue_yoy DOUBLE, net_profit_yoy DOUBLE, operating_profit_yoy DOUBLE, net_profit_qoq DOUBLE, \
         shares_growth DOUBLE, dividend_plan TEXT, dividend_year VARCHAR(10), \
         PRIMARY KEY (symbol, report_date))";
-
-    const CONCEPT_MEMBER_SCHEMA: &str = "\
-        CREATE TABLE concept_member (\
-        concept_code VARCHAR(20) NOT NULL, \
-        symbol VARCHAR(20) NOT NULL, \
-        concept_name VARCHAR(50), \
-        update_date DATE, \
-        PRIMARY KEY (concept_code, symbol))";
 
     const MAIN_FLOW_SCHEMA: &str = "\
         CREATE TABLE capital_main_flow (\
@@ -842,10 +807,6 @@ mod tests {
         assert!(matches!(
             "fin_cash_flow".parse::<CompassTable>(),
             Ok(CompassTable::FinCashFlow)
-        ));
-        assert!(matches!(
-            "concept_member".parse::<CompassTable>(),
-            Ok(CompassTable::ConceptMember)
         ));
         assert!(matches!(
             "capital_main_flow".parse::<CompassTable>(),
@@ -1431,99 +1392,6 @@ mod tests {
     }
 
     #[test]
-    fn concept_member_full_overwrite_propagates_deletion() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        setup_dolt(tmp.path());
-
-        Command::new("dolt")
-            .arg("--data-dir")
-            .arg(tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg(CONCEPT_MEMBER_SCHEMA)
-            .output()
-            .expect("create table");
-
-        // Version N: 50 members
-        let mut values = String::new();
-        for i in 0..50 {
-            if i > 0 {
-                values.push_str(", ");
-            }
-            values.push_str(&format!(
-                "('C{:04}', 'SH{:06}', '概念{}', '2026-01-01')",
-                i,
-                600000 + i,
-                i
-            ));
-        }
-        Command::new("dolt")
-            .arg("--data-dir")
-            .arg(tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg(format!(
-                "INSERT INTO concept_member (concept_code, symbol, concept_name, update_date) \
-                 VALUES {values}"
-            ))
-            .output()
-            .expect("insert 50 members");
-
-        run(
-            tmp.path().to_path_buf(),
-            tmp.path().to_path_buf(),
-            CompassTable::ConceptMember,
-            false,
-            None,
-        )
-        .expect("first import");
-        let parquet = tmp.path().join("concept_member.parquet");
-        assert_eq!(read_parquet_row_count(&parquet), 50);
-
-        // Version N+1: collector rewrote the table with 45 members (5 removed)
-        let removed: Vec<String> = (0..5).map(|i| format!("'SH{:06}'", 600000 + i)).collect();
-        Command::new("dolt")
-            .arg("--data-dir")
-            .arg(tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg(format!(
-                "DELETE FROM concept_member WHERE symbol IN ({})",
-                removed.join(", ")
-            ))
-            .output()
-            .expect("delete 5 members");
-
-        // Second import without --overwrite/--since must still fully overwrite
-        run(
-            tmp.path().to_path_buf(),
-            tmp.path().to_path_buf(),
-            CompassTable::ConceptMember,
-            false,
-            None,
-        )
-        .expect("second import");
-
-        assert_eq!(
-            read_parquet_row_count(&parquet),
-            45,
-            "deleted members must not linger in parquet"
-        );
-        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
-        let stale: usize = duck
-            .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM read_parquet('{}') WHERE symbol IN ({})",
-                    parquet.display(),
-                    removed.join(", ")
-                ),
-                [],
-                |row| row.get(0),
-            )
-            .expect("stale count");
-        assert_eq!(stale, 0, "removed members must not exist in parquet");
-    }
-
     #[test]
     fn run_sepa_capital_tables_export_parquet() {
         let tmp = tempfile::tempdir().expect("tempdir");

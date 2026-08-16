@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""A-share index daily collector — official indices, concept & industry boards.
+"""A-share index daily collector — official indices & THS industry boards.
 
 Independent module — uses common.py for shared infrastructure.
 
-Source: EastMoney push2his ``kline/get`` for daily bars (``klt=101``,
-``fqt=0``, ``beg=0&end=20500000`` full history) and push2 ``clist/get``
-(``fs=m:90 t:3`` / ``t:2`` ``f:!50``) for the concept/industry board list.
-Official indices additionally fall back to Tencent ``fqkline/get`` when
-EastMoney fails or returns empty klines (issue #278).
+Sources:
+- Official indices: EastMoney push2his ``kline/get`` (``klt=101``,
+  ``fqt=0``, ``beg=0&end=20500000`` full history); a Tencent ``fqkline/get``
+  fallback covers EastMoney failure/empty klines (issue #278).
+- Industry boards: 同花顺 (THS) 90 申万一级 industries (881xxx) — the list
+  page ``q.10jqka.com.cn/thshy/`` (GBK) and per-year daily klines from
+  ``d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`` (issue #283).
 
-Three index classes (handoff decisions 1/5/7):
+Two index classes (handoff decisions 1/5/7 + #283 D1):
 - ``official`` — hardcoded whitelist of ~30 mainstream exchange indices
   (``secid={1|0}.{code}``, 1=SH / 0=SZ); a target whose kline response
   ``data.code`` does not match the whitelisted bare code is SKIPPED (the API
   may return a different index for a delisted/renamed code).
-- ``concept`` / ``industry`` — boards discovered from clist (``f12`` code +
-  ``f14`` name); klines via ``secid=90.BKxxxx``. A board whose kline is empty
-  or fails is skipped for daily rows but KEEPS its index_basic entry
-  (decision 2/9: 拉不到就跳过，不自算).
+- ``industry`` — THS boards discovered from the thshy list page; klines via
+  the per-year BK kline endpoint. A board whose kline is empty or fails is
+  skipped for daily rows but KEEPS its index_basic entry (拉不到就跳过，不自算).
 
 Incremental mode (decision 8): ``data_updates.last_report_date`` is compared
 against today before fetching (short-circuit); new boards/indices are fetched
@@ -35,7 +36,9 @@ index_type) in csv_dir().
 import argparse
 import asyncio
 import csv
+import json
 import random
+import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -54,7 +57,7 @@ from common import (
 )
 
 DOLT_TABLE = "index_daily"
-SOURCE = "EastMoney push2his kline + push2 clist"
+SOURCE = "EastMoney push2his kline + Tencent fallback + THS industry kline"
 
 # push2his kline — primary host must stay the handoff-verified canonical URL;
 # numbered mirrors are tried as fallback on empty/failed responses.
@@ -74,11 +77,13 @@ _TENCENT_PAGE_SIZE = 2000
 # ~8.5k bars, so this is a generous safety cap against API misbehavior.
 _TENCENT_MAX_PAGES = 10
 
-# Board list discovery (push2 clist) — concept ``t:3`` / industry ``t:2``.
-CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
-CLIST_FALLBACK = "https://push2.eastmoney.com/api/qt/clist/get"
-CLIST_HOSTS = (CLIST_URL, CLIST_FALLBACK)
-CLIST_PAGE_SIZE = 100
+# THS (同花顺) industry boards (issue #283 D1/D2): the list page is GBK
+# HTML whose anchors embed every 881xxx code + display name (~140 raw rows,
+# 50 duplicates → 90 unique); per-year klines come from the JSONP BK
+# endpoint (2007..current year, ~20 requests per board).
+THS_LIST_URL = "https://q.10jqka.com.cn/thshy/"
+THS_KLINE_TPL = "https://d.10jqka.com.cn/v4/line/bk_{code}/01/{year}.js"
+THS_FIRST_YEAR = 2007
 
 HEADERS = {
     "User-Agent": (
@@ -89,9 +94,18 @@ HEADERS = {
     "Referer": "https://quote.eastmoney.com/",
 }
 
+# THS endpoints need their own Referer (10jqka hosts reject eastmoney one).
+THS_HEADERS = {**HEADERS, "Referer": "https://q.10jqka.com.cn/"}
+
 # Bounded retry budget per target: hosts × attempts. 30 official indices × 6
-# + 2 clist fetches × 6 = 192 requests worst case when everything 429s —
+# + 2 THS list fetches × 6 = 192 requests worst case when everything 429s —
 # must stay < 200 so an exhausted run terminates in bounded time.
+#
+# The THS per-year kline path is NOT covered by this budget: 90 industries ×
+# ~20 years ≈ 1800 requests max. It has its own throttle (Throttle) plus a
+# single retry per request (fetch_ths_kline), and the #277 fast-fail aborts
+# after 5 consecutive failed industries — a 429 storm on THS therefore ends
+# in bounded time via fast-fail, not via the <200 budget.
 _MAX_HOSTS_TRIED = 2
 _MAX_ATTEMPTS = 3
 
@@ -121,23 +135,26 @@ def _bump_failure(consecutive_failures: int) -> tuple[int, str | None]:
 def _persist_outputs(
     daily_records: list[dict[str, object]],
     basic_records: list[dict[str, object]],
-    boards: list[tuple[str, str, str]],
-    last: str,
     daily_path: Path,
     basic_path: Path,
 ) -> None:
     """Write the CSV outputs produced so far (shared by normal and abort paths).
 
-    index_basic is (re)built on full runs only (``last`` empty) and only when
-    the board universe was actually discovered — an empty clist means the API
-    glitched, and a boards-less basic table would silently drop every board's
-    name entry on the merge import. Incremental runs publish the daily CSV
-    alone; official names ride along on full runs. When no records exist at
-    all, any stale CSV files are removed.
+    index_basic is (re)built on every non-short-circuited run whenever any
+    basic record exists. The import is a merge (INSERT IGNORE on PK symbol),
+    which never drops rows absent from the CSV, so rewriting the basic CSV
+    cannot erase names already stored in Dolt (a THS list-page glitch that
+    leaves only official rows stays harmless). Rebuilding on every run keeps
+    the CSV mirror of ``index_basic`` in sync with the board whitelist —
+    without it, a stale CSV resurrects Dolt rows deleted by the B1 cleanup
+    (issue #283: 1000 EastMoney board rows were dropped from Dolt while an
+    old CSV still listed them; the next incremental import re-inserted every
+    deleted row). When no records exist at all, any stale CSV files are
+    removed.
     """
     if daily_records:
         write_csv(daily_records, daily_path)
-    if not last and boards and basic_records:
+    if basic_records:
         write_csv(basic_records, basic_path)
     if not daily_records and not basic_records:
         daily_path.unlink(missing_ok=True)
@@ -323,55 +340,140 @@ async def _get_json(
     return None
 
 
-async def fetch_board_list(session: AsyncSession, throttle: Throttle) -> list[tuple[str, str, str]]:
-    r"""Discover concept + industry boards from push2 clist.
+async def fetch_ths_industry_list(
+    session: AsyncSession, throttle: Throttle
+) -> list[tuple[str, str]]:
+    """Fetch the THS industry list page and extract the unique 881xxx boards.
 
-    Returns ``(symbol, name, index_type)`` tuples for every valid BK code
-    (``^BK\d{4}$``); malformed codes (BK12/BK12345/BKAB12) and entries
-    without f12 are rejected. Boards listed in both the concept and industry
-    queries keep their first (concept) classification — avoids double kline
-    fetches. Paginates until ``total`` is met; a failed page breaks the
-    pagination for that query (boards discovered so far are kept).
+    The page is GBK-encoded HTML; each industry row is an anchor whose href
+    embeds the 881xxx code and whose text is the display name. The raw page
+    carries ~140 rows with ~50 duplicate codes — de-duplication yields the 90
+    unique 申万一级 industries. Malformed hrefs and non-881xxx codes are
+    rejected. Returns ``(code, name)`` pairs in page order, or [] when the
+    page cannot be fetched/decoded (the run treats an empty universe as a
+    no-op for boards, never a crash).
     """
-    boards: list[tuple[str, str, str]] = []
+    # One retry with a short backoff — a transient 500/429 on the list page
+    # must not silently empty the whole industry universe (review P2-2).
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            await throttle.acquire()
+            resp = await session.get(THS_LIST_URL, headers=THS_HEADERS)
+            resp.raise_for_status()
+            html = resp.content.decode("gbk", errors="replace")
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt == 0:
+                await asyncio.sleep(0.5 + random.uniform(0, 0.5))
+    else:
+        print(f"    FAILED ths list: {last_exc}", file=sys.stderr)
+        return []
+    boards: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for fs, index_type in (("m:90 t:3 f:!50", "concept"), ("m:90 t:2 f:!50", "industry")):
-        page = 1
-        collected = 0
-        while True:
-            params = {
-                "pn": str(page),
-                "pz": str(CLIST_PAGE_SIZE),
-                "po": "1",
-                "np": "1",
-                "fltt": "2",
-                "invt": "2",
-                "fid": "f12",
-                "fs": fs,
-                "fields": "f12,f14",
-            }
-            data = await _get_json(session, throttle, CLIST_HOSTS, params)
-            diff = ((data or {}).get("data") or {}).get("diff") or []
-            total = int(((data or {}).get("data") or {}).get("total") or 0)
-            collected += len(diff)
-            for item in diff:
-                code = item.get("f12")
-                if (
-                    not isinstance(code, str)
-                    or len(code) != 6
-                    or not code.startswith("BK")
-                    or not code[2:].isdigit()
-                ):
-                    continue
-                if code in seen:
-                    continue
-                seen.add(code)
-                name = item.get("f14") if isinstance(item.get("f14"), str) else ""
-                boards.append((code, name, index_type))
-            if not diff or total <= 0 or collected >= total or page >= 100:
-                break
-            page += 1
+    # Live page anchors are /thshy/detail/code/881xxx/ (2026-08-16 实测);
+    # the optional (?:detail/code/)? segment keeps test fixtures using the
+    # bare /thshy/881xxx/ form working.
+    for m in re.finditer(
+        r'href="[^"]*?/thshy/(?:detail/code/)?(881\d{3})/"\s*[^>]*>([^<]+)</a>',
+        html,
+    ):
+        code, name = m.group(1), m.group(2).strip()
+        if code in seen:
+            continue
+        seen.add(code)
+        boards.append((code, name))
     return boards
+
+
+async def fetch_ths_kline(
+    session: AsyncSession,
+    throttle: Throttle,
+    code: str,
+    year: int,
+) -> list[str] | None:
+    """Fetch one year of THS industry daily klines for one 881xxx code.
+
+    The endpoint returns a JSONP body whose ``data`` field is a
+    ``;``-separated list of 11-field CSV rows. Every row keeps the first 7
+    fields and is reordered from the THS column order
+    (date, open, high, low, close, volume, amount) into the EastMoney order
+    consumed by ``_kline_records`` (date, open, close, high, low, volume,
+    amount) — the two sources are NOT column-identical (issue #283 实测
+    2026-08-16; reusing the EM mapping as-is would silently swap high/close).
+
+    Returns the normalized 7-field rows, [] for a structurally empty year, or
+    None when the request/parse failed (the caller stops the year loop on
+    None and counts the board as failed when nothing was collected).
+    """
+    # One retry with a short backoff — a transient failure on one year must
+    # not truncate the board history (review P1-1/P2-2); the caller still
+    # distinguishes None (failure) from [] (empty year).
+    last_exc: Exception | None = None
+    body = ""
+    for attempt in range(2):
+        try:
+            await throttle.acquire()
+            resp = await session.get(
+                THS_KLINE_TPL.format(code=code, year=year), headers=THS_HEADERS
+            )
+            resp.raise_for_status()
+            body = resp.text
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt == 0:
+                await asyncio.sleep(0.5 + random.uniform(0, 0.5))
+    else:
+        print(f"    FAILED ths kline {code}/{year}: {last_exc}", file=sys.stderr)
+        return None
+    start, end = body.find("("), body.rfind(")")
+    if start == -1 or end <= start:
+        return None
+    payload_text = body[start + 1 : end]
+    # The live API wraps a JSON object (``{"data": "…"}``); a bare CSV body
+    # (test fixture shape) parses as raw rows — accept both.
+    try:
+        payload = json.loads(payload_text)
+        data = (payload or {}).get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, str):
+            data = None
+    except Exception:
+        data = None
+    if data is None:
+        data = payload_text
+    rows: list[str] = []
+    for line in re.split(r"[;\n]", data):
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        # THS: date,open,high,low,close,volume,amount → EM: date,open,close,high,low,volume,amount.
+        reordered = [
+            _ths_date_iso(parts[0]),
+            parts[1],
+            parts[4],
+            parts[2],
+            parts[3],
+            parts[5],
+            parts[6],
+        ]
+        rows.append(",".join(reordered))
+    return rows
+
+
+def _ths_date_iso(cell: str) -> str:
+    """Normalize the THS compact date (YYYYMMDD) to ISO (YYYY-MM-DD).
+
+    THS kline rows carry 8-digit dates (``20260105``) while ``_kline_records``
+    compares trade_date against ``today`` lexically in ISO form — the raw
+    compact form compares greater than an ISO today (``0`` > ``-``) and every
+    row would be dropped as "future-dated". ISO-looking cells pass through.
+    """
+    cell = cell.strip()
+    if len(cell) == 8 and cell.isdigit():
+        return f"{cell[:4]}-{cell[4:6]}-{cell[6:]}"
+    return cell
 
 
 async def fetch_kline(
@@ -501,7 +603,7 @@ async def _fetch_tencent_kline(
 
 
 async def run() -> Path:
-    """Fetch official indices + concept/industry boards into two CSVs.
+    """Fetch official indices + THS industry boards into two CSVs.
 
     Short-circuits before fetching when ``data_updates.last_report_date`` is
     already today (incremental, decision 8). Individual targets that fail or
@@ -519,7 +621,11 @@ async def run() -> Path:
         print(f"Data up to date ({last}); skipping fetch", file=sys.stderr)
         return daily_path
 
-    print("Report: index_daily/index_basic (EastMoney push2his + push2 clist)", file=sys.stderr)
+    print(
+        "Report: index_daily/index_basic (EastMoney push2his + Tencent "
+        "fallback + THS industry kline)",
+        file=sys.stderr,
+    )
     print(f"Output: {daily_path.resolve()} / {basic_path.resolve()}", file=sys.stderr)
 
     with Progress("index_daily", output_csv=daily_path) as progress:
@@ -530,41 +636,65 @@ async def run() -> Path:
         abort_reason: str | None = None
 
         async with AsyncSession(impersonate="chrome142") as session:
-            boards = await fetch_board_list(session, throttle)
-            print(f"Boards: {len(boards)}", file=sys.stderr)
+            industries = await fetch_ths_industry_list(session, throttle)
+            print(f"THS industries: {len(industries)}", file=sys.stderr)
+            if not industries:
+                print(
+                    "WARNING: THS 行业列表为空（抓取失败或页面结构变化）——"
+                    "本次仅采集官方指数，90 个行业未采",
+                    file=sys.stderr,
+                )
             progress.update(
-                total_items=len(boards) + len(OFFICIAL_INDICES),
-                message="Fetching board and index klines",
+                total_items=len(industries) + len(OFFICIAL_INDICES),
+                message="Fetching THS industry and index klines",
             )
 
-            # Boards first (discovery order), official after — index_basic order
-            # convention (GUI picker lists boards prominently).
-            for i, (code, name, index_type) in enumerate(boards):
+            # THS industries first (list order), official after — index_basic
+            # order convention (GUI picker lists boards prominently).
+            for i, (code, name) in enumerate(industries):
                 if abort_reason is not None:
                     break
+                symbol = f"BK{code}"
                 basic_records.append(
-                    {"symbol": code, "name": name, "index_type": index_type}
+                    {"symbol": symbol, "name": name, "index_type": "industry"}
                 )
-                print(f"  [board] {code} {name} ...", file=sys.stderr, end=" ", flush=True)
-                result = await fetch_kline(session, throttle, f"90.{code}")
-                if result is None:
+                print(
+                    f"  [industry] {symbol} {name} ...",
+                    file=sys.stderr, end=" ", flush=True,
+                )
+                # Per-year pagination, newest first. An EMPTY year is the
+                # historical boundary (no older data) and stops the loop; a
+                # request/parse FAILURE (None) must NOT truncate the history
+                # — a transient 500/429 on one year would otherwise silently
+                # drop every earlier year (review P1-1). Failures are logged
+                # and the loop keeps walking back; a board whose years all
+                # fail still lands in the fast-fail counter below.
+                klines: list[str] = []
+                for year in range(_today().year, THS_FIRST_YEAR - 1, -1):
+                    year_rows = await fetch_ths_kline(session, throttle, code, year)
+                    if year_rows is None:
+                        print(
+                            f"    year {year} fetch failed (kept going)",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if not year_rows:
+                        break
+                    klines.extend(year_rows)
+                if not klines:
                     consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
-                    print("FAILED", file=sys.stderr)
-                elif not result[0]:
-                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
-                    print("empty (skipped)", file=sys.stderr)
+                    print("FAILED (no klines)", file=sys.stderr)
                 else:
-                    klines, _code = result
                     daily_records.extend(
-                        _kline_records(code, index_type, klines, _today())
+                        _kline_records(symbol, "industry", klines, _today())
                     )
                     print(f"{len(klines)} bars", file=sys.stderr)
                     consecutive_failures = 0
                 progress.update(
                     completed=i + 1,
                     fetched_rows=len(daily_records),
-                    current_item=code,
-                    message=f"Fetched board {code} {name}",
+                    current_item=symbol,
+                    message=f"Fetched industry {symbol} {name}",
                 )
                 if abort_reason is not None:
                     break
@@ -574,7 +704,7 @@ async def run() -> Path:
             # mismatch is neither a failure nor a success: it must not reset the
             # consecutive-failure counter (would mask a real block) nor count
             # toward it (would false-trigger on a delisted/renamed index).
-            for j, target in enumerate(OFFICIAL_INDICES, start=len(boards)):
+            for j, target in enumerate(OFFICIAL_INDICES, start=len(industries)):
                 if abort_reason is not None:
                     break
                 print(
@@ -636,21 +766,21 @@ async def run() -> Path:
 
         if abort_reason is not None:
             _persist_outputs(
-                daily_records, basic_records, boards, last, daily_path, basic_path
+                daily_records, basic_records, daily_path, basic_path
             )
             raise RuntimeError(abort_reason)
 
         if not daily_records and not basic_records:
             _persist_outputs(
-                daily_records, basic_records, boards, last, daily_path, basic_path
+                daily_records, basic_records, daily_path, basic_path
             )
             raise RuntimeError(
-                "No index data from push2his/clist (rate-limited or empty) — "
+                "No index data (rate-limited or empty) — "
                 "aborting, no CSV written"
             )
 
         _persist_outputs(
-            daily_records, basic_records, boards, last, daily_path, basic_path
+            daily_records, basic_records, daily_path, basic_path
         )
         progress.finish(
             fetched_rows=len(daily_records),
@@ -720,12 +850,12 @@ def _import_index_basic(csv_path: Path) -> int:
 
     Epic #266 B1 + review P1-1: when the name-en mapping is available the
     INSERT LEFT-JOINs it twice — by ``symbol`` against the ``index`` section
-    (official indexes) and by ``name`` against the ``concept`` section
-    (concept/industry boards, which carry BK symbols the index section does
-    not cover). The symbol hit wins via COALESCE; a double LEFT JOIN keeps
-    one row per CSV row (no inflation). Unmapped rows → NULL (GUI falls back
-    to Chinese). A missing mapping degrades gracefully — the base import
-    always lands.
+    (official indexes) and by ``name`` against the ``industry`` section
+    (THS industry boards, which carry BK symbols the index section does not
+    cover). The symbol hit wins via COALESCE; a double LEFT JOIN keeps one
+    row per CSV row (no inflation). Unmapped rows → NULL (GUI falls back to
+    Chinese). A missing mapping degrades gracefully — the base import always
+    lands.
     """
     print("[import index_basic]", file=sys.stderr)
     mapping = load_name_en_mapping()
@@ -735,7 +865,7 @@ def _import_index_basic(csv_path: Path) -> int:
                 LEFT JOIN _tmp_name_en m1
                   ON m1.section = 'index' AND m1.`key` = t.symbol
                 LEFT JOIN _tmp_name_en m2
-                  ON m2.section = 'concept' AND m2.`key` = t.name
+                  ON m2.section = 'industry' AND m2.`key` = t.name
             """
             insert_cols = "(symbol, name, index_type, name_en)"
             select_cols = (
@@ -823,7 +953,11 @@ def _verify_recent_points(csv_path: Path) -> None:
     for symbol, dates in sample.items():
         for trade_date, csv_close in dates:
             stored = _dolt_close(dolt_dir, symbol, trade_date)
-            if stored is None or abs(stored - csv_close) / csv_close <= _SAMPLE_TOLERANCE:
+            if (
+                csv_close == 0.0
+                or stored is None
+                or abs(stored - csv_close) / csv_close <= _SAMPLE_TOLERANCE
+            ):
                 continue
             print(
                 f"  [verify] {symbol} {trade_date}: CSV {csv_close} vs "
@@ -842,11 +976,17 @@ def _dolt_dir_exists() -> Path | None:
 
 
 def _dolt_close(dolt_dir: Path, symbol: str, trade_date: str) -> float | None:
-    """Fetch a single close from Dolt (None when the row is absent)."""
+    """Fetch a single close from Dolt (None when the row is absent).
+
+    Single-quote escaping is defense-in-depth (security review P2): the
+    values are CSV-derived and normally validated upstream, but the SELECT
+    interpolates them raw.
+    """
     try:
         out = dolt_sql_csv(
-            f"SELECT close FROM index_daily "
-            f"WHERE symbol = '{symbol}' AND trade_date = '{trade_date}'"
+            "SELECT close FROM index_daily "
+            f"WHERE symbol = '{symbol.replace(chr(39), chr(39) * 2)}' "
+            f"AND trade_date = '{trade_date.replace(chr(39), chr(39) * 2)}'"
         )
     except Exception:
         return None

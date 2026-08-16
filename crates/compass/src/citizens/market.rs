@@ -1,7 +1,7 @@
 //! Market panel citizen — 大盘 overview tab (epic #255 C4, plan T6).
 //!
 //! Report-type panel: a core-index card (6-index whitelist), a toolbar
-//! (count label + industry/concept/official Segmented + manual refresh) and
+//! (count label + industry/official Segmented + manual refresh) and
 //! a sortable ranking table fed by the fourth `AsyncDispatcher` channel
 //! (`RunIndexSnapshotRequest` → `IndexSnapshot`). Segment switching filters
 //! a local copy of the snapshot in memory — never re-fetches (SEPA TOP-N
@@ -68,8 +68,9 @@ const COLUMNS: [ColumnSpec; 5] = [
 const CHANGE_COLUMN: usize = 3;
 
 /// Segmented options map to the `index_type` filter values, in segment
-/// order: 0 = industry (default), 1 = concept, 2 = official.
-const SEGMENT_TYPES: [&str; 3] = ["industry", "concept", "official"];
+/// order: 0 = industry (default), 1 = official (issue #283 D4 — the
+/// concept segment is removed).
+const SEGMENT_TYPES: [&str; 2] = ["industry", "official"];
 
 /// Format a price per the vendored `format_price` rule (labels.rs): ≥100 →
 /// 2 decimals (index points are 3000+), ≥1 → 4, <1 → 6.
@@ -91,7 +92,7 @@ pub struct MarketPanel {
     tokens: ThemeTokens,
     /// Ranking table — owns its sort state across frames.
     table: DataTable,
-    /// Selected Segmented index: 0 = industry, 1 = concept, 2 = official.
+    /// Selected Segmented index: 0 = industry, 1 = official.
     segment: usize,
 }
 
@@ -287,7 +288,6 @@ impl MarketPanel {
                     &tokens,
                     [
                         compass_i18n::t!("index.segment.industry"),
-                        compass_i18n::t!("index.segment.concept"),
                         compass_i18n::t!("index.segment.official"),
                     ],
                 )
@@ -473,7 +473,6 @@ mod tests {
             rows: vec![
                 sample_row("SH000001", "上证指数", "official", 0.82),
                 sample_row("BK0475", "半导体", "industry", -1.25),
-                sample_row("BK1169", "AI概念", "concept", 3.5),
             ],
             date: "2026-08-13".to_string(),
         }
@@ -555,7 +554,7 @@ mod tests {
         let _ = harness.get_by_label(&tr("index.card_title"));
         let _ = harness.get_by_label_contains(&compass_i18n::t!(
             "index.count",
-            count = 3,
+            count = 2,
             date = "2026-08-13"
         ));
         // Industry segment is the default: only BK0475 survives the filter.
@@ -591,7 +590,7 @@ mod tests {
         let mut rows = vec![
             sample_row("BK1", "a", "industry", 1.0),
             sample_row("BK2", "b", "industry", 5.0),
-            sample_row("BK3", "c", "concept", 2.0),
+            sample_row("BK3", "c", "other", 2.0),
             sample_row("BK4", "d", "industry", -3.0),
         ];
         rows.sort_by(|a, b| b.change_pct.total_cmp(&a.change_pct));
@@ -599,6 +598,36 @@ mod tests {
         assert_eq!(filtered.len(), 3, "industry segment has 3 rows");
         assert_eq!(filtered[0].symbol, "BK2", "highest change first");
         assert_eq!(filtered[2].symbol, "BK4", "negative change last");
+    }
+
+    #[test]
+    fn segment_types_has_only_industry_and_official() {
+        // Issue #283 D4/D5: the concept segment is removed from the 大盘 tab —
+        // the Segmented (and its index_type filter) shrinks to
+        // [industry, official]. Today SEGMENT_TYPES still holds
+        // [industry, concept, official] (3 entries) => this test is RED until
+        // B5 drops the concept entry.
+        assert_eq!(
+            SEGMENT_TYPES,
+            ["industry", "official"],
+            "concept segment must be removed (index.segment.concept entry gone)"
+        );
+        assert_eq!(SEGMENT_TYPES.len(), 2, "only industry + official segments");
+    }
+
+    #[test]
+    fn filter_rows_second_segment_is_official_not_concept() {
+        // Issue #283 D4: after the concept segment is dropped, segment index 1
+        // maps to 'official' (was 'concept'). Today index 1 filters to concept
+        // rows => RED until B5 re-indexes SEGMENT_TYPES.
+        let rows = vec![
+            sample_row("SH000001", "上证指数", "official", 0.82),
+            sample_row("BK0475", "半导体", "industry", -1.25),
+            sample_row("BK1169", "AI概念", "concept", 3.5),
+        ];
+        let filtered = MarketPanel::filter_rows(&rows, 1);
+        assert_eq!(filtered.len(), 1, "segment 1 shows only the official row");
+        assert_eq!(filtered[0].symbol, "SH000001");
     }
 
     #[test]

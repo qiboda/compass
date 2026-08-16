@@ -315,7 +315,7 @@ fn index_basic_full_overwrite_reflects_dolt_state() {
 #[test]
 fn existing_compass_tables_unaffected() {
     assert!("stock_basic".parse::<CompassTable>().is_ok());
-    assert!("concept_member".parse::<CompassTable>().is_ok());
+    assert!("concept_member".parse::<CompassTable>().is_err());
     assert!("capital_main_flow".parse::<CompassTable>().is_ok());
     assert!("index_daily_typo".parse::<CompassTable>().is_err());
 }

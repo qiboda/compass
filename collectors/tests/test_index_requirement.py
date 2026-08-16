@@ -41,7 +41,7 @@ from conftest import StubResponse  # noqa: E402
 
 # Handoff-verified endpoints (fetch_index_daily must use these).
 KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
+THS_LIST_URL = "https://q.10jqka.com.cn/thshy/"
 
 # 东财 kline 11 字段: 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
 def _kline_row(day: str, close: float = 3000.0) -> str:
@@ -53,6 +53,28 @@ def _kline_row(day: str, close: float = 3000.0) -> str:
 
 def _kline_payload(code: str, name: str, klines: list[str]) -> dict[str, object]:
     return {"rc": 0, "data": {"code": code, "name": name, "klines": klines}}
+
+
+def _ths_list_response(codes_names: list[tuple[str, str]]) -> StubResponse:
+    """GBK-encoded THS list page: one anchor per (881xxx code, display name)."""
+    anchors = "\n".join(
+        f'<a href="http://q.10jqka.com.cn/thshy/{code}/">{name}</a>'
+        for code, name in codes_names
+    )
+    resp = StubResponse(status_code=200)
+    resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
+    return resp
+
+
+def _ths_kline_row(day: str = "2026-07-31", close: float = 3000.0) -> str:
+    """One 7-field THS row: date,open,high,low,close,volume,amount."""
+    return f"{day},{close - 1},{close + 1},{close - 2},{close},120000000,52000000000"
+
+
+def _ths_kline_body(code: str, rows: list[str]) -> str:
+    """JSONP per-year THS kline body text."""
+    data = ";".join(rows)
+    return f'quotebridge_v4_line_bk_{code}_01_2026({{"data":"{data}"}})'
 
 
 def _clist_payload(diff: list[dict[str, object]]) -> dict[str, object]:
@@ -75,7 +97,7 @@ class TestFetchHappyPath:
 
     @staticmethod
     def _five_target_stub(make_stub_session) -> StubResponse:
-        """Three official indices + one concept board + one industry board.
+        """Three official indices + two THS industries.
 
         secid → (symbol, index_type, kline rows). Two klines per target so
         the full-history row count is deterministic: 5 targets × 2 = 10 rows.
@@ -86,20 +108,19 @@ class TestFetchHappyPath:
             "0.399006": ("SZ399006", "official"),
         }
         boards = {
-            "90.BK0475": ("BK0475", "concept"),
-            "90.BK0476": ("BK0476", "industry"),
+            "881101": ("BK881101", "industry"),
+            "881102": ("BK881102", "industry"),
         }
         klines = ["2026-07-30", "2026-07-31"]
         kline_by_secid = {
             secid: _kline_payload(
                 code, name, [_kline_row(day) for day in klines]
             )
-            for secid, (code, name) in {**official, **boards}.items()
+            for secid, (code, name) in official.items()
         }
-        # clist: concept t:3 → BK0475; industry t:2 → BK0476.
-        clist_by_fs = {
-            "m:90 t:3": _clist_payload([{"f12": "BK0475", "f14": "半导体"}]),
-            "m:90 t:2": _clist_payload([{"f12": "BK0476", "f14": "白酒"}]),
+        ths_by_code = {
+            code: _ths_kline_body(code, [_ths_kline_row(day) for day in klines])
+            for code in boards
         }
 
         stub = make_stub_session()
@@ -118,13 +139,24 @@ class TestFetchHappyPath:
                         "999999", "unknown", [_kline_row("2026-07-30")]
                     )
                 )
-            if url == CLIST_URL:
-                fs = params.get("fs", "")
-                # fs arrives as "m:90 t:3 f:!50" — match on the t: segment.
-                for key, payload in clist_by_fs.items():
-                    if key in fs:
-                        return StubResponse(json_data=payload)
-                return StubResponse(json_data=_clist_payload([]))
+            if "thshy" in url:
+                anchors = "\n".join(
+                    f'<a href="http://q.10jqka.com.cn/thshy/{code}/">{name}</a>'
+                    for code, (_, name) in boards.items()
+                )
+                resp = StubResponse(status_code=200)
+                resp._content = f"<html><body>{anchors}</body></html>".encode("gbk")
+                return resp
+            if "d.10jqka.com.cn" in url:
+                m = __import__("re").search(r"bk_(\d+)/01/", url)
+                code = m.group(1) if m else ""
+                if code in ths_by_code:
+                    resp = StubResponse(status_code=200)
+                    resp._text = ths_by_code[code]
+                    return resp
+                resp = StubResponse(status_code=200)
+                resp._text = f'quotebridge_v4_line_bk_{code}_01_2026({{"data":""}})'
+                return resp
             return StubResponse(status_code=404, json_data={})
 
         stub.get = _get  # type: ignore[method-assign]
@@ -133,8 +165,9 @@ class TestFetchHappyPath:
     async def test_three_index_classes_full_history_row_count(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """C1a: 3 official + 2 boards × 2 klines → 10 daily rows; every row
-        tagged with its index_type; index_basic carries 5 name records."""
+        """C1a: 3 official + 2 THS industries × 2 klines → 10 daily rows;
+        every row tagged with its index_type; index_basic carries 5 name
+        records."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -154,9 +187,12 @@ class TestFetchHappyPath:
         daily = [r for r in rows if "name" not in r]
         basic = [r for r in rows if "name" in r]
 
-        # Full-history row count: every kline of every target lands.
-        assert len(daily) == 10, (
-            f"5 targets × 2 klines must yield 10 daily rows; got {len(daily)}"
+        # Full-history row count: 3 official × 2 klines + 2 THS industries ×
+        # per-year pagination (20 years × 2 rows each).
+        years = 2026 - 2007 + 1  # THS_FIRST_YEAR..today.year
+        assert len(daily) == 3 * 2 + 2 * years * 2, (
+            f"3 official × 2 + 2 industries × {years} years × 2 must land; "
+            f"got {len(daily)}"
         )
 
         # Per-row index_type for all three classes.
@@ -164,10 +200,10 @@ class TestFetchHappyPath:
         assert type_of["SH000001"] == "official"
         assert type_of["SZ399001"] == "official"
         assert type_of["SZ399006"] == "official"
-        assert type_of["BK0475"] == "concept"
-        assert type_of["BK0476"] == "industry"
-        assert set(type_of.values()) == {"official", "concept", "industry"}, (
-            "all three index classes must be present"
+        assert type_of["BK881101"] == "industry"
+        assert type_of["BK881102"] == "industry"
+        assert set(type_of.values()) == {"official", "industry"}, (
+            "official + THS industry classes must be present"
         )
 
         # index_basic: names for official indices AND boards (C1b — the picker
@@ -176,7 +212,7 @@ class TestFetchHappyPath:
         assert len(basic_symbols) == 5, (
             f"index_basic must hold 5 name records; got {list(basic_symbols)}"
         )
-        for sym in ("SH000001", "SZ399001", "SZ399006", "BK0475", "BK0476"):
+        for sym in ("SH000001", "SZ399001", "SZ399006", "BK881101", "BK881102"):
             rec = basic_symbols.get(sym)
             assert rec is not None, f"index_basic must carry a record for {sym}"
             assert rec["name"], f"index_basic record for {sym} must carry a name"
@@ -184,11 +220,12 @@ class TestFetchHappyPath:
                 f"index_basic index_type for {sym} must match the daily tag"
             )
 
-    async def test_basic_error_path_empty_clist_no_crash(
+    async def test_basic_error_path_empty_ths_list_no_crash(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """C1 basic error: empty clist (no boards discovered) must not crash
-        run() — official indices still land, boards simply contribute none."""
+        """C1 basic error: empty THS list page (no industries discovered) must
+        not crash run() — official indices still land, industries simply
+        contribute none."""
         from fetch_index_daily import run  # noqa: E402
 
         monkeypatch.chdir(tmp_path)
@@ -207,7 +244,7 @@ class TestFetchHappyPath:
                         "000001", "上证指数", [_kline_row("2026-07-31")]
                     )
                 },
-                CLIST_URL: {"json_data": _clist_payload([])},
+                THS_LIST_URL: _ths_list_response([]),
             }
         )
         with patch("fetch_index_daily.AsyncSession", return_value=stub):
@@ -286,7 +323,7 @@ class TestImportSchemaContract:
             self._DAILY_HEADER,
             [
                 [
-                    "BK0475", "2026-07-31", "concept",
+                    "BK881101", "2026-07-31", "industry",
                     "1199.0", "1210.0", "1215.0", "1195.0", "80000000", "35000000000",
                     "2026-08-02",
                 ]
@@ -298,7 +335,7 @@ class TestImportSchemaContract:
         row = self._last(
             dolt_sql_csv(
                 "SELECT open, close, high, low, volume, amount, update_date "
-                "FROM index_daily WHERE symbol='BK0475' AND trade_date='2026-07-31'"
+                "FROM index_daily WHERE symbol='BK881101' AND trade_date='2026-07-31'"
             )
         )
         fields = row.split(",")

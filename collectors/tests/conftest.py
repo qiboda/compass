@@ -27,11 +27,14 @@ class StubResponse:
     """Fake curl-cffi Response for unit-testing collector call-sites.
 
     Call-sites use ``resp.status_code`` (int), ``resp.raise_for_status()``
-    (sync, raises on >= 400 or injected exception), and ``resp.json()``
-    (sync, returns canned dict).
+    (sync, raises on >= 400 or injected exception), ``resp.json()``
+    (sync, returns canned dict), ``resp.content`` (bytes — raw body, e.g.
+    GBK HTML) and ``resp.text`` (str — JSONP body). Tests may inject raw
+    bodies either via the constructor kwargs or by assigning ``resp._content``
+    / ``resp._text`` directly (both slots exist so dynamic assignment works).
     """
 
-    __slots__ = ("status_code", "_json", "_exc")
+    __slots__ = ("status_code", "_json", "_exc", "_content", "_text")
 
     def __init__(
         self,
@@ -39,10 +42,14 @@ class StubResponse:
         status_code: int = 200,
         json_data: dict[str, Any] | None = None,
         exc: Exception | None = None,
+        content: bytes = b"",
+        text: str = "",
     ) -> None:
         self.status_code = status_code
         self._json = json_data
         self._exc = exc
+        self._content = content
+        self._text = text
 
     def raise_for_status(self) -> None:
         if self._exc is not None:
@@ -52,6 +59,14 @@ class StubResponse:
 
     def json(self) -> dict[str, Any]:
         return self._json if self._json is not None else {}
+
+    @property
+    def content(self) -> bytes:
+        return self._content
+
+    @property
+    def text(self) -> str:
+        return self._text
 
 
 class StubSession:

@@ -27,13 +27,13 @@ use std::collections::{HashMap, HashSet};
 use chrono::{Duration, NaiveDate};
 use compass_core::data::parquet::ParquetReader;
 use compass_core::model::{
-    BlockTradeRow, CapitalMainFlow, ConceptMember, CrossSectionBar, DragonListRow,
-    InstitutionSurveyRow, StockBasic,
+    BlockTradeRow, CapitalMainFlow, CrossSectionBar, DragonListRow, InstitutionSurveyRow,
+    StockBasic,
 };
 use compass_types::{SepaData, SepaDetails, SepaFactor, SepaQuery, SepaRow};
 
 use super::SEPA_WINDOW_DAYS;
-use super::aggregation::aggregate_concept_daily;
+use super::aggregation::aggregate_industry_daily;
 use super::indicators::{
     atr20, drawdown_from_high, ma, momentum_return, rs_score, vcp_score, volume_ratio,
 };
@@ -74,9 +74,10 @@ const SUSPEND_CAL_DAYS: i64 = 7; // ≈ 5 trading days
 /// score (NaN-safe), truncate to `query.top_n` (default 50) and assemble
 /// ranked [`SepaRow`]s with per-module [`SepaFactor`] breakdowns.
 ///
-/// Symbols are exchange-prefixed (`SH600519`); theme names come from
-/// `fetch_concept_member` grouped by symbol. Missing SEPA parquet files
-/// degrade to empty vecs — their modules score 0 without a panic.
+/// Symbols are exchange-prefixed (`SH600519`); the theme module groups by
+/// `stock_basic.industry` (issue #283 D5 — the concept-membership source was
+/// removed). Missing SEPA parquet files degrade to empty vecs — their
+/// modules score 0 without a panic.
 /// Pre-fetched SEPA scoring window (full range, sliced per-day by
 /// [`score_sepa`]). Fetching once and scoring many days avoids re-reading
 /// the parquet files for every backtest day (the original per-day
@@ -84,7 +85,6 @@ const SUSPEND_CAL_DAYS: i64 = 7; // ≈ 5 trading days
 pub(crate) struct SepaWindow {
     bars: Vec<CrossSectionBar>,
     basics: Vec<StockBasic>,
-    members: Vec<ConceptMember>,
     flows: Vec<CapitalMainFlow>,
     dragons: Vec<DragonListRow>,
     blocks: Vec<BlockTradeRow>,
@@ -126,12 +126,6 @@ pub(crate) fn fetch_sepa_window(
     let basics = reader.load_all_stock_basics()?;
     tracing::debug!(fetch = "stock_basics", elapsed_ms = t.elapsed().as_millis());
     let t = std::time::Instant::now();
-    let members = reader.fetch_concept_member()?;
-    tracing::debug!(
-        fetch = "concept_member",
-        elapsed_ms = t.elapsed().as_millis()
-    );
-    let t = std::time::Instant::now();
     let flows = reader.fetch_capital_main_flow(range_start, range_end)?;
     tracing::debug!(
         fetch = "capital_main_flow",
@@ -159,7 +153,6 @@ pub(crate) fn fetch_sepa_window(
     Ok(SepaWindow {
         bars,
         basics,
-        members,
         flows,
         dragons,
         blocks,
@@ -212,7 +205,6 @@ pub(crate) fn score_sepa(
         .filter(|s| s.survey_date >= range_start && s.survey_date <= now)
         .collect();
     let basics = &window.basics;
-    let members = &window.members;
     let slice_ms = started.elapsed().as_millis();
 
     // --- Group raw rows by exchange-prefixed symbol ------------------------
@@ -226,36 +218,28 @@ pub(crate) fn score_sepa(
             .push(bar);
     }
 
-    // Membership rows carry exchange-prefixed symbols → group by prefixed
-    // symbol (the same key format as bars and basics).
-    let mut memberships: HashMap<String, Vec<&ConceptMember>> = HashMap::new();
-    for m in members {
-        memberships.entry(m.symbol.clone()).or_default().push(m);
-    }
-
-    // Concept display names per symbol (deduped, sorted).
-    let mut themes: HashMap<String, Vec<String>> = HashMap::new();
-    for (symbol, ms) in &memberships {
-        let mut names: Vec<String> = ms.iter().filter_map(|m| m.concept_name.clone()).collect();
-        names.sort();
-        names.dedup();
-        if !names.is_empty() {
-            themes.insert(symbol.clone(), names);
+    // Industry classification per symbol (issue #283 D5): the theme module
+    // groups by stock_basic.industry instead of concept memberships.
+    let mut industry_of: HashMap<String, String> = HashMap::new();
+    for (symbol, basic) in &basics_by_symbol {
+        let industry = basic.industry.as_deref().unwrap_or("").trim();
+        if !industry.is_empty() {
+            industry_of.insert(symbol.clone(), industry.to_string());
         }
     }
 
     // --- Thermometer first (breakout confirmation consumes its score) ------
     let thermometer = compute_market_thermometer(&bars_by_symbol, &basics_by_symbol);
 
-    // --- Concept-board theme pass -------------------------------------------
-    let concept_daily = aggregate_concept_daily(members, &bars_by_symbol);
-    let board_stats = board_momentums(members, &bars_by_symbol);
+    // --- Industry-board theme pass ------------------------------------------
+    let industry_daily = aggregate_industry_daily(&industry_of, &bars_by_symbol);
+    let board_stats = board_momentums(&industry_of, &bars_by_symbol);
     let gain_values: Vec<f64> = board_stats
         .values()
         .filter(|s| s.gain_count > 0)
         .map(|s| s.gain_mean)
         .collect();
-    let amount_values: Vec<f64> = concept_daily.values().map(|d| d.amount).collect();
+    let amount_values: Vec<f64> = industry_daily.values().map(|d| d.amount).collect();
     let board_gain30 = |code: &str| -> f64 {
         let Some(s) = board_stats.get(code) else {
             return 0.0;
@@ -266,13 +250,13 @@ pub(crate) fn score_sepa(
         rank_percentile(&gain_values, s.gain_mean) * 30.0
     };
     let board_amount30 = |code: &str| -> f64 {
-        let Some(d) = concept_daily.get(code) else {
+        let Some(d) = industry_daily.get(code) else {
             return 0.0;
         };
         rank_percentile(&amount_values, d.amount) * 30.0
     };
     let board_diffusion20 = |code: &str| -> f64 {
-        let Some(d) = concept_daily.get(code) else {
+        let Some(d) = industry_daily.get(code) else {
             return 0.0;
         };
         let up = d.up_ratio * 10.0;
@@ -282,30 +266,16 @@ pub(crate) fn score_sepa(
         up + if leaders >= 2 { 10.0 } else { 0.0 }
     };
 
-    // Per symbol keep the concept scoring highest (multi-membership stocks
-    // are scored on their best board).
-    let mut best_theme: HashMap<String, ThemeComponents> = HashMap::new();
-    for (symbol, ms) in &memberships {
-        let mut best: Option<(f64, ThemeComponents)> = None;
-        for m in ms {
-            let components = ThemeComponents {
-                gain30: board_gain30(&m.concept_code),
-                amount30: board_amount30(&m.concept_code),
-                diffusion20: board_diffusion20(&m.concept_code),
-            };
-            let theme = theme_from_components(
-                components.gain30,
-                components.amount30,
-                components.diffusion20,
-                NEWS_SCORE_DEFAULT,
-            );
-            if best.as_ref().is_none_or(|(s, _)| theme > *s) {
-                best = Some((theme, components));
-            }
-        }
-        if let Some((_, components)) = best {
-            best_theme.insert(symbol.clone(), components);
-        }
+    // Per symbol keep the industry scoring highest (a symbol has exactly one
+    // industry, so this resolves to that industry's components).
+    let mut best_industry: HashMap<String, ThemeComponents> = HashMap::new();
+    for (symbol, industry) in &industry_of {
+        let components = ThemeComponents {
+            gain30: board_gain30(industry),
+            amount30: board_amount30(industry),
+            diffusion20: board_diffusion20(industry),
+        };
+        best_industry.insert(symbol.clone(), components);
     }
 
     // --- Capital pass --------------------------------------------------------
@@ -381,37 +351,22 @@ pub(crate) fn score_sepa(
         .collect();
     let mut sector_momentums: HashMap<String, Vec<(String, f64)>> = HashMap::new();
     let mut sector_member_count: HashMap<String, usize> = HashMap::new();
-    for (symbol, ms) in &memberships {
-        for m in ms {
-            *sector_member_count
-                .entry(m.concept_code.clone())
-                .or_default() += 1;
-            if let Some(series) = bars_by_symbol.get(symbol)
-                && let Some(mom) = momentum_for(series)
-            {
-                sector_momentums
-                    .entry(m.concept_code.clone())
-                    .or_default()
-                    .push((symbol.clone(), mom));
-            }
+    for (symbol, industry) in &industry_of {
+        *sector_member_count.entry(industry.clone()).or_default() += 1;
+        if let Some(series) = bars_by_symbol.get(symbol)
+            && let Some(mom) = momentum_for(series)
+        {
+            sector_momentums
+                .entry(industry.clone())
+                .or_default()
+                .push((symbol.clone(), mom));
         }
     }
-    // Each symbol's most representative sector (most members) for RS ranking.
-    let mut sector_of: HashMap<String, String> = HashMap::new();
-    for (symbol, ms) in &memberships {
-        if let Some(best) = ms.iter().max_by_key(|m| {
-            sector_member_count
-                .get(&m.concept_code)
-                .copied()
-                .unwrap_or(0)
-        }) {
-            sector_of.insert(symbol.clone(), best.concept_code.clone());
-        }
-    }
+    // Each symbol's sector for RS ranking: its own industry.
+    let sector_of: HashMap<String, String> = industry_of.clone();
 
     let ctx = MarketContext {
-        best_theme,
-        themes,
+        best_industry,
         main_flow_pct,
         institution_buy,
         surveyed,
@@ -453,7 +408,6 @@ pub(crate) fn score_sepa(
     tracing::debug!(
         bars_loaded = bars.len(),
         basics_loaded = basics.len(),
-        concept_members = members.len(),
         matched = total,
         returned = rows.len(),
         slice_ms = slice_ms,
@@ -471,8 +425,7 @@ pub(crate) fn score_sepa(
 
 /// Precomputed market-wide inputs shared by the per-symbol scoring loop.
 struct MarketContext {
-    best_theme: HashMap<String, ThemeComponents>,
-    themes: HashMap<String, Vec<String>>,
+    best_industry: HashMap<String, ThemeComponents>,
     main_flow_pct: HashMap<String, f64>,
     institution_buy: HashSet<String>,
     surveyed: HashSet<String>,
@@ -483,7 +436,7 @@ struct MarketContext {
     sector_member_count: HashMap<String, usize>,
 }
 
-/// Per-board 20/60-day momentum aggregates consumed by the theme module.
+/// Per-industry 20/60-day momentum aggregates consumed by the theme module.
 struct BoardMomentums {
     gain_mean: f64,
     gain_count: usize,
@@ -492,18 +445,18 @@ struct BoardMomentums {
 
 /// Board momentum pass: equal-weighted mean of the members' weighted
 /// 20/60-day momentum plus the members' day-over-day changes (for the 领涨
-/// 带动 check), per concept code. Members without computable windows are
+/// 带动 check), per industry name. Members without computable windows are
 /// skipped.
 fn board_momentums(
-    members: &[ConceptMember],
+    industry_of: &HashMap<String, String>,
     bars_by_symbol: &HashMap<String, Vec<&CrossSectionBar>>,
 ) -> HashMap<String, BoardMomentums> {
     let mut out: HashMap<String, BoardMomentums> = HashMap::new();
-    for m in members {
-        let Some(series) = bars_by_symbol.get(m.symbol.as_str()) else {
+    for (symbol, industry) in industry_of {
+        let Some(series) = bars_by_symbol.get(symbol.as_str()) else {
             continue;
         };
-        let entry = out.entry(m.concept_code.clone()).or_insert(BoardMomentums {
+        let entry = out.entry(industry.clone()).or_insert(BoardMomentums {
             gain_mean: 0.0,
             gain_count: 0,
             top_pcts: Vec::new(),
@@ -636,7 +589,7 @@ fn rs_score_from_percentile(pct: f64) -> f64 {
     (pct / 0.9).min(1.0) * 35.0
 }
 
-/// Score the theme module (locked formula, `None` = no concept membership).
+/// Score the theme module (locked formula, `None` = no industry classification).
 fn score_theme(best: Option<&ThemeComponents>) -> (f64, Vec<SepaFactor>) {
     let Some(c) = best else {
         return (
@@ -1004,7 +957,7 @@ fn score_symbol(
 ) -> SepaRow {
     let rs_pct = rs_percentile(symbol, series, ctx);
     let (trend, trend_factors) = score_trend(series, rs_pct);
-    let (theme, theme_factors) = score_theme(ctx.best_theme.get(symbol));
+    let (theme, theme_factors) = score_theme(ctx.best_industry.get(symbol));
     let capital_inputs = CapitalInputs {
         main_flow_pct: ctx.main_flow_pct.get(symbol).copied().unwrap_or(0.0),
         has_institution_buy: ctx.institution_buy.contains(symbol),
@@ -1032,7 +985,6 @@ fn score_symbol(
         risk,
         industry: basic.industry.clone().unwrap_or_default(),
         industry_en: basic.industry_en.clone(),
-        themes: ctx.themes.get(symbol).cloned().unwrap_or_default(),
         latest_price: latest.close,
         change_pct: day_change(series),
         details: SepaDetails {
@@ -1046,7 +998,7 @@ fn score_symbol(
 }
 
 /// RS percentile for one symbol: sector ranking when its most-representative
-/// concept has ≥5 members with computable peers, whole-market ranking
+/// industry has ≥5 members with computable peers, whole-market ranking
 /// otherwise (locked rule).
 fn rs_percentile(symbol: &str, series: &[&CrossSectionBar], ctx: &MarketContext) -> f64 {
     rs_score(series, &rs_peers_for(symbol, ctx))
@@ -1420,8 +1372,7 @@ mod tests {
             ("e".to_string(), 5.0),
         ];
         let ctx = MarketContext {
-            best_theme: HashMap::new(),
-            themes: HashMap::new(),
+            best_industry: HashMap::new(),
             main_flow_pct: HashMap::new(),
             institution_buy: HashSet::new(),
             surveyed: HashSet::new(),
@@ -1440,8 +1391,7 @@ mod tests {
             sector_momentums: HashMap::from([("BK1".to_string(), sector.clone())]),
             sector_of: HashMap::from([("a".to_string(), "BK1".to_string())]),
             sector_member_count: HashMap::from([("BK1".to_string(), 4)]),
-            best_theme: HashMap::new(),
-            themes: HashMap::new(),
+            best_industry: HashMap::new(),
             main_flow_pct: HashMap::new(),
             institution_buy: HashSet::new(),
             surveyed: HashSet::new(),

@@ -117,7 +117,6 @@ class TestDoSyncIndexDaily:
         import fetch_balance_sheet as fbs
         import fetch_block_trade as fbt
         import fetch_cash_flow as fcf
-        import fetch_concept_member as fcm
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
@@ -136,11 +135,10 @@ class TestDoSyncIndexDaily:
         monkeypatch.setattr(fdr, "run", Mock())
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
-        monkeypatch.setattr(fcm, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
-        for mod in (fbs, fi, fcf, fdr, fbt, fis, fcm, fmf):
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf):
             monkeypatch.setattr(mod, "import_to_dolt", Mock())
 
         return mock_run
@@ -156,7 +154,7 @@ class TestDoSyncIndexDaily:
 
         main_mod.do_sync()
 
-        assert mock_run.call_count == 10, (
+        assert mock_run.call_count == 9, (
             "index_daily must be the 11th step (9 existing asyncio fetches + "
             f"index_daily); got {mock_run.call_count}"
         )

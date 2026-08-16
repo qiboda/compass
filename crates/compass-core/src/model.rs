@@ -84,7 +84,7 @@ pub struct StockBasic {
 /// Read from `index_basic.parquet` (symbol/name/index_type) by
 /// [`crate::data::parquet::ParquetReader::load_all_index_basics`]; feeds the
 /// GUI toolbar picker and the market tab's name lookup. `index_type` is one
-/// of `"official"` / `"concept"` / `"industry"`.
+/// of `"official"` / `"industry"` (concept removed, #283).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexBasic {
     /// Exchange-prefixed symbol (e.g. "SH000001", "BK0475").
@@ -95,7 +95,7 @@ pub struct IndexBasic {
     /// name_en_mapping JOIN — `None` when unmapped or on legacy parquet).
     #[serde(default)]
     pub name_en: Option<String>,
-    /// `"official"` | `"concept"` | `"industry"`.
+    /// `"official"` | `"industry"`.
     pub index_type: String,
 }
 
@@ -109,7 +109,7 @@ pub struct IndexBasic {
 pub struct IndexDailyRow {
     /// Exchange-prefixed symbol (e.g. "SH000001", "BK0475").
     pub symbol: String,
-    /// `"official"` | `"concept"` | `"industry"`.
+    /// `"official"` | `"industry"`.
     pub index_type: String,
     /// Trading date.
     pub trade_date: chrono::NaiveDate,
@@ -148,24 +148,6 @@ pub struct CrossSectionBar {
     pub volume: f64,
     /// Trading amount (成交额, yuan).
     pub amount: f64,
-}
-
-/// A single (concept, stock) membership row of an EastMoney concept board.
-///
-/// Read from `concept_member.parquet` by
-/// [`crate::data::parquet::ParquetReader::fetch_concept_member`]. Versioned by
-/// `update_date` — a snapshot of memberships, not a per-day time series
-/// (epic #139 decision 20).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConceptMember {
-    /// Concept board code (e.g. "BK1169").
-    pub concept_code: String,
-    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
-    pub symbol: String,
-    /// Concept board display name.
-    pub concept_name: Option<String>,
-    /// Date this membership row was last updated.
-    pub update_date: Option<chrono::NaiveDate>,
 }
 
 /// Daily main-capital (主力资金) net flow for one symbol.

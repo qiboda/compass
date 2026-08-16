@@ -38,7 +38,6 @@ fn sample_row(rank: usize, symbol: &str, name: &str) -> SepaRow {
         risk: 0.0,
         industry: "白酒".to_string(),
         industry_en: None,
-        themes: vec!["茅指数".to_string()],
         latest_price: 1500.0,
         change_pct: 2.5,
         details: SepaDetails {

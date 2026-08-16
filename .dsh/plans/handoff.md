@@ -1,62 +1,53 @@
-# Handoff — fix-277-fast-fail
+# Handoff — industry-ths（#283 板块数据源战略调整）
 
 ## 用途
 
-collectors 采集器**连续失败快速终止**（反爬封禁不再空转数小时）+ 全局限流调大。
+板块数据源战略调整（用户 2026-08-15 决策，grill-me 共识）：
+1. **行业板块改用同花顺 90 个**（申万标准体系，代码 881xxx）替代东财 496 自编细分
+2. **彻底放弃概念板块（全链路）**：删除 Dolt 中全部 concept 行 + concept_member 表/采集/导入 + GUI 大盘 tab 概念段 + SEPA 主题标签
+3. **SEPA 题材模块改用行业板块数据**（stock_basic.industry 分组聚合，25% 权重保留）；backtest_result 删除 theme_score 列
+4. 官方指数维持腾讯源（#278 已实现，勿动）
 
-**Issue**: https://github.com/qiboda/compass/issues/277（OPEN）
-**分支**: fix/fast-fail-collector（基于 master 44c9d4a）
-**原始分支**: master —— worktree 会话启动后先 `git fetch origin master && git rebase origin/master` 同步，再开始工作
+> 2026-08-15 23:58 更新：grill-me 延续锁定 D3（BK 行业历史数据一并删除）、D4（SEPA 概念全移除）、D5（题材改行业板块聚合）、D6（theme_score 列删除）、D7（BK 前缀 4-6 位）、D8（thshy 实时抓取）。Plan 已批准：`.dsh/plans/industry-ths.md`（B1 数据清理 → B2 采集器 → B3 Rust 数据层 → B4 SEPA 引擎 → B5 GUI → B6 docs）。issue #283 验收标准已更新。
+>
+> 2026-08-16 09:15 D3 两次修正后定稿：用户确认**删除**东财 BK 行业名称行（496 行无行情数据，删除不损失行情；避免 picker 双名称重复），恢复原计划。
 
-## 背景
+**Issue**: https://github.com/qiboda/compass/issues/283（OPEN）
+**分支**: feat/industry-ths（基于 master 3fd7248）
+**原始分支**: master —— 启动后先 `git fetch origin master && git rebase origin/master`
 
-2026-08-15 首次真实采集指数数据（epic #255/#260）时东财 push2his 反爬封禁（45 请求/2 分钟触发，
-IP 级 HTTP 000 全镜像封锁）。`fetch_index_daily.py::run()` 对失败标的从不中断流程：单标的失败
-（2 hosts × 3 attempts 重试后）仅打印 FAILED 并 continue。封禁后 955 板块 + 30 官方指数 × 6 次尝试
-≈ 3.5 小时空转。详细诊断见 `.dsh/evidence/index-fetch-resume-2026-08-15.md`（master 上已有）。
+## 已锁定决策（不得偏离）
 
-## grill-me 锁定决策（不得偏离）
-
-| 决策 | 选择 |
+| 决策 | 内容 |
 |---|---|
-| 终止粒度 | **连续 5 个标的失败（含重试）即终止**——反爬封禁必连续失败，及时止损；网络偶发抖动不误杀 |
-| 失败定义 | 请求失败（`_get_json` 返回 None，所有 host×attempt 用尽）或 empty 响应（klines 为空）均计入连续失败 |
-| 终止行为 | 保留已抓数据（写 CSV，可续采）+ 抛 RuntimeError 提示疑似反爬/接口故障 |
-| 限流 | `common.py::EM_MIN_INTERVAL` 全局 0.5s → **2s**（用户确认全局调大，影响全部采集器） |
-| 工作区 | 独立 worktree（本目录），因主工作区被其他会话（#276）占用 |
+| 行业源 | 同花顺 90 个唯一（页面 140 行含 50 重复，去重后 90），申万风格命名 |
+| K 线接口 | `https://d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`，按年分页（2007→2026 ~20 请求/板块），已验证 2015/2024 数据完整 |
+| K 线格式 | `日期,开,高,低,收,量,额` 7 字段（与东财同构，复用 `_kline_records`） |
+| 概念板块 | 彻底删除：index_basic/index_daily 中 concept 行全删，GUI 概念段移除，不再采集 |
+| 快速失败 | 同花顺段受 #277 连续失败快速终止保护（复用计数器） |
+| 官方指数 | 腾讯源路径不变（回归测试锁定） |
 
-## 验收标准（issue #277）
+## 已验证事实（2026-08-15 实测）
 
-1. `run()` 维护连续失败计数器；连续 5 个标的失败（FAILED 或 empty）→ 立即终止，不再请求剩余标的
-2. 终止前已抓 daily/basic 记录写入 CSV（保留可续采），然后 RuntimeError 抛出
-3. 失败-成功交错不触发终止（成功即清零计数器）
-4. 连续 4 个失败不终止（第 5 个才触发）
-5. `common.py::EM_MIN_INTERVAL` = 2.0
-6. 测试覆盖：连续失败终止 + CSV 保留 + 交错不误杀 + 边界（4/5）+ 限流值断言
-7. `uv run pytest collectors/tests/ --cov=. --cov-fail-under=95 -q` 全绿
+- 同花顺行业列表：`https://q.10jqka.com.cn/thshy/`（GBK），href 提取 `881xxx 名称`，90 唯一
+- 行业 detail clid = 881xxx 本身（无需额外抓取）
+- 概念板块列表代码 30xxxx → detail clid 886xxx（本任务不再需要概念）
+- 公共集合：同花顺 90 vs 东财 496 = 精确同名 56 + 模糊 30 + 独有 4
+- akshare 参考实现：`stock_board_industry_hist_ths`（按年循环 + demjson 解析 data 串）
+- 注意：东财行业带 Ⅱ/Ⅲ 后缀（申万分级），同花顺只有一级——两者是不同粒度体系，采集同花顺 90 个即可，不需要匹配东财名称
+
+## 验收标准（issue #283）
+
+1. `fetch_index_daily.py` 新增同花顺行业源（90 个 881xxx 全量按年拉取），东财失败自动切同花顺；移除概念发现逻辑（fetch_board_list t:3 部分）
+2. 数据清理：Dolt `index_daily`/`index_basic` 删除全部 `index_type='concept'` 行；GUI 大盘 tab 移除概念 Segmented 段与相关 i18n
+3. 官方指数腾讯源路径回归测试保持绿
+4. 同花顺段受快速失败保护
+5. 测试覆盖：同花顺解析/按年分页/东财失败切换/概念段移除/数据清理
+6. 全套件绿：`uv run pytest collectors/tests/ --cov=. --cov-fail-under=95 -q` + `cargo test`
 
 ## 下一步（worktree 会话）
 
 1. 同步原始分支（fetch + rebase origin/master）
-2. PRE-IMPLEMENTATION GATE 剩余步骤：委派 subagent_skwy_requirement_test + subagent_skwy_adversarial_test 写 RED 测试（注入项目 Python 测试方法论：make_stub_session / COMPASS_DATA_DIR tmp_path / tests 目录模式）
-3. 实现 GREEN（fetch_index_daily.py run() 连续失败计数 + common.py EM_MIN_INTERVAL=2.0）
-4. 全套件验证 → commit（ref #277）→ subagent_review → 待用户 push
-5. 文档同步：toolchain.md 反爬排查卡补充"快速失败机制"；续采记录 .dsh/evidence/index-fetch-resume-2026-08-15.md 更新限流建议（EM_MIN_INTERVAL 已全局 2s）
-
----
-
-## 追加任务（2026-08-15 20:30，用户确认）— 腾讯源接入官方指数
-
-**Issue**: https://github.com/qiboda/compass/issues/278（OPEN，依赖 #277 同批实施）
-
-**背景**：东财 push2his 封禁未解（5.5h+），官方指数 30 个全缺。用户决策：**官方指数走腾讯源**（已验证可拉：web.ifzq.gtimg.cn fqkline/get，count≤2000 分页，15 连发零限流），板块 1000 个等东财解封后用 #277 机制补。
-
-**验收标准**：
-1. fetch_index_daily.py 新增腾讯源拉官方指数 30 个（OFFICIAL_INDICES 白名单，secid 映射 1.→sh、0.→sz + 小写 code）
-2. 东财优先、失败/empty 自动切腾讯；CSV 输出格式不变（amount 腾讯无则填 0）
-3. 全历史分页：count=2000 循环 + 起始日期推进
-4. 腾讯段受 #277 连续失败快速终止保护
-5. 测试覆盖：腾讯解析/分页/东财失败切换/amount 缺省
-6. pytest 全绿（cov ≥95%）
-
-**实现顺序**：#277（快速失败 + 限流 2s）先行 → #278（腾讯源）追加在 fetch_index_daily.py 同一文件内 → 两个 issue 各自 commit（ref #277 / ref #278）→ 一起 review → 用户 push。
+2. PRE-IMPLEMENTATION GATE：Design（GUI 概念段移除属界面变更，委派 subagent_ui_designer 评估方案——或判定为删除型变更直接列改动清单给用户确认）→ 3.5/4 委派测试子代理 RED → 实现 GREEN → commit（ref #283）→ review → 用户 push
+3. 文档同步（5b）：`.dsh/kb/design/data-providers.md`（同花顺源 schema）、`.dsh/kb/design/symbols.md`（BK 符号与概念段移除）、`.dsh/kb/user/gui.md`（大盘 tab 变更）、`.dsh/kb/design/ui.md`（概念段移除）、toolchain.md（如需）；5c 决策记录补充
+4. 数据清理脚本（Dolt DELETE concept 行）与采集实施分离提交
