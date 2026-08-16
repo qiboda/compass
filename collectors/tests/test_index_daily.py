@@ -12,7 +12,7 @@ Plan contract under attack (fetch_index_daily.py):
   auto full-history backfill for new boards (handoff decision 8).
 - Rate limiting: host rotation + retry must not loop forever on 429.
 
-URLs: EastMoney push2his kline / Tencent fqkline / THS list + per-year BK.
+URLs: EastMoney push2his kline / Tencent newfqkline / THS list + per-year BK.
 """
 
 import asyncio

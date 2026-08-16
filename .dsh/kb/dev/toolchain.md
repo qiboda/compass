@@ -565,6 +565,8 @@
   再跑 Dolt 相关测试。
 - **验证**: 禁用后完整前缀 140 用例 60.9s 通过，全套件 + coverage 全绿。
 - **教训**: 本地/CI 无外网时，Dolt 遥测是隐藏的挂起源；涉及 Dolt 的测试命令应显式禁用遥测。
+- **完整 collectors 套件约 3 分钟（620 tests）**：优先后台运行（`run_in_background`）并带
+  `DOLT_DISABLE_TELEMETRY=1 DOLT_DISABLE_UPDATE_CHECK=1`，避免前台超时/遥测挂起（ref #286 摩擦）。
 
 ### [数据] 东财封禁下官方指数爬取：快速失败机制误伤 + name_en 列缺失
 

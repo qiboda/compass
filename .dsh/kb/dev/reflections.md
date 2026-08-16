@@ -424,3 +424,27 @@
 ### Trends (last 10)
 - 数据链路问题仍反复由真实运行首次暴露（#273 update_date、#281 name_en/快速失败误伤、本次 CSV 复活/INSERT 超时）："真实运行验证"应进入数据管线变更的验收定义，import 后自动断言（行数/类型分布）可当场拦截复活类事故
 - Dolt 批量操作性能需预先标定（本次 INSERT IGNORE 41min→table import 18s）：大表导入路径应在实现前选定，避免真实运行才发现
+
+## 2026-08-16 — ref #286 腾讯回退官方指数补齐成交额（newfqkline）
+
+**What was done**: 将官方指数腾讯回退从 `fqkline/get` 切换为 `newfqkline/get`，解析 day 行 index 8 成交额（万元→元）并写入 `index_daily`；更新需求/对抗测试 RED→GREEN；真实重抓 30 个官方指数并替换 Dolt/Parquet（official 160,254 行全部非 0）。
+
+**User corrections**: 用户明确“只需要成交额，换手率用途不大。开始改。”——范围收窄，不引入换手率字段。
+
+**What went wrong**:
+1. 完整 collectors pytest 第一次前台运行 180s 超时无输出；改用 `DOLT_DISABLE_TELEMETRY=1 DOLT_DISABLE_UPDATE_CHECK=1` 后台运行后才拿到 614/620 passed。
+2. 多次重复 `list_agents` 轮询子代理状态，被系统提示“重复调用未推进”；应等待结算通知而非反复轮询。
+3. 初始实现把 `"0"` 万元转成 `"0.0"`，未通过测试的精确字符串断言；改为整数格式化后修复。
+4. 安全复审发现 `1e308` 万元在 ×10000 后溢出为 `inf`，初始只在乘前判 `isfinite` 不够；补乘后判有限 + 负值降级。
+5. 数据修正是对已有 Dolt 行改 amount，`INSERT IGNORE` merge 不会更新旧行；改用 `merge=False` 全表替换（合并 industry + 新 official CSV）才落地。
+6. 分支基于本地 master 多出的一个未推送 commit（f781000），push 前 rebase `--onto origin/master` 排除后才得到干净 3-commit 分支。
+
+**Lessons learned**:
+1. 解析外部 API 数值并做单位换算时，必须在换算后再次校验有限性/范围（乘后溢出、负值），不能只校验输入。
+2. 完整 Python 测试套件应一开始就用后台运行 + `DOLT_DISABLE_TELEMETRY=1 DOLT_DISABLE_UPDATE_CHECK=1`，避免前台超时和遥测挂起。
+3. 修正已存在 Dolt 行的数据时，merge/INSERT IGNORE 不更新旧行；需要 replace 或 delete+insert 语义，并在方案阶段确认。
+4. 推送前检查分支相对 origin/master 的基底，本地 master 独有 commit 用 `rebase --onto` 排除，避免无关 commit 混入 PR。
+
+**Process improvements**:
+- toolchain.md 补一条：完整 collectors 套件约 3 分钟，优先后台运行并带 Dolt 遥测禁用环境变量。
+- 其余为一次性教训，暂不新建 issue。

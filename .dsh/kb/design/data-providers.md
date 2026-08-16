@@ -178,9 +178,10 @@ CREATE TABLE IF NOT EXISTS index_basic (
   （JSONP 包装，`data` 字段 `;` 分隔），年循环 2007→当前年、空年提前终止；
   7 字段列序为 `日期,开,高,低,收,量,额`（与东财 `开,收,高,低` **不同**，解析时重排为
   东财序再复用 `_kline_records`）。同花顺段受 #277 连续失败快速终止保护。
-- **腾讯回退（issue #278）**：官方指数优先东财 push2his；东财失败/empty 时自动切腾讯
-  `web.ifzq.gtimg.cn/appstock/app/fqkline/get`（count≤2000，end 日期反向分页拉全历史；
-  amount 腾讯无则填 0；受 #277 连续失败快速终止保护）。行业板块只走同花顺。
+- **腾讯回退（issue #278/#286）**：官方指数优先东财 push2his；东财失败/empty 时自动切腾讯
+  `web.ifzq.gtimg.cn/appstock/app/newfqkline/get`（count≤2000，end 日期反向分页拉全历史；
+  day 行 11 字段，index 8 为成交额（万元），采集时 ×10000 转为元；缺失/畸形金额降级为 0；
+  受 #277 连续失败快速终止保护）。行业板块只走同花顺。
 - **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线 `beg=0` 全量拉取 +
   `INSERT IGNORE` 按 PK (symbol, trade_date) 去重，新标的自动补全量历史。
 - **Parquet 布局**：
@@ -509,3 +510,4 @@ compass_data_dir = "/data/compass-data/compass_data"
 | name_en/industry_en 列（epic #266） | i18n 静态键 / **数据层英文列 + collectors 静态映射表** | 数据层英文列（index_basic.name_en + stock_basic.industry_en）+ `name_en_mapping.csv` import JOIN | 数据动态增长，静态键不可维护；映射表随仓库版本可审；未收录 NULL 回退中文按需增量；全链路 Dolt→parquet→DuckDB→GUI | i18n 键需穷举全部数据名且随新增失效；数据库映射表需额外同步链路 |
 | 旧 parquet 兼容（epic #266） | 硬失败 / **读取侧降级 None** | `ParquetReader` 对新列 try-fallback（binder 缺列错误 → 无列查询，`name_en: None`） | 存量 parquet 无需重导即可启动；GUI 按语言回退中文；`is_missing_column` 仅匹配具体缺列短语，genuine 错误传播 | 硬失败强迫全量重导，升级窗口大 |
 | 行业后缀匹配（epic #266） | 精确匹配 / **双键（原样 + 去罗马数字后缀）** | import JOIN 条件 `m.key = TRIM(industry) OR (REGEXP 后缀 AND m.key = LEFT(len-1))` | 旧数据"白酒Ⅱ"类后缀行业可命中基础键"白酒"；双键防膨胀（`<>` guard） | 单键匹配漏掉后缀行业 |
+| 腾讯回退成交额来源（issue #286） | 继续 `fqkline/get` 填 0 / **切 `newfqkline/get` 解析成交额** | 切 `newfqkline/get`，解析 day 行 index 8 成交额（万元→元），缺失/畸形降级 0 | `fqkline/get` 日线只有 6 字段无成交额，官方指数 amount 全 0；`newfqkline/get` 同域、分页参数一致，实测 30 个官方指数均返回非 0 成交额 | 继续 `fqkline/get` 无法满足官方指数成交额展示；从其它源补需引入新依赖 |
