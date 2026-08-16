@@ -483,6 +483,14 @@ curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0
 - **`.state.json`** 文件跟踪上次抓取状态以支持增量更新
 - **`--resume`** 标志用于继续中断的抓取
 
+### 代理池试用（proxy_pool，issue #287）
+
+THS 板块接口（10jqka）的代理验证工具：
+
+- Compose：`scripts/proxy_pool/docker-compose.yml` 一键启动 proxy_pool + Redis，API 默认 `http://127.0.0.1:5010`。
+- 验证脚本：`collectors/check_proxy_pool.py` 从 proxy_pool API 取代理，用 `curl_cffi`（`chrome142` 指纹）打 THS 行业列表页 + 一个板块 kline，各 15 次共 30 次，输出成功率/平均耗时并判定（成功率 ≥50% 且平均耗时 <5s）。
+- 运行：`docker compose -f scripts/proxy_pool/docker-compose.yml up -d` 后执行 `uv run --project collectors python collectors/check_proxy_pool.py`。
+
 ### 百度云备份
 
 `compass-data backup` 将 `parquet_data/` 打包为 zip 并通过 `baidupcs`

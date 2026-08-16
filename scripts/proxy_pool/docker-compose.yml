@@ -1,0 +1,28 @@
+# Local proxy_pool + Redis for the collectors proxy trial (issue #287).
+#
+# Usage:
+#   docker compose -f scripts/proxy_pool/docker-compose.yml up -d
+#   # proxy_pool API: http://127.0.0.1:5010
+#   docker compose -f scripts/proxy_pool/docker-compose.yml down
+services:
+  proxy_redis:
+    image: redis:7-alpine
+    container_name: proxy_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no"]
+
+  proxy_pool:
+    image: jhao104/proxy_pool:latest
+    container_name: proxy_pool
+    restart: unless-stopped
+    depends_on:
+      - proxy_redis
+    ports:
+      - "5010:5010"
+    # The published image's default ENTRYPOINT invokes `bash`, but the image
+    # (Alpine-based) does not contain bash.  Start the Python server/scheduler
+    # directly with `sh` instead.
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["python proxyPool.py server & python proxyPool.py schedule & wait"]
+    environment:
+      DB_CONN: "redis://@proxy_redis:6379/0"
