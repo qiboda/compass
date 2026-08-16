@@ -254,12 +254,16 @@ class TestCsvPreservedOnTerminate:
             "index_basic must retain discovered boards past the abort point"
         )
 
-    async def test_incremental_abort_writes_daily_but_not_basic(
+    async def test_incremental_abort_writes_daily_and_basic(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Incremental run (last_report_date non-empty) + 5 consecutive failures:
-        abort still writes the fetched daily CSV, but does NOT rebuild
-        index_basic (same gate as the normal incremental path)."""
+        abort writes both the fetched daily CSV and the rebuilt index_basic CSV.
+
+        index_basic is rebuilt on every non-short-circuited run (issue #283:
+        the B1 cleanup dropped EastMoney BK/concept rows from Dolt while a
+        stale CSV still listed them; an incremental run that did NOT rebuild
+        the CSV let the next import resurrect all deleted rows)."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -286,8 +290,13 @@ class TestCsvPreservedOnTerminate:
         symbols = {r["symbol"] for r in _read_rows(daily_path)}
         assert "BK881201" in symbols, "daily rows fetched before the streak must be persisted"
         basic_path = tmp_path / "index_basic.csv"
-        assert not basic_path.exists(), (
-            "incremental abort must not rebuild index_basic (same gate as normal incremental path)"
+        assert basic_path.exists(), (
+            "incremental abort must rebuild index_basic so the CSV mirror stays "
+            "in sync with Dolt (issue #283 resurrection bug)"
+        )
+        basic_symbols = {r["symbol"] for r in _read_rows(basic_path)}
+        assert "BK881201" in basic_symbols, (
+            "discovered boards must land in the rebuilt basic CSV"
         )
 
 

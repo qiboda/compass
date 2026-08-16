@@ -135,23 +135,26 @@ def _bump_failure(consecutive_failures: int) -> tuple[int, str | None]:
 def _persist_outputs(
     daily_records: list[dict[str, object]],
     basic_records: list[dict[str, object]],
-    last: str,
     daily_path: Path,
     basic_path: Path,
 ) -> None:
     """Write the CSV outputs produced so far (shared by normal and abort paths).
 
-    index_basic is (re)built on full runs only (``last`` empty) whenever any
-    basic record exists — a merge import (INSERT IGNORE on PK symbol) never
-    drops the rows that are not in the CSV, so a THS list-page glitch that
-    leaves only official rows cannot erase industry names already stored.
-    Incremental runs publish the daily CSV alone; official names ride along
-    on full runs. When no records exist at all, any stale CSV files are
+    index_basic is (re)built on every non-short-circuited run whenever any
+    basic record exists. The import is a merge (INSERT IGNORE on PK symbol),
+    which never drops rows absent from the CSV, so rewriting the basic CSV
+    cannot erase names already stored in Dolt (a THS list-page glitch that
+    leaves only official rows stays harmless). Rebuilding on every run keeps
+    the CSV mirror of ``index_basic`` in sync with the board whitelist —
+    without it, a stale CSV resurrects Dolt rows deleted by the B1 cleanup
+    (issue #283: 1000 EastMoney board rows were dropped from Dolt while an
+    old CSV still listed them; the next incremental import re-inserted every
+    deleted row). When no records exist at all, any stale CSV files are
     removed.
     """
     if daily_records:
         write_csv(daily_records, daily_path)
-    if not last and basic_records:
+    if basic_records:
         write_csv(basic_records, basic_path)
     if not daily_records and not basic_records:
         daily_path.unlink(missing_ok=True)
@@ -763,13 +766,13 @@ async def run() -> Path:
 
         if abort_reason is not None:
             _persist_outputs(
-                daily_records, basic_records, last, daily_path, basic_path
+                daily_records, basic_records, daily_path, basic_path
             )
             raise RuntimeError(abort_reason)
 
         if not daily_records and not basic_records:
             _persist_outputs(
-                daily_records, basic_records, last, daily_path, basic_path
+                daily_records, basic_records, daily_path, basic_path
             )
             raise RuntimeError(
                 "No index data (rate-limited or empty) — "
@@ -777,7 +780,7 @@ async def run() -> Path:
             )
 
         _persist_outputs(
-            daily_records, basic_records, last, daily_path, basic_path
+            daily_records, basic_records, daily_path, basic_path
         )
         progress.finish(
             fetched_rows=len(daily_records),
