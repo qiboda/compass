@@ -521,12 +521,12 @@ def _tencent_code(secid: str) -> str:
     return ("sh" if market == "1" else "sz") + code.lower()
 
 
-def _tencent_amount_yuan(row: list | tuple) -> str:
+def _tencent_amount_yuan(row: list[object] | tuple[object, ...]) -> str:
     """Extract the 成交额 from a newfqkline/get day row as a yuan CSV cell.
 
     ``row[8]`` is 成交额 in 万元 (0-based); convert to yuan (×10000). Missing,
-    empty, non-numeric or non-finite values degrade to ``"0"`` so the merge
-    import never crashes on a malformed Tencent payload.
+    empty, non-numeric, non-finite, negative or overflowing values degrade to
+    ``"0"`` so the merge import never crashes on a malformed Tencent payload.
     """
     if len(row) <= 8:
         return "0"
@@ -540,6 +540,8 @@ def _tencent_amount_yuan(row: list | tuple) -> str:
     if not math.isfinite(amount_wan):
         return "0"
     yuan = amount_wan * 10000.0
+    if not math.isfinite(yuan) or yuan < 0:
+        return "0"
     if yuan.is_integer():
         return str(int(yuan))
     return str(yuan)

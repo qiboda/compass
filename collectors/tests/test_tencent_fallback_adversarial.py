@@ -29,23 +29,13 @@ declares but does not nail down:
       Tencent both fail) terminate AND stop issuing further Tencent requests;
       a Tencent success mid-streak RESETS the counter so a fresh streak starts.
 
-#286 extensions (newfqkline/get + real amount): the Tencent index fallback must
-switch to newfqkline/get, whose 11-field day rows carry 成交额 in 万元 at index 8,
-and write NON-ZERO amount (万元×10000 = yuan) for valid rows. These go RED
-against the current (issue #278) implementation which writes amount 0.
-  N1. Short/missing rows (fewer than 9 fields) degrade gracefully: amount
-      0/empty, no crash, other fields still parsed.
-  N2. Malformed amount cell (empty, "-", non-numeric, "NaN", whitespace)
-      degrades consistently (amount 0/empty or skipped) with valid siblings
-      still writing non-zero amount.
-  N3. Pagination boundary: a page with exactly _TENCENT_PAGE_SIZE rows plus a
-      short final page still paginates and PRESERVES amount across pages.
-  N4. Tencent success resets the fast-fail counter AND writes a NON-ZERO amount.
-  N6. Very large amount (999999999999.99 万元) parses without float overflow;
-      "0" amount stays 0.
+#286 extensions (newfqkline/get + real amount): the Tencent index fallback now
+uses newfqkline/get, whose 11-field day rows carry 成交额 in 万元 at index 8,
+and writes NON-ZERO amount (万元×10000 = yuan) for valid rows. Missing/malformed
+amounts degrade gracefully to 0/empty. The tests below are GREEN on the current
+implementation.
 
-STATUS: RED for #286 — the current implementation uses fqkline/get and writes
-amount 0, so every non-zero-amount assertion below fails (amount is "0").
+STATUS: GREEN.
 """
 
 import asyncio
@@ -61,7 +51,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from conftest import StubResponse  # noqa: E402
 
-TENCENT_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 _TENCENT_PAGE_SIZE = 2000
 
 
@@ -822,7 +811,8 @@ class TestNewFqKlineAmountAdversarial:
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """RED (N6): a huge 成交额 (999999999999.99 万元 → 9.99e15 yuan) must parse
-        into a Python float without overflow, and a "0" 万元 stays exactly 0."""
+        into a Python float without overflow, a "0" 万元 stays exactly 0, and
+        values that overflow after ×10000 or are negative degrade to "0"."""
         from fetch_index_daily import (
             Throttle,  # noqa: E402
             _fetch_tencent_kline,  # noqa: E402
@@ -831,6 +821,8 @@ class TestNewFqKlineAmountAdversarial:
         rows = [
             _tencent_row("2026-08-14", 3930.0, amount="999999999999.99"),
             _tencent_row("2026-08-13", 3900.0, amount="0"),
+            _tencent_row("2026-08-12", 3800.0, amount="1e308"),
+            _tencent_row("2026-08-11", 3700.0, amount="-500"),
         ]
         stub = make_stub_session()
 
@@ -859,4 +851,13 @@ class TestNewFqKlineAmountAdversarial:
         assert by_date["2026-08-13"][6] == "0", (
             "a '0' 万元 amount must stay 0, got "
             f"{by_date['2026-08-13'][6]!r}"
+        )
+        # Overflow after ×10000 and negative amounts degrade to 0.
+        assert by_date["2026-08-12"][6] == "0", (
+            "an amount that overflows to inf after ×10000 must degrade to 0, got "
+            f"{by_date['2026-08-12'][6]!r}"
+        )
+        assert by_date["2026-08-11"][6] == "0", (
+            "a negative amount must degrade to 0, got "
+            f"{by_date['2026-08-11'][6]!r}"
         )

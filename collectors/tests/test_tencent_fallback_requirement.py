@@ -17,7 +17,7 @@ Contract under test (fetch_index_daily.py):
       fast fail: 5 consecutive official indices failing on BOTH sources raise a
       ``RuntimeError`` mentioning "连续" and never request the remaining target.
 
-Issue #286 contract (the RED under test — NOT yet implemented):
+Issue #286 contract (implemented and GREEN):
 
   R1. The Tencent fallback switches from ``fqkline/get`` to
       ``newfqkline/get``, whose ``day`` rows are 11 fields with 成交额 in
@@ -30,12 +30,12 @@ Issue #286 contract (the RED under test — NOT yet implemented):
   R3. A ``newfqkline`` day row with fewer than 9 fields (no 成交额) degrades
       gracefully — amount 0/empty, never a crash (fallback safety net).
 
-The #277/#278 machinery is already GREEN, so the legacy 6-field-amount-0
-assertions have been replaced by the #286 non-zero-yuan expectations below.
-The tests marked RED fail on the current production code because it still
-hardcodes amount to 0 and talks to ``fqkline/get``.
+The #277/#278 machinery is GREEN, and issue #286 is implemented: the Tencent
+fallback now uses ``newfqkline/get`` and writes real non-zero yuan amounts
+(万元 × 10000). The tests below pin that contract and are GREEN on the current
+production code.
 
-STATUS: RED.
+STATUS: GREEN.
 """
 
 import asyncio
@@ -63,7 +63,7 @@ _TENCENT_PAGE_SIZE = 2000
 # Example newfqkline/get day row (0-based):
 #  0        1        2        3        4        5             6   7     8             9    10
 #  date    open    close    high     low     volume        pre 振幅  成交额(万元)   ...
-_DAY10 = {}  # the pre/post marker column (empty dict in the real payload)
+_MARKER = {}  # the pre/post marker column (empty dict in the real payload)
 
 
 def _tencent_row(day: str, close: float = 3000.0) -> list[str]:
@@ -103,7 +103,7 @@ def _tencent_row_new(
         high,
         low,
         volume,
-        _DAY10,
+        _MARKER,
         "1.03",           # 振幅 — index 7
         amount_wan,       # 成交额 in 万元 — index 8
         "0.00",           # index 9
@@ -399,6 +399,103 @@ class TestTencentNewFqKlineAmount:
             assert fields[6] in {"0", ""}, (
                 f"a row without 成交额 must keep amount 0/empty, got {fields[6]!r}"
             )
+
+    async def test_real_captured_newfqkline_row_maps_to_yuan(
+        self, make_stub_session
+    ) -> None:
+        """Regression: a literal row captured from the live newfqkline/get API
+        (2026-08-14 SH000001) must map to the EastMoney 7-field order and
+        non-zero yuan amount without relying on the shared fixture helper."""
+        from fetch_index_daily import (  # noqa: E402
+            Throttle,
+            _fetch_tencent_kline,
+        )
+
+        real_row = [
+            "2026-08-14",
+            "3930.02",
+            "3927.18",
+            "3932.64",
+            "3903.70",
+            "499525613.00",
+            {},
+            "1.03",
+            "99037192.42",
+            "0.00",
+            "0.00",
+        ]
+        stub = make_stub_session()
+
+        async def _get(url, params=None, headers=None):
+            return StubResponse(
+                json_data=_tencent_payload("sh000001", [real_row])
+            )
+
+        stub.get = _get  # type: ignore[method-assign]
+
+        klines = await _fetch_tencent_kline(
+            stub, Throttle(min_interval=0), "1.000001"
+        )
+        fields = klines[0].split(",")
+        assert fields[0] == "2026-08-14"
+        assert fields[1] == "3930.02"
+        assert fields[2] == "3927.18"
+        assert fields[3] == "3932.64"
+        assert fields[4] == "3903.70"
+        assert fields[5] == "499525613.00"
+        assert float(fields[6]) == 990371924200.0
+
+
+class TestTencentAmountYuanDirect:
+    """Direct unit tests for the private ``_tencent_amount_yuan`` helper.
+
+    These cover the degradation/formatting branches that are hard to reach
+    through the full fetch path: overflow after ×10000, negative values,
+    non-integral yuan output, and non-numeric/non-finite cells.
+    """
+
+    @staticmethod
+    def _row(amount: object) -> list[object]:
+        return [
+            "2026-08-14",
+            "3930.02",
+            "3927.18",
+            "3932.64",
+            "3903.70",
+            "499525613.00",
+            {},
+            "1.03",
+            amount,
+            "0.00",
+            "0.00",
+        ]
+
+    def test_overflow_after_multiply_degrades_to_zero(self) -> None:
+        from fetch_index_daily import _tencent_amount_yuan  # noqa: E402
+
+        assert _tencent_amount_yuan(self._row("1e308")) == "0"
+
+    def test_negative_amount_degrades_to_zero(self) -> None:
+        from fetch_index_daily import _tencent_amount_yuan  # noqa: E402
+
+        assert _tencent_amount_yuan(self._row("-500")) == "0"
+
+    def test_non_integral_yuan_keeps_decimal(self) -> None:
+        from fetch_index_daily import _tencent_amount_yuan  # noqa: E402
+
+        assert _tencent_amount_yuan(self._row("0.00001")) == "0.1"
+
+    def test_non_finite_literals_degrades_to_zero(self) -> None:
+        from fetch_index_daily import _tencent_amount_yuan  # noqa: E402
+
+        for bad in ("inf", "Infinity", "NaN"):
+            assert _tencent_amount_yuan(self._row(bad)) == "0"
+
+    def test_non_numeric_cells_degrades_to_zero(self) -> None:
+        from fetch_index_daily import _tencent_amount_yuan  # noqa: E402
+
+        for bad in (None, {}, [], "abc"):
+            assert _tencent_amount_yuan(self._row(bad)) == "0"
 
 
 # ── C3: EastMoney-fails → automatic Tencent fallback + amount default ────────
