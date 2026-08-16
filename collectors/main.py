@@ -605,7 +605,7 @@ def do_sync(restart: bool = False) -> None:
     asyncio.run(fetch_main_flow.run())
     fetch_main_flow.import_to_dolt()
 
-    # 11. index_daily (指数日线: 官方/概念/行业)
+    # 11. index_daily (指数日线: 官方指数/行业板块)
     print("\n[sync] Fetching index_daily...", file=sys.stderr)
     import fetch_index_daily
 

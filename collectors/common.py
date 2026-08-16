@@ -347,7 +347,7 @@ def dolt_table_import(
 
 
 # Name-en mapping CSV (epic #266 B1): section,key,value three-section table
-# (index symbol → name_en / industry zh → industry_en / concept zh → name_en).
+# (index symbol → name_en / industry zh → industry_en).
 # Path injection hook honoured by tests (ref #236): COMPASS_NAME_EN_MAPPING.
 NAME_EN_MAPPING_ENV = "COMPASS_NAME_EN_MAPPING"
 NAME_EN_MAPPING_TMP = "_tmp_name_en"

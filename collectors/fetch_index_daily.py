@@ -100,6 +100,12 @@ THS_HEADERS = {**HEADERS, "Referer": "https://q.10jqka.com.cn/"}
 # Bounded retry budget per target: hosts × attempts. 30 official indices × 6
 # + 2 THS list fetches × 6 = 192 requests worst case when everything 429s —
 # must stay < 200 so an exhausted run terminates in bounded time.
+#
+# The THS per-year kline path is NOT covered by this budget: 90 industries ×
+# ~20 years ≈ 1800 requests max. It has its own throttle (Throttle) plus a
+# single retry per request (fetch_ths_kline), and the #277 fast-fail aborts
+# after 5 consecutive failed industries — a 429 storm on THS therefore ends
+# in bounded time via fast-fail, not via the <200 budget.
 _MAX_HOSTS_TRIED = 2
 _MAX_ATTEMPTS = 3
 
@@ -344,13 +350,22 @@ async def fetch_ths_industry_list(
     page cannot be fetched/decoded (the run treats an empty universe as a
     no-op for boards, never a crash).
     """
-    try:
-        await throttle.acquire()
-        resp = await session.get(THS_LIST_URL, headers=THS_HEADERS)
-        resp.raise_for_status()
-        html = resp.content.decode("gbk", errors="replace")
-    except Exception as e:
-        print(f"    FAILED ths list: {e}", file=sys.stderr)
+    # One retry with a short backoff — a transient 500/429 on the list page
+    # must not silently empty the whole industry universe (review P2-2).
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            await throttle.acquire()
+            resp = await session.get(THS_LIST_URL, headers=THS_HEADERS)
+            resp.raise_for_status()
+            html = resp.content.decode("gbk", errors="replace")
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt == 0:
+                await asyncio.sleep(0.5 + random.uniform(0, 0.5))
+    else:
+        print(f"    FAILED ths list: {last_exc}", file=sys.stderr)
         return []
     boards: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -389,15 +404,26 @@ async def fetch_ths_kline(
     None when the request/parse failed (the caller stops the year loop on
     None and counts the board as failed when nothing was collected).
     """
-    try:
-        await throttle.acquire()
-        resp = await session.get(
-            THS_KLINE_TPL.format(code=code, year=year), headers=THS_HEADERS
-        )
-        resp.raise_for_status()
-        body = resp.text
-    except Exception as e:
-        print(f"    FAILED ths kline {code}/{year}: {e}", file=sys.stderr)
+    # One retry with a short backoff — a transient failure on one year must
+    # not truncate the board history (review P1-1/P2-2); the caller still
+    # distinguishes None (failure) from [] (empty year).
+    last_exc: Exception | None = None
+    body = ""
+    for attempt in range(2):
+        try:
+            await throttle.acquire()
+            resp = await session.get(
+                THS_KLINE_TPL.format(code=code, year=year), headers=THS_HEADERS
+            )
+            resp.raise_for_status()
+            body = resp.text
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt == 0:
+                await asyncio.sleep(0.5 + random.uniform(0, 0.5))
+    else:
+        print(f"    FAILED ths kline {code}/{year}: {last_exc}", file=sys.stderr)
         return None
     start, end = body.find("("), body.rfind(")")
     if start == -1 or end <= start:
@@ -420,9 +446,31 @@ async def fetch_ths_kline(
         if len(parts) < 7:
             continue
         # THS: date,open,high,low,close,volume,amount → EM: date,open,close,high,low,volume,amount.
-        reordered = [parts[0], parts[1], parts[4], parts[2], parts[3], parts[5], parts[6]]
+        reordered = [
+            _ths_date_iso(parts[0]),
+            parts[1],
+            parts[4],
+            parts[2],
+            parts[3],
+            parts[5],
+            parts[6],
+        ]
         rows.append(",".join(reordered))
     return rows
+
+
+def _ths_date_iso(cell: str) -> str:
+    """Normalize the THS compact date (YYYYMMDD) to ISO (YYYY-MM-DD).
+
+    THS kline rows carry 8-digit dates (``20260105``) while ``_kline_records``
+    compares trade_date against ``today`` lexically in ISO form — the raw
+    compact form compares greater than an ISO today (``0`` > ``-``) and every
+    row would be dropped as "future-dated". ISO-looking cells pass through.
+    """
+    cell = cell.strip()
+    if len(cell) == 8 and cell.isdigit():
+        return f"{cell[:4]}-{cell[4:6]}-{cell[6:]}"
+    return cell
 
 
 async def fetch_kline(
@@ -587,6 +635,12 @@ async def run() -> Path:
         async with AsyncSession(impersonate="chrome142") as session:
             industries = await fetch_ths_industry_list(session, throttle)
             print(f"THS industries: {len(industries)}", file=sys.stderr)
+            if not industries:
+                print(
+                    "WARNING: THS 行业列表为空（抓取失败或页面结构变化）——"
+                    "本次仅采集官方指数，90 个行业未采",
+                    file=sys.stderr,
+                )
             progress.update(
                 total_items=len(industries) + len(OFFICIAL_INDICES),
                 message="Fetching THS industry and index klines",
@@ -605,13 +659,22 @@ async def run() -> Path:
                     f"  [industry] {symbol} {name} ...",
                     file=sys.stderr, end=" ", flush=True,
                 )
-                # Per-year pagination, newest first; an empty year means no
-                # older data exists, a request failure stops the loop too.
+                # Per-year pagination, newest first. An EMPTY year is the
+                # historical boundary (no older data) and stops the loop; a
+                # request/parse FAILURE (None) must NOT truncate the history
+                # — a transient 500/429 on one year would otherwise silently
+                # drop every earlier year (review P1-1). Failures are logged
+                # and the loop keeps walking back; a board whose years all
+                # fail still lands in the fast-fail counter below.
                 klines: list[str] = []
                 for year in range(_today().year, THS_FIRST_YEAR - 1, -1):
                     year_rows = await fetch_ths_kline(session, throttle, code, year)
                     if year_rows is None:
-                        break
+                        print(
+                            f"    year {year} fetch failed (kept going)",
+                            file=sys.stderr,
+                        )
+                        continue
                     if not year_rows:
                         break
                     klines.extend(year_rows)
@@ -887,7 +950,11 @@ def _verify_recent_points(csv_path: Path) -> None:
     for symbol, dates in sample.items():
         for trade_date, csv_close in dates:
             stored = _dolt_close(dolt_dir, symbol, trade_date)
-            if stored is None or abs(stored - csv_close) / csv_close <= _SAMPLE_TOLERANCE:
+            if (
+                csv_close == 0.0
+                or stored is None
+                or abs(stored - csv_close) / csv_close <= _SAMPLE_TOLERANCE
+            ):
                 continue
             print(
                 f"  [verify] {symbol} {trade_date}: CSV {csv_close} vs "
@@ -906,11 +973,17 @@ def _dolt_dir_exists() -> Path | None:
 
 
 def _dolt_close(dolt_dir: Path, symbol: str, trade_date: str) -> float | None:
-    """Fetch a single close from Dolt (None when the row is absent)."""
+    """Fetch a single close from Dolt (None when the row is absent).
+
+    Single-quote escaping is defense-in-depth (security review P2): the
+    values are CSV-derived and normally validated upstream, but the SELECT
+    interpolates them raw.
+    """
     try:
         out = dolt_sql_csv(
-            f"SELECT close FROM index_daily "
-            f"WHERE symbol = '{symbol}' AND trade_date = '{trade_date}'"
+            "SELECT close FROM index_daily "
+            f"WHERE symbol = '{symbol.replace(chr(39), chr(39) * 2)}' "
+            f"AND trade_date = '{trade_date.replace(chr(39), chr(39) * 2)}'"
         )
     except Exception:
         return None

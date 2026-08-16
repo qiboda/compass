@@ -5,7 +5,7 @@
 #   1. market data:  compass-data import           (investment_data Dolt → Parquet)
 #   2. collect:      collectors fetch 5 sources    (EastMoney → compass_data Dolt)
 #   3. Dolt commit:  collector tables              (limited add, push; skipped when clean)
-#   4. import:       import-compass 4 append tables + concept_member --overwrite
+#   4. import:       import-compass 4 append tables
 #   5. compute:      sepa temperature + sepa score --top 50 (DELETE+append write-back)
 #   6. Dolt commit:  compute tables                (limited add, push; skipped when clean)
 #   7. print TOP50:  reuse step 5 output, never recompute
@@ -31,7 +31,7 @@ INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-/data/compass-data/investment_d
 COMPASS_DATA_DIR="${SEPA_COMPASS_DATA_DIR:-/data/compass-data/compass_data}"
 
 # Allowlisted table sets for the two Dolt commits (never `dolt add .`).
-COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey concept_member)
+COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey)
 COMPUTE_TABLES=(technical_factor industry_factor capital_factor final_score market_temperature data_updates)
 
 # --- helpers ---
@@ -132,10 +132,10 @@ run_step 1 "import market data (investment_data → Parquet)" "$PROJECT_ROOT" \
 # the day, so re-runs add nothing. main.py fetch accepts ONE target per call
 # (choices list, not nargs="+") and only writes the CSV — the Dolt import is a
 # separate command, so each source is fetched AND imported (the 4 time-series
-# collectors merge-import with INSERT IGNORE on the PK; concept_member
-# full-replaces, so re-runs are idempotent either way).
-run_step 2 "collect EastMoney data (5 sources)" "$PROJECT_ROOT/collectors" \
-    bash -c 'for src in main_flow dragon block_trade institution_survey concept_member; do
+# collectors merge-import with INSERT IGNORE on the PK, so re-runs are
+# idempotent either way (concept_member removed with issue #283 D4).
+run_step 2 "collect EastMoney data (4 sources)" "$PROJECT_ROOT/collectors" \
+    bash -c 'for src in main_flow dragon block_trade institution_survey; do
         echo "--- fetch $src ---"
         uv run python main.py fetch "$src" || exit 1
         echo "--- import $src ---"
@@ -169,11 +169,6 @@ for table in capital_main_flow dragon_list block_trade institution_survey; do
             cargo run --bin compass-data -- import-compass --table "$table"
     fi
 done
-# concept_member is a versioned mapping (not a date-partitioned feed): full
-# overwrite (DELETE+rewrite semantics in import_concept_member).
-run_step 4 "import-compass --table concept_member (full overwrite)" "$PROJECT_ROOT" \
-    cargo run --bin compass-data -- import-compass --table concept_member --overwrite
-
 # --- 5. Compute: market temperature + TOP50, write back to Dolt ---
 # The CLI write-back is DELETE-by-trade_date + append, so re-running the same day
 # is idempotent. The score table is teed to a log so step 7 can reuse it without

@@ -773,3 +773,56 @@ class TestImportToDolt:
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM index_daily")) == "1", (
             "prior rows must survive a failed re-import"
         )
+
+    async def test_mid_year_failure_does_not_truncate_history(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Review P1-1: a transient failure on one year (2025) must NOT stop
+        the per-year loop — earlier years (2024) still land, otherwise a
+        single 500 would silently truncate the board's whole history."""
+        import datetime
+
+        from fetch_index_daily import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        monkeypatch.setattr("fetch_index_daily._today", lambda: datetime.date(2026, 8, 2))
+        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+
+        captured: list[list[dict[str, object]]] = []
+        monkeypatch.setattr(
+            "fetch_index_daily.write_csv",
+            lambda records, _path: captured.append(records),
+        )
+        stub = make_stub_session(
+            canned_responses={
+                KLINE_URL: {
+                    "json_data": _kline_payload(
+                        "000001", [_kline_row("2026-07-31")]
+                    )
+                },
+                THS_LIST_URL: _ths_list_response([("881101", "半导体")]),
+            }
+        )
+        original_get = stub.get
+        async def _get(url, params=None, headers=None):
+            m = re.match(r"https://d\.10jqka\.com\.cn/v4/line/bk_(\d+)/01/(\d+)\.js$", url)
+            if m:
+                code, year = m.group(1), int(m.group(2))
+                if year == 2025:
+                    return StubResponse(status_code=500, json_data={})
+                if year >= 2024:
+                    return _ths_kline_response(code, year, [_ths_kline_row(f"{year}-07-31")])
+                return _ths_kline_response(code, year, [])  # empty → loop ends
+            return await original_get(url, params=params, headers=headers)
+        stub.get = _get  # type: ignore[method-assign]
+        with patch("fetch_index_daily.AsyncSession", return_value=stub):
+            await run()
+
+        rows = [r for batch in captured for r in batch if "trade_date" in r]
+        dates = {r["trade_date"] for r in rows if r["symbol"] == "BK881101"}
+        assert "2024-07-31" in dates, (
+            "a failed middle year must not truncate earlier history; "
+            f"got {sorted(dates)}"
+        )
+        assert "2025-07-31" not in dates, "the failed year itself has no rows"

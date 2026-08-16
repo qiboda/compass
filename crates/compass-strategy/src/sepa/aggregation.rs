@@ -300,4 +300,155 @@ mod tests {
         let out = aggregate_industry_daily(&HashMap::new(), &bars);
         assert!(out.is_empty());
     }
+
+    // ── Adversarial: industry-name special characters (issue #283 D5) ─────────
+
+    #[test]
+    fn blank_industry_name_is_a_distinct_group() {
+        // stock_basic.industry may carry an empty/whitespace string for symbols
+        // with no classification. It is a valid HashMap key and must aggregate
+        // into its own group — never panic, never fold into a real industry.
+        let bars = group(vec![
+            ("SH600000", two_bar_series("SH600000", 100.0, 3.0, 1.0e9)),
+            ("SH600001", two_bar_series("SH600001", 100.0, 4.0, 2.0e9)),
+        ]);
+        let industry_of = HashMap::from([
+            ("SH600000".to_string(), String::new()),     // empty string
+            ("SH600001".to_string(), "   ".to_string()), // whitespace-only
+        ]);
+        let out = aggregate_industry_daily(&industry_of, &bars);
+        assert_eq!(
+            out.len(),
+            2,
+            "each distinct key (incl. blank) is its own group"
+        );
+        let empty = out.get("").expect("the empty-string industry aggregates");
+        assert_eq!(empty.member_count, 1);
+        assert!((empty.pct_change - 3.0).abs() < 1e-9);
+        let ws = out
+            .get("   ")
+            .expect("the whitespace-only industry aggregates");
+        assert_eq!(ws.member_count, 1);
+    }
+
+    #[test]
+    fn unicode_and_punctuation_industry_names_do_not_collide() {
+        // Names rich in leading/trailing space + unicode punctuation must stay
+        // distinct — trimming or folding them would merge distinct branches.
+        let bars = group(vec![
+            ("SH600000", two_bar_series("SH600000", 100.0, 1.0, 1.0)),
+            ("SH600001", two_bar_series("SH600001", 100.0, 2.0, 1.0)),
+            ("SH600002", two_bar_series("SH600002", 100.0, 3.0, 1.0)),
+        ]);
+        let names = [
+            " 半导体 ", // trimmed-matching a distinct name
+            "半导体",   // the "clean" twin — must NOT merge above
+            "银行 /【金融】",
+        ];
+        let industry_of = HashMap::from([
+            ("SH600000".to_string(), names[0].to_string()),
+            ("SH600001".to_string(), names[1].to_string()),
+            ("SH600002".to_string(), names[2].to_string()),
+        ]);
+        let out = aggregate_industry_daily(&industry_of, &bars);
+        assert_eq!(
+            out.len(),
+            3,
+            "every distinct industry name keeps its own group"
+        );
+        assert_eq!(out.get(" 半导体 ").unwrap().member_count, 1);
+        assert_eq!(out.get("半导体").unwrap().member_count, 1);
+        assert_eq!(out.get("银行 /【金融】").unwrap().member_count, 1);
+    }
+
+    #[test]
+    fn skipped_industry_omitted_while_sibling_industry_kept() {
+        // One industry's members all lack bars (skipped) — it must be OMITTED
+        // from the result (no zero-member ghost entry), while a sibling industry
+        // with valid members still lands. Otherwise a per-industry loop over the
+        // result would divide by a phantom member_count == 0.
+        let bars = group(vec![(
+            "SH600000",
+            two_bar_series("SH600000", 100.0, 5.0, 1.0e9),
+        )]);
+        let industry_of = HashMap::from([
+            ("SH600000".to_string(), "银行".to_string()),
+            ("SH600777".to_string(), "银行".to_string()), // no bars → skipped
+            ("SZ000001".to_string(), "医药".to_string()), // no bars → skipped entirely
+        ]);
+        let out = aggregate_industry_daily(&industry_of, &bars);
+        assert!(
+            !out.contains_key("医药"),
+            "a fully-barless industry must be omitted"
+        );
+        let bank = out
+            .get("银行")
+            .expect("the sibling with a valid member stays");
+        assert_eq!(
+            bank.member_count, 1,
+            "the barless member is skipped, not counted"
+        );
+        assert!((bank.pct_change - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn up_ratio_excludes_zero_and_negative_changes() {
+        // up_ratio counts only pct > 0.
+        let bars = group(vec![
+            ("SH600000", two_bar_series("SH600000", 100.0, 0.0, 1.0)), // flat
+            ("SH600001", two_bar_series("SH600001", 100.0, -2.0, 1.0)), // down
+            ("SH600002", two_bar_series("SH600002", 100.0, 4.0, 1.0)), // up
+        ]);
+        let industry_of = HashMap::from([
+            ("SH600000".to_string(), "综合".to_string()),
+            ("SH600001".to_string(), "综合".to_string()),
+            ("SH600002".to_string(), "综合".to_string()),
+        ]);
+        let out = aggregate_industry_daily(&industry_of, &bars);
+        let d = out.get("综合").unwrap();
+        assert_eq!(d.member_count, 3);
+        assert!((d.up_ratio - 1.0 / 3.0).abs() < 1e-9, "got {}", d.up_ratio);
+    }
+
+    // ── Adversarial: scale — the aggregation must stay ~O(n), no O(n²) ────────
+
+    #[test]
+    fn aggregates_many_industries_without_quadratic_blowup() {
+        // 5_000 symbols spread across 1_000 industries: a per-member scan for
+        // each industry (O(n·k)) would be catastrophic here; a single pass over
+        // symbols (O(n)) completes instantly. Correctness is asserted exactly so
+        // an O(n²) regression can neither hide behind wrong counts nor crash on
+        // real-scale input. The wall-time guard is deliberately loose (flaky-CI
+        // safe) — the point is the algorithm shape, not a tight timer.
+        let n = 5_000usize;
+        let names: Vec<String> = (0..n).map(|i| format!("industry{i}")).collect();
+        // Owned symbol strings live for the whole test; the ``group`` helper is
+        // fed ``&str`` borrows and leaks the vec backing the ref-map.
+        let symbols: Vec<String> = (0..n).map(|i| format!("SH{i:06}")).collect();
+        let mut series: Vec<(&str, Vec<CrossSectionBar>)> = Vec::with_capacity(n);
+        let mut industry_of = HashMap::with_capacity(n);
+        for i in 0..n {
+            series.push((&symbols[i], two_bar_series(&symbols[i], 100.0, 1.0, 1.0e9)));
+            industry_of.insert(symbols[i].clone(), names[i % 1_000].clone());
+        }
+        let bars = group(series);
+
+        let start = std::time::Instant::now();
+        let out = aggregate_industry_daily(&industry_of, &bars);
+        let elapsed_secs = start.elapsed().as_secs_f64();
+
+        // Every industry has exactly 5 members → pct == 1.0 and up_ratio == 1.0.
+        assert_eq!(out.len(), 1_000, "all 1_000 industries present");
+        for (name, daily) in &out {
+            assert_eq!(daily.member_count, 5, "industry {name}");
+            assert!((daily.pct_change - 1.0).abs() < 1e-9, "industry {name}");
+            assert_eq!(daily.up_ratio, 1.0, "industry {name}");
+        }
+        // 5k×2-bar aggregation on this hot path must complete fast even on a
+        // slow CI box; an O(n²) implementation would blow past the 3s bound.
+        assert!(
+            elapsed_secs < 3.0,
+            "5k members across 1k industries took {elapsed_secs:.3}s — O(n²) regression?"
+        );
+    }
 }

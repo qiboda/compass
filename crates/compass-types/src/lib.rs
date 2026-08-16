@@ -362,7 +362,8 @@ pub struct SepaData {
 ///
 /// The market tab renders these in its ranking table (板块轮动) and the
 /// core-index card consumes the `official` subset. `index_type` is one of
-/// `"official"` / `"concept"` / `"industry"` (index_daily.parquet column).
+/// `"official"` / `"industry"` (index_daily.parquet column; concept rows
+/// were removed with issue #283 D4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexRow {
     /// Exchange-prefixed symbol (e.g. `SH000001`, `BK0475`).
@@ -372,7 +373,7 @@ pub struct IndexRow {
     /// English display name (epic #266; `None` when unmapped — the GUI
     /// falls back to the Chinese `name`).
     pub name_en: Option<String>,
-    /// `"official"` | `"concept"` | `"industry"`.
+    /// `"official"` | `"industry"`.
     pub index_type: String,
     /// Latest close (点位).
     pub latest: f64,
