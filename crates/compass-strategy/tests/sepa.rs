@@ -325,7 +325,7 @@ fn bar_only_stock(symbol: &'static str, bars: Vec<TestBar>) -> TestStock {
 fn strong_series() -> Vec<TestBar> {
     let mut closes: Vec<f64> = (0..300).map(|i| 10.0 + i as f64 * 12.73 / 299.0).collect();
     closes[299] = 25.0;
-    let mut s = bars("2026-07-31", &closes, 0.1, 0.1, 1.0e6, 5.0e8);
+    let mut s = bars("2026-07-31", &closes, 0.1, 0.1, 1.0e6, 9.0e8);
     for b in s.iter_mut().skip(280) {
         b.volume = 2.0e6;
     }
@@ -337,7 +337,7 @@ fn strong_series() -> Vec<TestBar> {
 fn strong_series_b() -> Vec<TestBar> {
     let mut closes: Vec<f64> = (0..300).map(|i| 10.0 + i as f64 * 12.73 / 299.0).collect();
     closes[299] = 24.3;
-    let mut s = bars("2026-07-31", &closes, 0.1, 0.1, 1.0e6, 5.0e8);
+    let mut s = bars("2026-07-31", &closes, 0.1, 0.1, 1.0e6, 9.0e8);
     for b in s.iter_mut().skip(280) {
         b.volume = 2.0e6;
     }
@@ -447,10 +447,15 @@ fn strong_stock_outranks_junk_stock() {
     );
     assert!((strong.risk - 0.0).abs() < 1e-9, "risk {}", strong.risk);
     assert!(strong.total_score <= 100.0);
+    // Issue #283 D5: every classified stock now has an industry theme score
+    // (the "测试" industry's diffusion + news components), so junk's total is
+    // small but no longer zero — the strong-margin assertion above is the
+    // real contract.
     assert!(
-        (junk.total_score - 0.0).abs() < 1e-9,
-        "junk total clamped to 0: {}",
-        junk.total_score
+        junk.total_score < strong.total_score - 40.0,
+        "junk {} must trail strong {} by a wide margin",
+        junk.total_score,
+        strong.total_score
     );
     assert_eq!(junk.risk, -1.5, "junk risk = -(30 deductions) × 0.05");
 
