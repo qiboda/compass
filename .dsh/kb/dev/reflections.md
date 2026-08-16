@@ -448,3 +448,33 @@
 **Process improvements**:
 - toolchain.md 补一条：完整 collectors 套件约 3 分钟，优先后台运行并带 Dolt 遥测禁用环境变量。
 - 其余为一次性教训，暂不新建 issue。
+
+## 2026-08-16 — ref #287 proxy_pool 试用：独立验证 harness + 免费代理 HTTPS 验证失败
+
+**What was done**: 新增 `scripts/proxy_pool/docker-compose.yml`（proxy_pool 2.4.2 + Redis，回环绑定 + healthcheck + 镜像缺 bash workaround）与 `collectors/check_proxy_pool.py` 独立验证脚本（curl_cffi/chrome142，30 次 THS 探测，输出成功率/平均耗时/失败原因/判定）。RED→GREEN 测试 63 个，全套件 683 passed、覆盖率 98.25%。真实验证结果：30/30 失败（0%），免费代理全部 HTTP-only，HTTPS CONNECT 被拒，按锁定标准判定 FAIL。
+
+**User corrections**: 无显式纠正；用户批准计划与 push/PR。
+
+**What went wrong**:
+1. 多次 edit 工具摩擦：2 次 "read the file first"、1 次 "file changed since it was read"，均因改前未 read/文件被 ruff format 改动；增加返工。
+2. 测试子代理交付的 requirement 测试存在 Python 闭包 bug（`status_code = status_code` 在 class body 中 NameError）与契约不一致（`run_trial` 缺 count、`main()` 在 pytest 下被 sys.argv 干扰），实现后首次运行才暴露，需主 agent 修测试。
+3. `get_proxies` 初版按假设的 `{"proxies": [...]}` 解析，真实 proxy_pool `/all/` 返回 JSON 数组对象且 `/all` 会 302；真实运行后才发现，补了 list 形态兼容与 `/all/` 尾斜杠。
+4. Review 发现 `main` 文档/测试声称「API 不可达 → rc=1」，但 `get_proxies` 吞掉所有异常返回空列表，真实路径不可达；需统一契约（不可达 → rc=0 + FAIL，rc=1 仅真实 validation 错误）。
+5. Docker 沙箱 bridge 网络创建 veth 失败（operation not supported），改用临时 host-network override 完成验证；官方 proxy_pool 镜像缺 bash 默认 ENTRYPOINT 崩溃，compose 用 `sh` 直启 server/schedule 绕过。
+6. 本地 master 存在未推送 commit f781000 混入 worktree 分支，push 前用 `git rebase --onto origin/master f781000` 排除，得到干净 4-commit PR 分支（与 #286 同型问题）。
+
+**Lessons learned**:
+1. 委派测试子代理后，主 agent 应在实现后第一时间跑新测试并审查测试代码本身（Python class body 闭包/签名/argv 等 latent bug），不能只信子代理自报 RED/GREEN。
+2. 对接外部 API 前先 curl 真实响应确认形态与重定向，再定解析契约；不要按文档/假设写死响应结构。
+3. 对外暴露的退出码/错误语义必须有真实可达路径；仅靠 monkeypatch 让测试通过等于虚假契约，review 应专门检查「文档承诺的路径是否真能发生」。
+4. 沙箱 Docker bridge 不可用时用 host-network override 做验证，交付 compose 保持标准 bridge；环境 workaround 写入 toolchain 排查卡。
+5. worktree 分支 push 前检查 `origin/master..HEAD`，若含本地 master 独有 commit 用 `rebase --onto` 排除，避免无关 commit 进 PR。
+
+**Process improvements**:
+- 已落实：`.dsh/kb/dev/toolchain.md` 新增两条容器排查卡（bridge veth 不支持、proxy_pool 镜像缺 bash）。
+- proposed：skwy-requirement-test 委派 prompt 增加「用临时参考实现自检测试可运行」要求（本次 requirement 子代理未自检，adversarial 子代理自检通过）；待建 issue 排期。
+
+### Trends (last 10)
+- 本地 master 独有未推送 commit 混入 worktree 分支已第二次出现（#286、#287）：push 前应默认执行 `git fetch origin master && git log HEAD..origin/master`，发现本地独有 commit 用 `rebase --onto origin/master <本地基点>` 排除。
+- 外部 API 真实形态与文档/假设不符多次由真实运行暴露（#283 JSONP/列序、#287 `/all/` list-of-dicts）：新数据源/API 对接应先抓真实样例再写解析。
+- 子代理产出测试存在 latent bug 需主 agent 复核（本次 requirement 测试闭包/契约问题）：测试子代理交付前应自检可运行性。
