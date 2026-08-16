@@ -398,3 +398,29 @@
 ### Trends (last 10)
 - 数据级问题反复由真实数据首次暴露（#181 混源、#273 update_date、本次 name_en 列/快速失败误伤）：fixture 覆盖不到数据链路的真实集成，真实冒烟/真实爬取仍是唯一暴露途径（#273、#277 反思同模式）
 - 非阻塞问题过度深挖被用户叫停（本次 export duckdb）——与"真实冒烟滞后"同属范围判断：工作前先标定阻塞性
+
+## 2026-08-16 — ref #283 板块数据源战略调整：THS 行业 90 + 概念全链路移除 + 真实采集暴露 CSV 复活事故
+
+**What was done**: 完成 issue #283 全链路（8 实现 commit + 2 修复 commit）：THS 90 申万一级行业替代东财 496（列表实时抓 + 按年分页 K 线）；concept 全链路移除（表/模型/reader/GUI/SEPA）；SEPA 题材改按 stock_basic.industry 聚合；final_score 删 theme_score；BK 4-6 位符号；清理脚本执行（Dolt commit pvah87l0）；真实采集 512,995 行入 Dolt（aq7b7sk）。
+
+**User corrections**: 本 worktree 会话无用户纠正（auto 模式）。D3 决策"先保留后定稿删除东财 BK 行"两次确认记录于 handoff（主会话）。
+
+**What went wrong**:
+1. **CSV 复活事故（数据一致性）**：B1 清理只删 Dolt 行、未同步清理 csv/index_basic.csv 镜像；`_persist_outputs` 的增量门禁（`not last` 时不重建 basic CSV）让旧 CSV 残留；import（INSERT IGNORE merge）把 1,000 个已删行（496 东财 BK + 504 concept）全部复活。import 后查 index_type 分布才发现。
+2. **Dolt 批量导入性能盲区**：INSERT IGNORE 512,995 行 41 分钟未完成（600s timeout 先超时，3600s 也悬），换 dolt table import 批量路径 18 秒完成——差 2 个数量级。
+3. 工具摩擦：多次 edit "file changed since it was read" 重试（改前未 read）；bash-137 会话重启后 job 丢失需重新核验；dolt log --stat 参数语法与 AS OF 'HEAD' 行为与预期不符（改用具体 hash 验证）。
+
+**Lessons learned**:
+1. 数据清理（Dolt DELETE/drop 表）必须同步清理/重建派生产物（CSV 镜像、Parquet），否则下次导入用 INSERT IGNORE merge 复活已删行——CSV 与 Dolt 的一致性靠"每次 run 全量重建镜像"保证（merge 永不丢行，重建才安全）。
+2. Dolt 大表（>10 万行）导入用 dolt table import 批量路径（CSV→临时表→原子 RENAME 交换），避免 SQL INSERT IGNORE（慢 2 个数量级）。
+3. import 后应自动断言表状态（index_type 分布/行数），当场拦截"复活"类数据事故，而非事后人工查。
+
+**Process improvements**:
+- 已落实（代码+回归测试，d7f10f1）：_persist_outputs 每次非短路 run 重建 basic CSV；增量 abort 测试契约反转
+- 已落实（脚本，3464736）：cleanup-concept-data.sh 同步删除 csv/index_basic.csv 镜像
+- 已落实（代码，3464736）：import 插入 timeout 600→3600
+- proposed：Dolt 大表导入性能（merge 模式 INSERT IGNORE → dolt table import 路径）与 import 后自动断言——待建 issue 排期
+
+### Trends (last 10)
+- 数据链路问题仍反复由真实运行首次暴露（#273 update_date、#281 name_en/快速失败误伤、本次 CSV 复活/INSERT 超时）："真实运行验证"应进入数据管线变更的验收定义，import 后自动断言（行数/类型分布）可当场拦截复活类事故
+- Dolt 批量操作性能需预先标定（本次 INSERT IGNORE 41min→table import 18s）：大表导入路径应在实现前选定，避免真实运行才发现
