@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import curl_cffi.requests as _curl_requests
 import pytest
 
 import fetch_freeproxy as mod
@@ -29,6 +30,9 @@ class _FakeRedis:
 
     def hset(self, table: str, key: str, value: str) -> None:
         self.hsets.append((table, key, value))
+
+    def close(self) -> None:
+        pass
 
 
 def _sample_json_item(**overrides: Any) -> dict[str, Any]:
@@ -67,7 +71,7 @@ def test_fetch_json_proxies_filters_http_and_limits(
         ]
     }
     monkeypatch.setattr(
-        mod.curl_requests,
+        _curl_requests,
         "get",
         lambda url, timeout: _FakeResponse(payload),
     )
@@ -85,7 +89,7 @@ def test_fetch_json_proxies_prefers_cn_and_elite(monkeypatch: pytest.MonkeyPatch
         ]
     }
     monkeypatch.setattr(
-        mod.curl_requests,
+        _curl_requests,
         "get",
         lambda url, timeout: _FakeResponse(payload),
     )
@@ -174,7 +178,7 @@ def test_fetch_json_proxies_data_none_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        mod.curl_requests,
+        _curl_requests,
         "get",
         lambda url, timeout: _FakeResponse({"data": None}),
     )

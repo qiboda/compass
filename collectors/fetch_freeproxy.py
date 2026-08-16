@@ -22,10 +22,10 @@ import sys
 from collections.abc import Iterable
 from typing import Any
 
-from curl_cffi import requests as curl_requests
+from curl_cffi import requests as _curl_requests
 from redis import Redis
 
-__all__ = ["curl_requests", "main"]
+__all__ = ["main"]
 
 DEFAULT_JSON_URL = "https://raw.githubusercontent.com/CharlesPikachu/freeproxy/master/proxies.json"
 DEFAULT_REDIS_URL = "redis://@127.0.0.1:6379/0"
@@ -153,7 +153,7 @@ def normalize_proxy_info(info: Any) -> dict[str, Any]:
 
 def fetch_json_proxies(url: str, limit: int) -> list[dict[str, Any]]:
     """Download and filter the freeproxy ``proxies.json`` snapshot."""
-    resp: Any = curl_requests.get(url, timeout=30)
+    resp: Any = _curl_requests.get(url, timeout=30)
     resp.raise_for_status()
     payload = resp.json()
     data = payload.get("data") if isinstance(payload, dict) else None
@@ -210,14 +210,17 @@ def write_to_redis(redis_url: str, table: str, records: Iterable[dict[str, Any]]
     """Write proxy records into a Redis hash and return the number written."""
     client = _new_redis_client(redis_url)
     written = 0
-    for record in records:
-        proxy = _safe_proxy_str(str(record.get("proxy", "")))
-        if proxy is None:
-            continue
-        safe_record = dict(record)
-        safe_record["proxy"] = proxy
-        client.hset(table, proxy, json.dumps(safe_record, ensure_ascii=False))
-        written += 1
+    try:
+        for record in records:
+            proxy = _safe_proxy_str(str(record.get("proxy", "")))
+            if proxy is None:
+                continue
+            safe_record = dict(record)
+            safe_record["proxy"] = proxy
+            client.hset(table, proxy, json.dumps(safe_record, ensure_ascii=False))
+            written += 1
+    finally:
+        client.close()
     return written
 
 
@@ -259,22 +262,31 @@ def main(argv: list[str] | None = None) -> int:
         print("fatal: --limit must be >= 0", file=sys.stderr)
         return 1
 
-    if args.source == "json":
-        records = fetch_json_proxies(args.json_url, args.limit)
-    else:
-        print(
-            "warning: --source realtime makes outbound requests to untrusted "
-            "third-party proxy sources; run it only in a sandboxed network",
-            file=sys.stderr,
-        )
-        sources = [s.strip() for s in args.realtime_sources.split(",") if s.strip()]
-        records = fetch_realtime_proxies(args.limit, sources)
+    try:
+        if args.source == "json":
+            records = fetch_json_proxies(args.json_url, args.limit)
+        else:
+            print(
+                "warning: --source realtime makes outbound requests to untrusted "
+                "third-party proxy sources; run it only in a sandboxed network",
+                file=sys.stderr,
+            )
+            sources = [s.strip() for s in args.realtime_sources.split(",") if s.strip()]
+            records = fetch_realtime_proxies(args.limit, sources)
+    except Exception as exc:
+        print(f"fatal: {exc}", file=sys.stderr)
+        return 1
 
     if not records:
         print("no proxies fetched", file=sys.stderr)
         return 1
 
-    written = write_to_redis(args.redis_url, args.table, records)
+    try:
+        written = write_to_redis(args.redis_url, args.table, records)
+    except Exception as exc:
+        print(f"fatal: {exc}", file=sys.stderr)
+        return 1
+
     print(f"seeded {written} proxies into {args.table} ({args.source})")
     return 0
 
