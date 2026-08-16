@@ -56,7 +56,6 @@ KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
 # Issue #286: the fallback switched to newfqkline/get, whose day rows are 11
 # fields with 成交额 in 万元 at index 8.
-TENCENT_URL = "https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get"
 
 _TENCENT_PAGE_SIZE = 2000
 
@@ -146,19 +145,19 @@ class TestTencentCodeMapping:
     """C1: _tencent_code maps EastMoney secid to a Tencent symbol."""
 
     def test_sh_secid_maps_to_sh_prefix(self) -> None:
-        """RED: 1.000001 (上证指数) → sh000001."""
+        """Test: 1.000001 (上证指数) → sh000001."""
         from fetch_index_daily import _tencent_code  # noqa: E402
 
         assert _tencent_code("1.000001") == "sh000001"
 
     def test_sz_secid_maps_to_sz_prefix(self) -> None:
-        """RED: 0.399001 (深证成指) → sz399001."""
+        """Test: 0.399001 (深证成指) → sz399001."""
         from fetch_index_daily import _tencent_code  # noqa: E402
 
         assert _tencent_code("0.399001") == "sz399001"
 
     def test_all_official_indices_have_mappable_secid(self) -> None:
-        """RED: every OFFICIAL_INDICES secid maps to a clean sh/sz+code symbol."""
+        """Test: every OFFICIAL_INDICES secid maps to a clean sh/sz+code symbol."""
         from fetch_index_daily import OFFICIAL_INDICES, _tencent_code  # noqa: E402
 
         for t in OFFICIAL_INDICES:
@@ -180,7 +179,7 @@ class TestTencentPagination:
     async def test_merges_pages_and_advances_end_date(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: page 1 returns exactly 2000 rows (full), page 2 returns fewer —
+        """Test: page 1 returns exactly 2000 rows (full), page 2 returns fewer —
         the helper must (a) request page 1 with empty end date, (b) advance the
         end date on the 2nd request, and (c) return ALL 2000+ rows merged."""
         from fetch_index_daily import (
@@ -239,7 +238,7 @@ class TestTencentPagination:
     async def test_single_short_page_returns_without_second_request(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED: when the first page is already short (<2000), no second request
+        """Test: when the first page is already short (<2000), no second request
         is made — full history fit in one page."""
         from fetch_index_daily import (
             Throttle,  # noqa: E402
@@ -277,7 +276,7 @@ class TestTencentNewFqKlineAmount:
     成交额 (万元, index 8) is converted to yuan (× 10000) in the emitted
     7-field CSV row, preserving the EastMoney field order.
 
-    RED on current code: it talks to ``fqkline/get`` and hardcodes amount to 0.
+    GREEN on current code: it uses ``newfqkline/get`` and writes real amount.
     """
 
     # Example from the issue:
@@ -288,7 +287,7 @@ class TestTencentNewFqKlineAmount:
     async def test_newfqkline_row_returns_nonzero_yuan_amount(
         self, make_stub_session
     ) -> None:
-        """RED: an 11-field newfqkline day row (成交额 万元 at index 8) must come
+        """Test: an 11-field newfqkline day row (成交额 万元 at index 8) must come
         back as a 7-field kline whose amount (index 6) is yuan = 万元 × 10000.
         The request must target the NEW endpoint (newfqkline/get), not the old
         fqkline/get."""
@@ -331,7 +330,7 @@ class TestTencentNewFqKlineAmount:
     async def test_newfqkline_row_preserves_eastmoney_field_order(
         self, make_stub_session
     ) -> None:
-        """RED: the emitted 7-field row keeps the EastMoney column order
+        """Test: the emitted 7-field row keeps the EastMoney column order
         date,open,close,high,low,volume,amount — the 11-field Tencent row must
         be mapped (not naively truncated), so close/high/low are not swapped."""
         from fetch_index_daily import (  # noqa: E402
@@ -404,8 +403,9 @@ class TestTencentNewFqKlineAmount:
         self, make_stub_session
     ) -> None:
         """Regression: a literal row captured from the live newfqkline/get API
-        (2026-08-14 SH000001) must map to the EastMoney 7-field order and
-        non-zero yuan amount without relying on the shared fixture helper."""
+        (2026-08-14 SZ399001) must map to the EastMoney 7-field order and
+        non-zero yuan amount. Raw API values may differ slightly from the
+        float-rounded Dolt/Parquet store; this pins the raw parse contract."""
         from fetch_index_daily import (  # noqa: E402
             Throttle,
             _fetch_tencent_kline,
@@ -413,37 +413,44 @@ class TestTencentNewFqKlineAmount:
 
         real_row = [
             "2026-08-14",
-            "3930.02",
-            "3927.18",
-            "3932.64",
-            "3903.70",
-            "499525613.00",
+            "14335.41",
+            "14354.31",
+            "14384.18",
+            "14203.99",
+            "642557319.00",
             {},
-            "1.03",
-            "99037192.42",
+            "2.62",
+            "115247130.12",
             "0.00",
             "0.00",
         ]
         stub = make_stub_session()
+        urls: list[str] = []
 
         async def _get(url, params=None, headers=None):
+            urls.append(url)
             return StubResponse(
-                json_data=_tencent_payload("sh000001", [real_row])
+                json_data=_tencent_payload("sz399001", [real_row])
             )
 
         stub.get = _get  # type: ignore[method-assign]
 
         klines = await _fetch_tencent_kline(
-            stub, Throttle(min_interval=0), "1.000001"
+            stub, Throttle(min_interval=0), "0.399001"
+        )
+        assert klines is not None
+        assert urls and urls[0].endswith("newfqkline/get"), (
+            f"must call newfqkline/get, got {urls!r}"
         )
         fields = klines[0].split(",")
+        assert len(fields) == 7, f"expected 7 fields, got {fields!r}"
         assert fields[0] == "2026-08-14"
-        assert fields[1] == "3930.02"
-        assert fields[2] == "3927.18"
-        assert fields[3] == "3932.64"
-        assert fields[4] == "3903.70"
-        assert fields[5] == "499525613.00"
-        assert float(fields[6]) == 990371924200.0
+        assert fields[1] == "14335.41"
+        assert fields[2] == "14354.31"
+        assert fields[3] == "14384.18"
+        assert fields[4] == "14203.99"
+        assert fields[5] == "642557319.00"
+        assert float(fields[6]) == 115247130.12 * 10000.0
 
 
 class TestTencentAmountYuanDirect:
@@ -508,7 +515,7 @@ class TestTencentFallbackAndAmount:
     async def test_official_falls_back_to_tencent_writes_nonzero_amount(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: ONLY 1.000001 is in the whitelist via monkeypatch, its EastMoney
+        """Test: ONLY 1.000001 is in the whitelist via monkeypatch, its EastMoney
         kline fails, so the run must fetch from Tencent (newfqkline/get) and
         write an official row whose amount (yuan = 成交额 万元 × 10000) is
         NON-ZERO and whose symbol is SH000001."""
@@ -564,7 +571,7 @@ class TestTencentFallbackAndAmount:
     async def test_eastmoney_empty_falls_back_to_tencent(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: EastMoney returns EMPTY klines (non-error) for the official
+        """Test: EastMoney returns EMPTY klines (non-error) for the official
         target → must still fall back to Tencent and produce rows."""
         from fetch_index_daily import run  # noqa: E402
 
@@ -619,12 +626,12 @@ class TestTencentFastFail:
     async def test_eastmoney_only_failures_recover_via_tencent(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: 6 official indices whitelisted; EastMoney fails for ALL of them
+        """Test: 6 official indices whitelisted; EastMoney fails for ALL of them
         but Tencent would succeed for the 5th. The #277 counter must only mark a
         target failed once Tencent was tried — so 4 EastMoney-only failures do
         NOT trigger, and the 5th succeeds on Tencent → no abort, all targets
         fetched. The current (no-tencent) implementation counts all 5 EastMoney
-        failures consecutively and aborts → RED."""
+        failures consecutively and aborts → expected."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -681,7 +688,7 @@ class TestTencentFastFail:
     async def test_five_doublefail_officials_terminate(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: when Tencent ALSO fails (double-fail) for 5 consecutive official
+        """Test: when Tencent ALSO fails (double-fail) for 5 consecutive official
         targets, run() must abort (连续… RuntimeError) and never fetch the 6th —
         proving the Tencent segment is inside the #277 fast-fail boundary."""
         from fetch_index_daily import run  # noqa: E402

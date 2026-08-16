@@ -182,7 +182,7 @@ class TestTencentPaginationBounded:
     async def test_no_progress_full_pages_terminate_in_bounded_requests(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED (resource-exhaustion attack on pagination): the stub answers
+        """Test (resource-exhaustion attack on pagination): the stub answers
         EXACTLY 2000 rows every time and the days NEVER move forward (the same
         earliest date is re-served on every request). A naive
         ``while len(page) == 2000: ...`` loop would never observe a short page
@@ -226,7 +226,7 @@ class TestTencentPaginationBounded:
     async def test_always_full_advancing_pages_still_bounded(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED (ordering attack, second boundedness check): even when start_date
+        """Test (ordering attack, second boundedness check): even when start_date
         DOES advance every page but the page stays exactly 2000 rows wide, the
         helper must eventually give up after a page cap rather than enumerate
         months of synthetic data. Assert termination and a hard bound on the
@@ -294,7 +294,7 @@ class TestTencentMalformedPayloads:
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
         bad_payload: dict,
     ) -> None:
-        """RED: EastMoney fails for the official, Tencent returns a structurally
+        """Test: EastMoney fails for the official, Tencent returns a structurally
         broken body → the target is a double-fail (counts once, run completes,
         no crash). A TypeError on ``payload["data"][code]["day"]`` would escape
         run() and crash the pipeline — the helper must treat it as empty/failed."""
@@ -335,10 +335,10 @@ class TestTencentMalformedPayloads:
     async def test_day_row_fewer_than_six_fields_skipped_safely(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED (N1): a short day row (fewer than 9 fields — missing the index-8
+        """Test (N1): a short day row (fewer than 9 fields — missing the index-8
         amount) inside an otherwise valid ``day`` list must not crash the row
         builder; short siblings degrade to amount 0/empty while a valid 11-field
-        sibling writes its NON-ZERO amount (RED vs the current amount-0 impl)."""
+        sibling writes its NON-ZERO amount (pins the non-zero amount contract)."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -386,7 +386,7 @@ class TestTencentMalformedPayloads:
         assert all(r["trade_date"] in {"2026-07-30", "2026-07-29"} for r in official)
 
         by_date = {r["trade_date"]: r for r in official}
-        # Valid 11-field row carries its real (non-zero) amount — RED today.
+        # Valid 11-field row carries its real (non-zero) amount — now.
         assert float(by_date["2026-07-30"]["amount"]) == pytest.approx(
             _amount_yuan("499525613.00")
         ), (
@@ -414,7 +414,7 @@ class TestTencentNoFallbackOnCodeMismatch:
     async def test_code_mismatch_skips_fallback_and_preserves_counter(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED: 4 THS industries fail (counter=4). O1 mismatches on EastMoney
+        """Test: 4 THS industries fail (counter=4). O1 mismatches on EastMoney
         (skip → counter stays 4, NO Tencent request). O2 then double-fails →
         counter=5 → abort on O2. If O1 wrongly reset the counter
         (mismatch-as-success) there would be no abort; if O1 wrongly triggered
@@ -492,7 +492,7 @@ class TestTencentFastFailAdversarial:
     async def test_five_double_fails_abort_and_stop_tencent_requests(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED (exact boundary + resource): 6 officials, all EastMoney fail.
+        """Test (exact boundary + resource): 6 officials, all EastMoney fail.
         Tencent ALSO fails for all 6 → the first 5 are consecutive double-fails
         → run aborts and the 6th is never requested BY EITHER source. This pins
         that the Tencent segment is inside the #277 boundary: nothing after the
@@ -556,12 +556,12 @@ class TestTencentFastFailAdversarial:
     async def test_tencent_success_resets_counter_and_writes_nonzero_amount(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """RED (N4): officials O1,O2,E,F: E fails on EastMoney + Tencent, F fails
+        """Test (N4): officials O1,O2,E,F: E fails on EastMoney + Tencent, F fails
         on EastMoney but SUCCEEDS on Tencent. Then 5 more officials double-fail →
         the streak restarts AFTER F's success: the 5 double-fails FOLLOWING F
         must terminate only at their own 5th (O7). If F's Tencent success had NOT
         cleared the counter the run would have aborted earlier. F's written row
-        must carry a NON-ZERO amount (万元×10000) — RED vs the amount-0 impl."""
+        must carry a NON-ZERO amount (万元×10000) — pins the non-zero amount contract."""
         from fetch_index_daily import run  # noqa: E402
 
         _env(monkeypatch, tmp_path)
@@ -645,7 +645,7 @@ def _tencent_symbol(secid: str, code: str) -> str:
 
 
 class TestNewFqKlineAmountAdversarial:
-    """RED for #286: the Tencent index fallback must write NON-ZERO amount
+    """Test for #286: the Tencent index fallback must write NON-ZERO amount
     (index-8 成交额 in 万元 ×10000 = yuan) for valid rows, degrade gracefully on
     missing/malformed amounts, preserve amount across pagination, and handle
     very large/small values without float overflow."""
@@ -666,7 +666,7 @@ class TestNewFqKlineAmountAdversarial:
     async def test_hits_newfqkline_endpoint(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED (#286 N_endpoint): the Tencent fallback must target
+        """Test (#286 N_endpoint): the Tencent fallback must target
         ``newfqkline/get`` (whose day rows carry 成交额 in 万元 at index 8). The
         current implementation still requests ``fqkline/get`` → this fails."""
         from fetch_index_daily import (
@@ -710,9 +710,9 @@ class TestNewFqKlineAmountAdversarial:
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch,
         bad_amount: str,
     ) -> None:
-        """RED (N2): an 11-field row whose index-8 amount is malformed must not
+        """Test (N2): an 11-field row whose index-8 amount is malformed must not
         crash the helper; it degrades to amount 0/empty, while a valid 11-field
-        sibling row still writes its NON-ZERO amount (RED today: amount is 0)."""
+        sibling row still writes its NON-ZERO amount (now: amount is 0)."""
         from fetch_index_daily import (
             Throttle,  # noqa: E402
             _fetch_tencent_kline,  # noqa: E402
@@ -740,7 +740,7 @@ class TestNewFqKlineAmountAdversarial:
         assert klines is not None, "malformed amount must not crash the helper"
 
         by_date = {s[0]: s for s in self._splits(klines)}
-        # Valid row keeps its real non-zero amount — RED today.
+        # Valid row keeps its real non-zero amount — now.
         assert float(by_date["2026-08-14"][6]) == pytest.approx(
             _amount_yuan("499525613.00")
         ), (
@@ -758,10 +758,10 @@ class TestNewFqKlineAmountAdversarial:
     async def test_pagination_boundary_preserves_amount_across_pages(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED (N3): page 1 answers EXACTLY _TENCENT_PAGE_SIZE rows (full), page 2
+        """Test (N3): page 1 answers EXACTLY _TENCENT_PAGE_SIZE rows (full), page 2
         is a short final page. The helper must paginate (2 requests) and MERGE
         the full page + short page, preserving each row's NON-ZERO amount across
-        the page boundary — RED today because every amount is written 0."""
+        the page boundary — now because every amount is written 0."""
         from fetch_index_daily import (
             Throttle,  # noqa: E402
             _fetch_tencent_kline,  # noqa: E402
@@ -796,7 +796,7 @@ class TestNewFqKlineAmountAdversarial:
         )
         # Two requests: first page empty end date, second advances it.
         assert n_requests["n"] == 2, "full page + short page must paginate once"
-        # Amount preserved on BOTH pages (non-zero) — RED today (all zeros).
+        # Amount preserved on BOTH pages (non-zero) — now (all zeros).
         splits = self._splits(klines)
         # page1 rows: first 2000 in chronological order (reversed merge).
         non_zero = {s[6] for s in splits}
@@ -810,7 +810,7 @@ class TestNewFqKlineAmountAdversarial:
     async def test_very_large_amount_parses_without_overflow(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RED (N6): a huge 成交额 (999999999999.99 万元 → 9.99e15 yuan) must parse
+        """Test (N6): a huge 成交额 (999999999999.99 万元 → 9.99e15 yuan) must parse
         into a Python float without overflow, a "0" 万元 stays exactly 0, and
         values that overflow after ×10000 or are negative degrade to "0"."""
         from fetch_index_daily import (
@@ -840,7 +840,7 @@ class TestNewFqKlineAmountAdversarial:
         assert klines is not None
         by_date = {s[0]: s for s in self._splits(klines)}
 
-        # Huge amount: finite and exactly 万元×10000 — RED today (amount is "0").
+        # Huge amount: finite and exactly 万元×10000 — now (amount is "0").
         huge = float(by_date["2026-08-14"][6])
         assert math.isfinite(huge), f"huge amount overflowed to {huge}"
         assert huge == pytest.approx(_amount_yuan("999999999999.99")), (

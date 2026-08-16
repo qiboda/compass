@@ -57,7 +57,12 @@ DuckDB 查询结果与 Dolt 一致：
 ```sh
 cd /data/compass-data/compass_data && dolt sql -q "SELECT ..."
 cd /data/codes/compass && cargo run --bin compass-data -- import-compass --table index_daily
-python3 - <<'PY'  # DuckDB read_parquet 检查
+python3 - <<'PY'
+import duckdb
+print(duckdb.connect().execute(
+    "SELECT index_type, COUNT(*) total, SUM(CASE WHEN amount=0 THEN 1 ELSE 0 END) zero "
+    "FROM read_parquet('/data/compass-data/parquet_data/index_daily.parquet') GROUP BY index_type"
+).fetchall())
 PY
-cd /data/codes/compass/collectors && .venv/bin/python -m pytest tests/ --no-cov -q  # 614 passed
+cd /data/codes/compass/collectors && .venv/bin/python -m pytest tests/ --no-cov -q  # 620 passed
 ```
