@@ -545,6 +545,24 @@ class TestFetchTencentKlineIncremental:
         )
         assert result is None
 
+    async def test_all_invalid_rows_returns_none(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-empty page with no structurally valid rows is a malformed
+        payload, not a valid empty increment -> None (failure)."""
+        first_page = [
+            ["2026-08-17"],  # too short
+            ["2026-08-16"],  # too short
+        ]
+        stub, requested = await self._tencent_getter(
+            [first_page, []], make_stub_session, monkeypatch
+        )
+        result = await fid._fetch_tencent_kline(
+            stub, fid.Throttle(), "1.000001", last_date="2026-08-12"
+        )
+        assert result is None
+        assert len(requested) == 1
+
     async def test_valid_empty_increment_returns_empty_list(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch
     ) -> None:

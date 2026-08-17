@@ -488,15 +488,20 @@ async def fetch_ths_kline(
         return None
     payload_text = body[start + 1 : end]
     # The live API wraps a JSON object (``{"data": "…"}``); a bare CSV body
-    # (test fixture shape) parses as raw rows — accept both.
+    # (test fixture shape) parses as raw rows — accept both. A JSON object
+    # without a CSV-string ``data`` field is NOT a valid kline carrier (e.g.
+    # error/captcha/malformed), so it is a failed fetch (None), not an empty
+    # year — otherwise anti-bot/API breakage would be silently treated as a
+    # weekend no-op and bypass fast-fail.
     try:
         payload = json.loads(payload_text)
-        data = (payload or {}).get("data") if isinstance(payload, dict) else None
-        if not isinstance(data, str):
-            data = None
     except Exception:
-        data = None
-    if data is None:
+        payload = None
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if not isinstance(data, str):
+            return None
+    else:
         data = payload_text
     rows: list[str] = []
     for line in re.split(r"[;\n]", data):
@@ -652,6 +657,7 @@ async def _fetch_tencent_kline(
         page_klines: list[str] = []
         min_date: str | None = None
         boundary_hit = False
+        valid_row_count = 0
         for row in rows:
             if not isinstance(row, (list, tuple)) or len(row) < 6:
                 continue
@@ -659,6 +665,7 @@ async def _fetch_tencent_kline(
             date_cell = cells[0].strip()
             if not date_cell:
                 continue
+            valid_row_count += 1
             if last_date is not None and date_cell <= last_date:
                 # This page overlaps the already-stored boundary. Tencent day
                 # rows are ascending (oldest first), so later rows in the
@@ -669,6 +676,11 @@ async def _fetch_tencent_kline(
             if min_date is None or date_cell < min_date:
                 min_date = date_cell
             page_klines.append(",".join([*cells, _tencent_amount_yuan(row)]))
+
+        if rows and valid_row_count == 0:
+            # Non-empty page with no structurally valid rows is a malformed
+            # payload, not a valid empty increment — treat as failure.
+            return None
 
         if boundary_hit:
             # Even an empty kept set is a valid incremental no-op: record the
@@ -877,7 +889,7 @@ async def run() -> Path:
                 # Per-symbol incremental window (issue #292): pass the stored
                 # MAX(trade_date) so EastMoney/Tencent only fetch newer bars.
                 # MAX == today (or a clamped future dirty value) means the
-                # symbol is already up to date -> skip.
+                # symbol is already up to date → skip.
                 max_raw = max_trade_date(DOLT_TABLE, symbol)
                 max_dt = _parse_max_date(max_raw)
                 if max_dt is not None and max_dt >= _today():
@@ -899,7 +911,7 @@ async def run() -> Path:
                     session, throttle, target["secid"], last_date=last_date
                 )
                 if result is None or not result[0]:
-                    # EastMoney failed/empty -> try Tencent fallback (issue #278).
+                    # EastMoney failed/empty → try Tencent fallback (issue #278).
                     source_label = "FAILED" if result is None else "empty (skipped)"
                     print(
                         f"{source_label} (eastmoney); trying tencent...",
@@ -940,7 +952,7 @@ async def run() -> Path:
                     klines, code = result
                     # EastMoney echoes either the bare code ("000001") or the full
                     # symbol ("SH000001"); accept both, anything else is a different
-                    # index (delisted/renamed code) - skip. A mismatch must NOT
+                    # index (delisted/renamed code) — skip. A mismatch must NOT
                     # trigger the Tencent fallback (issue #278 semantics).
                     if code != target["code"] and code != symbol:
                         print(f"code mismatch ({code!r}), skipped", file=sys.stderr)
