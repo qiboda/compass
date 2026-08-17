@@ -471,6 +471,134 @@ class TestRunIncremental:
             "Tencent incremental must stop paging at <= last_date row"
         )
 
+    async def test_existing_ths_empty_upper_year_continues_to_max_year(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An empty/non-trading upper year must not break the incremental loop
+        before MAX year is reached — older years can still hold new rows."""
+        import fetch_index_daily as fid  # noqa: E402
+
+        _prepare_run_env(monkeypatch, tmp_path)
+        captured: list[list[dict[str, object]]] = []
+        monkeypatch.setattr(
+            "fetch_index_daily.write_csv",
+            lambda records, _path: captured.append(records),
+        )
+        monkeypatch.setattr(fid, "OFFICIAL_INDICES", ())
+        monkeypatch.setattr(
+            fid,
+            "max_trade_date",
+            lambda dolt_table, symbol: "2025-06-30",
+            raising=False,
+        )
+        stub, calls = _record_stub(
+            make_stub_session,
+            ths_boards=[("881101", "半导体")],
+            ths_rows_by_year={
+                2025: [_ths_kline_row("2025-07-01")],
+                # 2026 intentionally empty: must not stop the loop.
+            },
+        )
+        with patch("fetch_index_daily.AsyncSession", return_value=stub):
+            await fid.run()
+
+        requested_years = [
+            int(m.group(2))
+            for url, _ in calls
+            if (m := re.match(
+                r"https://d\.10jqka\.com\.cn/v4/line/bk_(\d+)/01/(\d+)\.js$",
+                url,
+            ))
+        ]
+        assert 2026 in requested_years and 2025 in requested_years, (
+            "incremental loop must walk through both years even when 2026 is empty; "
+            f"got {requested_years}"
+        )
+        rows = [
+            r
+            for batch in captured
+            for r in batch
+            if r.get("trade_date") and r["symbol"] == "BK881101"
+        ]
+        assert {"2025-07-01"} == {r["trade_date"] for r in rows}
+
+    async def test_existing_ths_failed_upper_year_not_masked_as_noop(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A failed upper-year request must not be reported as a successful
+        empty no-op just because an older year responded with only old rows."""
+        import fetch_index_daily as fid  # noqa: E402
+
+        _prepare_run_env(monkeypatch, tmp_path)
+        board_codes = [f"88110{i}" for i in range(5)]
+        monkeypatch.setattr(fid, "OFFICIAL_INDICES", ())
+        monkeypatch.setattr(
+            fid,
+            "max_trade_date",
+            lambda dolt_table, symbol: "2025-06-30",
+            raising=False,
+        )
+        stub = make_stub_session(
+            canned_responses={
+                THS_LIST_URL: _ths_list_response(
+                    [(code, f"板块{i}") for i, code in enumerate(board_codes)]
+                )
+            }
+        )
+        original_get = stub.get
+        async def _get(url, params=None, headers=None):
+            m = re.match(
+                r"https://d\.10jqka\.com\.cn/v4/line/bk_(\d+)/01/(\d+)\.js$",
+                url,
+            )
+            if m:
+                code, year = m.group(1), int(m.group(2))
+                if year == 2026:
+                    return StubResponse(status_code=500, json_data={})
+                return _ths_kline_response(
+                    code, year, [_ths_kline_row("2025-01-01")]
+                )
+            return await original_get(url, params=params, headers=headers)
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), \
+                pytest.raises(RuntimeError, match="连续 5 个标的失败"):
+            await fid.run()
+
+    async def test_official_tencent_empty_increment_is_success_noop(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """EastMoney empty/absent + Tencent valid no-new rows is a successful
+        no-op: several such official indices must not trigger fast-fail."""
+        import fetch_index_daily as fid  # noqa: E402
+
+        _prepare_run_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            fid,
+            "OFFICIAL_INDICES",
+            tuple(
+                {"secid": "1.000001", "code": "000001", "name": f"指数{i}"}
+                for i in range(5)
+            ),
+        )
+        monkeypatch.setattr(
+            fid,
+            "max_trade_date",
+            lambda dolt_table, symbol: "2026-07-30",
+            raising=False,
+        )
+        tencent_rows = [
+            ["2026-07-30", "2999", "3000", "3001", "2997",
+             "119000000", "0", "0", "49000000"],
+        ]
+        stub, _ = _record_stub(
+            make_stub_session,
+            em_json=None,  # EastMoney empty -> Tencent fallback
+            tencent_json=_tencent_response("sh000001", tencent_rows).json(),
+        )
+        with patch("fetch_index_daily.AsyncSession", return_value=stub):
+            await fid.run()  # must not raise RuntimeError after 5 no-ops
+
     async def test_global_last_report_date_today_still_zero_requests(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

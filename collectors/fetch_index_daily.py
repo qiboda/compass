@@ -5,10 +5,10 @@ Independent module — uses common.py for shared infrastructure.
 
 Sources:
 - Official indices: EastMoney push2his ``kline/get`` (``klt=101``,
-  ``fqt=0``, ``beg=0&end=20500000`` full history); a Tencent
-  ``newfqkline/get`` fallback covers EastMoney failure/empty klines and
-  supplies 成交额 (index 8, 万元 → 元) for official index rows (issue
-  #278/#286).
+  ``fqt=0``; ``beg=0&end=20500000`` for new symbols, ``beg=last_date+1``
+  for incremental); a Tencent ``newfqkline/get`` fallback covers EastMoney
+  failure/empty klines and supplies 成交额 (index 8, 万元 → 元) for official
+  index rows (issue #278/#286).
 - Industry boards: 同花顺 (THS) 90 申万一级 industries (881xxx) — the list
   page ``q.10jqka.com.cn/thshy/`` (GBK) and per-year daily klines from
   ``d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`` (issue #283).
@@ -458,8 +458,9 @@ async def fetch_ths_kline(
     2026-08-16; reusing the EM mapping as-is would silently swap high/close).
 
     Returns the normalized 7-field rows, [] for a structurally empty year, or
-    None when the request/parse failed (the caller stops the year loop on
-    None and counts the board as failed when nothing was collected).
+    None when the request/parse failed. The caller walks back through years on
+    None (never truncating history) and counts the board as failed when
+    nothing was collected.
     """
     # One retry with a short backoff — a transient failure on one year must
     # not truncate the board history (review P1-1/P2-2); the caller still
@@ -781,6 +782,7 @@ async def run() -> Path:
                 max_raw = max_trade_date(DOLT_TABLE, symbol)
                 max_dt = _parse_max_date(max_raw)
                 if max_dt is not None and max_dt >= _today():
+                    consecutive_failures = 0
                     print("up to date", file=sys.stderr)
                     progress.update(
                         completed=i + 1,
@@ -792,6 +794,7 @@ async def run() -> Path:
 
                 klines: list[str] = []
                 saw_response = False
+                fetch_failed = False
                 if max_dt is None:
                     start_year = THS_FIRST_YEAR
                 elif max_dt.month == 12 and max_dt.day == 31:
@@ -801,16 +804,19 @@ async def run() -> Path:
                     start_year = max(max_dt.year, THS_FIRST_YEAR)
                 max_iso = max_dt.isoformat() if max_dt is not None else None
 
-                # Per-year pagination, newest first. An EMPTY year is the
-                # historical boundary (no older data) and stops the loop; a
-                # request/parse FAILURE (None) must NOT truncate the history
-                # — a transient 500/429 on one year would otherwise silently
-                # drop every earlier year (review P1-1). Failures are logged
-                # and the loop keeps walking back; a board whose years all
-                # fail still lands in the fast-fail counter below.
+                # Per-year pagination, newest first. For a new board an EMPTY
+                # year is the historical boundary (no older data) and stops
+                # the loop; for an incremental board an empty year just means
+                # no new rows in that year — older years in the window may
+                # still hold rows newer than MAX, so keep walking back. A
+                # request/parse FAILURE (None) is logged and the loop keeps
+                # walking; a no-op is only accepted when every year in the
+                # window responded successfully (otherwise a failed latest
+                # year would be silently masked as "no new bars").
                 for year in range(_today().year, start_year - 1, -1):
                     year_rows = await fetch_ths_kline(session, throttle, code, year)
                     if year_rows is None:
+                        fetch_failed = True
                         print(
                             f"    year {year} fetch failed (kept going)",
                             file=sys.stderr,
@@ -818,19 +824,21 @@ async def run() -> Path:
                         continue
                     saw_response = True
                     if not year_rows:
-                        break
+                        if max_iso is None:
+                            break
+                        continue
                     if max_iso is not None:
                         kept = [
                             row for row in year_rows
                             if row.split(",", 1)[0] > max_iso
                         ]
                         if not kept:
-                            break
+                            continue
                         klines.extend(kept)
                     else:
                         klines.extend(year_rows)
                 if not klines:
-                    if max_dt is not None and saw_response:
+                    if max_dt is not None and saw_response and not fetch_failed:
                         # Weekend/halt/valid-empty increment: a successful no-op.
                         consecutive_failures = 0
                         print("no new bars", file=sys.stderr)
@@ -873,6 +881,7 @@ async def run() -> Path:
                 max_raw = max_trade_date(DOLT_TABLE, symbol)
                 max_dt = _parse_max_date(max_raw)
                 if max_dt is not None and max_dt >= _today():
+                    consecutive_failures = 0
                     basic_records.append(
                         {"symbol": symbol, "name": target["name"], "index_type": "official"}
                     )

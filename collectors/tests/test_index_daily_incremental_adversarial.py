@@ -252,6 +252,41 @@ class TestMaxTradeDateInvalidInput:
         monkeypatch.setattr(fid, "dolt_sql_csv", boom)
         assert fid.max_trade_date("index_daily", "BK881101") is None
 
+    async def test_helper_parses_real_iso_stdout(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A normal Dolt CSV stdout (header + ISO date) must parse."""
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        (tmp_path / ".dolt").mkdir()
+        monkeypatch.setattr(
+            fid,
+            "dolt_sql_csv",
+            lambda _sql: "DATE_FORMAT(MAX(trade_date), '%Y-%m-%d')\n2026-07-31\n",
+        )
+        assert fid.max_trade_date("index_daily", "BK881101") == "2026-07-31"
+
+    async def test_helper_null_value_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Dolt's NULL max value must degrade to None, not a literal string."""
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        (tmp_path / ".dolt").mkdir()
+        monkeypatch.setattr(
+            fid,
+            "dolt_sql_csv",
+            lambda _sql: "DATE_FORMAT(MAX(trade_date), '%Y-%m-%d')\nNULL\n",
+        )
+        assert fid.max_trade_date("index_daily", "BK881101") is None
+
+    async def test_helper_empty_stdout_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An empty stdout (e.g. missing table) must degrade to None."""
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path))
+        (tmp_path / ".dolt").mkdir()
+        monkeypatch.setattr(fid, "dolt_sql_csv", lambda _sql: "")
+        assert fid.max_trade_date("index_daily", "BK881101") is None
+
     @pytest.mark.parametrize("bad_value", ["not-a-date", "2026-13-99", ""])
     async def test_run_survives_invalid_max_trade_date(
         self,
@@ -449,6 +484,35 @@ class TestFetchTencentKlineIncremental:
         )
         assert len(requested) == 1, (
             "encountering an old row must stop pagination immediately; "
+            f"requested {len(requested)} pages"
+        )
+
+    async def test_ascending_page_keeps_new_rows_after_old_rows(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tencent day rows are ascending (oldest first): a page may contain
+        old rows first and new rows later; all new rows must be kept and the
+        page must not paginate further."""
+        first_page = [
+            _tencent_row("2026-08-09"),  # <= last_date, appears first
+            _tencent_row("2026-08-11"),
+            _tencent_row("2026-08-12"),
+        ]
+        second_page = [_tencent_row("2026-07-01")]
+        stub, requested = await self._tencent_getter(
+            [first_page, second_page], make_stub_session, monkeypatch
+        )
+
+        result = await fid._fetch_tencent_kline(
+            stub, fid.Throttle(), "1.000001", last_date="2026-08-10"
+        )
+
+        dates = [row.split(",", 1)[0] for row in (result or [])]
+        assert dates == ["2026-08-11", "2026-08-12"], (
+            f"ascending page must keep rows newer than last_date; got {dates}"
+        )
+        assert len(requested) == 1, (
+            "ascending page with an old row must stop pagination after one page; "
             f"requested {len(requested)} pages"
         )
 
