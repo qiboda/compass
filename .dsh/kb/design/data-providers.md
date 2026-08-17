@@ -182,8 +182,11 @@ CREATE TABLE IF NOT EXISTS index_basic (
   `web.ifzq.gtimg.cn/appstock/app/newfqkline/get`（count≤2000，end 日期反向分页拉全历史；
   day 行 11 字段，index 8 为成交额（万元），采集时 ×10000 转为元；缺失/畸形金额降级为 0；
   受 #277 连续失败快速终止保护）。行业板块只走同花顺。
-- **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线 `beg=0` 全量拉取 +
-  `INSERT IGNORE` 按 PK (symbol, trade_date) 去重，新标的自动补全量历史。
+- **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线按 symbol 的
+  `MAX(trade_date)` 真增量（issue #292）——THS 行业只拉 MAX 年份→今年（MAX 为
+  12-31 时从次年启动）并过滤 `<= MAX` 旧行；官方指数东财 `beg=MAX+1`、腾讯增量
+  翻页遇 `<= MAX` 行即停；新 symbol 自动补全量历史；周末/停牌无新行按成功 no-op
+  处理，不触发 fast-fail。
 - **Parquet 布局**：
   - `index_daily.parquet`：`symbol, index_type, tradedate, open, high, low, close, volume, amount, adjclose`
     ——导出时 Dolt `trade_date` 重命名为 `tradedate`（对齐 `stock_daily.parquet` 列名），
@@ -511,3 +514,4 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 旧 parquet 兼容（epic #266） | 硬失败 / **读取侧降级 None** | `ParquetReader` 对新列 try-fallback（binder 缺列错误 → 无列查询，`name_en: None`） | 存量 parquet 无需重导即可启动；GUI 按语言回退中文；`is_missing_column` 仅匹配具体缺列短语，genuine 错误传播 | 硬失败强迫全量重导，升级窗口大 |
 | 行业后缀匹配（epic #266） | 精确匹配 / **双键（原样 + 去罗马数字后缀）** | import JOIN 条件 `m.key = TRIM(industry) OR (REGEXP 后缀 AND m.key = LEFT(len-1))` | 旧数据"白酒Ⅱ"类后缀行业可命中基础键"白酒"；双键防膨胀（`<>` guard） | 单键匹配漏掉后缀行业 |
 | 腾讯回退成交额来源（issue #286） | 继续 `fqkline/get` 填 0 / **切 `newfqkline/get` 解析成交额** | 切 `newfqkline/get`，解析 day 行 index 8 成交额（万元→元），缺失/畸形降级 0 | `fqkline/get` 日线只有 6 字段无成交额，官方指数 amount 全 0；`newfqkline/get` 同域、分页参数一致，实测 30 个官方指数均返回非 0 成交额 | 继续 `fqkline/get` 无法满足官方指数成交额展示；从其它源补需引入新依赖 |
+| index_daily 增量语义（issue #292） | 全量拉取 + INSERT IGNORE 去重 / **按 symbol MAX(trade_date) 真增量** | THS 行业只拉 MAX 年份→今年（MAX 为 12-31 时从次年启动）并过滤旧行；官方指数东财 `beg=MAX+1`、腾讯增量翻页遇 `<= MAX` 停止；新 symbol 全量回填；空增量（周末/停牌）按成功 no-op | 跨日 sync 不再回拉 2007 全史，避免旧年份 404/502/504 风暴与小时级耗时；空增量不误触发 fast-fail | 全量+去重不符合“增量更新”预期，单次 sync 90 行业约 1 小时、大量失败 |

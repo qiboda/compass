@@ -1,40 +1,31 @@
-# Handoff — proxy-pool-https-validator
+# Handoff — fix/index-daily-incremental
 
 ## 用途
+修复 `collectors/fetch_index_daily.py` 的“非真增量”缺陷：THS 行业板块与官方指数
+K 线当前每次同步都会从 2007 年全量拉取再靠 INSERT IGNORE 去重，导致单次 sync
+耗时约 1 小时、大量旧年份 404/502/504。目标改为真正的日期增量拉取。
 
-修正 proxy_pool 的 HTTPS 验证逻辑：`httpsTimeOutValidator` 的 `proxies`
-改为同时提供 `http://` 代理地址给 http 和 https，使免费 HTTP 代理能通过
-标准 CONNECT 验证 HTTPS；通过自定义 Dockerfile 打补丁镜像，重建后重跑
-`collectors/check_proxy_pool.py` 验证 THS 板块接口成功率。
+## 对应 Issue
+https://github.com/qiboda/compass/issues/292
 
-**Issue**: https://github.com/qiboda/compass/issues/290
-**Plan**: `.dsh/plans/proxy-pool-https-validator.md`
+## 已锁定的 grill-me 决策
+1. THS 行业板块改真增量：查 Dolt index_daily 每板块 MAX(trade_date)，
+   已有数据板块只拉 MAX 所在年份→今年并过滤旧行；新板块仍 2007→今年全量回填；
+   周末/停牌无新行不记为失败。
+2. 官方指数也改增量：东财 beg=0 改 beg=上次日期+1；腾讯回退只拉最近页并在遇到
+   <= 上次日期时停止翻页。
+3. 保留 last_report_date==今天整体短路。
+4. 按项目 gate 走 worktree → issue → plan → RED → 实现 → docs → 反思。
 
-## 已锁定决策（grill-me 共识）
+## Git 基线
+- 分支：fix/index-daily-incremental
+- 基点：master（含本地未推送 docs 提交 10e71a2）
+- 实现、测试、docs 全部在本 worktree 内完成，PR 合并回 master。
+- 同步提醒：开始前如 master 有更新，先 `git fetch origin master && git rebase origin/master`。
 
-1. 修改 `helper/validator.py` 中 HTTPS 验证的 proxies：
-   ```python
-   proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
-   ```
-2. 在 `scripts/proxy_pool/` 增加 `Dockerfile` + 补丁文件，`docker-compose.yml`
-   改用本地构建的补丁镜像（可复现）。
-3. 重建容器后重跑 `collectors/check_proxy_pool.py`，观察 `https: true` 代理
-   是否出现、THS 成功率是否变化。
-4. 按项目门禁走：新 worktree → issue → RED tests → 实现 → 文档。
-
-## 下一步（worktree 会话内）
-
-1. 同步原始分支（如落后）：`git fetch origin master && git rebase origin/master`。
-2. 走 PRE-IMPLEMENTATION GATE：创建 GitHub issue → plan → RED tests → 实现。
-3. 实现内容（初步）：
-   - `scripts/proxy_pool/validator.patch`（或等价补丁文件）。
-   - `scripts/proxy_pool/Dockerfile`：基于 `jhao104/proxy_pool:2.4.2` 应用补丁。
-   - 更新 `scripts/proxy_pool/docker-compose.yml` 使用 `build: .`。
-   - 测试：补丁/镜像构建逻辑或验证脚本相关测试。
-4. 真实重建并重跑验证，结果写入 `.dsh/evidence/`。
-
-## 注意
-
-- 主工作区在 master（可能落后 origin），本 worktree 已基于 `origin/master`。
-- proxy_pool 上游 2.4.2 的 `httpsTimeOutValidator` 当前把 `https` 代理写成
-  `https://ip:port`，这是本次要修正的点。
+## 数据目录
+- collectors 写入 Dolt：/data/compass-data/compass_data
+- 行情主 Dolt：/data/compass-data/investment_data
+- 注：collectors/main.py sync-investment-data 与 scripts/sync-investment-data.sh
+  中 investment_data 路径仍写 PROJECT_ROOT/investment_data 已过时（实际在
+  /data/compass-data/investment_data）。
