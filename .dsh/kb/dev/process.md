@@ -483,13 +483,38 @@ curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0
 - **`.state.json`** 文件跟踪上次抓取状态以支持增量更新
 - **`--resume`** 标志用于继续中断的抓取
 
-### 代理池试用（proxy_pool，issue #287）
+### 代理池试用与 HTTPS 验证修正（proxy_pool，issue #287 / #290）
 
 THS 板块接口（10jqka）的代理验证工具：
 
 - Compose：`scripts/proxy_pool/docker-compose.yml` 一键启动 proxy_pool + Redis，API 默认 `http://127.0.0.1:5010`。
+- 镜像：proxy_pool 服务使用本地构建（`build: .`），基于 `jhao104/proxy_pool:2.4.2` 并应用
+  `scripts/proxy_pool/validator.patch`——修正 `httpsTimeOutValidator` 的 https 代理 scheme
+  为 `http://`，使 HTTP-only 代理能走标准 CONNECT 验证 HTTPS（issue #290）。
 - 验证脚本：`collectors/check_proxy_pool.py` 从 proxy_pool API 取代理，用 `curl_cffi`（`chrome142` 指纹）打 THS 行业列表页 + 一个板块 kline，各 15 次共 30 次，输出成功率/平均耗时并判定（成功率 ≥50% 且平均耗时 <5s）。
-- 运行：`docker compose -f scripts/proxy_pool/docker-compose.yml up -d` 后执行 `uv run --project collectors python collectors/check_proxy_pool.py`。
+- 运行：`docker compose -f scripts/proxy_pool/docker-compose.yml up -d --build` 后执行 `uv run --project collectors python collectors/check_proxy_pool.py`。
+
+#### freeproxy 代理源集成（#290）
+
+用 [CharlesPikachu/freeproxy](https://github.com/CharlesPikachu/freeproxy) 作为
+proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
+
+- 灌库脚本：`collectors/fetch_freeproxy.py`
+  - `--source json`（默认）：下载 freeproxy 每日更新的 `proxies.json` 快照。
+  - `--source realtime`：调用 `pyfreeproxy` 实时抓取多个免费源。
+  - 默认写入 proxy_pool Redis 的 `use_proxy` 表；proxy_pool 调度器会自动校验
+    http/https（含 #290 的 HTTPS 验证补丁）。
+- 示例：
+  ```bash
+  uv run --project collectors python collectors/fetch_freeproxy.py --source json --limit 500
+  uv run --project collectors python collectors/fetch_freeproxy.py --source realtime --limit 500
+  ```
+- 运维节奏：建议每 6 小时跑一次灌库，保持池子新鲜；监控
+  `curl http://127.0.0.1:5010/count/` 的 `https` 数量，并定期跑
+  `collectors/check_proxy_pool.py` 验证 THS 成功率（≥50% 为达标）。
+- 安全注意：`--source realtime` 会向不可信的第三方源发起外连，应在沙箱/隔离
+  网络运行；Redis 默认只应在本机/容器网络内访问，若需跨机请加密码/ACL/TLS。
+- 完整运维 Runbook 见 `.dsh/evidence/proxy-pool-https-validator.md` 与本节命令。
 
 ### 百度云备份
 

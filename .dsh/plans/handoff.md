@@ -1,43 +1,40 @@
-# Handoff — proxy-pool-trial
+# Handoff — proxy-pool-https-validator
 
 ## 用途
 
-试用 proxy_pool（jhao104/proxy_pool）作为现有 collectors 的代理方案：
-先用独立验证脚本确认免费代理能否通过 THS 板块接口（10jqka），
-再决定是否接入 `fetch_index_daily.py` 的 THS 板块部分。
+修正 proxy_pool 的 HTTPS 验证逻辑：`httpsTimeOutValidator` 的 `proxies`
+改为同时提供 `http://` 代理地址给 http 和 https，使免费 HTTP 代理能通过
+标准 CONNECT 验证 HTTPS；通过自定义 Dockerfile 打补丁镜像，重建后重跑
+`collectors/check_proxy_pool.py` 验证 THS 板块接口成功率。
 
-**Issue**: https://github.com/qiboda/compass/issues/287
-**Plan**: `.dsh/plans/proxy-pool-trial.md`
+**Issue**: https://github.com/qiboda/compass/issues/290
+**Plan**: `.dsh/plans/proxy-pool-https-validator.md`
 
 ## 已锁定决策（grill-me 共识）
 
-1. 目标：给现有 collectors 增加代理能力，先验证 proxy_pool 是否可用。
-2. 部署：proxy_pool + Redis 用 Docker Compose 跑在本机（本机有 Docker，无 Redis）。
-3. 先做独立验证脚本，不改现有 collectors。
-4. 验证客户端：`curl_cffi`（与 collectors 相同的 TLS 指纹）。
-5. 验证目标：THS 行业列表页 `https://q.10jqka.com.cn/thshy/` + 一个板块 kline
-   （如 `https://d.10jqka.com.cn/v4/line/bk_881101/01/<今年>.js`），各 15 次共 30 次。
-6. 通过标准：成功率 ≥ 50% 且平均耗时 < 5s。
-7. 验证通过后：先接入 `fetch_index_daily.py` 的 THS 板块部分试点。
-8. 验证不通过：先改用 Vultr 单 IP 做同样验证；再不行上付费 API。
+1. 修改 `helper/validator.py` 中 HTTPS 验证的 proxies：
+   ```python
+   proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
+   ```
+2. 在 `scripts/proxy_pool/` 增加 `Dockerfile` + 补丁文件，`docker-compose.yml`
+   改用本地构建的补丁镜像（可复现）。
+3. 重建容器后重跑 `collectors/check_proxy_pool.py`，观察 `https: true` 代理
+   是否出现、THS 成功率是否变化。
+4. 按项目门禁走：新 worktree → issue → RED tests → 实现 → 文档。
 
 ## 下一步（worktree 会话内）
 
-1. 同步原始分支：`git fetch origin master && git rebase origin/master`（如落后）。
+1. 同步原始分支（如落后）：`git fetch origin master && git rebase origin/master`。
 2. 走 PRE-IMPLEMENTATION GATE：创建 GitHub issue → plan → RED tests → 实现。
 3. 实现内容（初步）：
-   - `scripts/proxy_pool/docker-compose.yml`：proxy_pool + Redis 本地启动。
-   - `collectors/check_proxy_pool.py`（或 scripts/ 下）：独立验证脚本，
-     从 proxy_pool API 取代理，用 curl_cffi 打 THS 列表页 + 一个板块 kline。
-   - 输出成功率/平均耗时/失败原因，按锁定标准判定可用性。
-
-## 验证结果（2026-08-16）
-
-- 30 次请求（列表 15 + kline 15）成功率 **0%**，平均耗时 1.336s → **未通过**锁定标准。
-- 代理池当时 30 个代理全部为 HTTP-only（`https: false`），HTTPS CONNECT 被拒。
-- 后续路径（Vultr 单 IP / 付费 API）不在本 PR 范围，见 `.dsh/evidence/proxy-pool-trial.md`。
+   - `scripts/proxy_pool/validator.patch`（或等价补丁文件）。
+   - `scripts/proxy_pool/Dockerfile`：基于 `jhao104/proxy_pool:2.4.2` 应用补丁。
+   - 更新 `scripts/proxy_pool/docker-compose.yml` 使用 `build: .`。
+   - 测试：补丁/镜像构建逻辑或验证脚本相关测试。
+4. 真实重建并重跑验证，结果写入 `.dsh/evidence/`。
 
 ## 注意
 
-- 主工作区当前在 `fix/286-tencent-amount` 且有未提交改动，本 worktree 独立隔离。
-- 代理池只是试用；正式接入前必须先看验证结果。
+- 主工作区在 master（可能落后 origin），本 worktree 已基于 `origin/master`。
+- proxy_pool 上游 2.4.2 的 `httpsTimeOutValidator` 当前把 `https` 代理写成
+  `https://ip:port`，这是本次要修正的点。

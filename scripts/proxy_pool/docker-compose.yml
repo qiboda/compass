@@ -1,7 +1,8 @@
 # Local proxy_pool + Redis for the collectors proxy trial (issue #287).
+# proxy_pool now builds from the local patched Dockerfile (issue #290).
 #
 # Usage:
-#   docker compose -f scripts/proxy_pool/docker-compose.yml up -d
+#   docker compose -f scripts/proxy_pool/docker-compose.yml up -d --build
 #   # proxy_pool API: http://127.0.0.1:5010
 #   docker compose -f scripts/proxy_pool/docker-compose.yml down
 services:
@@ -17,7 +18,7 @@ services:
       retries: 10
 
   proxy_pool:
-    image: jhao104/proxy_pool:2.4.2
+    build: .
     container_name: proxy_pool
     restart: unless-stopped
     depends_on:

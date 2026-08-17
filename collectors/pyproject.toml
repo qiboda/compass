@@ -5,6 +5,8 @@ description = "Compass data pipeline — EastMoney API collectors"
 requires-python = ">=3.11"
 dependencies = [
     "curl-cffi>=0.15",
+    "pyfreeproxy>=0.5.1",
+    "redis>=5.0",
     "requests>=2.32",
     "tenacity>=9.1",
 ]

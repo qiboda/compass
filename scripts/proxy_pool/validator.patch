@@ -1,0 +1,11 @@
+--- a/helper/validator.py
++++ b/helper/validator.py
+@@ -71,7 +71,7 @@
+ @ProxyValidator.addHttpsValidator
+ def httpsTimeOutValidator(proxy):
+     """https检测超时"""
+ 
+-    proxies = {"http": "http://{proxy}".format(proxy=proxy), "https": "https://{proxy}".format(proxy=proxy)}
++    proxies = {"http": "http://{proxy}".format(proxy=proxy), "https": "http://{proxy}".format(proxy=proxy)}
+     try:
+         r = head(conf.httpsUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout, verify=False)
