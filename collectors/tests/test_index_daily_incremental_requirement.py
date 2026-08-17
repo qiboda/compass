@@ -565,6 +565,51 @@ class TestRunIncremental:
                 pytest.raises(RuntimeError, match="连续 5 个标的失败"):
             await fid.run()
 
+    async def test_existing_ths_partial_year_failure_discards_rows_and_bumps_fast_fail(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A partial success in an incremental window (newer year OK, older
+        MAX-year request fails) must not write rows and must not reset the
+        failure counter — otherwise MAX advances past the failed year and the
+        missing bars are never re-fetched."""
+        import fetch_index_daily as fid  # noqa: E402
+
+        _prepare_run_env(monkeypatch, tmp_path)
+        board_codes = [f"88110{i}" for i in range(5)]
+        monkeypatch.setattr(fid, "OFFICIAL_INDICES", ())
+        monkeypatch.setattr(
+            fid,
+            "max_trade_date",
+            lambda dolt_table, symbol: "2025-06-30",
+            raising=False,
+        )
+        stub = make_stub_session(
+            canned_responses={
+                THS_LIST_URL: _ths_list_response(
+                    [(code, f"板块{i}") for i, code in enumerate(board_codes)]
+                )
+            }
+        )
+        original_get = stub.get
+        async def _get(url, params=None, headers=None):
+            m = re.match(
+                r"https://d\.10jqka\.com\.cn/v4/line/bk_(\d+)/01/(\d+)\.js$",
+                url,
+            )
+            if m:
+                code, year = m.group(1), int(m.group(2))
+                if year == 2026:
+                    return _ths_kline_response(
+                        code, year, [_ths_kline_row("2026-08-01")]
+                    )
+                return StubResponse(status_code=500, json_data={})
+            return await original_get(url, params=params, headers=headers)
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_index_daily.AsyncSession", return_value=stub), \
+                pytest.raises(RuntimeError, match="连续 5 个标的失败"):
+            await fid.run()
+
     async def test_official_tencent_empty_increment_is_success_noop(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

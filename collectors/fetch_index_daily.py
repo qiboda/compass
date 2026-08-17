@@ -849,7 +849,16 @@ async def run() -> Path:
                         klines.extend(kept)
                     else:
                         klines.extend(year_rows)
-                if not klines:
+                if klines and max_dt is not None and fetch_failed:
+                    # Partial success in an incremental window is NOT a clean
+                    # success: writing the successful years would advance
+                    # MAX(trade_date) past a failed year and the missing bars
+                    # would never be re-fetched. Discard the partial rows and
+                    # count the board as failed so the next run retries the
+                    # full window.
+                    consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
+                    print("FAILED (partial year failure, rows discarded)", file=sys.stderr)
+                elif not klines:
                     if max_dt is not None and saw_response and not fetch_failed:
                         # Weekend/halt/valid-empty increment: a successful no-op.
                         consecutive_failures = 0
