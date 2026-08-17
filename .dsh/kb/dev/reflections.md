@@ -478,3 +478,32 @@
 - 本地 master 独有未推送 commit 混入 worktree 分支已第二次出现（#286、#287）：push 前应默认执行 `git fetch origin master && git log HEAD..origin/master`，发现本地独有 commit 用 `rebase --onto origin/master <本地基点>` 排除。
 - 外部 API 真实形态与文档/假设不符多次由真实运行暴露（#283 JSONP/列序、#287 `/all/` list-of-dicts）：新数据源/API 对接应先抓真实样例再写解析。
 - 子代理产出测试存在 latent bug 需主 agent 复核（本次 requirement 测试闭包/契约问题）：测试子代理交付前应自检可运行性。
+
+## 2026-08-17 — ref #290 proxy_pool HTTPS 校验补丁 + freeproxy 集成
+
+**What was done**: 修正 proxy_pool `httpsTimeOutValidator` 的 https 代理 scheme（`https://` → `http://`），用多阶段 Dockerfile 打补丁镜像并让 compose 走 `build: .`；新增 `collectors/fetch_freeproxy.py` 把 freeproxy（`proxies.json` 快照 + `pyfreeproxy` 实时）灌入 proxy_pool Redis；补测试、文档、证据；真实验证 freeproxy 代理源下 THS 成功率 60%。
+
+**User corrections**:
+- “pyfreeproxy 还是必须的安装依赖拉。” —— 用户否决“可选依赖”方案，要求 pyfreeproxy 作为正式依赖。
+- “再考虑更架构一点。” / “我们是不是需要一个更好的爬虫工具库？？” —— 要求先做架构选型（采集层/池管理层/桥接层），并评估爬虫库。
+- “运维流程上呢？” —— 要求补充运维 Runbook（启动/刷新/监控/异常/安全/回滚）。
+- “之后合并pr并关闭worktree” —— 最终明确 push→PR→merge→关闭 worktree。
+
+**What went wrong**:
+1. 真实免费代理池初始 0% 成功率，容易误判为补丁无效；实际是免费代理不支持 CONNECT。需用受控 CONNECT 代理证明机制，再用 freeproxy 广撒网解决数量。
+2. 沙箱有 Clash 代理（`127.0.0.1:7897`），本地直连型 CONNECT 代理超时；必须把本地代理链到上游 Clash 才能访问外网。
+3. 上游 `jhao104/proxy_pool:2.4.2` 缺 `patch`，Docker build 失败；加 `apk add patch` 并改多阶段构建，最终镜像不携带 patch/补丁文件。
+4. Review 发现 realtime 模式两处功能 bug：`ProxyInfo` 字段是 `country_code` 不是 `country`；`.proxy` 带 `http://` scheme，直接写入会导致 proxy_pool 拼出 `http://http://ip:port`。因 realtime 路径最初无测试而漏网。
+5. 子代理/初始测试存在多处 latent bug：tautological 断言、正则 `+++` 未转义、函数名 N802、过时 “RED now” docstring、`mod.curl_requests` 导出问题；均需主 agent 修复。
+6. 沙箱默认 `HTTPS_URL=https://www.qq.com` HEAD 返回 501，会误伤可用代理；验证时需改用 `https://example.com` 等 HEAD 200 目标。
+
+**Lessons learned**:
+1. 集成第三方代理源时，先验证其真实数据结构（属性名、是否带 scheme），再写 normalizer；realtime 路径必须有真实单元测试。
+2. 写 Redis 前对不可信代理字符串做公网 IP/端口/控制字符校验，避免脏数据进入 proxy_pool。
+3. 沙箱网络有上游代理时，本地代理验证要链到上游 Clash；环境相关 workaround 记入 toolchain。
+4. 免费代理池的“可用性”必须区分“代理本身是否支持 CONNECT”和“目标站点是否放行”；用受控代理证明机制，用大规模源（freeproxy）解决数量。
+5. 新功能从第一版就应包含运维 Runbook（启动/刷新/监控/异常/安全），不能等用户追问再补。
+
+**Process improvements**:
+- 已落实：`collectors/fetch_freeproxy.py` + 安全校验 + realtime 测试；`process.md` 增加 freeproxy 集成与运维注意；`toolchain.md` 增加缺 patch/多阶段构建排查卡。
+- proposed：给 CI 增加依赖审计（`uv audit`/osv-scanner）以覆盖 pyfreeproxy 引入的传递依赖；待建 issue 排期。
