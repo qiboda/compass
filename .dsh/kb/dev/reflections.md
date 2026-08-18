@@ -10,63 +10,6 @@
 ——值得处理的条目建 issue 后归档、已处理的直接归档、剩余的保留待下次归档时
 重新检阅；归档后仍超 500 行则交用户判断。
 
-
-
-## 2026-08-09 — ref #230 Button 主题感知文字色 + loading 宽度观感修复
-
-**What was done**: 修复两个 UI 问题：①Primary/Danger 亮色主题文字看不清——新增 `on_accent`/`on_error` token（两主题纯白），Primary/Danger 改用之，Default/Ghost 维持 text_primary（light 下 text_primary 深字落彩底 3.19:1 < WCAG AA，白字 4.90:1）；②SEPA 刷新按钮 loading 宽度观感——根因调查（kittest 断言）证实宽度实际跟随文本（33.7→59.0px），「未变」系 loading 遮罩观感；新增 `Button::min_width(f32)` 让两态宽度一致（SEPA 96 / Fetch 104）。双测试 agent 写 RED（需求 9 + 对抗 7+2），实现后 233 lib + 11 + 7 全绿，review-work 5/5 PASS。commit `0a06bc9`。
-
-**User corrections**（逐字引用对话记录）:
-1. "primary 按钮始终是蓝色的，这样亮色下，文本就是黑色的，看起来看不清。然后按钮的大小也没有跟随文本的改变而改变宽度（sepa的刷新按钮点击效果）。 让设计师设计一下。"——GUI 冒烟后用户报告两个新 UI 问题，要求 ui-designer 设计（#230 起点）。
-2. "1. 暗主题用白色合适吗？？我不确定啊 2. 微调 3. 为什么？ 4. 需要查根本原因，也许是被其他ui遮挡了？？？？需要后续确认。"——对设计方案的 4 点质疑：dark 纯白需对比度数据支撑（最终选 A 纯白）、min_width 数值实现时实测微调、空态按钮为何不加 min_width（代码事实：无 loading 切换）、**宽度问题必须查根因（怀疑被 UI 遮挡）**。
-3. "1. push 2. 在当前worktree处理。"——push #226-228 PR；#230 在当前 worktree 处理（复用分支）。
-4. "流程结束，自动push，并关闭worktree"——授权自动 push + 收尾关闭 worktree。
-
-**What went wrong**: ①**需求 agent 与对抗 agent 并行写入重复测试**——`loading_button_keeps_variant_text_color`（需求 agent 更新旧断言）与 `loading_button_keeps_on_accent_variant_text`（需求 agent 新增）内容重复，review 抓出 [MINOR]；两 agent 并行时应在委派 prompt 中明确「避免与对方重复」的协调机制。②**对抗 agent 输出被截断**——其计划（对比度功能断言、非 alias 断言）部分未落地到最终测试集，实际落地由需求 agent 的 color.rs 测试 + 对抗的集成测试覆盖；后台 agent 长输出需关注完整性。③**Fetch 按钮无精确文本宽度测试**——仅 API 层断言，验收「Fetch 两态一致（min 104）」缺「加载中…」精确文本断言（FYI，min 为下限风险低）。④LSP 诊断滞后于 cargo 编译（on_* 字段已加仍报错），以 cargo 为权威验证。
-
-**Lessons learned**:
-1. **并行双测试 agent 的协调**：两个测试 agent 同时写同模块测试时，委派 prompt 需明确划分边界（需求 agent 写 mod tests 契约测试、对抗 agent 写 tests/ 集成测试）并声明「避免重复断言同一契约」——本次 loading 文字色测试双写被抓。
-2. **UI 宽度类问题根因调查先行**（用户明确要求）：kittest 断言（response.rect.width() idle vs loading）直接锁定「宽度真实跟随文本」→ 方案从「修宽度」转为「修观感」（min_width 稳定两态）；先锁定根因再选方案避免修错方向。
-3. **后台 agent 长输出完整性**：对抗 agent 输出超长被截断，需在委派时要求「结论摘要放最前」或分块返回，避免计划未落地。
-4. **on_* token 语义**：Material `on-*`（彩色实底上的对比前景）与 `text_primary`（普通浅底主文字）语义分离，是解决「同色值两场景对比度不同」的正确分层——ref #217 统一 text_primary 决策在 light 主题的边界条件被 #230 暴露。
-
-**Process improvements**:
-- None（一次性/已落实：设计文档 `.dsh/designs/button-theme-and-width-fix.md` 已提交；.dsh/kb/design/ui.md L261 决策记录已修订为 ref #230 版本；ui-widgets.md Button 条目已同步。测试 helper 重复 → proposed 提取 `tests/common/mod.rs`）。
-
-### Trends (last 10)
-- **「先猜根因再验证」返工模式持续出现**（#139/#217 布局诊断、本次 #230 宽度观感）：本次因用户明确要求「查根本原因」而走了 kittest 断言先行，直接锁定根因（宽度真实跟随、遮罩观感）——验证「先复现拿证据再二分」有效，建议在 .dsh/kb/dev/process.md 调试章节固化该排查框架（proposed）。
-- **ui-designer 设计委派流程已成标准路径**（#217 → 本次 #230）：design-first（产出 .omo/designs → 用户逐点确认 → 实现）两次均获认可，无偏差。
-- **并行子代理测试重复**（本次 loading 文字色测试双写）：新出现模式——需在双测试 agent 委派时显式划分边界，观察后续是否再现。
-
-## 2026-08-12 — ref #235/#213 data-trim-hook-batch：collectors TRIM + hook 批量查询
-
-**What was done**: 一个 PR 内完成两个修复——#235 collectors 写 Dolt 的文本列 SQL 层统一 TRIM（stock_basic/fin_indicators/财务三表/institution_survey/block_trade，U+3000 盲区锁定），#213 commit-msg/pre-push 的 gh issue 校验改单次批量查询（fail-closed）。7 commits（rebase 后），双通道审查（momus+oracle）3 轮批准，门禁 3.5/4 RED 测试（test_trim_imports.py 23 用例 + gh-issue-list-test.sh），351 Python 测试 + 4 hook 脚本全绿，F1-F4 验证通过。
-
-**User corrections**（逐字引用对话记录）:
-1. "F1 按推荐 F2 B" —— 用户确认 F1=推荐 A（纳入 institution_survey/block_trade）、F2=B（hook 内联重复不提取共享脚本）——两个 fork 的决策。
-2. "开始，后面直到push，都自动执行" —— 授权门禁 3.5→push 前全程自动执行（这是范围授权，不是纠正）。
-3. "任务完成后自动push，merge pr 并关闭worktree" —— 扩展授权到 push + merge + 关闭 worktree（HARD BLOCK 的显式解除）。
-
-**What went wrong**:
-1. **F10 TRIM 测试断言目标错误（RED 阶段未暴露）**：对抗测试 agent 的 `TRIM_EXPECTED` 字典值既是输入（带空格，正确）又是断言目标（也带空格，错误）——断言 `_hex(self.TRIM_EXPECTED[c])` 期望带空格值，但 TRIM 实现后落库无空格 → 三表 GREEN 时 3 测试 FAIL。门禁 4 的 requirement agent 复核时只看到"9 RED 合理"就放行，未逐断言核对断言目标与输入的语义关系。RED 测试可以"为错误原因失败"——这正是 TDD 红绿灯陷阱。
-2. **门禁 4 复核未抓 F10 断言 bug（承接 1）**：requirement-test agent 复核了契约覆盖率（补了 fin_indicators 8 列 + j2）但没验证既有断言目标逻辑——"验证 RED 存在" ≠ "验证 RED 正确"。
-3. **F1 发现 mirror-drift guard 未实现**：plan todo 4 明确要求扩展 hook-standalone-ref-test.sh 的 guard 循环，实现时遗漏（只加了 gh-issue-list-test.sh 的 guard），F1 compliance audit 抓到后补提交。
-4. **首次委派 C2 对抗测试结果截断**：agent 输出在规划中途截断，gh-issue-list-test.sh 未创建——续接 session 后完成（浪费一轮）。
-
-**Lessons learned**:
-1. **RED 测试必须验证"因正确原因失败"**：断言目标与输入值的关系必须语义自洽（padded 输入 → 期望 trimmed 输出），不能只确认"测试失败数量合理"。门禁 4 复核清单增加"逐断言核对输入/期望关系"步骤。
-2. **实现时逐 todo 对照 plan 的 What to do 全项**：验收标准通过 ≠ What to do 全落实（mirror-drift guard 属 What to do ① 而非 acceptance）——F-wave 前自查 plan 每 todo 的 What to do 逐条核对。
-3. **委派后验证产出完整性**：agent 声称完成但文件缺失时，续接同一 session 而非重新委派（保持上下文），并验证产出物存在 + 证据落盘。
-
-**Process improvements**:
-- 门禁 4 复核增强：requirement-test agent 的 DELIVERABLE 增加"逐断言核对输入/期望语义自洽性"（拟写入 skwy-requirement-test skill 的复核清单，proposed）
-- F-wave 前自查：主 agent 在委派 F1 前先逐 todo 对照 plan What to do 全项核对（可固化为 skwy-workflow skill 的 F 波次前自查步骤，proposed）
-
-### Trends (last 10)
-- **"RED 因错误原因失败"模式（新，本次 #235）**：对抗测试断言目标语义错误未被门禁 4 复核抓出，直到 GREEN 阶段才暴露——建议 skwy-requirement-test 复核清单增加"断言目标与输入语义自洽"检查（本条目 Process improvements 已提出）
-- **plan What to do 未全落实（新，本次 #235）**：验收标准通过但 What to do 细节遗漏（mirror-drift guard），F1 兜底抓出——建议实现完成后、F 波次前逐 todo 对照 plan What to do 全项自查
-- **"文档/假设未实测"模式（ref #46 → #71 → 本次 GUI 冒烟）**：plan 假设"GUI 冒烟可验证"但实测发现 X server dead + Parquet 为旧快照（concept_member 11 行脏数据根因在 Parquet 而非 Dolt）——数据面/环境面声明必须实测
-
 ## 2026-08-12 — ref #244 llm-screener Batch 1：AST 类型系统 + 序列函数 + run_screener 兼容层
 
 **What was done**: epic #243 Batch 1（#244）选股器表达式 AST 类型系统——compass-types 新增 Filter/MetaCond/SeriesFactor/SeriesCond/CmpOp/FactorRef 六组 enum（serde + and/or/negate + &|~ 运算符 + From<ScreenerQuery> 11 类编译映射）；compass-strategy 新增 up_days/count_in_window/volume_surge 序列函数 + run_screener(&Filter) 受限反向转换（8-shape accept-grammar + SeenFields 重复拒绝）+ ScreenerError::UnsupportedFilter。5 commits（44affdb 覆盖率配置 commit 因 master #251 supersede 在 rebase 中丢弃），966 测试全绿，compass-types 覆盖率 99.51%，5-way review 全 PASS。
@@ -507,3 +450,28 @@
 **Process improvements**:
 - 已落实：`collectors/fetch_freeproxy.py` + 安全校验 + realtime 测试；`process.md` 增加 freeproxy 集成与运维注意；`toolchain.md` 增加缺 patch/多阶段构建排查卡。
 - proposed：给 CI 增加依赖审计（`uv audit`/osv-scanner）以覆盖 pyfreeproxy 引入的传递依赖；待建 issue 排期。
+
+## 2026-08-18 — ref #292 index_daily 真增量同步
+
+**What was done**: 将 `collectors/fetch_index_daily.py` 从“全量拉取 + INSERT IGNORE”改为按 symbol `MAX(trade_date)` 的真增量：THS 行业只拉 MAX 年份→今年并过滤旧行、官方指数东财 `beg=MAX+1`、腾讯增量翻页遇边界停止；新 symbol 全量回填，周末/停牌空增量按成功 no-op。补需求/对抗测试、data-providers.md 决策记录与真实冒烟证据。
+
+**User corrections**:
+- “不是增量更新吗？？？？？” —— 用户指出当前 sync 实际是全量回拉，不是增量；这是本次 issue #292 的起点。
+- “是，push 并创建 PR” —— 最终确认 push 并创建 PR（流程决策，非纠偏）。
+
+**What went wrong**:
+1. **腾讯分页行序假设错误**：初版按“页内 newest-first”实现增量边界，但真实 `newfqkline/get` day 行是 ascending（oldest first），导致 last_date 前有旧行时直接 break、丢掉同一页后面的新行；真实冒烟发现后修复并补升序页测试。
+2. **增量 no-op 语义三度返工**：第一轮 review 发现 THS 空年 break 会漏 MAX 年数据；第二轮又发现“最新年失败被旧年有效响应掩盖”和“畸形 JSONP/全畸形 Tencent 行被当作有效空增量”；第三轮发现“部分年份失败但其他年有新行”会推进 MAX 造成永久空洞。每轮都补了回归测试后才收敛。
+3. **手动冒烟脚本污染真实 CSV 目录**：写复现脚本时未设 `COMPASS_CSV_DIR`，直接覆盖了 `/data/compass-data/csv/index_basic.csv` 并写入 `index_daily.progress.json`；review agent 发现后从 Dolt 恢复/删除。教训：任何采集器冒烟必须先设临时 CSV/数据目录。
+4. **全量 `pytest tests/` 反复超时/拖慢 review**：本地工具 60s 上限跑不完全量，review agent 又各自跑全量，导致多轮长时间等待；应只跑相关测试文件并在委派时明确指定命令。
+5. **commit-msg 偶发 `gh issue list` 失败**：两次 commit 被 hook 拒绝，手动验证 `gh issue list` 正常后重试成功；属于环境瞬时故障，非代码问题。
+
+**Lessons learned**:
+1. 对接外部 API 分页前，先用真实响应确认行序/字段顺序，再写边界逻辑（本次 Tencent ascending 是决定性事实）。
+2. 采集器冒烟/复现脚本必须显式 `COMPASS_CSV_DIR` 和 `COMPASS_DATA_DIR` 指向临时目录，禁止触碰真实数据文件。
+3. 增量 no-op 必须区分“合法空响应”与“畸形/失败响应”：`[]` 只能来自确认无新数据，任何结构异常应返回 `None` 并计入失败，避免绕过 fast-fail。
+4. 增量窗口内“部分年份失败”不能写入部分行后推进 MAX，否则失败年份的缺失数据永远不会再被拉取；应丢弃部分行并让下次重试整个窗口。
+
+**Process improvements**:
+- 已随本 PR 固化回归测试：THS 空年 continue、部分失败丢弃、Tencent 升序页、畸形 payload 返回 None、官方空增量 no-op。
+- proposed：在 `.dsh/kb/dev/testing.md` 或 `toolchain.md` 增加“采集器冒烟必须隔离 COMPASS_CSV_DIR/COMPASS_DATA_DIR”的强制检查项，并考虑给 review 委派模板固定“只跑相关测试文件”命令，避免全量超时。

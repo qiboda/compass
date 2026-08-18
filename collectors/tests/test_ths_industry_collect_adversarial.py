@@ -340,11 +340,19 @@ class TestKlineJsonpAnomalies:
         stub.get = _get  # type: ignore[method-assign]
         return await fid.fetch_ths_kline(stub, fid.Throttle(min_interval=0), "881501", 2026)
 
-    async def test_data_field_non_string_yields_empty(self, make_stub_session) -> None:
+    async def test_data_field_non_string_yields_none(self, make_stub_session) -> None:
         # A valid JSON object whose 'data' is not a string (e.g. a number) is
-        # not a CSV carrier → [] (bare-body fallback also yields no 7-field rows).
+        # not a CSV carrier → None (failed fetch), not an empty year — an
+        # error/captcha shape must not be masked as a weekend no-op.
         out = await self._get_kline(make_stub_session, 'cb({"data": 123})')
-        assert out == [], f"a non-string data must yield [], got {out!r}"
+        assert out is None, f"a non-string data must yield None, got {out!r}"
+
+    async def test_missing_or_error_jsonp_yields_none(self, make_stub_session) -> None:
+        # cb({}) / cb({"error": "captcha"}) are not kline payloads → failed fetch.
+        out = await self._get_kline(make_stub_session, "cb({})")
+        assert out is None, f"missing data must yield None, got {out!r}"
+        out = await self._get_kline(make_stub_session, 'cb({"error": "captcha"})')
+        assert out is None, f"error payload must yield None, got {out!r}"
 
     async def test_empty_data_string_yields_empty(self, make_stub_session) -> None:
         out = await self._get_kline(make_stub_session, 'cb({"data": ""})')

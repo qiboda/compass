@@ -5,10 +5,10 @@ Independent module — uses common.py for shared infrastructure.
 
 Sources:
 - Official indices: EastMoney push2his ``kline/get`` (``klt=101``,
-  ``fqt=0``, ``beg=0&end=20500000`` full history); a Tencent
-  ``newfqkline/get`` fallback covers EastMoney failure/empty klines and
-  supplies 成交额 (index 8, 万元 → 元) for official index rows (issue
-  #278/#286).
+  ``fqt=0``; ``beg=0&end=20500000`` for new symbols, ``beg=last_date+1``
+  for incremental); a Tencent ``newfqkline/get`` fallback covers EastMoney
+  failure/empty klines and supplies 成交额 (index 8, 万元 → 元) for official
+  index rows (issue #278/#286).
 - Industry boards: 同花顺 (THS) 90 申万一级 industries (881xxx) — the list
   page ``q.10jqka.com.cn/thshy/`` (GBK) and per-year daily klines from
   ``d.10jqka.com.cn/v4/line/bk_881xxx/01/{year}.js`` (issue #283).
@@ -22,11 +22,15 @@ Two index classes (handoff decisions 1/5/7 + #283 D1):
   the per-year BK kline endpoint. A board whose kline is empty or fails is
   skipped for daily rows but KEEPS its index_basic entry (拉不到就跳过，不自算).
 
-Incremental mode (decision 8): ``data_updates.last_report_date`` is compared
-against today before fetching (short-circuit); new boards/indices are fetched
-with full history automatically because every fetch uses ``beg=0`` and the
-merge import (``INSERT IGNORE`` on PK (symbol, trade_date)) dedupes the
-overlap.  Rate limiting: Throttle + host rotation (push2his main domain
+Incremental mode (decision 8 + issue #292): ``data_updates.last_report_date``
+short-circuits when everything is already updated today. Per symbol, the
+stored ``MAX(trade_date)`` drives a true incremental fetch: existing THS
+boards only fetch MAX year→current year (a Dec-31 MAX starts the next year)
+and rows ``<= MAX`` are filtered; official indices use EastMoney
+``beg=MAX+1`` and a Tencent incremental pagination that stops at ``<= MAX``.
+New symbols still backfill full history. The merge import (``INSERT IGNORE``
+on PK (symbol, trade_date)) remains the idempotent landing. Rate limiting:
+Throttle + host rotation (push2his main domain
 falls back to numbered mirrors on empty/failed responses) + bounded 429
 retries (handoff 调研).
 
@@ -246,6 +250,50 @@ def _today() -> date:
     return date.today()
 
 
+def max_trade_date(dolt_table: str, symbol: str) -> str | None:
+    """Return the latest stored ``trade_date`` for one symbol, or None.
+
+    None means the symbol has no rows (new symbol → full backfill) or the
+    Dolt table/database is unavailable (degrade to full backfill rather than
+    crash the collector). Single-quote escaping mirrors ``_dolt_close``.
+    """
+    if _dolt_dir_exists() is None:
+        return None
+    escaped = symbol.replace(chr(39), chr(39) * 2)
+    try:
+        stdout = dolt_sql_csv(
+            f"SELECT DATE_FORMAT(MAX(trade_date), '%Y-%m-%d') "
+            f"FROM {dolt_table} WHERE symbol = '{escaped}'"
+        )
+    except Exception:
+        return None
+    lines = stdout.strip().split("\n")
+    if len(lines) < 2:
+        return None
+    value = lines[-1].strip()
+    if value and value != "NULL":
+        return value
+    return None
+
+
+def _parse_max_date(raw: str | None) -> date | None:
+    """Parse a symbol's max trade_date into a date.
+
+    Invalid/empty values are treated as None (new symbol → full backfill).
+    A future-dated MAX (API/DB dirty data) is clamped to today so the
+    collector treats the symbol as already up to date instead of attempting
+    another full-history sweep.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        return None
+    today = _today()
+    return min(parsed, today)
+
+
 def _num(value: str) -> int | float | str:
     """Parse a kline numeric cell, preserving int-ness for exact CSV round-trips.
 
@@ -410,8 +458,9 @@ async def fetch_ths_kline(
     2026-08-16; reusing the EM mapping as-is would silently swap high/close).
 
     Returns the normalized 7-field rows, [] for a structurally empty year, or
-    None when the request/parse failed (the caller stops the year loop on
-    None and counts the board as failed when nothing was collected).
+    None when the request/parse failed. The caller walks back through years on
+    None (never truncating history) and counts the board as failed when
+    nothing was collected.
     """
     # One retry with a short backoff — a transient failure on one year must
     # not truncate the board history (review P1-1/P2-2); the caller still
@@ -439,15 +488,20 @@ async def fetch_ths_kline(
         return None
     payload_text = body[start + 1 : end]
     # The live API wraps a JSON object (``{"data": "…"}``); a bare CSV body
-    # (test fixture shape) parses as raw rows — accept both.
+    # (test fixture shape) parses as raw rows — accept both. A JSON object
+    # without a CSV-string ``data`` field is NOT a valid kline carrier (e.g.
+    # error/captcha/malformed), so it is a failed fetch (None), not an empty
+    # year — otherwise anti-bot/API breakage would be silently treated as a
+    # weekend no-op and bypass fast-fail.
     try:
         payload = json.loads(payload_text)
-        data = (payload or {}).get("data") if isinstance(payload, dict) else None
-        if not isinstance(data, str):
-            data = None
     except Exception:
-        data = None
-    if data is None:
+        payload = None
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if not isinstance(data, str):
+            return None
+    else:
         data = payload_text
     rows: list[str] = []
     for line in re.split(r"[;\n]", data):
@@ -486,18 +540,26 @@ async def fetch_kline(
     session: AsyncSession,
     throttle: Throttle,
     secid: str,
+    last_date: str | None = None,
 ) -> tuple[list[str], str] | None:
-    """Fetch full-history daily klines for one secid.
+    """Fetch daily klines for one secid.
 
     Returns (klines, data.code) on success, None when every host×attempt is
-    exhausted. ``beg=0&end=20500000`` fetches the whole history; the caller
-    decides code-match validation (official indices validate, boards don't).
+    exhausted. ``last_date is None`` keeps the legacy full-history window
+    ``beg=0&end=20500000``; otherwise ``beg`` is ``last_date + 1 day`` in
+    YYYYMMDD compact form so the API returns only the incremental window. The
+    caller decides code-match validation (official indices validate, boards
+    don't).
     """
+    if last_date is None:
+        beg = "0"
+    else:
+        beg = (date.fromisoformat(last_date) + timedelta(days=1)).strftime("%Y%m%d")
     params = {
         "secid": secid,
         "klt": "101",
         "fqt": "0",
-        "beg": "0",
+        "beg": beg,
         "end": "20500000",
         "lmt": "1000000",
         "fields1": "f1,f2,f3,f4,f5,f6",
@@ -551,14 +613,21 @@ async def _fetch_tencent_kline(
     session: AsyncSession,
     throttle: Throttle,
     secid: str,
+    last_date: str | None = None,
 ) -> list[str] | None:
-    """Fetch full-history daily klines from Tencent for one official index.
+    """Fetch daily klines from Tencent for one official index.
 
     Paginates with count=2000, advancing the end date backwards until a
     short page or a bounded page cap. Returns klines in the same 7-field CSV
     format as EastMoney (date,open,close,high,low,volume,amount) with amount
     in yuan taken from newfqkline/get's 成交额 field (万元 × 10000), or None
     on any failure.
+
+    With ``last_date`` set this is an incremental fetch: it keeps only rows
+    strictly newer than ``last_date`` and stops paging as soon as a row
+    ``<= last_date`` is seen. A structurally valid response that yields no new
+    rows returns ``[]`` (successful no-op), which is distinct from ``None``
+    (request/malformed failure).
     """
     try:
         tcode = _tencent_code(secid)
@@ -587,6 +656,8 @@ async def _fetch_tencent_kline(
 
         page_klines: list[str] = []
         min_date: str | None = None
+        boundary_hit = False
+        valid_row_count = 0
         for row in rows:
             if not isinstance(row, (list, tuple)) or len(row) < 6:
                 continue
@@ -594,9 +665,28 @@ async def _fetch_tencent_kline(
             date_cell = cells[0].strip()
             if not date_cell:
                 continue
+            valid_row_count += 1
+            if last_date is not None and date_cell <= last_date:
+                # This page overlaps the already-stored boundary. Tencent day
+                # rows are ascending (oldest first), so later rows in the
+                # same page may still be newer than last_date — keep scanning
+                # and collect them, but do not paginate to an older page.
+                boundary_hit = True
+                continue
             if min_date is None or date_cell < min_date:
                 min_date = date_cell
             page_klines.append(",".join([*cells, _tencent_amount_yuan(row)]))
+
+        if rows and valid_row_count == 0:
+            # Non-empty page with no structurally valid rows is a malformed
+            # payload, not a valid empty increment — treat as failure.
+            return None
+
+        if boundary_hit:
+            # Even an empty kept set is a valid incremental no-op: record the
+            # (possibly empty) page so the merge below returns [] cleanly.
+            pages.append(page_klines)
+            break
 
         if not page_klines:
             # Empty or all-invalid page: no more data.
@@ -696,28 +786,86 @@ async def run() -> Path:
                     f"  [industry] {symbol} {name} ...",
                     file=sys.stderr, end=" ", flush=True,
                 )
-                # Per-year pagination, newest first. An EMPTY year is the
-                # historical boundary (no older data) and stops the loop; a
-                # request/parse FAILURE (None) must NOT truncate the history
-                # — a transient 500/429 on one year would otherwise silently
-                # drop every earlier year (review P1-1). Failures are logged
-                # and the loop keeps walking back; a board whose years all
-                # fail still lands in the fast-fail counter below.
+                # Per-symbol incremental window (issue #292): an existing board
+                # starts at the year of its MAX(trade_date) (or the next year
+                # when MAX is a Dec-31 snapshot) and filters out rows already
+                # stored; a new board (None) still backfills 2007→current.
+                # MAX == today means the symbol is already up to date → skip.
+                max_raw = max_trade_date(DOLT_TABLE, symbol)
+                max_dt = _parse_max_date(max_raw)
+                if max_dt is not None and max_dt >= _today():
+                    consecutive_failures = 0
+                    print("up to date", file=sys.stderr)
+                    progress.update(
+                        completed=i + 1,
+                        fetched_rows=len(daily_records),
+                        current_item=symbol,
+                        message=f"Skipped industry {symbol} {name}",
+                    )
+                    continue
+
                 klines: list[str] = []
-                for year in range(_today().year, THS_FIRST_YEAR - 1, -1):
+                saw_response = False
+                fetch_failed = False
+                if max_dt is None:
+                    start_year = THS_FIRST_YEAR
+                elif max_dt.month == 12 and max_dt.day == 31:
+                    start_year = min(max_dt.year + 1, _today().year)
+                    start_year = max(start_year, THS_FIRST_YEAR)
+                else:
+                    start_year = max(max_dt.year, THS_FIRST_YEAR)
+                max_iso = max_dt.isoformat() if max_dt is not None else None
+
+                # Per-year pagination, newest first. For a new board an EMPTY
+                # year is the historical boundary (no older data) and stops
+                # the loop; for an incremental board an empty year just means
+                # no new rows in that year — older years in the window may
+                # still hold rows newer than MAX, so keep walking back. A
+                # request/parse FAILURE (None) is logged and the loop keeps
+                # walking; a no-op is only accepted when every year in the
+                # window responded successfully (otherwise a failed latest
+                # year would be silently masked as "no new bars").
+                for year in range(_today().year, start_year - 1, -1):
                     year_rows = await fetch_ths_kline(session, throttle, code, year)
                     if year_rows is None:
+                        fetch_failed = True
                         print(
                             f"    year {year} fetch failed (kept going)",
                             file=sys.stderr,
                         )
                         continue
+                    saw_response = True
                     if not year_rows:
-                        break
-                    klines.extend(year_rows)
-                if not klines:
+                        if max_iso is None:
+                            break
+                        continue
+                    if max_iso is not None:
+                        kept = [
+                            row for row in year_rows
+                            if row.split(",", 1)[0] > max_iso
+                        ]
+                        if not kept:
+                            continue
+                        klines.extend(kept)
+                    else:
+                        klines.extend(year_rows)
+                if klines and max_dt is not None and fetch_failed:
+                    # Partial success in an incremental window is NOT a clean
+                    # success: writing the successful years would advance
+                    # MAX(trade_date) past a failed year and the missing bars
+                    # would never be re-fetched. Discard the partial rows and
+                    # count the board as failed so the next run retries the
+                    # full window.
                     consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
-                    print("FAILED (no klines)", file=sys.stderr)
+                    print("FAILED (partial year failure, rows discarded)", file=sys.stderr)
+                elif not klines:
+                    if max_dt is not None and saw_response and not fetch_failed:
+                        # Weekend/halt/valid-empty increment: a successful no-op.
+                        consecutive_failures = 0
+                        print("no new bars", file=sys.stderr)
+                    else:
+                        consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
+                        print("FAILED (no klines)", file=sys.stderr)
                 else:
                     daily_records.extend(
                         _kline_records(symbol, "industry", klines, _today())
@@ -741,11 +889,36 @@ async def run() -> Path:
             for j, target in enumerate(OFFICIAL_INDICES, start=len(industries)):
                 if abort_reason is not None:
                     break
+                symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
+                    else f"SZ{target['code']}"
                 print(
                     f"  [official] {target['secid']} {target['name']} ...",
                     file=sys.stderr, end=" ", flush=True,
                 )
-                result = await fetch_kline(session, throttle, target["secid"])
+                # Per-symbol incremental window (issue #292): pass the stored
+                # MAX(trade_date) so EastMoney/Tencent only fetch newer bars.
+                # MAX == today (or a clamped future dirty value) means the
+                # symbol is already up to date → skip.
+                max_raw = max_trade_date(DOLT_TABLE, symbol)
+                max_dt = _parse_max_date(max_raw)
+                if max_dt is not None and max_dt >= _today():
+                    consecutive_failures = 0
+                    basic_records.append(
+                        {"symbol": symbol, "name": target["name"], "index_type": "official"}
+                    )
+                    print("up to date", file=sys.stderr)
+                    progress.update(
+                        completed=j + 1,
+                        fetched_rows=len(daily_records),
+                        current_item=target["name"],
+                        message=f"Skipped official {target['name']}",
+                    )
+                    continue
+
+                last_date = max_dt.isoformat() if max_dt is not None else None
+                result = await fetch_kline(
+                    session, throttle, target["secid"], last_date=last_date
+                )
                 if result is None or not result[0]:
                     # EastMoney failed/empty → try Tencent fallback (issue #278).
                     source_label = "FAILED" if result is None else "empty (skipped)"
@@ -754,11 +927,25 @@ async def run() -> Path:
                         file=sys.stderr,
                     )
                     tencent_klines = await _fetch_tencent_kline(
-                        session, throttle, target["secid"]
+                        session, throttle, target["secid"], last_date=last_date
                     )
-                    if tencent_klines:
-                        symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
-                            else f"SZ{target['code']}"
+                    if last_date is not None:
+                        # Incremental: a valid Tencent response with no new rows
+                        # ([]) is a successful no-op, distinct from a
+                        # request/malformed failure (None).
+                        if tencent_klines is not None:
+                            consecutive_failures = 0
+                            basic_records.append(
+                                {"symbol": symbol, "name": target["name"], "index_type": "official"}
+                            )
+                            daily_records.extend(
+                                _kline_records(symbol, "official", tencent_klines, _today())
+                            )
+                            print(f"{len(tencent_klines)} bars (tencent)", file=sys.stderr)
+                        else:
+                            consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
+                            print("FAILED (eastmoney+tencent)", file=sys.stderr)
+                    elif tencent_klines:
                         consecutive_failures = 0
                         basic_records.append(
                             {"symbol": symbol, "name": target["name"], "index_type": "official"}
@@ -772,8 +959,6 @@ async def run() -> Path:
                         print("FAILED (eastmoney+tencent)", file=sys.stderr)
                 else:
                     klines, code = result
-                    symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
-                        else f"SZ{target['code']}"
                     # EastMoney echoes either the bare code ("000001") or the full
                     # symbol ("SH000001"); accept both, anything else is a different
                     # index (delisted/renamed code) — skip. A mismatch must NOT
