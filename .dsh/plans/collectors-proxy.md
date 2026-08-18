@@ -120,8 +120,8 @@
 |--------|-------|------|------------|
 | done | #294 | `uv run pytest collectors/tests/ --cov=. --cov-fail-under=95 -q` + ruff | Batch 5 |
 | done | #294 | 真实冒烟：keepalive `--once`（json 下载 + Redis 缺失优雅降级）+ 真实 collector 代理降级路径，evidence 已落 `.dsh/evidence/collectors-proxy.md` | 上 |
-| in_progress | #294 | commit → review（可多轮） | 上 |
-| pending | #294 | push 前 rebase + `skwy-reflect` 反思 commit | review |
+| done | #294 | commit → review（子代理不可用，用户批准 fallback 自审，P0/P1 无） | 上 |
+| done | #294 | push 前 rebase（与 origin/master 同步）+ `skwy-reflect` 反思 commit（c7a8b51） | review |
 | pending | #294 | 用户确认 push → push → PR → 合并后 issue 收尾（完成 comment + close） | 上 |
 
 ## 验收标准
