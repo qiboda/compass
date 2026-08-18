@@ -239,31 +239,6 @@
 - **命令输出解析类摩擦跨批再现**（#273 后台 tail 盲等 → 本次 grep 计数误判 + llvm-cov percent 单位）：对工具输出格式先验证再采信——toolchain.md 已追加解析卡
 - **GIT_EDITOR=true 卡（ref #189）执行侧再现**（本次 rebase --continue 先直接跑超时）：已有排查卡但未第一时间遵守——"文档已固化未遵守"模式再现，执行侧习惯待养成
 
-## 2026-08-15 — ref #276 result-slot log/loading race fix
-
-**What was done**: Fixed a CI race in `wire_backend` where fetch/screener/SEPA/index result slots cleared `*_loading` before writing the display log; moved log writes before `*_loading.set(false)` and added four deterministic regression tests that hold the loading `Dynamic::lock()` and wait for `log_count() > 0`. Docs updated in `testing.md` and `architecture.md`.
-
-**User corrections**: None. (User decisions: 修复 / 统一修 / 按推荐 / 好 / 开始 / push.)
-
-**What went wrong**:
-1. `cargo test -p compass --lib ...` failed with "no library targets found in package `compass`" — compass is a binary-only crate; used `--bin compass` instead.
-2. Initial four regression tests from the requirement-test subagent waited for intermediate result data (bars/screener_result/sepa_data/index_snapshot) before asserting `log_count > 0`; on fixed code the fetch test still flaked because data is written before the log. Refined the tests to poll the invariant itself (`log_count > 0`) while holding the loading lock.
-3. Multiple `edit` attempts failed with "file changed since it was read" after subagents/cargo fmt/commit modified the file; required re-read and retry.
-
-**Lessons learned**:
-1. Check crate targets (`Cargo.toml`) before running tests: binary-only crates need `cargo test -p <pkg> --bin <bin>`, not `--lib`.
-2. For ordering invariants tested by parking a worker on a mutex, poll the observable invariant itself (e.g. `log_count > 0`) rather than an intermediate state then asserting; the intermediate state can be visible before the invariant is established even in fixed code.
-3. Use `read` immediately before a batch of `edit` calls on files that subagents or formatters may have touched; on "file changed since it was read", re-read and retry instead of guessing.
-
-**Process improvements**:
-- `.dsh/kb/dev/testing.md` already documents the deterministic mutex-park pattern for result-slot ordering (committed with the fix).
-- `.dsh/kb/design/architecture.md` now shows log-before-loading in the result_slot diagram (committed with the fix).
-- No new hook/CI proposed for this batch.
-
-### Trends (last 10)
-- `edit` "file changed since it was read" friction recurs across #273/#266 and this #276; batch edits after subagent/cargo fmt should start with a fresh `read` of the target file.
-- Subagent-delivered tests requiring main-agent refinement recurred (this session's result-data wait → log-invariant wait); main agent should validate RED/GREEN determinism against both old and new code before accepting test delivery.
-- Binary-only crate test command confusion is a new small pattern; consider documenting `--bin` usage in `testing.md` if it recurs.
 ## 2026-08-15 — ref #277 collectors: 连续失败快速终止 + 全局限流调大
 
 **What was done**: 实现 `fetch_index_daily.run()` 连续失败快速终止（连续 5 个标的失败/empty 即写已抓 CSV 后抛 RuntimeError），并将 `common.py` / `fetch_fin_indicators.py` / `fetch_stock_basic.py` 的 `EM_MIN_INTERVAL` 全部调至 2.0s；新增 17 个 RED→GREEN 测试，更新 3 个旧测试适配新语义；全套件 553 passed，coverage 98.57%。
@@ -475,3 +450,34 @@
 **Process improvements**:
 - 已随本 PR 固化回归测试：THS 空年 continue、部分失败丢弃、Tencent 升序页、畸形 payload 返回 None、官方空增量 no-op。
 - proposed：在 `.dsh/kb/dev/testing.md` 或 `toolchain.md` 增加“采集器冒烟必须隔离 COMPASS_CSV_DIR/COMPASS_DATA_DIR”的强制检查项，并考虑给 review 委派模板固定“只跑相关测试文件”命令，避免全量超时。
+
+## 2026-08-19 — ref #294 collectors 接入 proxy_pool 代理层 + keepalive
+
+**What was done**: 为全部 Python collectors 接入 proxy_pool 代理层（proxy-first、池空降级、坏代理轮换）并新增 keepalive 双源喂源脚本；RED 测试、文档、evidence 同批提交（7b041f9）。
+
+**User corrections** (if any): 无显式纠正。用户两次批准 fallback（RED 测试与 review 均因 DSH 子代理基础设施不可用改为主 agent 自写/自审）；用户询问 trash-put 原因（环境 rm 安全包装，非流程纠正）。
+
+**What went wrong**:
+- DSH 子代理工具整体不可用（subagent run failed），两处门禁（RED 测试、review）被迫走用户批准的 fallback，失去认知独立性（已记录 toolchain.md）。
+- `str_replace_editor` 在本环境多次“成功”但吞掉替换内容：fetch_freeproxy 函数整体消失、proxy_pool_client.get_proxy 方法体变空、fetch_bse 测试体被清空——均通过 `write` 全量重写或 `edit` 修复；造成大量返工（edit ×69 / read ×41）。
+- 多次 `edit requires reading ... first` 报错：本环境 edit/str_replace_editor 强制先 read，未先 read 直接编辑会失败。
+- `skill` 工具首次调用漏传 `name` 参数（ToolArgsError）。
+- 覆盖率首轮 94.01% 未达标，补 25 个覆盖测试后 96.60%。
+- keepalive 冒烟首轮因 realtime 源过慢超时；改用 `--realtime-sources ""` 验证 json 路径。
+- fetch_main_flow 冒烟在沙箱 push2 直连超时（exit 124），仅验证了降级路径；真实代理成功路径需生产 VPS 验证。
+
+**Lessons learned**:
+1. 本环境 `str_replace_editor` 不可信：大段替换优先用 `write` 全量重写或 `edit`（精确唯一 old_string）；每次编辑后立即 grep 验证函数体存在。
+2. 编辑工具要求先 read：新文件/未读文件先用 `read` 标记再 edit，避免报错返工。
+3. 子代理不可用时不要反复重试：先最小任务确认系统性故障，再向用户申请 fallback 并记录 toolchain。
+4. 覆盖率门禁应在提交前跑完整 `--cov-fail-under=95`，新增代码即时补覆盖，避免提交后返工。
+
+**Process improvements**:
+- 已新增 `.dsh/kb/dev/toolchain.md` 问题卡：DSH 子代理工具不可用（实现 commit 已含）。
+- 新增 `.dsh/kb/dev/toolchain.md` 问题卡：`str_replace_editor` 内容吞噬（本反思 commit 一并提交）。
+- 其余为一次性教训，未固化为机制（None）。
+
+### Trends (last 10)
+- 多次真实冒烟暴露单测盲区（#283 CSV 复活、#286 成交额、#292 增量、#294 沙箱 push2 超时）→ 保持“真实数据冒烟 + evidence 落盘”强制步骤，并在 evidence 中显式记录环境限制。
+- proxy_pool 系列（#287/#290/#294）反复受“沙箱无 proxy_pool/Redis”限制 → evidence 模板应固定“生产 VPS 最终验证清单”，避免每次重新摸索。
+- 采集器网络/反爬主题高频出现（#277/#278/#283/#286/#287/#290/#292/#294）→ 该领域值得沉淀为 skill/checklist（如“反爬/网络故障排查卡”）。
