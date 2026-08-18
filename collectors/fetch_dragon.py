@@ -27,6 +27,7 @@ from common import (
     fetch_paginated,
     import_replace_table,
     last_report_date,
+    make_proxy_pool,
     write_csv,
 )
 
@@ -182,6 +183,7 @@ async def run(
         "dragon", total_items=total_days, output_csv=output_path
     ) as progress:
         throttle = Throttle()
+        pool = make_proxy_pool()
         all_records: list[dict[str, str | int | float]] = []
         day = start_date
         failure: str | None = None
@@ -198,6 +200,7 @@ async def run(
                         FILTER_COLUMN,
                         day,
                         page_size,
+                        pool=pool,
                     )
                     sell = await fetch_paginated(
                         session,
@@ -206,6 +209,7 @@ async def run(
                         FILTER_COLUMN,
                         day,
                         page_size,
+                        pool=pool,
                     )
                     records = _merge_seats(buy + sell)
                 except Exception as e:

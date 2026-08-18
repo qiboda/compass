@@ -516,6 +516,33 @@ proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
   网络运行；Redis 默认只应在本机/容器网络内访问，若需跨机请加密码/ACL/TLS。
 - 完整运维 Runbook 见 `.dsh/evidence/proxy-pool-https-validator.md` 与本节命令。
 
+#### collectors 代理层接入与 keepalive（#294）
+
+采集器接入状态：**proxy-first**——东财 datacenter（balance_sheet/cash_flow/income/
+fin_indicators/block_trade/dragon/institution_survey）、push2（main_flow）、
+push2his+THS+腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）全部
+默认走代理；池空/API 不可达 → 醒目警告 + `proxy_pool_state.json` + 直连不失败。
+
+- 代理客户端：`collectors/proxy_pool_client.py`（get/delete/count + 降级 state）。
+- 请求包装：`collectors/common.py` 的 `proxy_get` / `proxy_post` / `proxy_get_sync` /
+  `proxy_post_sync`；坏代理（请求异常）`delete` 出池 + 换下一个，有界重试后直连兜底。
+- 禁用：`COMPASS_PROXY_DISABLE=1`；API 基址：`COMPASS_PROXY_API_URL`。
+- 降级状态：`csv_dir()/proxy_pool_state.json`（时间戳/池计数/是否降级/原因）。
+
+**keepalive 常驻喂源**（替代手工每 6 小时跑 fetch_freeproxy）：
+
+```bash
+cd /data/codes/compass/.worktrees/collectors-proxy/collectors   # 生产在仓库 collectors/
+uv run python proxy_keepalive.py --once                          # 单轮验证
+nohup uv run python proxy_keepalive.py --interval 600 \
+  >> /data/compass-data/csv/proxy_keepalive.log 2>&1 &
+```
+
+- 每周期：freeproxy `json` 快照（成功写 `/tmp/freeproxy.json`）→ realtime 双源灌
+  proxy_pool Redis；json 下载失败（GitHub raw 429/超时）自动用快照兜底。
+- 任一步失败只日志不崩溃；监控日志关键字 `[keepalive] cycle done` 与
+  `curl http://127.0.0.1:5010/count/`。
+
 ### 百度云备份
 
 `compass-data backup` 将 `parquet_data/` 打包为 zip 并通过 `baidupcs`

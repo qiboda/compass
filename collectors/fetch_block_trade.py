@@ -27,6 +27,7 @@ from common import (
     fetch_paginated,
     import_replace_table,
     last_report_date,
+    make_proxy_pool,
     write_csv,
 )
 
@@ -104,6 +105,7 @@ async def run(
         "block_trade", total_items=len(all_dates), output_csv=output_path
     ) as progress:
         throttle = Throttle()
+        pool = make_proxy_pool()
         all_records: list[dict[str, str | int | float]] = []
         failure: str | None = None
 
@@ -116,6 +118,7 @@ async def run(
                 try:
                     records = await fetch_paginated(
                         session, throttle, REPORT_NAME, FILTER_COLUMN, trade_date, page_size,
+                        pool=pool,
                     )
                 except Exception as e:
                     failure = f"{trade_date}: {e}"

@@ -415,6 +415,38 @@ institution_survey / block_trade；与 concept_member 先例 `TRIM(BOARD_NAME)` 
 - 回归测试：`collectors/tests/test_trim_imports.py`（RED→GREEN，含 U+3000
   characterization 锁定盲区）。
 
+## Python 采集器代理层（issue #294）
+
+collectors 对东财/THS/交易所官网的 HTTPS 抓取默认走本地 proxy_pool 代理层，
+解决 VPS 固定 IP 上 push2his/THS 的限流断连（curl 56）。
+
+### 架构
+
+- `collectors/proxy_pool_client.py`：`ProxyPool` 客户端——`get_proxy`
+  （`GET /get/?type=https`）、`delete_proxy`（`GET /delete/`）、`pool_count`
+  （`GET /count/`）、`record_state`（原子写 `proxy_pool_state.json`）。
+- `collectors/common.py`：`make_proxy_pool()` + 请求包装 `proxy_get` / `proxy_post`
+  （async）与 `proxy_get_sync` / `proxy_post_sync`（同步 `requests.Session`），
+  以及 `fetch_paginated(..., *, pool=None)`。
+- 接入面：东财 datacenter（balance_sheet / cash_flow / income / fin_indicators /
+  block_trade / dragon / institution_survey）、push2（main_flow）、push2his + THS +
+  腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）。
+- `collectors/proxy_keepalive.py`：后台常驻喂源循环（freeproxy json + realtime 双源，
+  本地 `/tmp/freeproxy.json` 快照兜底）。
+
+### 行为契约
+
+- proxy-first：有 https 代理必走代理；`/get/?type=https` 返回的 `proxy` 经
+  `{"http": "http://IP:PORT", "https": "http://IP:PORT"}` 传入每请求 `proxies`。
+- 池空/API 不可达/畸形响应 → 醒目打印 `[proxy] WARN/ERROR: https pool empty,
+  falling back to direct`（每实例首次）+ 写 `proxy_pool_state.json`（时间戳/池计数/
+  是否降级/原因）+ 直连，绝不因无代理失败。
+- 坏代理（请求异常，非 HTTP 状态码）→ `delete_proxy` 出池 + 换下一个；有界重试
+  `DEFAULT_PROXY_MAX_ATTEMPTS=3` 后直连兜底一次，直连仍失败交给模块既有 retry。
+- HTTP 429/5xx 不误删代理，由各模块既有重试处理。
+- 环境变量：`COMPASS_PROXY_API_URL`（默认 `http://127.0.0.1:5010`）、
+  `COMPASS_PROXY_DISABLE=1`（禁用代理层）、`COMPASS_CSV_DIR`（state 文件位置）。
+
 ## 错误处理
 
 ### DataError 枚举
@@ -515,3 +547,9 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 行业后缀匹配（epic #266） | 精确匹配 / **双键（原样 + 去罗马数字后缀）** | import JOIN 条件 `m.key = TRIM(industry) OR (REGEXP 后缀 AND m.key = LEFT(len-1))` | 旧数据"白酒Ⅱ"类后缀行业可命中基础键"白酒"；双键防膨胀（`<>` guard） | 单键匹配漏掉后缀行业 |
 | 腾讯回退成交额来源（issue #286） | 继续 `fqkline/get` 填 0 / **切 `newfqkline/get` 解析成交额** | 切 `newfqkline/get`，解析 day 行 index 8 成交额（万元→元），缺失/畸形降级 0 | `fqkline/get` 日线只有 6 字段无成交额，官方指数 amount 全 0；`newfqkline/get` 同域、分页参数一致，实测 30 个官方指数均返回非 0 成交额 | 继续 `fqkline/get` 无法满足官方指数成交额展示；从其它源补需引入新依赖 |
 | index_daily 增量语义（issue #292） | 全量拉取 + INSERT IGNORE 去重 / **按 symbol MAX(trade_date) 真增量** | THS 行业只拉 MAX 年份→今年（MAX 为 12-31 时从次年启动）并过滤旧行；官方指数东财 `beg=MAX+1`、腾讯增量翻页遇 `<= MAX` 停止；新 symbol 全量回填；空增量（周末/停牌）按成功 no-op | 跨日 sync 不再回拉 2007 全史，避免旧年份 404/502/504 风暴与小时级耗时；空增量不误触发 fast-fail | 全量+去重不符合“增量更新”预期，单次 sync 90 行业约 1 小时、大量失败 |
+| collectors 代理注入粒度（issue #294） | 会话级绑定 / 每请求级 `proxies` | **每请求级包装**（`proxy_get`/`proxy_post` 等） | curl_cffi 支持每请求 `proxies`；坏代理可精确 `delete` 并换下一个，不重建会话 | 会话级绑定无法在同一请求内轮换坏代理，重建 AsyncSession 开销大且复杂 |
+| 池空降级行为（issue #294） | 抛错 / 静默直连 / 醒目警告+写 state+直连 | **醒目警告+写 `proxy_pool_state.json`+直连** | 锁定决策：绝不因无代理失败，但降级必须可观测 | 抛错违背"绝不因无代理失败"；静默直连不可观测 |
+| 坏代理判定（issue #294） | HTTP 非 2xx / 仅请求异常 | **仅请求异常触发 delete+轮换** | 429/5xx 多为服务端限流或业务错误，不应误杀可用代理 | HTTP 状态码由各模块既有 retry 处理，误删降低池质量 |
+| 有界重试后兜底（issue #294） | 放弃请求 / 直连兜底 | **直连兜底一次**，失败交给模块既有 retry | 锁定决策"池空/坏代理均降级直连" | 放弃请求导致数据缺失，违反不因代理失败 |
+| keepalive 实现（issue #294） | 独立脚本 / 并入 main.py | **独立 `proxy_keepalive.py` + `--once`** | 可后台常驻也可单轮测试/冒烟，职责单一 | 并入 main.py 增加 CLI 复杂度，且 sync 不应被 keepalive 阻塞 |
+| 快照兜底解析（issue #294） | keepalive 自写下载逻辑 / 重构 fetch_freeproxy | **拆 `fetch_json_payload` + `records_from_json_data` 复用** | 单一解析/过滤/归一化实现，快照与在线源同路径 | keepalive 自写重复逻辑，后续变更易漂移 |

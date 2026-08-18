@@ -20,6 +20,7 @@ from common import (
     fetch_paginated,
     import_replace_table,
     last_report_date,
+    make_proxy_pool,
     write_csv,
 )
 
@@ -408,6 +409,7 @@ async def run(
     print(file=sys.stderr)
 
     throttle = Throttle()
+    pool = make_proxy_pool()
     total_records = 0
     first_write = True
 
@@ -427,6 +429,7 @@ async def run(
                     FILTER_COLUMN,
                     report_date,
                     page_size,
+                    pool=pool,
                 )
             except Exception as e:
                 print(f"FAILED: {e}", file=sys.stderr)

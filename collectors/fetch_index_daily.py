@@ -53,6 +53,7 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Progress,
+    ProxyPool,
     Throttle,
     csv_dir,
     dolt_sql_csv,
@@ -60,6 +61,8 @@ from common import (
     import_replace_table,
     last_report_date,
     load_name_en_mapping,
+    make_proxy_pool,
+    proxy_get,
     write_csv,
 )
 
@@ -356,6 +359,8 @@ async def _get_json(
     throttle: Throttle,
     hosts: tuple[str, ...],
     params: dict[str, str],
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> dict[str, object] | None:
     """GET ``params`` across ``hosts`` with bounded 429/error retries.
 
@@ -363,13 +368,13 @@ async def _get_json(
     exhausted. 429 waits then retries the same host (mirrors
     fetch_main_flow._fetch_page); an empty non-error response moves to the
     next host. Never raises on network failure — the caller treats None as
-    "skip this target".
+    "skip this target". ``pool`` enables proxy-first rotation.
     """
     for base in hosts[:_MAX_HOSTS_TRIED]:
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 await throttle.acquire()
-                resp = await session.get(base, params=params, headers=HEADERS)
+                resp = await proxy_get(session, pool, base, params=params, headers=HEADERS)
                 if resp.status_code == 429:
                     wait = 15 + random.uniform(0, 5)
                     print(f"    429, waiting {wait:.0f}s...", file=sys.stderr)
@@ -395,7 +400,10 @@ async def _get_json(
 
 
 async def fetch_ths_industry_list(
-    session: AsyncSession, throttle: Throttle
+    session: AsyncSession,
+    throttle: Throttle,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> list[tuple[str, str]]:
     """Fetch the THS industry list page and extract the unique 881xxx boards.
 
@@ -405,7 +413,7 @@ async def fetch_ths_industry_list(
     unique 申万一级 industries. Malformed hrefs and non-881xxx codes are
     rejected. Returns ``(code, name)`` pairs in page order, or [] when the
     page cannot be fetched/decoded (the run treats an empty universe as a
-    no-op for boards, never a crash).
+    no-op for boards, never a crash). ``pool`` enables proxy-first rotation.
     """
     # One retry with a short backoff — a transient 500/429 on the list page
     # must not silently empty the whole industry universe (review P2-2).
@@ -413,7 +421,7 @@ async def fetch_ths_industry_list(
     for attempt in range(2):
         try:
             await throttle.acquire()
-            resp = await session.get(THS_LIST_URL, headers=THS_HEADERS)
+            resp = await proxy_get(session, pool, THS_LIST_URL, headers=THS_HEADERS)
             resp.raise_for_status()
             html = resp.content.decode("gbk", errors="replace")
             break
@@ -446,6 +454,8 @@ async def fetch_ths_kline(
     throttle: Throttle,
     code: str,
     year: int,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> list[str] | None:
     """Fetch one year of THS industry daily klines for one 881xxx code.
 
@@ -460,7 +470,7 @@ async def fetch_ths_kline(
     Returns the normalized 7-field rows, [] for a structurally empty year, or
     None when the request/parse failed. The caller walks back through years on
     None (never truncating history) and counts the board as failed when
-    nothing was collected.
+    nothing was collected. ``pool`` enables proxy-first rotation.
     """
     # One retry with a short backoff — a transient failure on one year must
     # not truncate the board history (review P1-1/P2-2); the caller still
@@ -470,8 +480,11 @@ async def fetch_ths_kline(
     for attempt in range(2):
         try:
             await throttle.acquire()
-            resp = await session.get(
-                THS_KLINE_TPL.format(code=code, year=year), headers=THS_HEADERS
+            resp = await proxy_get(
+                session,
+                pool,
+                THS_KLINE_TPL.format(code=code, year=year),
+                headers=THS_HEADERS,
             )
             resp.raise_for_status()
             body = resp.text
@@ -541,6 +554,8 @@ async def fetch_kline(
     throttle: Throttle,
     secid: str,
     last_date: str | None = None,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> tuple[list[str], str] | None:
     """Fetch daily klines for one secid.
 
@@ -549,7 +564,7 @@ async def fetch_kline(
     ``beg=0&end=20500000``; otherwise ``beg`` is ``last_date + 1 day`` in
     YYYYMMDD compact form so the API returns only the incremental window. The
     caller decides code-match validation (official indices validate, boards
-    don't).
+    don't). ``pool`` enables proxy-first rotation.
     """
     if last_date is None:
         beg = "0"
@@ -565,7 +580,7 @@ async def fetch_kline(
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
     }
-    data = await _get_json(session, throttle, KLINE_HOSTS, params)
+    data = await _get_json(session, throttle, KLINE_HOSTS, params, pool=pool)
     payload = (data or {}).get("data") or {}
     klines = payload.get("klines") or []
     return (klines, str(payload.get("code") or "")) if data else None
@@ -614,6 +629,8 @@ async def _fetch_tencent_kline(
     throttle: Throttle,
     secid: str,
     last_date: str | None = None,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> list[str] | None:
     """Fetch daily klines from Tencent for one official index.
 
@@ -627,7 +644,7 @@ async def _fetch_tencent_kline(
     strictly newer than ``last_date`` and stops paging as soon as a row
     ``<= last_date`` is seen. A structurally valid response that yields no new
     rows returns ``[]`` (successful no-op), which is distinct from ``None``
-    (request/malformed failure).
+    (request/malformed failure). ``pool`` enables proxy-first rotation.
     """
     try:
         tcode = _tencent_code(secid)
@@ -644,7 +661,7 @@ async def _fetch_tencent_kline(
         # latest `count` bars, setting it to (previous earliest - 1 day) pulls
         # the next older page (verified against the live Tencent API).
         param = f"{tcode},day,,{end_date},{_TENCENT_PAGE_SIZE},qfq"
-        data = await _get_json(session, throttle, (TENCENT_KLINE_URL,), {"param": param})
+        data = await _get_json(session, throttle, (TENCENT_KLINE_URL,), {"param": param}, pool=pool)
         if data is None:
             return None
         data_section = data.get("data")
@@ -754,13 +771,14 @@ async def run() -> Path:
 
     with Progress("index_daily", output_csv=daily_path) as progress:
         throttle = Throttle()
+        pool = make_proxy_pool()
         daily_records: list[dict[str, object]] = []
         basic_records: list[dict[str, object]] = []
         consecutive_failures = 0
         abort_reason: str | None = None
 
         async with AsyncSession(impersonate="chrome142") as session:
-            industries = await fetch_ths_industry_list(session, throttle)
+            industries = await fetch_ths_industry_list(session, throttle, pool=pool)
             print(f"THS industries: {len(industries)}", file=sys.stderr)
             if not industries:
                 print(
@@ -826,7 +844,7 @@ async def run() -> Path:
                 # window responded successfully (otherwise a failed latest
                 # year would be silently masked as "no new bars").
                 for year in range(_today().year, start_year - 1, -1):
-                    year_rows = await fetch_ths_kline(session, throttle, code, year)
+                    year_rows = await fetch_ths_kline(session, throttle, code, year, pool=pool)
                     if year_rows is None:
                         fetch_failed = True
                         print(
@@ -917,7 +935,7 @@ async def run() -> Path:
 
                 last_date = max_dt.isoformat() if max_dt is not None else None
                 result = await fetch_kline(
-                    session, throttle, target["secid"], last_date=last_date
+                    session, throttle, target["secid"], last_date=last_date, pool=pool
                 )
                 if result is None or not result[0]:
                     # EastMoney failed/empty → try Tencent fallback (issue #278).
@@ -927,7 +945,7 @@ async def run() -> Path:
                         file=sys.stderr,
                     )
                     tencent_klines = await _fetch_tencent_kline(
-                        session, throttle, target["secid"], last_date=last_date
+                        session, throttle, target["secid"], last_date=last_date, pool=pool
                     )
                     if last_date is not None:
                         # Incremental: a valid Tencent response with no new rows

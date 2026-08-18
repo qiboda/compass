@@ -45,7 +45,15 @@ from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
 
-from common import csv_dir, dedupe_csv, dolt_dir, dolt_sql_csv
+from common import (
+    ProxyPool,
+    csv_dir,
+    dedupe_csv,
+    dolt_dir,
+    dolt_sql_csv,
+    make_proxy_pool,
+    proxy_get,
+)
 
 # ── Constants ───────────────────────────────────────────────────
 EM_BASE = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -219,6 +227,8 @@ async def fetch_period(
     report_name: str,
     report_date: str,
     page_size: int = EM_PAGE_SIZE,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> list[dict]:
     """Fetch all pages for a single report period."""
     all_records = []
@@ -241,7 +251,7 @@ async def fetch_period(
         for attempt in range(EM_MAX_RETRIES):
             try:
                 await throttle.acquire()
-                resp = await session.get(EM_BASE, params=params, headers=EM_HEADERS)
+                resp = await proxy_get(session, pool, EM_BASE, params=params, headers=EM_HEADERS)
 
                 if resp.status_code == 429:
                     wait = 15 + random.uniform(0, 5)
@@ -291,6 +301,8 @@ async def fetch_by_update_date(
     report_name: str,
     anchor: str,
     page_size: int = EM_PAGE_SIZE,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> list[dict]:
     """Fetch all rows with UPDATE_DATE >= anchor (incremental revision detect).
 
@@ -320,7 +332,7 @@ async def fetch_by_update_date(
         for attempt in range(EM_MAX_RETRIES):
             try:
                 await throttle.acquire()
-                resp = await session.get(EM_BASE, params=params, headers=EM_HEADERS)
+                resp = await proxy_get(session, pool, EM_BASE, params=params, headers=EM_HEADERS)
 
                 if resp.status_code == 429:
                     wait = 15 + random.uniform(0, 5)
@@ -492,6 +504,7 @@ async def main():
     print(file=sys.stderr)
 
     throttle = Throttle()
+    pool = make_proxy_pool()
     total_records = 0
     max_report_date = ""
     max_update_date = ""
@@ -504,7 +517,7 @@ async def main():
             )
             try:
                 records = await fetch_by_update_date(
-                    session, throttle, report_name, anchor, page_size
+                    session, throttle, report_name, anchor, page_size, pool=pool
                 )
             except Exception as e:
                 print(f"FAILED: {e}", file=sys.stderr)
@@ -535,7 +548,7 @@ async def main():
 
                 try:
                     records = await fetch_period(
-                        session, throttle, report_name, report_date, page_size
+                        session, throttle, report_name, report_date, page_size, pool=pool
                     )
                 except Exception as e:
                     print(f"FAILED: {e}", file=sys.stderr)

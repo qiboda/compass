@@ -29,7 +29,7 @@ from typing import Any
 
 import requests
 
-from common import csv_dir
+from common import ProxyPool, csv_dir, make_proxy_pool, proxy_get_sync, proxy_post_sync
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
@@ -428,7 +428,7 @@ def records_to_csv(records: list[dict[str, Any]], path: Path) -> None:
 # ── 网络抓取函数（非测试范围，供 main() 在线调用） ─────────────────────────
 
 
-def fetch_sse(session: requests.Session) -> dict[str, Any]:
+def fetch_sse(session: requests.Session, *, pool: ProxyPool | None = None) -> dict[str, Any]:
     """从上交所 API 获取 A 股股票列表 JSON。
 
     Returns:
@@ -438,12 +438,18 @@ def fetch_sse(session: requests.Session) -> dict[str, Any]:
         "User-Agent": USER_AGENT,
         "Referer": "https://www.sse.com.cn/",
     }
-    resp = session.get(SSE_URL, params=SSE_PARAMS, headers=headers, timeout=30)
+    resp = proxy_get_sync(session, pool, SSE_URL, params=SSE_PARAMS, headers=headers, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
-def fetch_szse_xlsx(session: requests.Session, catalogid: str, tabkey: str) -> str:
+def fetch_szse_xlsx(
+    session: requests.Session,
+    catalogid: str,
+    tabkey: str,
+    *,
+    pool: ProxyPool | None = None,
+) -> str:
     """从深交所 API 下载 xlsx 报表，解压提取 sheet1.xml。
 
     Args:
@@ -464,7 +470,7 @@ def fetch_szse_xlsx(session: requests.Session, catalogid: str, tabkey: str) -> s
         "User-Agent": USER_AGENT,
         "Referer": "https://www.szse.cn/",
     }
-    resp = session.get(SZSE_XLSX_URL, params=params, headers=headers, timeout=30)
+    resp = proxy_get_sync(session, pool, SZSE_XLSX_URL, params=params, headers=headers, timeout=30)
     resp.raise_for_status()
 
     # xlsx 本质是 ZIP 包，提取 sheet1.xml
@@ -472,7 +478,7 @@ def fetch_szse_xlsx(session: requests.Session, catalogid: str, tabkey: str) -> s
         return zf.read("xl/worksheets/sheet1.xml").decode("utf-8")
 
 
-def fetch_bse(session: requests.Session) -> list[dict[str, Any]]:
+def fetch_bse(session: requests.Session, *, pool: ProxyPool | None = None) -> list[dict[str, Any]]:
     """从北交所 API 分页获取全部上市股票。
 
     流程：先 GET 列表页获取 cookie，再 POST 分页请求，
@@ -482,7 +488,9 @@ def fetch_bse(session: requests.Session) -> list[dict[str, Any]]:
         原始 API 行列表（字段：xxzqdm, xxzqjc, fxssrq, xxhyzl, xxssdq, xxzgb 等）
     """
     # 第一步：访问列表页获取必要 cookie
-    session.get(
+    proxy_get_sync(
+        session,
+        pool,
         BSE_LISTED_URL,
         headers={"User-Agent": USER_AGENT},
         timeout=20,
@@ -506,7 +514,7 @@ def fetch_bse(session: requests.Session) -> list[dict[str, Any]]:
             "Referer": "https://www.bse.cn/nq/listedcompany.html",
             "X-Requested-With": "XMLHttpRequest",
         }
-        resp = session.post(BSE_API_URL, data=data, headers=headers, timeout=30)
+        resp = proxy_post_sync(session, pool, BSE_API_URL, data=data, headers=headers, timeout=30)
         resp.raise_for_status()
         body = resp.text
 
@@ -566,6 +574,7 @@ def main() -> None:
 
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
+    pool = make_proxy_pool()
 
     # 收集各交易所记录
     exchange_records: list[list[dict[str, Any]]] = []
@@ -573,7 +582,7 @@ def main() -> None:
     # ── 上交所 ──
     print("\n[1/4] 上交所 SSE ...", file=sys.stderr)
     try:
-        sse_data = _with_retry(fetch_sse, session, desc="上交所")
+        sse_data = _with_retry(fetch_sse, session, pool=pool, desc="上交所")
         sse_records = parse_sse_json(sse_data, update_date)
         exchange_records.append(sse_records)
         print(f"  ✓ 上交所: {len(sse_records)} 条（含退市）", file=sys.stderr)
@@ -584,7 +593,7 @@ def main() -> None:
     print("\n[2/4] 深交所 SZSE 正常上市 ...", file=sys.stderr)
     try:
         szse_active_xml = _with_retry(
-            fetch_szse_xlsx, session, "1110", "tab1", desc="深交所 正常上市"
+            fetch_szse_xlsx, session, "1110", "tab1", pool=pool, desc="深交所 正常上市"
         )
         szse_records = parse_szse_xlsx(szse_active_xml, update_date)
         exchange_records.append(szse_records)
@@ -596,7 +605,7 @@ def main() -> None:
     print("\n[3/4] 深交所 SZSE 退市股 ...", file=sys.stderr)
     try:
         szse_delisted_xml = _with_retry(
-            fetch_szse_xlsx, session, "1793_ssgs", "tab2", desc="深交所 退市"
+            fetch_szse_xlsx, session, "1793_ssgs", "tab2", pool=pool, desc="深交所 退市"
         )
         szse_delisted_records = parse_szse_delisted(szse_delisted_xml, update_date)
         exchange_records.append(szse_delisted_records)
@@ -607,7 +616,7 @@ def main() -> None:
     # ── 北交所 ──
     print("\n[4/4] 北交所 BSE ...", file=sys.stderr)
     try:
-        bse_raw_rows = _with_retry(fetch_bse, session, desc="北交所")
+        bse_raw_rows = _with_retry(fetch_bse, session, pool=pool, desc="北交所")
         # 将原始行重新打包为 JSONP body 再调用 parse_bse_json
         bse_body = f"null([{{\"content\": {json.dumps(bse_raw_rows)}}}])"
         bse_records = parse_bse_json(bse_body, update_date)
