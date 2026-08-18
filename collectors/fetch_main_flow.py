@@ -23,10 +23,13 @@ from pathlib import Path
 from common import (
     AsyncSession,
     Progress,
+    ProxyPool,
     Throttle,
     csv_dir,
     import_replace_table,
     last_report_date,
+    make_proxy_pool,
+    proxy_get,
     write_csv,
 )
 
@@ -147,7 +150,12 @@ def _build_records(diff: list[dict], trade_date: date) -> list[dict]:
 
 
 async def _fetch_page(
-    session, throttle: Throttle, page_number: int, page_size: int
+    session,
+    throttle: Throttle,
+    page_number: int,
+    page_size: int,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> tuple[list[dict], int]:
     """Fetch one snapshot page; returns (diff items, reported total)."""
     params = {
@@ -165,7 +173,7 @@ async def _fetch_page(
         for attempt in range(4):
             try:
                 await throttle.acquire()
-                resp = await session.get(base, params=params, headers=PUSH2_HEADERS)
+                resp = await proxy_get(session, pool, base, params=params, headers=PUSH2_HEADERS)
                 if resp.status_code == 429:
                     wait = 15 + random.uniform(0, 5)
                     print(f"    429, waiting {wait:.0f}s...", file=sys.stderr)
@@ -191,13 +199,19 @@ async def _fetch_page(
     return [], 0
 
 
-async def _fetch_snapshot(session, throttle: Throttle, page_size: int) -> list[dict]:
+async def _fetch_snapshot(
+    session,
+    throttle: Throttle,
+    page_size: int,
+    *,
+    pool: "ProxyPool | None" = None,
+) -> list[dict]:
     """Fetch the full-market snapshot, paginating over pn until total is met."""
     all_items: list[dict] = []
     total = 0
     page = 1
     while True:
-        items, data_total = await _fetch_page(session, throttle, page, page_size)
+        items, data_total = await _fetch_page(session, throttle, page, page_size, pool=pool)
         if not items:
             break
         all_items.extend(items)
@@ -228,8 +242,9 @@ async def run(page_size: int = 1000) -> Path:
 
     with Progress("main_flow", output_csv=output_path) as progress:
         throttle = Throttle()
+        pool = make_proxy_pool()
         async with AsyncSession(impersonate="chrome142") as session:
-            diff = await _fetch_snapshot(session, throttle, page_size)
+            diff = await _fetch_snapshot(session, throttle, page_size, pool=pool)
 
         if not diff:
             output_path.unlink(missing_ok=True)

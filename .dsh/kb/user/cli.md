@@ -255,6 +255,28 @@ block_trade 的 buyer/seller）。仅去 ASCII 空格（U+0020），全角空格
 `fetch_stock_basic.py` 仍保留但不再用于 stock_basic——其 EM_FS m:0+t:81 段混入
 6841 只新三板/老三板股票。原先为东财分页设计的 `--resume` / `--max-pages` 标志已移除。
 
+### 代理层（proxy_pool，issue #294）
+
+所有 HTTPS 采集默认走本地 proxy_pool（`http://127.0.0.1:5010`）代理：
+**proxy-first**——有 https 可用代理必走代理；池空/API 不可达时打印醒目警告并写
+`proxy_pool_state.json`（时间戳/池计数/是否降级）后**直连**，绝不因无代理失败。
+坏代理自动 `delete` 出池并换下一个（有界重试后直连兜底）。可用环境变量：
+
+- `COMPASS_PROXY_API_URL`：proxy_pool API 基址（默认 `http://127.0.0.1:5010`）
+- `COMPASS_PROXY_DISABLE=1`：完全禁用代理层（测试/本地无池时）
+- `COMPASS_CSV_DIR`：`proxy_pool_state.json` 所在目录（默认 `/data/compass-data/csv/`）
+
+**保持池温（keepalive）**：`collectors/proxy_keepalive.py` 后台常驻循环，每周期
+从 freeproxy `json` 快照 + `realtime` 双源灌 proxy_pool Redis（`use_proxy` hash），
+GitHub raw 429/超时自动用本地 `/tmp/freeproxy.json` 快照兜底：
+
+```sh
+cd collectors/
+uv run python proxy_keepalive.py --once              # 单轮（测试/冒烟）
+uv run python proxy_keepalive.py --interval 600      # 常驻（每 10 分钟一轮）
+nohup uv run python proxy_keepalive.py --interval 600 >> /data/compass-data/csv/proxy_keepalive.log 2>&1 &
+```
+
 采集器管线的完整描述见 `.dsh/kb/design/architecture.md`。
 
 ---

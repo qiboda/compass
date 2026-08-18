@@ -68,8 +68,13 @@ def _safe_proxy(host: Any, port: Any) -> str | None:
         return None
     if "/" in host or "@" in host:
         return None
+    port_str = str(port)
+    # int() tolerates surrounding whitespace, so an injected CRLF/space in the
+    # port string must be rejected explicitly (adversarial test #294).
+    if any(ch.isspace() or ord(ch) < 32 for ch in port_str):
+        return None
     try:
-        port_int = int(port)
+        port_int = int(port_str)
     except (TypeError, ValueError):
         return None
     if not 1 <= port_int <= 65535:
@@ -151,11 +156,26 @@ def normalize_proxy_info(info: Any) -> dict[str, Any]:
     }
 
 
-def fetch_json_proxies(url: str, limit: int) -> list[dict[str, Any]]:
-    """Download and filter the freeproxy ``proxies.json`` snapshot."""
+
+
+
+def fetch_json_payload(url: str) -> Any:
+    """Download and parse the freeproxy ``proxies.json`` snapshot.
+
+    Raises on network/HTTP errors so the keepalive script can distinguish a
+    fresh-source failure from a local snapshot fallback.
+    """
     resp: Any = _curl_requests.get(url, timeout=30)
     resp.raise_for_status()
-    payload = resp.json()
+    return resp.json()
+
+
+def records_from_json_data(payload: Any, limit: int) -> list[dict[str, Any]]:
+    """Filter and normalize a freeproxy JSON payload into proxy_pool records.
+
+    This is the shared parser used by both the online source and the local
+    snapshot fallback so the two paths never drift.
+    """
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, list):
         data = []
@@ -172,6 +192,11 @@ def fetch_json_proxies(url: str, limit: int) -> list[dict[str, Any]]:
         except ValueError:
             continue
     return records
+
+
+def fetch_json_proxies(url: str, limit: int) -> list[dict[str, Any]]:
+    """Download and filter the freeproxy ``proxies.json`` snapshot."""
+    return records_from_json_data(fetch_json_payload(url), limit)
 
 
 def fetch_realtime_proxies(limit: int, sources: Iterable[str]) -> list[dict[str, Any]]:
@@ -291,5 +316,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
     raise SystemExit(main())

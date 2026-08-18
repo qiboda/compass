@@ -667,3 +667,17 @@
   https key 已改为 `http://`。
 - **教训**: 对第三方 Alpine 镜像打补丁前先确认基础工具是否安装；沙箱网络限制同时
   影响 build RUN 与容器运行，统一用 host network 验证。
+
+### [DSH] 子代理工具整体不可用 "subagent run failed"
+
+- **症状**: 本 session 委派 `subagent_skwy_adversarial_test` / `subagent_skwy_requirement_test` 后台运行立即失败（"failed before it finished. It left no closing message."）；恢复重试同样失败；前台通用 `subagent` 最小任务报 `Error: subagent run failed`；`dev_mode_subagent` 返回空结果。
+- **根因**: 子代理运行基础设施故障。用最小任务排除任务内容/权限因素；session 日志（`session.jsonl.zstd`）中工具结果仅 `Error: subagent run failed`，无更深层错误；DSH 服务日志不可读，无法从 session 内修复。
+- **排查路径**:
+  1. 委派一个最小任务（"回复一句话"）到 `subagent` 前台 → 同样失败，排除任务复杂性
+  2. 同时启动两个 `subagent_skwy_*` 后台 → 均无产出无 closing message
+  3. 用 `send_message` 恢复子代理 → 再次立即失败
+  4. `dev_mode_subagent` 对照 → 返回空
+  5. 解压 `~/.dsh/sessions/<session>/session.jsonl.zstd`，grep `subagent run failed` 定位 tool/result，确认无堆栈
+- **修复**: 本次无法在 session 内修复；经用户批准采用 fallback——由主 agent 按 `skwy-adversarial-test` / `skwy-requirement-test` 方法论亲自编写 RED 测试（记录失去认知独立性）。
+- **验证**: fallback 后测试文件落盘 `collectors/tests/test_collectors_proxy_{adversarial,requirement}.py`，运行 pytest 得到预期 RED（导入失败）。
+- **教训**: 子代理委派是门禁硬性要求，但基础设施不可用时必须显式报告根因 + 用户批准 fallback，不得静默绕行；后续若 DSH 子代理恢复，应重新委派独立 QA 复核。

@@ -5,6 +5,7 @@ and state-file management — used by all collector modules.
 """
 
 import asyncio
+import contextlib
 import csv
 import json
 import logging
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any, TypeAlias
 
 from curl_cffi.requests import AsyncSession
+
+from proxy_pool_client import DEFAULT_PROXY_MAX_ATTEMPTS, ProxyPool, proxy_enabled
 
 # curl_cffi AsyncSession is generic over response type; pin to Any
 CFFI_SESSION: TypeAlias = AsyncSession[Any]
@@ -44,8 +47,13 @@ __all__ = [
     "name_en_mapping_path",
     "fetch_paginated",
     "flatten_record",
+    "make_proxy_pool",
     "Progress",
     "progress_path",
+    "proxy_get",
+    "proxy_get_sync",
+    "proxy_post",
+    "proxy_post_sync",
     "read_progress",
     "import_replace_table",
     "last_report_date",
@@ -536,6 +544,202 @@ def flatten_record(item: dict[str, object]) -> dict[str, str | int | float]:
     return record
 
 
+# ── Proxy-first request wrappers (issue #294) ────────────────────
+
+
+def make_proxy_pool() -> "ProxyPool | None":
+    """Create a ``ProxyPool`` bound to the shared state file, or None when disabled."""
+    if not proxy_enabled():
+        return None
+    return ProxyPool(state_path=csv_dir() / "proxy_pool_state.json")
+
+
+async def proxy_get(
+    session: CFFI_SESSION,
+    pool: "ProxyPool | None",
+    url: str,
+    *,
+    max_proxy_attempts: int = DEFAULT_PROXY_MAX_ATTEMPTS,
+    **kwargs: Any,
+) -> Any:
+    """GET with proxy-first rotation.
+
+    Tries up to ``max_proxy_attempts`` proxies from ``pool``; a request
+    exception through a proxy deletes that proxy and moves to the next one.
+    After the bounded attempts (or immediately when the pool is empty) the
+    request is sent direct. HTTP status codes are returned to the caller and
+    never treated as proxy failures.
+    """
+    if pool is None:
+        return await session.get(url, **kwargs)
+    attempts = max(0, int(max_proxy_attempts))
+    last_exc: Exception | None = None
+    for i in range(attempts + 1):
+        proxy: str | None = None
+        if i < attempts:
+            proxy = await pool.get_proxy()
+        try:
+            request_kwargs = dict(kwargs)
+            if proxy:
+                request_kwargs["proxies"] = pool.proxy_spec(proxy)
+            return await session.get(url, **request_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if proxy:
+                await pool.delete_proxy(proxy)
+                continue
+            raise
+    assert last_exc is not None  # pragma: no cover - loop always returns or raises
+    raise last_exc  # pragma: no cover
+
+
+async def proxy_post(
+    session: CFFI_SESSION,
+    pool: "ProxyPool | None",
+    url: str,
+    *,
+    max_proxy_attempts: int = DEFAULT_PROXY_MAX_ATTEMPTS,
+    **kwargs: Any,
+) -> Any:
+    """POST variant of :func:`proxy_get`."""
+    if pool is None:
+        return await session.post(url, **kwargs)
+    attempts = max(0, int(max_proxy_attempts))
+    last_exc: Exception | None = None
+    for i in range(attempts + 1):
+        proxy: str | None = None
+        if i < attempts:
+            proxy = await pool.get_proxy()
+        try:
+            request_kwargs = dict(kwargs)
+            if proxy:
+                request_kwargs["proxies"] = pool.proxy_spec(proxy)
+            return await session.post(url, **request_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if proxy:
+                await pool.delete_proxy(proxy)
+                continue
+            raise
+    assert last_exc is not None  # pragma: no cover - loop always returns or raises
+    raise last_exc  # pragma: no cover
+
+
+def proxy_get_sync(
+    session: Any,
+    pool: "ProxyPool | None",
+    url: str,
+    *,
+    max_proxy_attempts: int = DEFAULT_PROXY_MAX_ATTEMPTS,
+    **kwargs: Any,
+) -> Any:
+    """Synchronous GET variant for ``requests.Session`` call-sites."""
+    if pool is None:
+        return session.get(url, **kwargs)
+    attempts = max(0, int(max_proxy_attempts))
+    last_exc: Exception | None = None
+    for i in range(attempts + 1):
+        proxy: str | None = None
+        if i < attempts:
+            # Sync context: call the sync hook directly; get_proxy is async,
+            # so use a fresh event loop only when a live pool is configured.
+            # Tests inject a stub whose ``get_proxy`` is async; keep this path
+            # simple by expecting callers to pass an already-usable pool.
+            proxy = _sync_get_proxy(pool)
+        try:
+            request_kwargs = dict(kwargs)
+            if proxy:
+                request_kwargs["proxies"] = pool.proxy_spec(proxy)
+            return session.get(url, **request_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if proxy:
+                _sync_delete_proxy(pool, proxy)
+                continue
+            raise
+    assert last_exc is not None  # pragma: no cover - loop always returns or raises
+    raise last_exc  # pragma: no cover
+
+
+def proxy_post_sync(
+    session: Any,
+    pool: "ProxyPool | None",
+    url: str,
+    *,
+    max_proxy_attempts: int = DEFAULT_PROXY_MAX_ATTEMPTS,
+    **kwargs: Any,
+) -> Any:
+    """Synchronous POST variant for ``requests.Session`` call-sites."""
+    if pool is None:
+        return session.post(url, **kwargs)
+    attempts = max(0, int(max_proxy_attempts))
+    last_exc: Exception | None = None
+    for i in range(attempts + 1):
+        proxy: str | None = None
+        if i < attempts:
+            proxy = _sync_get_proxy(pool)
+        try:
+            request_kwargs = dict(kwargs)
+            if proxy:
+                request_kwargs["proxies"] = pool.proxy_spec(proxy)
+            return session.post(url, **request_kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if proxy:
+                _sync_delete_proxy(pool, proxy)
+                continue
+            raise
+    assert last_exc is not None  # pragma: no cover - loop always returns or raises
+    raise last_exc  # pragma: no cover
+
+
+def _sync_get_proxy(pool: "ProxyPool") -> str | None:
+    """Run ``pool.get_proxy()`` from a synchronous call-site.
+
+    The proxy_pool client is async-first; for the synchronous exchange
+    collectors we need a small event-loop bridge. A dedicated loop per call is
+    acceptable because these are rare local API calls, and the pool object has
+    no cross-call async state that requires the same loop.
+    """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(pool.get_proxy())
+    # Already inside a loop (rare in sync collectors): fall back to a direct
+    # pool call without awaiting — tests use a synchronous stub via this hook.
+    return _sync_get_proxy_fallback(pool)
+
+
+def _sync_get_proxy_fallback(pool: "ProxyPool") -> str | None:
+    """Best-effort sync proxy acquisition when no fresh loop is available."""
+    try:
+        # Tests monkeypatch ``_api_get`` with a plain sync callable; this
+        # path keeps the sync wrappers testable without an event loop.
+        data = pool._api_get("/get/", {"type": "https"})
+    except Exception:
+        return None
+    if isinstance(data, dict):
+        proxy = data.get("proxy")
+        if isinstance(proxy, str) and proxy.strip():
+            return proxy.strip()
+    return None
+
+
+def _sync_delete_proxy(pool: "ProxyPool", proxy: str) -> None:
+    """Best-effort synchronous ``delete_proxy`` bridge."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(pool.delete_proxy(proxy))
+        return
+    with contextlib.suppress(Exception):
+        pool._api_get("/delete/", {"proxy": proxy})
+
+
 async def fetch_paginated(
     session: CFFI_SESSION,
     throttle: Throttle,
@@ -543,6 +747,8 @@ async def fetch_paginated(
     filter_column: str,
     report_date: str,
     page_size: int = EM_PAGE_SIZE,
+    *,
+    pool: "ProxyPool | None" = None,
 ) -> list[dict[str, str | int | float]]:
     """Fetch all pages for a single report period.
 
@@ -575,7 +781,7 @@ async def fetch_paginated(
         for attempt in range(EM_MAX_RETRIES):
             try:
                 await throttle.acquire()
-                resp = await session.get(EM_BASE, params=params, headers=EM_HEADERS)
+                resp = await proxy_get(session, pool, EM_BASE, params=params, headers=EM_HEADERS)
 
                 if resp.status_code == 429:
                     wait = 15 + random.uniform(0, 5)
