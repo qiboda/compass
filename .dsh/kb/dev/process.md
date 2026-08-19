@@ -540,6 +540,8 @@ nohup uv run python proxy_keepalive.py --interval 600 \
 
 - 每周期：freeproxy `json` 快照（成功写 `/tmp/freeproxy.json`）→ realtime 双源灌
   proxy_pool Redis；json 下载失败（GitHub raw 429/超时）自动用快照兜底。
+- compose 已把 `proxy_redis` 端口 `127.0.0.1:6379` 映射到宿主机（issue #296），
+  keepalive / fetch_freeproxy 默认 redis-url 无需再传容器 IP。
 - 任一步失败只日志不崩溃；监控日志关键字 `[keepalive] cycle done` 与
   `curl http://127.0.0.1:5010/count/`。
 

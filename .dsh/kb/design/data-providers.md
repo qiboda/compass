@@ -433,6 +433,9 @@ collectors 对东财/THS/交易所官网的 HTTPS 抓取默认走本地 proxy_po
   腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）。
 - `collectors/proxy_keepalive.py`：后台常驻喂源循环（freeproxy json + realtime 双源，
   本地 `/tmp/freeproxy.json` 快照兜底）。
+- compose 部署（`scripts/proxy_pool/docker-compose.yml`）把 `proxy_redis` 的 6379
+  以 `127.0.0.1:6379:6379` loopback 暴露到宿主机，保证 keepalive / fetch_freeproxy
+  默认 `redis://@127.0.0.1:6379/0` 可直接灌池（issue #296）。
 
 ### 行为契约
 

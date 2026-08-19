@@ -277,6 +277,9 @@ uv run python proxy_keepalive.py --interval 600      # 常驻（每 10 分钟一
 nohup uv run python proxy_keepalive.py --interval 600 >> /data/compass-data/csv/proxy_keepalive.log 2>&1 &
 ```
 
+> compose 部署（`scripts/proxy_pool/docker-compose.yml`）已把 Redis 映射到
+> `127.0.0.1:6379`（仅 loopback），上述默认命令可直接使用（issue #296）。
+
 采集器管线的完整描述见 `.dsh/kb/design/architecture.md`。
 
 ---

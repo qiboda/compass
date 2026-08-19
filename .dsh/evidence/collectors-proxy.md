@@ -78,3 +78,15 @@ Output: /tmp/smoke-csv/RPT_MAIN_MONEY_FLOW.csv
   2. 后台跑 `proxy_keepalive.py --interval 600` 保持池温；
   3. 跑一次 `fetch_index_daily`（或 `fetch_main_flow`）确认走代理且无 curl 56；
   4. 观察 `proxy_pool_state.json` 在池空时降级、池有货时不降级。
+
+## 5. 后续修复（issue #296）
+
+- 根因：compose 版 `proxy_redis` 未向宿主机暴露 6379，keepalive 默认
+  `redis://@127.0.0.1:6379/0` 报 `Error 111`（见上文第 2 节）。
+- 修复：`scripts/proxy_pool/docker-compose.yml` 为 `proxy_redis` 增加
+  `ports: ["127.0.0.1:6379:6379"]`（仅 loopback）。
+- 验证：`docker compose up -d` 后宿主机
+  `redis.Redis(host='127.0.0.1', port=6379).ping()` → PONG；
+  `proxy_keepalive.py --interval 300` 使用默认 redis-url 正常灌入（日志
+  `json source ok`）；回归测试 `collectors/tests/test_proxy_pool_compose.py`
+  5 passed。
