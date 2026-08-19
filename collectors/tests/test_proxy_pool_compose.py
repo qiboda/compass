@@ -62,4 +62,9 @@ def test_keepalive_default_redis_url_matches_host_port() -> None:
     keepalive = REPO_ROOT / "collectors" / "proxy_keepalive.py"
     fetch_freeproxy = REPO_ROOT / "collectors" / "fetch_freeproxy.py"
     assert 'DEFAULT_REDIS_URL = "redis://@127.0.0.1:6379/0"' in fetch_freeproxy.read_text(encoding="utf-8")
-    assert '"--redis-url"' in keepalive.read_text(encoding="utf-8")
+    # Keepalive must actually wire its --redis-url default to the same constant;
+    # otherwise a drift between the two would still pass the literal checks above.
+    assert (
+        "default=fetch_freeproxy.DEFAULT_REDIS_URL"
+        in keepalive.read_text(encoding="utf-8")
+    )
