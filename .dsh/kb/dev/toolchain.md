@@ -681,6 +681,7 @@
 - **修复**: 本次无法在 session 内修复；经用户批准采用 fallback——由主 agent 按 `skwy-adversarial-test` / `skwy-requirement-test` 方法论亲自编写 RED 测试（记录失去认知独立性）。
 - **验证**: fallback 后测试文件落盘 `collectors/tests/test_collectors_proxy_{adversarial,requirement}.py`，运行 pytest 得到预期 RED（导入失败）。
 - **教训**: 子代理委派是门禁硬性要求，但基础设施不可用时必须显式报告根因 + 用户批准 fallback，不得静默绕行；后续若 DSH 子代理恢复，应重新委派独立 QA 复核。
+- **2026-08-19 复发/根因**：本次前台+后台子代理全失败，孩子日志（`~/.dsh/sessions/<workspace>/<child-id>/session.jsonl.zstd`）定位 `429 GoUsageLimitError: Weekly usage limit reached...`（OpenCode Go 周配额）。根因是子代理继承父 agent 创建时旧 `AgentOptions`，session 中途换模型不生效；已修 deepseek-harness `resolveChildAgentOptions`（优先读 `parent.session.requestHeader()?.config`，commit fbd193a），DSH 重启后子代理恢复。排查时务必先解压孩子会话日志看 `turn/end` 的 `reason.error`。
 
 ### [DSH] str_replace_editor 大段替换会“成功”但吞掉内容
 

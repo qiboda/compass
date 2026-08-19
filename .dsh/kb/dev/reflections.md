@@ -481,3 +481,33 @@
 - 多次真实冒烟暴露单测盲区（#283 CSV 复活、#286 成交额、#292 增量、#294 沙箱 push2 超时）→ 保持“真实数据冒烟 + evidence 落盘”强制步骤，并在 evidence 中显式记录环境限制。
 - proxy_pool 系列（#287/#290/#294）反复受“沙箱无 proxy_pool/Redis”限制 → evidence 模板应固定“生产 VPS 最终验证清单”，避免每次重新摸索。
 - 采集器网络/反爬主题高频出现（#277/#278/#283/#286/#287/#290/#292/#294）→ 该领域值得沉淀为 skill/checklist（如“反爬/网络故障排查卡”）。
+
+## 2026-08-19 — ref #296 expose proxy_redis host port in compose for keepalive
+
+**What was done**: 修复 compose 版 `proxy_redis` 未向宿主机暴露 6379 导致 keepalive / fetch_freeproxy 默认 redis URL 连不上（Error 111）；新增回归测试与 docs（6ab22e1、38fc95f）。
+
+**User corrections**:
+- “所有子代理审查工具连续失败 这是为什么” —— 用户要求追查子代理审查失败根因，不接受仅 fallback。
+- “查一下为什么会失败，修复它” —— 要求修复根因而非绕行。
+- “这个session之前是使用opencode go，我把session的模型换了，但是子模型没有自动切换到新的，这个bug吧。” —— 用户准确指出 DSH bug：子代理继承旧启动模型，session 中途换模型不生效。
+
+**What went wrong**:
+- 子代理审查工具（前台+后台）全失败，最初按已知 toolchain 卡直接走人工复核 fallback；用户坚持追根因后才发现真因是 OpenCode Go 周配额 + 子代理继承旧模型（并非“基础设施不可知”）。
+- `pkill -f 'proxy_keepalive.py --interval 300'` 匹配到调用 shell 自身，把当前 bash 杀掉（SIGTERM），导致 keepalive 重启命令未执行；教训：清理后台进程用精确 PID，避免 broad pkill 匹配自身命令行。
+- write/edit 工具强制先 read，多次因未先 read 报错返工。
+- compose 端口暴露缺陷是切换 host-network→bridge 后才暴露的部署缝隙，首次 compose 启动即遇到。
+
+**Lessons learned**:
+1. 子代理失败先解压孩子会话日志看 `turn/end` 的 `reason.error`——能直接定位 provider 配额/模型错误，而不是停在“基础设施故障”卡片。
+2. 子代理应跟随父 session 当前模型，而非创建时 `AgentOptions`（已修 deepseek-harness fbd193a）。
+3. 杀后台进程用精确 PID（`pgrep -f` 后取 PID 再 kill），不要把 `pkill -f` 模式写进会同时匹配自身 shell 的命令里。
+4. 部署形态变更（host-network→compose）后必须重新验证“宿主机可达性”类假设（端口映射）。
+
+**Process improvements**:
+- toolchain.md「DSH 子代理工具整体不可用」卡片追加 2026-08-19 复发/根因（OpenCode Go 配额 + 旧模型继承 + 修复 commit fbd193a）。
+- 回归测试 `collectors/tests/test_proxy_pool_compose.py` 固化 compose 端口与 keepalive 默认 URL 绑定（ref #296）。
+
+### Trends (last 10)
+- 子代理交付/基础设施异常再次出现（#244/#245/#255/#278/#294 → 本次 #296 追到真实根因）→ 反思已从“记录故障”升级为“读孩子日志定位真因”，可固化为子代理故障排查脚本。
+- 采集器网络/反爬主题继续高频（#287/#290/#292/#294/#296）→ 建议沉淀反爬/网络故障排查 checklist。
+- “部署形态变更后验证可达性”是新出现的模式，值得在 process.md 部署章节加检查项。
