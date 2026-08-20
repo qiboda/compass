@@ -584,3 +584,27 @@ class TestMainIncremental:
 
         with pytest.raises(RuntimeError, match="boom"):
             main.do_sync()
+
+    def test_do_sync_propagates_fin_indicators_failure(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """fin_indicators 增量抓取异常必须让 do_sync 在 F10 之前失败。
+
+        RED: 当前 fetch_fin_indicators 吞掉异常，do_sync 继续执行后续步骤。
+        """
+        import main
+
+        sb = _import_module("fetch_stock_basic_official")
+        monkeypatch.setattr(sb, "main", lambda: None, raising=False)
+        monkeypatch.setattr(main, "_import_stock_basic", lambda: None, raising=False)
+
+        fi = _import_module("fetch_fin_indicators")
+
+        async def boom() -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(fi, "main", boom, raising=False)
+        monkeypatch.setattr(main, "dolt_sql", lambda *a, **k: None, raising=False)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            main.do_sync()
