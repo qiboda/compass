@@ -1021,9 +1021,7 @@ async def fetch_incremental(
     Returns the number of records fetched (0 means an empty window or a
     fetch failure — the anchor/state is never advanced on empty results).
     """
-    anchor = (anchor_resolver or update_date_anchor)(
-        report_name, state_path, dolt_table=dolt_table
-    )
+    anchor = (anchor_resolver or update_date_anchor)(report_name, state_path, dolt_table=dolt_table)
     if not anchor:
         anchor = initial_anchor
         print(
@@ -1042,9 +1040,7 @@ async def fetch_incremental(
     max_update_date = ""
 
     async with (session_factory or AsyncSession)(impersonate="chrome142") as session:
-        print(
-            f"[1/1] UPDATE_DATE>='{anchor}' ...", file=sys.stderr, end=" ", flush=True
-        )
+        print(f"[1/1] UPDATE_DATE>='{anchor}' ...", file=sys.stderr, end=" ", flush=True)
         try:
             records = await (fetch_fn or fetch_by_update_date)(
                 session, throttle, report_name, anchor, page_size, pool=pool
