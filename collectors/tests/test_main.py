@@ -652,7 +652,7 @@ class TestMain:
         monkeypatch.setattr(main_mod, "dispatch_fetch", mock_dispatch)
 
         main_mod.main()
-        mock_dispatch.assert_called_once_with("stock_basic", years=None)
+        mock_dispatch.assert_called_once_with("stock_basic", years=None, incremental=False)
 
     def test_fetch_fin_indicators_with_years(
         self,
@@ -669,7 +669,7 @@ class TestMain:
         monkeypatch.setattr(main_mod, "dispatch_fetch", mock_dispatch)
 
         main_mod.main()
-        mock_dispatch.assert_called_once_with("fin_indicators", years=[2024, 2025])
+        mock_dispatch.assert_called_once_with("fin_indicators", years=[2024, 2025], incremental=False)
 
     def test_fetch_with_years_list(
         self,
@@ -686,7 +686,7 @@ class TestMain:
         monkeypatch.setattr(main_mod, "dispatch_fetch", mock_dispatch)
 
         main_mod.main()
-        mock_dispatch.assert_called_once_with("stock_basic", years=[2024])
+        mock_dispatch.assert_called_once_with("stock_basic", years=[2024], incremental=False)
 
     def test_import_stock_basic(
         self,

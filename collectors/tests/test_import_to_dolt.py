@@ -111,10 +111,9 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "1"
 
-    def test_first_run_insert_failure_drops_table(self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path) -> None:
-        """Replace semantics: first-run INSERT failure drops the freshly
-        created table — there is no old table to roll back to, so the target
-        table does not exist afterwards, with no temp-table residue.
+    def test_first_run_insert_failure_leaves_empty_table(self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path) -> None:
+        """Merge semantics: first-run INSERT failure leaves the empty table,
+        with no temp-table residue (no old table to restore).
         """
         dolt_dir, dolt_sql_csv = dolt_env
         csv_path = tmp_path / "bs.csv"
@@ -124,11 +123,11 @@ class TestImportToDolt:
         rows = import_to_dolt(csv_path)
 
         assert rows == 0
-        # replace: fresh table dropped on failure; no prior table to restore
+        # merge: freshly created table stays (empty); no old-table rename exists
         cnt = self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM fin_balance_sheet"
         ))
-        assert cnt == ""
+        assert cnt == "0"
         cnt = self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM information_schema.tables "
             "WHERE table_name='_tmp_bs_old'"

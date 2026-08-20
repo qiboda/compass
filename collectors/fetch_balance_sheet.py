@@ -13,8 +13,9 @@ Usage:
 """
 
 import asyncio
+import json
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from common import (
@@ -22,10 +23,14 @@ from common import (
     Throttle,
     build_dates,
     csv_dir,
+    dedupe_csv,
+    fetch_by_update_date,
     fetch_paginated,
     import_replace_table,
     last_report_date,
     make_proxy_pool,
+    normalize_update_date,
+    update_date_anchor,
     write_csv,
 )
 
@@ -33,6 +38,7 @@ REPORT_NAME = "RPT_F10_FINANCE_GBALANCE"
 FILTER_COLUMN = "REPORT_DATE"  # underscore — different from RPT_LICO_FN_CPD
 DOLT_TABLE = "fin_balance_sheet"
 START_YEAR = 2020
+INITIAL_UPDATE_ANCHOR = "2020-01-01"  # no-anchor first run: one full-history UPDATE_DATE pull
 
 DDL = """\
 CREATE TABLE IF NOT EXISTS fin_balance_sheet (
@@ -384,6 +390,24 @@ def trim_select_cols() -> str:
     )
 
 
+def _upsert_select_cols() -> str:
+    """SELECT-side aliased column list for the merge/ODKU import.
+
+    Each COLS column gets a unique ``_<COL>`` alias so the ODKU clause can
+    reference the source value without the Dolt-2.2.3-incompatible qualified
+    source refs or ``VALUES()`` (see main.py::_import_fin_indicators).
+    """
+    return ", ".join(
+        f"TRIM({col}) AS _{col}" if col in _TRIM_TEXT_COLS else f"{col} AS _{col}"
+        for col in COLS.split(", ")
+    )
+
+
+def _upsert_updates() -> str:
+    """ODKU update list: every non-PK COLS column is overwritten by its alias."""
+    return ", ".join(f"{col}=_{col}" for col in COLS.split(", "))
+
+
 # Wide temp-table schema: Dolt's `-c` CSV import inference caps row size at
 # 65504 bytes, which a 319-column CSV overflows — create the temp table
 # explicitly and import with `-u` (see common.py dolt_table_import).
@@ -716,15 +740,97 @@ async def run(
     years: list[int] | None = None,
     periods: str = "Q1,Q2,Q3,FY",
     page_size: int = 100,
+    incremental: bool = False,
 ) -> Path:
     """Fetch balance sheet data and write to CSV.
 
+    With ``incremental=True`` a single ``UPDATE_DATE>='anchor'`` pull replaces
+    per-period REPORT_DATE enumeration, so historical revisions are captured
+    and the full table is not re-fetched on every sync (issue #299). When no
+    anchor exists the fixed initial date ``2020-01-01`` is used (one full
+    history pull by UPDATE_DATE), never a REPORT_DATE enumeration fallback.
+
     Returns the path to the generated CSV file.
     """
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
+
+    if incremental:
+        state_path = csv_dir() / f"{REPORT_NAME}.state.json"
+        anchor = update_date_anchor(REPORT_NAME, state_path, dolt_table=DOLT_TABLE)
+        if not anchor:
+            anchor = INITIAL_UPDATE_ANCHOR
+            print(
+                f"No prior anchor found; using UPDATE_DATE>='{anchor}' for one full-history pull",
+                file=sys.stderr,
+            )
+        print(f"Report: {REPORT_NAME}", file=sys.stderr)
+        print(f"Update filter: UPDATE_DATE>='{anchor}' (ignores --years/--periods)", file=sys.stderr)
+        print(f"Output: {output_path.resolve()}", file=sys.stderr)
+        print(file=sys.stderr)
+
+        throttle = Throttle()
+        pool = make_proxy_pool()
+        total_records = 0
+        max_report_date = ""
+        max_update_date = ""
+
+        async with AsyncSession(impersonate="chrome142") as session:
+            print(
+                f"[1/1] UPDATE_DATE>='{anchor}' ...", file=sys.stderr, end=" ", flush=True
+            )
+            try:
+                records = await fetch_by_update_date(
+                    session, throttle, REPORT_NAME, anchor, page_size, pool=pool
+                )
+            except Exception as e:
+                print(f"FAILED: {e}", file=sys.stderr)
+                records = []
+
+            if records:
+                write_csv(records, output_path, append=False)
+                total_records += len(records)
+                for rec in records:
+                    rpt = rec.get("REPORT_DATE") or ""
+                    if rpt:
+                        max_report_date = max(max_report_date, rpt)
+                    upd = normalize_update_date(rec.get("UPDATE_DATE"))
+                    if upd:
+                        max_update_date = max(max_update_date, upd)
+                dedupe_csv(output_path, date_col="REPORT_DATE")
+                print(f"{len(records)} records", file=sys.stderr)
+            else:
+                print("empty", file=sys.stderr)
+
+        if total_records > 0:
+            state = {
+                "last_report_date": max_report_date,
+                "total_rows": total_records,
+                "last_run": datetime.now().isoformat(),
+            }
+            if not max_update_date:
+                # All fetched rows had empty/missing UPDATE_DATE: preserve the
+                # previous anchor (never advance, never regress).
+                try:
+                    prev = (
+                        json.loads(state_path.read_text()).get("last_update_date", "")
+                        if state_path.exists()
+                        else ""
+                    )
+                except (json.JSONDecodeError, OSError):
+                    prev = ""
+                max_update_date = prev
+            today = date.today().isoformat()
+            if max_update_date > today:
+                max_update_date = today
+            state["last_update_date"] = max_update_date
+            state_path.write_text(json.dumps(state, indent=2))
+
+        print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
+        return output_path
+
     if years is None:
         years = list(range(START_YEAR, datetime.now().year + 1))
 
-    output_path = csv_dir() / f"{REPORT_NAME}.csv"
     period_list = [p.strip() for p in periods.split(",")]
     all_dates = build_dates(years, period_list)
 
@@ -778,11 +884,14 @@ async def run(
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
-    """Import the fetched CSV into Dolt fin_balance_sheet (replace semantics).
+    """Import the fetched CSV into Dolt fin_balance_sheet (merge/upsert semantics).
 
-    The table is atomically REPLACED from the CSV (drop + fresh DDL + insert),
-    matching the F10 full-rebuild workflow — old DMSK rows are discarded and
-    the table always mirrors the latest full fetch (ref #202).
+    Incremental CSVs are UPSERTed into the existing table keyed by the PK
+    (symbol, report_date): new rows append to history while revised rows
+    (same PK, moved UPDATE_DATE) OVERWRITE the old row across every non-PK
+    value column. Writing constraint (Dolt 2.2.3): SELECT-side unique
+    aliases + ODKU unqualified alias refs — qualified source refs fail on
+    TRIM-wrapped text columns and VALUES() is unsupported (issue #299).
     """
     csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import balance_sheet]", file=sys.stderr)
@@ -792,19 +901,21 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         tmp_name="_tmp_bs",
         ddl=DDL,
         insert_sql=f"""
-            INSERT IGNORE INTO {DOLT_TABLE} (symbol, report_date, {COLS})
+            INSERT INTO {DOLT_TABLE} (symbol, report_date, {COLS})
             SELECT
-                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-                CAST(REPORT_DATE AS DATE), {trim_select_cols()}
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS _sym,
+                CAST(REPORT_DATE AS DATE) AS _rpt, {_upsert_select_cols()}
             FROM _tmp_bs
             WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                   IN (SELECT symbol FROM stock_basic)
+            ON DUPLICATE KEY UPDATE
+                {_upsert_updates()}
         """,
         create_sql=_TMP_BS_DDL,
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(report_date)",
-        merge=False,
+        merge=True,
     )
 
 
@@ -816,10 +927,12 @@ if __name__ == "__main__":
         p = argparse.ArgumentParser(description="Fetch A-share balance sheet")
         p.add_argument("--years", default="")
         p.add_argument("--periods", default="Q1,Q2,Q3,FY")
+        p.add_argument("--incremental", action="store_true")
         args = p.parse_args()
         await run(
             years=[int(y) for y in args.years.split(",") if y] or None,
             periods=args.periods,
+            incremental=args.incremental,
         )
 
     asyncio.run(_main())

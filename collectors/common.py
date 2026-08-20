@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -45,8 +45,11 @@ __all__ = [
     "drop_name_en_mapping",
     "load_name_en_mapping",
     "name_en_mapping_path",
+    "fetch_by_update_date",
     "fetch_paginated",
     "flatten_record",
+    "normalize_update_date",
+    "update_date_anchor",
     "make_proxy_pool",
     "Progress",
     "progress_path",
@@ -414,6 +417,80 @@ def last_report_date(dolt_table: str) -> str:
     if last and last != "NULL":
         return last
     return ""
+
+
+def normalize_update_date(value: object) -> str | None:
+    """Normalize an API UPDATE_DATE to its YYYY-MM-DD date prefix.
+
+    Handles time-suffixed values ("2026-08-05 00:00:00") and slash / zero-
+    padded variants ("2026/08/13", "2026-8-3").  Returns None for empty,
+    missing, or unparseable values so callers can SKIP them (they must never
+    crash the filter construction or the state max computation).
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
+    if not m:
+        return None
+    year, month, day = m.groups()
+    return f"{year}-{int(month):02d}-{int(day):02d}"
+
+
+def update_date_anchor(
+    report_name: str,
+    state_path: Path,
+    dolt_table: str | None = None,
+) -> str:
+    """Resolve the incremental UPDATE_DATE anchor for a report.
+
+    Anchor = min(data_updates.last_updated (table for ``report_name`` or
+    ``dolt_table``), state.json ``last_update_date``) — the EARLIER of the two
+    sources, so a cross-day fetch/import or a standalone import can never push
+    the anchor past rows updated in the fetch-import gap.
+
+    - data_updates row with NULL/empty ``last_updated`` → that source missing
+    - state.json lacking the ``last_update_date`` key (old single-key format)
+      → that source missing
+    - both sources missing → "" (caller decides fallback behavior)
+    - anchor > today → clamped to today (no-update semantics)
+
+    When ``dolt_table`` is provided it is used for the data_updates lookup
+    (F10 tables: ``fin_balance_sheet`` etc.); otherwise the legacy mapping is
+    kept (``RPT_LICO_FN_CPD`` → ``fin_indicators``, other report names use
+    the report name as the Dolt table).
+    """
+    sources: list[str] = []
+    if (dolt_dir() / ".dolt").exists():
+        table = (
+            dolt_table
+            if dolt_table is not None
+            else ("fin_indicators" if report_name == "RPT_LICO_FN_CPD" else report_name)
+        )
+        stdout = dolt_sql_csv(
+            f"SELECT last_updated FROM data_updates WHERE table_name='{table}'"
+        )
+        lines = stdout.strip().split("\n")
+        last = lines[-1].strip() if len(lines) > 1 else ""
+        if last and last != "NULL":
+            sources.append(last)
+
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            state = {}
+        last_update = state.get("last_update_date")
+        if last_update:
+            sources.append(str(last_update))
+
+    if not sources:
+        return ""
+    anchor = min(sources)
+    today = date.today().isoformat()
+    return today if anchor > today else anchor
 
 
 def _table_exists(table_name: str) -> str:
@@ -828,6 +905,92 @@ async def fetch_paginated(
     return all_records
 
 
+async def fetch_by_update_date(
+    session: CFFI_SESSION,
+    throttle: Throttle,
+    report_name: str,
+    anchor: str,
+    page_size: int = EM_PAGE_SIZE,
+    *,
+    pool: "ProxyPool | None" = None,
+) -> list[dict[str, str | int | float]]:
+    """Fetch all rows with UPDATE_DATE >= anchor (incremental revision detect).
+
+    Single UPDATE_DATE filter instead of per-period REPORTDATE enumeration:
+    catches revisions to any previously-fetched report period.  Sorted by
+    UPDATE_DATE so pagination walks revisions in stable order; total_pages is
+    capped at 500 and pagination progress is logged to stderr.
+    """
+    all_records: list[dict[str, str | int | float]] = []
+    page = 1
+    total_pages = 1
+
+    while page <= total_pages:
+        params = {
+            "reportName": report_name,
+            "columns": "ALL",
+            "filter": f"(UPDATE_DATE>='{anchor}')",
+            "sortColumns": "UPDATE_DATE",
+            "sortTypes": "1",
+            "pageSize": page_size,
+            "pageNumber": page,
+            "source": "WEB",
+            "client": "WEB",
+        }
+
+        data = None
+        for attempt in range(EM_MAX_RETRIES):
+            try:
+                await throttle.acquire()
+                resp = await proxy_get(session, pool, EM_BASE, params=params, headers=EM_HEADERS)
+
+                if resp.status_code == 429:
+                    wait = 15 + random.uniform(0, 5)
+                    print(f"    429, waiting {wait:.0f}s...", file=sys.stderr)
+                    await asyncio.sleep(wait)
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+                break
+
+            except Exception as e:
+                wait = min(2**attempt, 30) + random.uniform(0, 3)
+                if attempt < EM_MAX_RETRIES - 1:
+                    print(
+                        f"    retry {attempt + 1}/{EM_MAX_RETRIES} in {wait:.0f}s: {e}",
+                        file=sys.stderr,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+
+        if data is None:
+            print("    No data returned", file=sys.stderr)
+            break
+        if not data.get("success"):
+            print(f"    API error: {data.get('message', 'unknown')}", file=sys.stderr)
+            break
+
+        result = data.get("result")
+        if result is None:
+            break
+
+        items = result.get("data", [])
+        if not items:
+            break
+
+        for item in items:
+            all_records.append(flatten_record(item))
+
+        total_pages = min(result.get("pages", 1), 500)  # safety cap
+        if page > 1 or total_pages > 1:
+            print(f"    page {page}/{total_pages}", file=sys.stderr)
+        page += 1
+
+    return all_records
+
+
 # ── CSV output ──────────────────────────────────────────────────
 
 
@@ -846,8 +1009,8 @@ def write_csv(
         writer.writerows(records)
 
 
-def dedupe_csv(path: Path) -> None:
-    """Dedupe a CSV file in place, keeping the LAST row per (SECURITY_CODE, REPORTDATE).
+def dedupe_csv(path: Path, date_col: str = "REPORTDATE") -> None:
+    """Dedupe a CSV file in place, keeping the LAST row per (SECURITY_CODE, <date_col>).
 
     Reads the whole file (utf-8-sig, BOM-safe) and rewrites it with the same
     header and column order. Keep-LAST means the final occurrence's values win
@@ -856,7 +1019,9 @@ def dedupe_csv(path: Path) -> None:
     Rewriting is skipped when the file already has unique PKs.
 
     Called after every write so a revised row (same PK, newer UPDATE_DATE)
-    overwrites the old one instead of duplicating it in the CSV.
+    overwrites the old one instead of duplicating it in the CSV. F10 collectors
+    pass ``date_col="REPORT_DATE"`` because EastMoney F10 CSVs use the
+    underscore form (issue #299).
     """
     if not path.exists() or path.stat().st_size == 0:
         return
@@ -868,7 +1033,7 @@ def dedupe_csv(path: Path) -> None:
             return
         try:
             code_idx = header.index("SECURITY_CODE")
-            date_idx = header.index("REPORTDATE")
+            date_idx = header.index(date_col)
         except ValueError:
             return  # missing PK columns — leave the file untouched
 

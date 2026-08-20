@@ -662,14 +662,10 @@ class TestImportToDolt:
             == "1"
         )
 
-    def test_full_rebuild_replaces_history(
+    def test_merge_keeps_history(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Full-rebuild (replace) semantics: CSV B replaces the whole table.
-
-        The import is a full rebuild — the second CSV fully re-supplies the
-        table, so rows outside the new CSV disappear (PIN).
-        """
+        """Merge semantics: CSV B appends/upserts, history outside the CSV remains."""
         from fetch_cash_flow import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -680,9 +676,9 @@ class TestImportToDolt:
 
         self._write_csv(csv_path, [_make_row(), _make_row(secucode="000002.SZ")])
         rows = import_to_dolt(csv_path)
-        assert rows == 2
-        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_cash_flow")) == "2"
-        # 2023-12-31 row was outside the rebuild window and is gone.
+        assert rows == 3
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_cash_flow")) == "3"
+        # 2023-12-31 row was outside the new CSV but is retained by merge.
         assert (
             self._last(
                 dolt_sql_csv(
@@ -690,7 +686,7 @@ class TestImportToDolt:
                     "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
                 )
             )
-            == "0"
+            == "1"
         )
         assert (
             self._last(
@@ -699,7 +695,7 @@ class TestImportToDolt:
                     "WHERE table_name='fin_cash_flow'"
                 )
             )
-            == "2,2024-12-31"
+            == "3,2024-12-31"
         )
 
     def test_rebuild_applies_restated_value(
@@ -746,10 +742,10 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_cash_flow")) == "1"
 
-    def test_rebuild_watermark_full_total_and_max_date(
+    def test_merge_watermark_full_total_and_max_date(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Watermark counts the rebuilt table and its max report date (PIN)."""
+        """Watermark counts the merged table and its max report date."""
         from fetch_cash_flow import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -760,7 +756,7 @@ class TestImportToDolt:
 
         self._write_csv(csv_path, [_make_row()])
         rows = import_to_dolt(csv_path)
-        assert rows == 1
+        assert rows == 2
         assert (
             self._last(
                 dolt_sql_csv(
@@ -768,17 +764,13 @@ class TestImportToDolt:
                     "WHERE table_name='fin_cash_flow'"
                 )
             )
-            == "1,2024-12-31"
+            == "2,2024-12-31"
         )
 
-    def test_first_run_insert_failure_rolls_back_table(
+    def test_first_run_insert_failure_leaves_empty_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """First-run INSERT failure rolls back: no table, no tmp residue.
-
-        Replace drops the freshly created table on failure (there is no old
-        table to restore), leaving no fin_cash_flow at all (PIN).
-        """
+        """Merge first-run INSERT failure leaves the empty table, no tmp residue."""
         from fetch_cash_flow import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -788,7 +780,8 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 0
-        assert not self._table_exists(dolt_sql_csv, "fin_cash_flow")
+        assert self._table_exists(dolt_sql_csv, "fin_cash_flow")
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_cash_flow")) == "0"
         assert not self._table_exists(dolt_sql_csv, "_tmp_cf")
         assert not self._table_exists(dolt_sql_csv, "_tmp_cf_old")
         assert (

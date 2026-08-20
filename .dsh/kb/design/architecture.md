@@ -427,10 +427,14 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 - **curl_cffi** 而非 httpx/aiohttp：EastMoney 检查 TLS 指纹（JA3/JA4）；
   curl_cffi 模拟 Chrome 以绕过检测
 - **CSV 作为中间格式**：eastmoney → CSV → Dolt，而非直接写入
-- **增量模式**：状态文件（`.state.json`）记录上次获取日期；
-  `--incremental` 标志仅获取新的报告期间
-- **已知限制**：基于 REPORTDATE 的增量无法检测已获取期间的修订
-  （例如五粮液 2025Q1 修订）。计划使用周期性 `--refresh N` 标志（见 issue #27）
+- **增量模式**：状态文件（`{REPORT_NAME}.state.json`）记录 `last_update_date` 与
+  `last_report_date`；财务指标与财务三表（balance_sheet/income/cash_flow）的
+  `--incremental` 使用 **UPDATE_DATE 时间锚点**（`UPDATE_DATE>='{anchor}'`），
+  一次拉取新披露与历史修订，不再按 REPORT_DATE 报告期枚举；导入使用
+  **merge + `INSERT ... ON DUPLICATE KEY UPDATE`**（ODKU），历史永不丢失、
+  同 PK 修订覆盖旧值（issue #135 / #299）
+- **无 anchor 首跑**：财务三表 `--incremental` 在无 anchor 时固定
+  `2020-01-01` 走 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举（issue #299）
 
 ### import：Dolt investment_data → Parquet
 - 通过 `dolt sql -r parquet` 查询 Dolt `investment_data` 数据库

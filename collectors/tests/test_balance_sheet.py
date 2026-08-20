@@ -187,10 +187,10 @@ class TestImportToDolt:
         ).strip()
         assert "3" in row and "2024-12-31" in row
 
-    def test_replace_window_wipes_older_history(
+    def test_incremental_window_keeps_older_history(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Replace semantics: a window CSV wipes pre-window rows; merge kept them."""
+        """Merge semantics: a window CSV appends/upserts without wiping history."""
         from fetch_balance_sheet import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -202,17 +202,17 @@ class TestImportToDolt:
         self._write_csv(csv_path, [_make_row(), _make_row(secucode="000002.SZ")])
         rows = import_to_dolt(csv_path)
 
-        assert rows == 2  # replace: 2023-12-31 wiped
-        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "2"
+        assert rows == 3  # merge: 2023 history survives alongside 2024 + new symbol
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "3"
         assert self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM fin_balance_sheet "
             "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
-        )) == "0"
+        )) == "1"
         row = dolt_sql_csv(
             "SELECT row_count, last_report_date FROM data_updates "
             "WHERE table_name='fin_balance_sheet'"
         ).strip()
-        assert "2" in row and "2024-12-31" in row
+        assert "3" in row and "2024-12-31" in row
 
     def test_replace_overlap_uses_latest_csv_value(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -255,10 +255,10 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "1"
 
-    def test_replace_watermark_full_total_and_max_date(
+    def test_merge_watermark_full_total_and_max_date(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Watermark row_count is the full table count after replace, not the CSV batch size."""
+        """Watermark row_count is the full table count after merge, not the CSV batch size."""
         from fetch_balance_sheet import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -269,12 +269,12 @@ class TestImportToDolt:
         self._write_csv(csv_path, [_make_row()])
         rows = import_to_dolt(csv_path)
 
-        assert rows == 1  # replace: only the new window row survives
+        assert rows == 2  # merge: 2023 history remains + 2024 window row
         row = dolt_sql_csv(
             "SELECT row_count, last_report_date FROM data_updates "
             "WHERE table_name='fin_balance_sheet'"
         ).strip()
-        assert "1" in row and "2024-12-31" in row
+        assert "2" in row and "2024-12-31" in row
 
     def test_csv_not_found_returns_zero(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """When CSV does not exist, import_to_dolt returns 0 gracefully."""
@@ -284,10 +284,10 @@ class TestImportToDolt:
         result = import_to_dolt(tmp_path / "nonexistent.csv")
         assert result == 0
 
-    def test_first_run_insert_failure_drops_table(
+    def test_first_run_insert_failure_leaves_empty_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """On first-run insert failure the fresh table is dropped (no prior data to restore)."""
+        """Merge first-run insert failure leaves the empty table (no data_updates row)."""
         from fetch_balance_sheet import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -298,9 +298,9 @@ class TestImportToDolt:
         rows = import_to_dolt(csv_path)
 
         assert rows == 0
-        # Replace failure DROPs the fresh table → COUNT(*) on missing table returns ""
+        # Merge failure does not drop the freshly created table; it stays empty.
         cnt = self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet"))
-        assert cnt == ""
+        assert cnt == "0"
         for tbl in ("_tmp_bs", "_tmp_bs_old"):
             cnt = self._last(dolt_sql_csv(
                 "SELECT COUNT(*) FROM information_schema.tables "

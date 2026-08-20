@@ -266,10 +266,10 @@ class TestImportToDolt:
         ).strip()
         assert "3" in row and "2024-12-31" in row
 
-    def test_partial_window_replaces_table(
+    def test_partial_window_keeps_history(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """A partial-window CSV replaces the whole table (rebuild semantics)."""
+        """A partial-window CSV appends/upserts without wiping history (merge)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -279,20 +279,20 @@ class TestImportToDolt:
 
         self._write_csv(csv_path, [_make_row(), _make_row(secucode="000002.SZ")])
         rows = import_to_dolt(csv_path)
-        assert rows == 2
-        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "2"
+        assert rows == 3
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "3"
         assert self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM fin_income WHERE symbol='SZ000002'"
         )) == "1"
-        # periods outside the new CSV are dropped (replace, not append)
+        # periods outside the new CSV are retained (merge, not replace)
         assert self._last(dolt_sql_csv(
             "SELECT COUNT(*) FROM fin_income "
             "WHERE symbol='SZ000001' AND report_date='2023-12-31'"
-        )) == "0"
+        )) == "1"
         row = dolt_sql_csv(
             "SELECT row_count FROM data_updates WHERE table_name='fin_income'"
         ).strip()
-        assert "2" in row
+        assert "3" in row
 
     def test_restated_value_wins_on_replace(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
@@ -332,7 +332,7 @@ class TestImportToDolt:
         assert rows == 1
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "1"
 
-    def test_replace_watermark_full_total_and_max_date(
+    def test_merge_watermark_full_total_and_max_date(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
         """Watermark row_count is the final table count and max report date."""
@@ -345,17 +345,17 @@ class TestImportToDolt:
 
         self._write_csv(csv_path, [_make_row()])
         rows = import_to_dolt(csv_path)
-        assert rows == 1
+        assert rows == 2
         row = dolt_sql_csv(
             "SELECT row_count, last_report_date FROM data_updates "
             "WHERE table_name='fin_income'"
         ).strip()
-        assert "1" in row and "2024-12-31" in row
+        assert "2" in row and "2024-12-31" in row
 
-    def test_first_run_insert_failure_leaves_no_table(
+    def test_first_run_insert_failure_leaves_empty_table(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """First-run INSERT failure drops the fresh table (nothing to roll back to)."""
+        """Merge first-run INSERT failure leaves the empty table, no temp residue."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -365,10 +365,7 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 0
-        assert self._last(dolt_sql_csv(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_name='fin_income'"
-        )) == "0"
+        assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_income")) == "0"
         for t in ("_tmp_inc", "_tmp_inc_old"):
             cnt = self._last(dolt_sql_csv(
                 "SELECT COUNT(*) FROM information_schema.tables "
