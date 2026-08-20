@@ -134,6 +134,25 @@ class TestUpdateDateAnchorAdversarial:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# common.normalize_update_date — numeric/compact date forms
+# ═══════════════════════════════════════════════════════════════════
+
+class TestNormalizeUpdateDateAdversarial:
+    def test_numeric_yyyymmdd_and_float_are_normalized(self) -> None:
+        """紧凑数字日期（20260805 / 20260805.0）也应归一为 YYYY-MM-DD。
+
+        RED: 当前 regex 只认 -/ 分隔形式，数字日期返回 None。
+        """
+        common = _common()
+        assert common.normalize_update_date("20260805") == "2026-08-05"
+        assert common.normalize_update_date(20260805) == "2026-08-05"
+        assert common.normalize_update_date(20260805.0) == "2026-08-05"
+        assert common.normalize_update_date("20260805.0") == "2026-08-05"
+        assert common.normalize_update_date("202608") is None
+        assert common.normalize_update_date(2026) is None
+
+
+# ═══════════════════════════════════════════════════════════════════
 # run(incremental=True) — state edge cases
 # ═══════════════════════════════════════════════════════════════════
 
@@ -198,6 +217,71 @@ class TestRunIncrementalAdversarial:
         assert state_path.exists()
         state = json.loads(state_path.read_text())
         assert state["last_update_date"] == "2025-01-01"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target,mod,report,dolt_table", F10, ids=[f[0] for f in F10])
+    async def test_fetch_failure_propagates_and_does_not_write_state(
+        self, target, mod, report, dolt_table,
+        make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """抓取异常必须向上传播，不能伪装成空窗口成功返回。
+
+        RED: 当前 fetch_incremental 吞掉异常并返回 0，run() 打印 Done: 0。
+        """
+        module = _import_module(mod)
+
+        async def fake_fetch(session, throttle, report_name, anchor, page_size=100, *, pool=None):
+            raise RuntimeError("boom")
+
+        fake_session = make_stub_session()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(module, "fetch_by_update_date", fake_fetch, raising=False)
+            mp.setattr(module, "update_date_anchor", lambda r, s, **k: "2025-01-01", raising=False)
+            mp.setattr(module, "AsyncSession", lambda **k: fake_session, raising=False)
+            monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+            with pytest.raises(RuntimeError, match="boom"):
+                await module.run(incremental=True)
+
+        assert not (tmp_path / f"{report}.state.json").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target,mod,report,dolt_table", F10, ids=[f[0] for f in F10])
+    async def test_state_last_report_date_normalizes_time_suffix(
+        self, target, mod, report, dolt_table,
+        make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """state.last_report_date 应存 YYYY-MM-DD，不残留 API 时间后缀。
+
+        RED: 当前 max_report_date 直接取原始字符串 "2024-12-31 00:00:00"。
+        """
+        module = _import_module(mod)
+
+        async def fake_fetch(session, throttle, report_name, anchor, page_size=100, *, pool=None):
+            return [
+                {
+                    "SECUCODE": "000001.SZ",
+                    "SECURITY_CODE": "000001",
+                    "REPORT_DATE": "2024-12-31 00:00:00",
+                    "UPDATE_DATE": "2026-08-05 00:00:00",
+                    "TOTAL_ASSETS": "100",
+                }
+            ]
+
+        fake_session = make_stub_session()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(module, "fetch_by_update_date", fake_fetch, raising=False)
+            mp.setattr(module, "update_date_anchor", lambda r, s, **k: "2025-01-01", raising=False)
+            mp.setattr(module, "AsyncSession", lambda **k: fake_session, raising=False)
+            monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+            await module.run(incremental=True)
+
+        state_path = tmp_path / f"{report}.state.json"
+        assert state_path.exists()
+        state = json.loads(state_path.read_text())
+        assert state["last_report_date"] == "2024-12-31"
+        assert state["last_update_date"] == "2026-08-05"
 
 
 # ═══════════════════════════════════════════════════════════════════

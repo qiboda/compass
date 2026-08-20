@@ -434,10 +434,16 @@ def normalize_update_date(value: object) -> str | None:
     if not s:
         return None
     m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
-    if not m:
-        return None
-    year, month, day = m.groups()
-    return f"{year}-{int(month):02d}-{int(day):02d}"
+    if m:
+        year, month, day = m.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    # Compact numeric forms: 20260805, 20260805.0 (float timestamps from
+    # some API serializers).  Reject 4-digit years / short fragments.
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})(?:\.0)?", s)
+    if m:
+        year, month, day = m.groups()
+        return f"{year}-{month}-{day}"
+    return None
 
 
 def update_date_anchor(
@@ -1018,8 +1024,9 @@ async def fetch_incremental(
     default to :func:`update_date_anchor` / :func:`fetch_by_update_date`; the
     F10 modules pass their module-level imports so tests can monkeypatch them.
 
-    Returns the number of records fetched (0 means an empty window or a
-    fetch failure — the anchor/state is never advanced on empty results).
+    Returns the number of records fetched (0 means an empty window — the
+    anchor/state is never advanced on empty results).  Fetch failures are
+    printed and re-raised so callers cannot mistake an outage for success.
     """
     anchor = (anchor_resolver or update_date_anchor)(report_name, state_path, dolt_table=dolt_table)
     if not anchor:
@@ -1047,13 +1054,13 @@ async def fetch_incremental(
             )
         except Exception as e:
             print(f"FAILED: {e}", file=sys.stderr)
-            records = []
+            raise
 
         if records:
             write_csv(records, output_path, append=False)
             total_records += len(records)
             for rec in records:
-                rpt = str(rec.get("REPORT_DATE") or "")
+                rpt = normalize_update_date(rec.get("REPORT_DATE")) or ""
                 if rpt:
                     max_report_date = max(max_report_date, rpt)
                 upd = normalize_update_date(rec.get("UPDATE_DATE"))
