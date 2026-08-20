@@ -16,7 +16,7 @@ Usage:
     # Balance sheet / income / cashflow
     uv run python fetch_fin_indicators.py --report-name RPT_DMSK_FN_BALANCE
 
-State file: {report_name}.state.json caches last fetch.
+State file: csv_dir()/{report_name}.state.json caches last fetch.
 
 Incremental mode (RPT_LICO_FN_CPD only) fetches every row whose UPDATE_DATE is
 >= the anchor = min(data_updates.last_updated, state.json last_update_date) —
