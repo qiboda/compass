@@ -501,19 +501,20 @@ class TestMainIncremental:
         """
         import main
 
-        collected: dict[str, list] = {}
-
-        async def fake_run(**_kwargs):
-            # record which module's run was invoked via call-site module identity
-            collected.setdefault("last", []).append(_kwargs)
-            return Path("out.csv")
+        collected: dict[str, list[dict]] = {}
 
         async def _noop_async() -> None:
             return None
 
-        # Stub modules used by do_sync so no real network/import runs.
+        # Stub modules used by do_sync so no real network/import runs. Each
+        # module gets its own fake so calls are attributable per call-site.
         def _stub(module_name: str) -> None:
             m = _import_module(module_name)
+
+            async def fake_run(*_args, **_kwargs):
+                collected.setdefault(module_name, []).append(_kwargs)
+                return Path("out.csv")
+
             monkeypatch.setattr(m, "run", fake_run, raising=False)
             monkeypatch.setattr(m, "import_to_dolt", lambda *a, **k: 0, raising=False)
 
@@ -533,13 +534,8 @@ class TestMainIncremental:
 
         main.do_sync()
 
-        # Track the three F10 run calls with the kwargs they received.
-        # fake_run is module-identical, so capture order per call-site is not directly
-        # visible — instead assert on the FINAL run() call being incremental and that
-        # at least 3 incremental run calls happened.
-        inc_calls = collected.get("last", [])
-        f10_calls = [c for c in inc_calls if c.get("incremental") is True]
-        # do_sync must invoke run(incremental=True) for each of the three F10 tables;
-        # without per-call-site identity we assert the total number of incremental run calls.
-        assert len(f10_calls) >= 3, "do_sync must call the three F10 run() with incremental=True"
-        assert all(c.get("incremental") is True for c in f10_calls)
+        # do_sync must invoke run(incremental=True) for each of the three F10
+        # tables specifically — not just "at least three incremental calls".
+        assert collected.get("fetch_balance_sheet") == [{"incremental": True}]
+        assert collected.get("fetch_income") == [{"incremental": True}]
+        assert collected.get("fetch_cash_flow") == [{"incremental": True}]

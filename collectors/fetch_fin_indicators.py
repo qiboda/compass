@@ -270,8 +270,9 @@ async def main():
     report_name = args.report_name
     current_year = datetime.now().year
 
-    # State file for incremental updates
-    state_path = Path(f"{report_name}.state.json")
+    # State file for incremental updates — keep it beside the CSV in
+    # csv_dir(), not in the process CWD, so anchors survive run-directory changes.
+    state_path = csv_dir() / f"{report_name}.state.json"
 
     # Build date list
     if args.years:
