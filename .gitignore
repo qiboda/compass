@@ -3,7 +3,7 @@ compass.db
 compass.duckdb
 logs/
 *.log
-investment_data/
+investment_data
 compass_data/
 .dolt/
 /data

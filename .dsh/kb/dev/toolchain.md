@@ -693,3 +693,45 @@
 - **修复**: 大段/整函数替换改用 `write` 全量重写文件，或 `edit` 工具（精确唯一 old_string）；避免对关键代码用 str_replace_editor 做大段替换。
 - **验证**: 重写后运行 pytest/语法检查通过。
 - **教训**: 工具返回成功≠内容正确；编辑后必须验证函数体/关键行存在（尤其涉及多行替换时）。
+
+### [环境] investment_data 路径硬编码 PROJECT_ROOT/investment_data 与真实 Dolt 仓库不一致
+
+- **症状**: `scripts/sync-investment-data.sh` 与 `collectors/main.py::sync_investment_data()` 硬编码
+  `PROJECT_ROOT/investment_data`（即 `/data/codes/compass/investment_data`），但实际 Dolt 仓库在
+  `/data/compass-data/investment_data`，导致同步脚本报仓库不存在/未初始化。
+- **根因**: 脚本/代码以项目目录下 `investment_data` 为假设路径，而本机数据仓库统一放在
+  `/data/compass-data/` 下。
+- **修复**: 创建符号链接
+  `ln -s /data/compass-data/investment_data /data/codes/compass/investment_data`；
+  `.gitignore` 原规则 `investment_data/` 不匹配符号链接，需改为 `investment_data`（无斜杠）才能忽略。
+- **验证**: 符号链接后 `scripts/sync-investment-data.sh` 重跑成功，fast-forward 到
+  `nta67cibl6412uhg3oo5dmeffcf1775e`。
+- **教训**: 环境路径差异不要硬编码到脚本；若保留现有硬编码，需保证符号链接/统一数据目录约定并记入 toolchain。
+
+### [collectors] stock_basic 导入后残留 `_tmp_name_en` 临时表
+
+- **症状**: `collectors sync` 后 Dolt `compass_data` status 出现 untracked `_tmp_name_en`（105 行）；
+  手动 `dolt sql -q "DROP TABLE IF EXISTS _tmp_name_en"` 后消失。
+- **根因（初步）**: `collectors/common.py:361` 定义 `NAME_EN_MAPPING_TMP="_tmp_name_en"`，
+  `main.py::import_stock_basic` 的 `finally` 调 `drop_name_en_mapping()`，但该清理未实际生效；
+  且 `dolt_sql` 调用不检查 returncode，drop 失败被静默吞掉。根因未完全定位。
+- **修复**: 本次手动 DROP 清理；代码修复待后续（检查 drop_name_en_mapping 是否在正确 finally 路径/是否正确提交事务）。
+- **教训**: Dolt SQL 工具调用应检查 returncode；临时表清理失败不能静默。
+
+### [compass-data] import-compass 增量 merge fallback 用 since 过滤数据覆盖 parquet，导致历史丢失（issue #298）
+
+- **症状**: `import-compass --table capital_main_flow --since 2026-08-20` 增量 merge 报
+  `DuckDB merge failed: Binder Error: Set operations can only apply to expressions with the same number of result columns, falling back to full export`；
+  随后 `capital_main_flow.parquet` 只剩 2026-08-20 一天 5544 行，Dolt 表共 27706 行。
+  进一步检查发现 dragon_list（parquet 278 / Dolt 6143）、block_trade（118 / 19654）、
+  institution_survey（478 / 304848）、index_daily（528116 / 528476）也均少于 Dolt，疑为历史 fallback 覆盖累积。
+- **根因**: `crates/compass-data/src/import_compass.rs` `import_append_table` fallback 分支（约 497-503 行）
+  在 merge 失败时执行 `std::fs::write(&path, &new_data)`，而 `new_data` 是 `WHERE date_col >= since`
+  的查询结果，并非日志声称的 “full export”——增量数据覆盖全文件导致历史丢失。
+  merge 失败的具体 schema 不匹配原因未能在复现中定位（parquet 已被覆盖后无法重现，需保留旧文件才能诊断）。
+- **修复（本次数据恢复）**: 对 5 个 append 表（capital_main_flow, dragon_list, block_trade, institution_survey, index_daily）
+  执行无 `--since` 的 `import-compass` 全量重导，parquet 行数与 Dolt 一致后重跑 SEPA。
+  代码修复（fallback 改为真正全量导出或报错退出、保留现场日志）见 issue #298。
+- **验证**: 5 表 parquet 行数 = Dolt 行数（27706 / 6143 / 19654 / 304848 / 528476）。
+- **教训**: 任何 fallback 若覆盖数据文件，必须保证覆盖内容与声明一致（全量）；数据文件写操作前后应校验行数，
+  不能静默用增量数据覆盖历史。
