@@ -437,9 +437,10 @@ def normalize_update_date(value: object) -> str | None:
     if m:
         year, month, day = m.groups()
         return f"{year}-{int(month):02d}-{int(day):02d}"
-    # Compact numeric forms: 20260805, 20260805.0 (float timestamps from
-    # some API serializers).  Reject 4-digit years / short fragments.
-    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})(?:\.0)?", s)
+    # Compact numeric forms: 20260805, 20260805.0, 20260805.00 (float
+    # timestamps from some API serializers).  Reject 4-digit years / short
+    # fragments.
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})(?:\.0+)?", s)
     if m:
         year, month, day = m.groups()
         return f"{year}-{month}-{day}"

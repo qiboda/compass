@@ -45,10 +45,12 @@ row_count + last_report_date）。消费方：
 
 - **collectors 增量锚点**（`collectors/common.py:171-185`）：大多数采集器以
   `last_report_date` 为增量起点，只抓 `>= 最新已抓报告期` 的窗口；**财务三表
-  （`fin_balance_sheet` / `fin_income` / `fin_cash_flow`，issue #299）例外**——
-  自 2026-08 起改用 `UPDATE_DATE` 锚点（`csv_dir()/{REPORT_NAME}.state.json`
-  的 `last_update_date`，无锚点时固定 `2020-01-01` 全历史拉一次），以捕获历史
-  修订并减少全量拉取；`last_report_date` 仍由 import 写入，供新鲜度校验使用。
+  （`fin_balance_sheet` / `fin_income` / `fin_cash_flow`，issue #299）与
+  `fin_indicators` 的增量路径**改用 `UPDATE_DATE` 锚点——解析规则为
+  `min(data_updates.last_updated, state.json.last_update_date)`（
+  `csv_dir()/{REPORT_NAME}.state.json`），双源皆缺时固定 `2020-01-01`
+  全历史拉一次，以捕获历史修订并减少全量拉取；`last_report_date` 仍由
+  import 写入，供新鲜度校验使用。
 - **sepa_daily.sh 增量锚点**（`scripts/sepa_daily.sh:157-158`）：取 SEPA 行情表
   最新 `last_report_date` 判断当日是否需采集
 - **import-compass 新鲜度校验（ref #136）**：导入后读 `last_report_date`，过期

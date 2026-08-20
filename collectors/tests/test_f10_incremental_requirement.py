@@ -539,3 +539,48 @@ class TestMainIncremental:
         assert collected.get("fetch_balance_sheet") == [{"incremental": True}]
         assert collected.get("fetch_income") == [{"incremental": True}]
         assert collected.get("fetch_cash_flow") == [{"incremental": True}]
+
+    def test_do_sync_propagates_f10_fetch_failure(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """F10 抓取异常必须让 do_sync 失败，而不是静默继续导入旧数据。
+
+        RED: 当前 fetch_incremental 吞掉异常，do_sync 会继续执行 import。
+        """
+        import main
+
+        def _stub(module_name: str) -> None:
+            m = _import_module(module_name)
+
+            async def fake_run(*_args, **_kwargs):
+                return Path("out.csv")
+
+            monkeypatch.setattr(m, "run", fake_run, raising=False)
+            monkeypatch.setattr(m, "import_to_dolt", lambda *a, **k: 0, raising=False)
+
+        for name in ("fetch_balance_sheet", "fetch_income", "fetch_cash_flow",
+                     "fetch_dragon", "fetch_block_trade", "fetch_institution_survey",
+                     "fetch_main_flow", "fetch_index_daily"):
+            _stub(name)
+
+        fbs = _import_module("fetch_balance_sheet")
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(fbs, "run", boom, raising=False)
+
+        sb = _import_module("fetch_stock_basic_official")
+        monkeypatch.setattr(sb, "main", lambda: None, raising=False)
+        monkeypatch.setattr(main, "_import_stock_basic", lambda: None, raising=False)
+        fi = _import_module("fetch_fin_indicators")
+
+        async def _noop_async() -> None:
+            return None
+
+        monkeypatch.setattr(fi, "main", _noop_async, raising=False)
+        monkeypatch.setattr(main, "_import_fin_indicators", lambda: 0, raising=False)
+        monkeypatch.setattr(main, "dolt_sql", lambda *a, **k: None, raising=False)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            main.do_sync()

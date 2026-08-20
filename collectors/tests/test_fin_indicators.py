@@ -604,6 +604,35 @@ class TestMain:
         assert not (tmp_path / "RPT_LICO_FN_CPD.state.json").exists()
         assert "FAILED: boom" in capsys.readouterr().err
 
+    async def test_incremental_fetch_failure_propagates(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """增量路径抓取异常必须向上传播（与 F10 三表一致），不能伪装成空窗口。
+
+        RED: 当前 anchor 分支吞掉异常并继续，main() 正常返回。
+        """
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            fetch_fin_indicators, "_update_anchor", lambda *a, **k: "2025-01-01"
+        )
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(exc=RuntimeError("boom"))
+        with (
+            patch.object(fetch_fin_indicators, "AsyncSession", return_value=stub),
+            patch.object(
+                fetch_fin_indicators.sys,
+                "argv",
+                ["fetch_fin_indicators.py", "--incremental", "--years", "2024", "--periods", "FY"],
+            ),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            await fetch_fin_indicators.main()
+
+        assert not (tmp_path / "RPT_LICO_FN_CPD.csv").exists()
+        assert not (tmp_path / "RPT_LICO_FN_CPD.state.json").exists()
+
     async def test_empty_records_prints_empty(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

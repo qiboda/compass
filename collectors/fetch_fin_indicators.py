@@ -355,7 +355,7 @@ async def main():
                 )
             except Exception as e:
                 print(f"FAILED: {e}", file=sys.stderr)
-                records = []
+                raise
 
             if records:
                 write_csv(records, output_path, append=not first_write)

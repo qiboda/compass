@@ -148,6 +148,7 @@ class TestNormalizeUpdateDateAdversarial:
         assert common.normalize_update_date(20260805) == "2026-08-05"
         assert common.normalize_update_date(20260805.0) == "2026-08-05"
         assert common.normalize_update_date("20260805.0") == "2026-08-05"
+        assert common.normalize_update_date("20260805.00") == "2026-08-05"
         assert common.normalize_update_date("202608") is None
         assert common.normalize_update_date(2026) is None
 
