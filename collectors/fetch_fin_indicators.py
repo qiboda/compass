@@ -38,7 +38,6 @@ import csv
 import json
 import random
 import sys
-import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -46,6 +45,7 @@ from curl_cffi.requests import AsyncSession
 
 from common import (
     ProxyPool,
+    Throttle,
     csv_dir,
     dedupe_csv,
     fetch_by_update_date,
@@ -120,25 +120,6 @@ def _last_report_date(report_name: str, state_path: Path) -> str:
     if state_path.exists():
         return json.loads(state_path.read_text()).get("last_report_date", "")
     return ""
-
-
-# ── Throttle ────────────────────────────────────────────────────
-
-
-class Throttle:
-    def __init__(self, min_interval: float = EM_MIN_INTERVAL):
-        self._min_interval = min_interval
-        self._last: float = 0.0
-
-    async def acquire(self):
-        now = time.monotonic()
-        since_last = now - self._last
-        if since_last < self._min_interval:
-            wait = self._min_interval - since_last + random.uniform(*EM_JITTER)
-            await asyncio.sleep(wait)
-        else:
-            await asyncio.sleep(random.uniform(0, 0.15))
-        self._last = time.monotonic()
 
 
 # ── Field flattener ─────────────────────────────────────────────
@@ -380,7 +361,7 @@ async def main():
                 first_write = False
                 total_records += len(records)
                 for rec in records:
-                    rpt = rec.get("REPORTDATE") or ""
+                    rpt = str(rec.get("REPORTDATE") or "")
                     if rpt:
                         max_report_date = max(max_report_date, rpt)
                     upd = _normalize_update_date(rec.get("UPDATE_DATE"))

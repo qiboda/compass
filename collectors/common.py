@@ -46,6 +46,7 @@ __all__ = [
     "load_name_en_mapping",
     "name_en_mapping_path",
     "fetch_by_update_date",
+    "fetch_incremental",
     "fetch_paginated",
     "flatten_record",
     "normalize_update_date",
@@ -989,6 +990,109 @@ async def fetch_by_update_date(
         page += 1
 
     return all_records
+
+
+async def fetch_incremental(
+    report_name: str,
+    dolt_table: str,
+    output_path: Path,
+    state_path: Path,
+    page_size: int = EM_PAGE_SIZE,
+    initial_anchor: str = "2020-01-01",
+    session_factory: Any = None,
+    anchor_resolver: Any = None,
+    fetch_fn: Any = None,
+) -> int:
+    """Run one UPDATE_DATE incremental fetch and write CSV/state (issue #299).
+
+    Shared by the three F10 collectors (balance_sheet/income/cash_flow):
+    resolves the anchor via :func:`update_date_anchor` (falling back to
+    ``initial_anchor`` when both sources are missing), fetches every row with
+    ``UPDATE_DATE>='{anchor}'``, writes the CSV (keep-LAST dedupe by
+    ``(SECURITY_CODE, REPORT_DATE)``), and writes ``state_path`` when rows
+    were returned.
+
+    ``session_factory`` is the curl_cffi AsyncSession constructor (or a test
+    fake); callers pass their module-level ``AsyncSession`` so tests can patch
+    the module attribute as before. ``anchor_resolver`` and ``fetch_fn``
+    default to :func:`update_date_anchor` / :func:`fetch_by_update_date`; the
+    F10 modules pass their module-level imports so tests can monkeypatch them.
+
+    Returns the number of records fetched (0 means an empty window or a
+    fetch failure — the anchor/state is never advanced on empty results).
+    """
+    anchor = (anchor_resolver or update_date_anchor)(
+        report_name, state_path, dolt_table=dolt_table
+    )
+    if not anchor:
+        anchor = initial_anchor
+        print(
+            f"No prior anchor found; using UPDATE_DATE>='{anchor}' for one full-history pull",
+            file=sys.stderr,
+        )
+    print(f"Report: {report_name}", file=sys.stderr)
+    print(f"Update filter: UPDATE_DATE>='{anchor}' (ignores --years/--periods)", file=sys.stderr)
+    print(f"Output: {output_path.resolve()}", file=sys.stderr)
+    print(file=sys.stderr)
+
+    throttle = Throttle()
+    pool = make_proxy_pool()
+    total_records = 0
+    max_report_date = ""
+    max_update_date = ""
+
+    async with (session_factory or AsyncSession)(impersonate="chrome142") as session:
+        print(
+            f"[1/1] UPDATE_DATE>='{anchor}' ...", file=sys.stderr, end=" ", flush=True
+        )
+        try:
+            records = await (fetch_fn or fetch_by_update_date)(
+                session, throttle, report_name, anchor, page_size, pool=pool
+            )
+        except Exception as e:
+            print(f"FAILED: {e}", file=sys.stderr)
+            records = []
+
+        if records:
+            write_csv(records, output_path, append=False)
+            total_records += len(records)
+            for rec in records:
+                rpt = str(rec.get("REPORT_DATE") or "")
+                if rpt:
+                    max_report_date = max(max_report_date, rpt)
+                upd = normalize_update_date(rec.get("UPDATE_DATE"))
+                if upd:
+                    max_update_date = max(max_update_date, upd)
+            dedupe_csv(output_path, date_col="REPORT_DATE")
+            print(f"{len(records)} records", file=sys.stderr)
+        else:
+            print("empty", file=sys.stderr)
+
+    if total_records > 0:
+        state = {
+            "last_report_date": max_report_date,
+            "total_rows": total_records,
+            "last_run": datetime.now().isoformat(),
+        }
+        if not max_update_date:
+            # All fetched rows had empty/missing UPDATE_DATE: preserve the
+            # previous anchor (never advance, never regress).
+            try:
+                prev = (
+                    json.loads(state_path.read_text()).get("last_update_date", "")
+                    if state_path.exists()
+                    else ""
+                )
+            except (json.JSONDecodeError, OSError):
+                prev = ""
+            max_update_date = prev
+        today = date.today().isoformat()
+        if max_update_date > today:
+            max_update_date = today
+        state["last_update_date"] = max_update_date
+        state_path.write_text(json.dumps(state, indent=2))
+
+    return total_records
 
 
 # ── CSV output ──────────────────────────────────────────────────

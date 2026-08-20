@@ -8,9 +8,8 @@ Default: 2020 onwards, all four quarterly periods.
 """
 
 import asyncio
-import json
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 from common import (
@@ -18,13 +17,12 @@ from common import (
     Throttle,
     build_dates,
     csv_dir,
-    dedupe_csv,
     fetch_by_update_date,
+    fetch_incremental,
     fetch_paginated,
     import_replace_table,
     last_report_date,
     make_proxy_pool,
-    normalize_update_date,
     update_date_anchor,
     write_csv,
 )
@@ -418,76 +416,17 @@ async def run(
     output_path = csv_dir() / f"{REPORT_NAME}.csv"
 
     if incremental:
-        state_path = csv_dir() / f"{REPORT_NAME}.state.json"
-        anchor = update_date_anchor(REPORT_NAME, state_path, dolt_table=DOLT_TABLE)
-        if not anchor:
-            anchor = INITIAL_UPDATE_ANCHOR
-            print(
-                f"No prior anchor found; using UPDATE_DATE>='{anchor}' for one full-history pull",
-                file=sys.stderr,
-            )
-        print(f"Report: {REPORT_NAME}", file=sys.stderr)
-        print(f"Update filter: UPDATE_DATE>='{anchor}' (ignores --years/--periods)", file=sys.stderr)
-        print(f"Output: {output_path.resolve()}", file=sys.stderr)
-        print(file=sys.stderr)
-
-        throttle = Throttle()
-        pool = make_proxy_pool()
-        total_records = 0
-        max_report_date = ""
-        max_update_date = ""
-
-        async with AsyncSession(impersonate="chrome142") as session:
-            print(
-                f"[1/1] UPDATE_DATE>='{anchor}' ...", file=sys.stderr, end=" ", flush=True
-            )
-            try:
-                records = await fetch_by_update_date(
-                    session, throttle, REPORT_NAME, anchor, page_size, pool=pool
-                )
-            except Exception as e:
-                print(f"FAILED: {e}", file=sys.stderr)
-                records = []
-
-            if records:
-                write_csv(records, output_path, append=False)
-                total_records += len(records)
-                for rec in records:
-                    rpt = rec.get("REPORT_DATE") or ""
-                    if rpt:
-                        max_report_date = max(max_report_date, rpt)
-                    upd = normalize_update_date(rec.get("UPDATE_DATE"))
-                    if upd:
-                        max_update_date = max(max_update_date, upd)
-                dedupe_csv(output_path, date_col="REPORT_DATE")
-                print(f"{len(records)} records", file=sys.stderr)
-            else:
-                print("empty", file=sys.stderr)
-
-        if total_records > 0:
-            state = {
-                "last_report_date": max_report_date,
-                "total_rows": total_records,
-                "last_run": datetime.now().isoformat(),
-            }
-            if not max_update_date:
-                # All fetched rows had empty/missing UPDATE_DATE: preserve the
-                # previous anchor (never advance, never regress).
-                try:
-                    prev = (
-                        json.loads(state_path.read_text()).get("last_update_date", "")
-                        if state_path.exists()
-                        else ""
-                    )
-                except (json.JSONDecodeError, OSError):
-                    prev = ""
-                max_update_date = prev
-            today = date.today().isoformat()
-            if max_update_date > today:
-                max_update_date = today
-            state["last_update_date"] = max_update_date
-            state_path.write_text(json.dumps(state, indent=2))
-
+        total_records = await fetch_incremental(
+            REPORT_NAME,
+            DOLT_TABLE,
+            output_path,
+            csv_dir() / f"{REPORT_NAME}.state.json",
+            page_size=page_size,
+            initial_anchor=INITIAL_UPDATE_ANCHOR,
+            session_factory=AsyncSession,
+            anchor_resolver=update_date_anchor,
+            fetch_fn=fetch_by_update_date,
+        )
         print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
         return output_path
 
