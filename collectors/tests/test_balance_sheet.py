@@ -146,10 +146,10 @@ class TestImportToDolt:
         ).strip()
         assert "1" in row and "2024-12-31" in row
 
-    def test_window_csv_replaces_table_full_history(
+    def test_full_csv_merges_all_rows(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """A full-window CSV rebuilds the table under replace semantics."""
+        """A full-window CSV is UPSERTed; every row is present under merge semantics."""
         from fetch_balance_sheet import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -214,10 +214,10 @@ class TestImportToDolt:
         ).strip()
         assert "3" in row and "2024-12-31" in row
 
-    def test_replace_overlap_uses_latest_csv_value(
+    def test_overlap_uses_latest_csv_value(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Replace semantics: the latest CSV value wins for an existing (symbol, report_date)."""
+        """Merge/ODKU: the latest CSV value wins for an existing (symbol, report_date)."""
         from fetch_balance_sheet import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -233,7 +233,7 @@ class TestImportToDolt:
 
         assert rows == 2
         assert self._last(dolt_sql_csv("SELECT COUNT(*) FROM fin_balance_sheet")) == "2"
-        # Replace: the fresh CSV overwrites the prior row with the restated value
+        # Merge/ODKU: the fresh CSV overwrites the prior row with the restated value
         assert float(self._last(dolt_sql_csv(
             "SELECT TOTAL_ASSETS FROM fin_balance_sheet "
             "WHERE symbol='SZ000001' AND report_date='2024-12-31'"

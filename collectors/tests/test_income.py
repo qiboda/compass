@@ -228,10 +228,10 @@ class TestImportToDolt:
         assert float(total) == pytest.approx(174144069958.25, rel=0.01)
         assert float(eps) == pytest.approx(68.64, rel=0.01)
 
-    def test_refetch_full_csv_rebuilds_table(
+    def test_refetch_full_csv_merges_all_rows(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """A full-history CSV refetch rebuilds the table; every row present."""
+        """A full-history CSV refetch UPSERTs; every row is present under merge."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -294,10 +294,10 @@ class TestImportToDolt:
         ).strip()
         assert "3" in row
 
-    def test_restated_value_wins_on_replace(
+    def test_restated_value_wins_on_merge(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """A restated value in the new CSV replaces the previously stored one."""
+        """A restated value in the new CSV overwrites the stored one (ODKU)."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -379,7 +379,7 @@ class TestImportToDolt:
     def test_rerun_insert_failure_preserves_prior_rows(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Rerun with failing INSERT rolls back to the previous table and watermark."""
+        """Rerun with failing INSERT preserves the previous table and watermark."""
         from fetch_income import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env

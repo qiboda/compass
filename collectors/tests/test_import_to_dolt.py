@@ -1,10 +1,9 @@
 """Integration tests for import_to_dolt() — temp Dolt + COMPASS_DATA_DIR.
 
-Covers the replace-import semantics (full rebuild, ref #202): first run vs
-rerun, INSERT failure safety. With merge=False (replace), a first-run INSERT
-failure drops the freshly created table (no old table to roll back to), so
-the target table does not exist afterwards; a rerun failure rolls back to
-the previous table contents.
+Covers the merge/upsert import semantics (issue #299): first run vs rerun,
+INSERT failure safety. With merge=True (upsert), a first-run INSERT failure
+leaves the freshly created table empty (no data_updates row); a rerun failure
+preserves the previous table contents.
 """
 
 import csv

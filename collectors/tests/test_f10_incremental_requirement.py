@@ -224,6 +224,40 @@ class TestRunIncremental:
 
         assert paginated_calls == [], "incremental must not enumerate REPORT_DATE"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target,mod,report,csv_name,val_col", F10, ids=[f[0] for f in F10])
+    async def test_run_forwards_dolt_table_to_anchor(
+        self, target, mod, report, csv_name, val_col,
+        make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """run(incremental=True) 必须把 DOLT_TABLE 传给 update_date_anchor。
+
+        data_updates 按 Dolt 表名（fin_balance_sheet 等）登记，不是 report_name；
+        若未来重构丢掉该 kwarg 会静默查错表。
+        """
+        module = _import_module(mod)
+        captured: dict = {}
+
+        def fake_anchor(report_name, state_path, **kwargs):
+            captured["report_name"] = report_name
+            captured["state_path"] = state_path
+            captured.update(kwargs)
+            return "2025-01-01"
+
+        async def fake_fetch(session, throttle, report_name, anchor, page_size=100, *, pool=None):
+            return []
+
+        fake_session = make_stub_session()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(module, "fetch_by_update_date", fake_fetch, raising=False)
+            mp.setattr(module, "update_date_anchor", fake_anchor, raising=False)
+            mp.setattr(module, "AsyncSession", lambda **k: fake_session, raising=False)
+            monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+            await module.run(incremental=True)
+
+        assert captured.get("dolt_table") == csv_name
+
 
 # ═══════════════════════════════════════════════════════════════════
 # B. import_to_dolt() merge 语义（temp Dolt + COMPASS_DATA_DIR）

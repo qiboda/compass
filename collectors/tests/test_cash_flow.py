@@ -698,12 +698,10 @@ class TestImportToDolt:
             == "3,2024-12-31"
         )
 
-    def test_rebuild_applies_restated_value(
+    def test_merge_applies_restated_value(
         self, dolt_env: tuple[Path, Callable[[str], str]], tmp_path: Path
     ) -> None:
-        """Full rebuild applies the restated value (200), unlike merge which
-        kept the original 500 (PIN: replace contract).
-        """
+        """Merge/ODKU applies the restated value (200) over the same PK."""
         from fetch_cash_flow import import_to_dolt  # noqa: E402
 
         dolt_dir_, dolt_sql_csv = dolt_env
@@ -796,8 +794,8 @@ class TestImportToDolt:
     ) -> None:
         """Rerun with failing INSERT preserves prior rows and watermark.
 
-        Replace relies on RENAME rollback, merge on never touching the table —
-        both keep the prior row, so this passes for the rebuild contract (PIN).
+        Merge never touches the existing table on failure, so the prior row
+        and data_updates watermark remain intact.
         """
         from fetch_cash_flow import import_to_dolt  # noqa: E402
 
