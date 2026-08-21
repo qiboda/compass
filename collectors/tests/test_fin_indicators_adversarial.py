@@ -1292,21 +1292,22 @@ class TestT9FetchByUpdateDateBreak:
 class TestT9MainFallbacks:
     """main() 级 fallback 分支（覆盖 470 / 472-473 / 508-510 / 574-575 行）。"""
 
-    async def test_incremental_fetch_exception_falls_back(
+    async def test_incremental_fetch_exception_propagates(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
         capsys,
     ) -> None:
-        """⑥ 增量 fetch 抛异常 → 外层 except 捕获 → records=[] → 不崩溃。"""
+        """⑥ 增量 fetch 抛异常 → FAILED 打印后向上传播，不伪装成空窗口。"""
         monkeypatch.setattr(
             fetch_fin_indicators, "_update_anchor", lambda *a, **k: "2026-01-01"
         )
         stub = _RecordingStub(exc=RuntimeError("boom"))
-        await _run_main(
-            stub,
-            ["fetch_fin_indicators.py", "--incremental", "--years", "2026", "--periods", "FY"],
-            monkeypatch,
-            tmp_path,
-        )
+        with pytest.raises(RuntimeError, match="boom"):
+            await _run_main(
+                stub,
+                ["fetch_fin_indicators.py", "--incremental", "--years", "2026", "--periods", "FY"],
+                monkeypatch,
+                tmp_path,
+            )
 
         assert "FAILED: boom" in capsys.readouterr().err
         assert not (tmp_path / "RPT_LICO_FN_CPD.csv").exists()

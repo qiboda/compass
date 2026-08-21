@@ -1,31 +1,20 @@
-# Handoff — fix/index-daily-incremental
+# Handoff: 财务三表按 UPDATE_DATE 增量抓取
 
 ## 用途
-修复 `collectors/fetch_index_daily.py` 的“非真增量”缺陷：THS 行业板块与官方指数
-K 线当前每次同步都会从 2007 年全量拉取再靠 INSERT IGNORE 去重，导致单次 sync
-耗时约 1 小时、大量旧年份 404/502/504。目标改为真正的日期增量拉取。
+实现 GitHub issue #299：财务三表（balance_sheet / income / cash_flow）从按 `REPORT_DATE` 全市场最新报告期增量，改为按 `UPDATE_DATE` 增量抓取，捕获历史修订并减少全量拉取。
 
-## 对应 Issue
-https://github.com/qiboda/compass/issues/292
+## Issue
+https://github.com/qiboda/compass/issues/299
 
-## 已锁定的 grill-me 决策
-1. THS 行业板块改真增量：查 Dolt index_daily 每板块 MAX(trade_date)，
-   已有数据板块只拉 MAX 所在年份→今年并过滤旧行；新板块仍 2007→今年全量回填；
-   周末/停牌无新行不记为失败。
-2. 官方指数也改增量：东财 beg=0 改 beg=上次日期+1；腾讯回退只拉最近页并在遇到
-   <= 上次日期时停止翻页。
-3. 保留 last_report_date==今天整体短路。
-4. 按项目 gate 走 worktree → issue → plan → RED → 实现 → docs → 反思。
+## 已锁定的 grill-me 决策（2026-08-20）
+- **无 anchor 时的行为**：不再回退到按 `REPORT_DATE` 全量枚举 / 全量 replace。无 anchor（首次运行/无 state/无 data_updates）时，直接用固定起始日 `2020-01-01` 走 `UPDATE_DATE>='2020-01-01'` 增量路径（相当于一次拉取全部历史更新）。
+- 其余方案以 issue #299 body 为准：三表增量 fetch 复用 `fetch_fin_indicators.py::fetch_by_update_date` / `_update_anchor` / `_normalize_update_date` 逻辑；导入改为 `import_replace_table(merge=True)` + `INSERT ... ON DUPLICATE KEY UPDATE`（参照 `main.py::_import_fin_indicators`），确保修订行覆盖旧值；state.json 记录 `last_update_date` + `last_report_date`。
+- 本次为 feature 工作，需走完整 gate：worktree → plan → RED tests → docs。
 
-## Git 基线
-- 分支：fix/index-daily-incremental
-- 基点：master（含本地未推送 docs 提交 10e71a2）
-- 实现、测试、docs 全部在本 worktree 内完成，PR 合并回 master。
-- 同步提醒：开始前如 master 有更新，先 `git fetch origin master && git rebase origin/master`。
+## 下一步（worktree 会话第一步）
+1. 先同步原始分支：`git fetch origin master && git rebase origin/master`（如落后）。
+2. 读取 `.dsh/plans/handoff.md`（本文件）确认上下文。
+3. 走 skwy-workflow 门禁：第 3 步 PLAN（在 worktree 内创建 `.dsh/plans/*.md` 并向用户展示批准）→ 第 3.5/4 步 RED tests（subagent_skwy_adversarial_test + subagent_skwy_requirement_test）→ 第 5b docs → 实现 → 冒烟 → commit/review/PR。
 
-## 数据目录
-- collectors 写入 Dolt：/data/compass-data/compass_data
-- 行情主 Dolt：/data/compass-data/investment_data
-- 注：collectors/main.py sync-investment-data 与 scripts/sync-investment-data.sh
-  中 investment_data 路径仍写 PROJECT_ROOT/investment_data 已过时（实际在
-  /data/compass-data/investment_data）。
+## 备注
+- 本 worktree 的 `.dsh/plans/handoff.md` 在 master 上是被 git 跟踪的旧文件（内容原为 #292 index_daily）；本次已覆盖为 #299 上下文。提交 PR 时需评估是否将 handoff 更新纳入 PR（历史惯例不明确）。

@@ -17,10 +17,13 @@ from common import (
     Throttle,
     build_dates,
     csv_dir,
+    fetch_by_update_date,
+    fetch_incremental,
     fetch_paginated,
     import_replace_table,
     last_report_date,
     make_proxy_pool,
+    update_date_anchor,
     write_csv,
 )
 
@@ -28,6 +31,7 @@ REPORT_NAME = "RPT_F10_FINANCE_GINCOME"
 FILTER_COLUMN = "REPORT_DATE"
 DOLT_TABLE = "fin_income"
 START_YEAR = 2020
+INITIAL_UPDATE_ANCHOR = "2020-01-01"  # no-anchor first run: one full-history UPDATE_DATE pull
 
 DDL = """\
 CREATE TABLE IF NOT EXISTS fin_income (
@@ -260,6 +264,20 @@ def trim_select_cols() -> str:
         for col in COLS.split(", ")
     )
 
+
+def _upsert_select_cols() -> str:
+    """SELECT-side aliased column list for the merge/ODKU import."""
+    return ", ".join(
+        f"TRIM({col}) AS _{col}" if col in _TRIM_TEXT_COLS else f"{col} AS _{col}"
+        for col in COLS.split(", ")
+    )
+
+
+def _upsert_updates() -> str:
+    """ODKU update list: every non-PK COLS column is overwritten by its alias."""
+    return ", ".join(f"{col}=_{col}" for col in COLS.split(", "))
+
+
 COLS = (
     "SECUCODE, SECURITY_CODE, SECURITY_NAME_ABBR, ORG_CODE, ORG_TYPE, REPORT_TYPE, REPORT_DATE_NAME, SECURITY_TYPE_CODE, NOTICE_DATE, UPDATE_DATE, CURRENCY, TOTAL_OPERATE_INCOME, TOTAL_OPERATE_INCOME_YOY, OPERATE_INCOME, OPERATE_INCOME_YOY, INTEREST_INCOME, INTEREST_INCOME_YOY, EARNED_PREMIUM, EARNED_PREMIUM_YOY, FEE_COMMISSION_INCOME, FEE_COMMISSION_INCOME_YOY, OTHER_BUSINESS_INCOME, OTHER_BUSINESS_INCOME_YOY, TOI_OTHER, TOI_OTHER_YOY, TOTAL_OPERATE_COST, TOTAL_OPERATE_COST_YOY, OPERATE_COST, OPERATE_COST_YOY, INTEREST_EXPENSE, INTEREST_EXPENSE_YOY, FEE_COMMISSION_EXPENSE, FEE_COMMISSION_EXPENSE_YOY, RESEARCH_EXPENSE, RESEARCH_EXPENSE_YOY, SURRENDER_VALUE, SURRENDER_VALUE_YOY, NET_COMPENSATE_EXPENSE, NET_COMPENSATE_EXPENSE_YOY, NET_CONTRACT_RESERVE, NET_CONTRACT_RESERVE_YOY, POLICY_BONUS_EXPENSE, POLICY_BONUS_EXPENSE_YOY, REINSURE_EXPENSE, REINSURE_EXPENSE_YOY, OTHER_BUSINESS_COST, OTHER_BUSINESS_COST_YOY, OPERATE_TAX_ADD, OPERATE_TAX_ADD_YOY, SALE_EXPENSE, SALE_EXPENSE_YOY, MANAGE_EXPENSE, MANAGE_EXPENSE_YOY, ME_RESEARCH_EXPENSE, ME_RESEARCH_EXPENSE_YOY, FINANCE_EXPENSE, FINANCE_EXPENSE_YOY, FE_INTEREST_EXPENSE, FE_INTEREST_EXPENSE_YOY, FE_INTEREST_INCOME, FE_INTEREST_INCOME_YOY, ASSET_IMPAIRMENT_LOSS, ASSET_IMPAIRMENT_LOSS_YOY, CREDIT_IMPAIRMENT_LOSS, CREDIT_IMPAIRMENT_LOSS_YOY, TOC_OTHER, TOC_OTHER_YOY, FAIRVALUE_CHANGE_INCOME, FAIRVALUE_CHANGE_INCOME_YOY, INVEST_INCOME, INVEST_INCOME_YOY, INVEST_JOINT_INCOME, INVEST_JOINT_INCOME_YOY, NET_EXPOSURE_INCOME, NET_EXPOSURE_INCOME_YOY, EXCHANGE_INCOME, EXCHANGE_INCOME_YOY, ASSET_DISPOSAL_INCOME, ASSET_DISPOSAL_INCOME_YOY, ASSET_IMPAIRMENT_INCOME, ASSET_IMPAIRMENT_INCOME_YOY, CREDIT_IMPAIRMENT_INCOME, CREDIT_IMPAIRMENT_INCOME_YOY, OTHER_INCOME, OTHER_INCOME_YOY, OPERATE_PROFIT_OTHER, OPERATE_PROFIT_OTHER_YOY, OPERATE_PROFIT_BALANCE, OPERATE_PROFIT_BALANCE_YOY, OPERATE_PROFIT, OPERATE_PROFIT_YOY, NONBUSINESS_INCOME, NONBUSINESS_INCOME_YOY, NONCURRENT_DISPOSAL_INCOME, NONCURRENT_DISPOSAL_INCOME_YOY, NONBUSINESS_EXPENSE, NONBUSINESS_EXPENSE_YOY, NONCURRENT_DISPOSAL_LOSS, NONCURRENT_DISPOSAL_LOSS_YOY, EFFECT_TP_OTHER, EFFECT_TP_OTHER_YOY, TOTAL_PROFIT_BALANCE, TOTAL_PROFIT_BALANCE_YOY, TOTAL_PROFIT, TOTAL_PROFIT_YOY, INCOME_TAX, INCOME_TAX_YOY, EFFECT_NETPROFIT_OTHER, EFFECT_NETPROFIT_OTHER_YOY, EFFECT_NETPROFIT_BALANCE, EFFECT_NETPROFIT_BALANCE_YOY, UNCONFIRM_INVEST_LOSS, UNCONFIRM_INVEST_LOSS_YOY, NETPROFIT, NETPROFIT_YOY, PRECOMBINE_PROFIT, PRECOMBINE_PROFIT_YOY, CONTINUED_NETPROFIT, CONTINUED_NETPROFIT_YOY, DISCONTINUED_NETPROFIT, DISCONTINUED_NETPROFIT_YOY, PARENT_NETPROFIT, PARENT_NETPROFIT_YOY, MINORITY_INTEREST, MINORITY_INTEREST_YOY, DEDUCT_PARENT_NETPROFIT, DEDUCT_PARENT_NETPROFIT_YOY, NETPROFIT_OTHER, NETPROFIT_OTHER_YOY, NETPROFIT_BALANCE, NETPROFIT_BALANCE_YOY, BASIC_EPS, BASIC_EPS_YOY, DILUTED_EPS, DILUTED_EPS_YOY, OTHER_COMPRE_INCOME, OTHER_COMPRE_INCOME_YOY, PARENT_OCI, PARENT_OCI_YOY, MINORITY_OCI, MINORITY_OCI_YOY, PARENT_OCI_OTHER, PARENT_OCI_OTHER_YOY, PARENT_OCI_BALANCE, PARENT_OCI_BALANCE_YOY, UNABLE_OCI, UNABLE_OCI_YOY, CREDITRISK_FAIRVALUE_CHANGE, CREDITRISK_FAIRVALUE_CHANGE_YOY, OTHERRIGHT_FAIRVALUE_CHANGE, OTHERRIGHT_FAIRVALUE_CHANGE_YOY, SETUP_PROFIT_CHANGE, SETUP_PROFIT_CHANGE_YOY, RIGHTLAW_UNABLE_OCI, RIGHTLAW_UNABLE_OCI_YOY, UNABLE_OCI_OTHER, UNABLE_OCI_OTHER_YOY, UNABLE_OCI_BALANCE, UNABLE_OCI_BALANCE_YOY, ABLE_OCI, ABLE_OCI_YOY, RIGHTLAW_ABLE_OCI, RIGHTLAW_ABLE_OCI_YOY, AFA_FAIRVALUE_CHANGE, AFA_FAIRVALUE_CHANGE_YOY, HMI_AFA, HMI_AFA_YOY, CASHFLOW_HEDGE_VALID, CASHFLOW_HEDGE_VALID_YOY, CREDITOR_FAIRVALUE_CHANGE, CREDITOR_FAIRVALUE_CHANGE_YOY, CREDITOR_IMPAIRMENT_RESERVE, CREDITOR_IMPAIRMENT_RESERVE_YOY, FINANCE_OCI_AMT, FINANCE_OCI_AMT_YOY, CONVERT_DIFF, CONVERT_DIFF_YOY, ABLE_OCI_OTHER, ABLE_OCI_OTHER_YOY, ABLE_OCI_BALANCE, ABLE_OCI_BALANCE_YOY, OCI_OTHER, OCI_OTHER_YOY, OCI_BALANCE, OCI_BALANCE_YOY, TOTAL_COMPRE_INCOME, TOTAL_COMPRE_INCOME_YOY, PARENT_TCI, PARENT_TCI_YOY, MINORITY_TCI, MINORITY_TCI_YOY, PRECOMBINE_TCI, PRECOMBINE_TCI_YOY, EFFECT_TCI_BALANCE, EFFECT_TCI_BALANCE_YOY, TCI_OTHER, TCI_OTHER_YOY, TCI_BALANCE, TCI_BALANCE_YOY, ACF_END_INCOME, ACF_END_INCOME_YOY, OPINION_TYPE"
 )
@@ -269,11 +287,38 @@ async def run(
     years: list[int] | None = None,
     periods: str = "Q1,Q2,Q3,FY",
     page_size: int = 100,
+    incremental: bool = False,
 ) -> Path:
+    """Fetch income statement data and write to CSV.
+
+    With ``incremental=True`` a single ``UPDATE_DATE>='anchor'`` pull replaces
+    per-period REPORT_DATE enumeration, so historical revisions are captured
+    and the full table is not re-fetched on every sync (issue #299). When no
+    anchor exists the fixed initial date ``2020-01-01`` is used (one full
+    history pull by UPDATE_DATE), never a REPORT_DATE enumeration fallback.
+
+    Returns the path to the generated CSV file.
+    """
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
+
+    if incremental:
+        total_records = await fetch_incremental(
+            REPORT_NAME,
+            DOLT_TABLE,
+            output_path,
+            csv_dir() / f"{REPORT_NAME}.state.json",
+            page_size=page_size,
+            initial_anchor=INITIAL_UPDATE_ANCHOR,
+            session_factory=AsyncSession,
+            anchor_resolver=update_date_anchor,
+            fetch_fn=fetch_by_update_date,
+        )
+        print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
+        return output_path
+
     if years is None:
         years = list(range(START_YEAR, datetime.now().year + 1))
 
-    output_path = csv_dir() / f"{REPORT_NAME}.csv"
     period_list = [p.strip() for p in periods.split(",")]
     all_dates = build_dates(years, period_list)
 
@@ -538,12 +583,12 @@ CREATE TABLE _tmp_inc (
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
-    """Import the fetched CSV into Dolt fin_income (replace semantics).
+    """Import the fetched CSV into Dolt fin_income (merge/upsert semantics).
 
-    The whole table is atomically rebuilt from the CSV on every import
-    (full-refetch contract for the F10 schema, ref #202): the old table is
-    renamed aside, a fresh table is created with the 203-field DDL and
-    filled via INSERT SELECT; any failure rolls back to the previous data.
+    Incremental CSVs are UPSERTed into the existing table keyed by the PK
+    (symbol, report_date): new rows append to history while revised rows
+    (same PK, moved UPDATE_DATE) OVERWRITE the old row across every non-PK
+    value column (issue #299).
     """
     csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import income]", file=sys.stderr)
@@ -553,19 +598,21 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         tmp_name="_tmp_inc",
         ddl=DDL,
         insert_sql=f"""
-            INSERT IGNORE INTO {DOLT_TABLE} (symbol, report_date, {COLS})
+            INSERT INTO {DOLT_TABLE} (symbol, report_date, {COLS})
             SELECT
-                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-                CAST(REPORT_DATE AS DATE), {trim_select_cols()}
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS _sym,
+                CAST(REPORT_DATE AS DATE) AS _rpt, {_upsert_select_cols()}
             FROM _tmp_inc
             WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                   IN (SELECT symbol FROM stock_basic)
+            ON DUPLICATE KEY UPDATE
+                {_upsert_updates()}
         """,
         create_sql=_TMP_INC_DDL,
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(report_date)",
-        merge=False,
+        merge=True,
     )
 
 
@@ -576,10 +623,12 @@ if __name__ == "__main__":
         p = argparse.ArgumentParser(description="Fetch A-share income statement")
         p.add_argument("--years", default="")
         p.add_argument("--periods", default="Q1,Q2,Q3,FY")
+        p.add_argument("--incremental", action="store_true")
         args = p.parse_args()
         await run(
             years=[int(y) for y in args.years.split(",") if y] or None,
             periods=args.periods,
+            incremental=args.incremental,
         )
 
     asyncio.run(_main())

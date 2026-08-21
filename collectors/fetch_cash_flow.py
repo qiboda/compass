@@ -17,10 +17,13 @@ from common import (
     Throttle,
     build_dates,
     csv_dir,
+    fetch_by_update_date,
+    fetch_incremental,
     fetch_paginated,
     import_replace_table,
     last_report_date,
     make_proxy_pool,
+    update_date_anchor,
     write_csv,
 )
 
@@ -28,6 +31,7 @@ REPORT_NAME = "RPT_F10_FINANCE_GCASHFLOW"
 FILTER_COLUMN = "REPORT_DATE"
 DOLT_TABLE = "fin_cash_flow"
 START_YEAR = 2020
+INITIAL_UPDATE_ANCHOR = "2020-01-01"  # no-anchor first run: one full-history UPDATE_DATE pull
 
 DDL = """\
 CREATE TABLE IF NOT EXISTS fin_cash_flow (
@@ -311,6 +315,20 @@ def trim_select_cols() -> str:
         for col in COLS.split(", ")
     )
 
+
+def _upsert_select_cols() -> str:
+    """SELECT-side aliased column list for the merge/ODKU import."""
+    return ", ".join(
+        f"TRIM({col}) AS _{col}" if col in _TRIM_TEXT_COLS else f"{col} AS _{col}"
+        for col in COLS.split(", ")
+    )
+
+
+def _upsert_updates() -> str:
+    """ODKU update list: every non-PK COLS column is overwritten by its alias."""
+    return ", ".join(f"{col}=_{col}" for col in COLS.split(", "))
+
+
 COLS = (
     "SECUCODE, SECURITY_CODE, SECURITY_NAME_ABBR, ORG_CODE, "
     "ORG_TYPE, REPORT_TYPE, REPORT_DATE_NAME, SECURITY_TYPE_CODE, "
@@ -383,11 +401,38 @@ async def run(
     years: list[int] | None = None,
     periods: str = "Q1,Q2,Q3,FY",
     page_size: int = 100,
+    incremental: bool = False,
 ) -> Path:
+    """Fetch cash flow statement data and write to CSV.
+
+    With ``incremental=True`` a single ``UPDATE_DATE>='anchor'`` pull replaces
+    per-period REPORT_DATE enumeration, so historical revisions are captured
+    and the full table is not re-fetched on every sync (issue #299). When no
+    anchor exists the fixed initial date ``2020-01-01`` is used (one full
+    history pull by UPDATE_DATE), never a REPORT_DATE enumeration fallback.
+
+    Returns the path to the generated CSV file.
+    """
+    output_path = csv_dir() / f"{REPORT_NAME}.csv"
+
+    if incremental:
+        total_records = await fetch_incremental(
+            REPORT_NAME,
+            DOLT_TABLE,
+            output_path,
+            csv_dir() / f"{REPORT_NAME}.state.json",
+            page_size=page_size,
+            initial_anchor=INITIAL_UPDATE_ANCHOR,
+            session_factory=AsyncSession,
+            anchor_resolver=update_date_anchor,
+            fetch_fn=fetch_by_update_date,
+        )
+        print(f"\nDone: {total_records} records → {output_path.resolve()}", file=sys.stderr)
+        return output_path
+
     if years is None:
         years = list(range(START_YEAR, datetime.now().year + 1))
 
-    output_path = csv_dir() / f"{REPORT_NAME}.csv"
     period_list = [p.strip() for p in periods.split(",")]
     all_dates = build_dates(years, period_list)
 
@@ -710,11 +755,12 @@ CREATE TABLE _tmp_cf (
 
 
 def import_to_dolt(csv_path: Path | None = None) -> int:
-    """Import the fetched CSV into Dolt fin_cash_flow (full rebuild semantics).
+    """Import the fetched CSV into Dolt fin_cash_flow (merge/upsert semantics).
 
-    The table is atomically REPLACED with the CSV contents: old rows outside
-    the CSV disappear, restated values in the CSV win (ref #202). Rows are
-    deduped by the PK (symbol, report_date).
+    Incremental CSVs are UPSERTed into the existing table keyed by the PK
+    (symbol, report_date): new rows append to history while revised rows
+    (same PK, moved UPDATE_DATE) OVERWRITE the old row across every non-PK
+    value column (issue #299).
     """
     csv_path = csv_path or csv_dir() / f"{REPORT_NAME}.csv"
     print("[import cash_flow]", file=sys.stderr)
@@ -724,19 +770,21 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         tmp_name="_tmp_cf",
         ddl=DDL,
         insert_sql=f"""
-            INSERT IGNORE INTO {DOLT_TABLE} (symbol, report_date, {COLS})
+            INSERT INTO {DOLT_TABLE} (symbol, report_date, {COLS})
             SELECT
-                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE),
-                CAST(REPORT_DATE AS DATE), {trim_select_cols()}
+                CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE) AS _sym,
+                CAST(REPORT_DATE AS DATE) AS _rpt, {_upsert_select_cols()}
             FROM _tmp_cf
             WHERE CONCAT(UPPER(SUBSTRING_INDEX(SECUCODE, '.', -1)), SECURITY_CODE)
                   IN (SELECT symbol FROM stock_basic)
+            ON DUPLICATE KEY UPDATE
+                {_upsert_updates()}
         """,
         create_sql=_TMP_CF_DDL,
         dolt_table=DOLT_TABLE,
         source_label=f"EastMoney datacenter {REPORT_NAME}",
         last_report_expr="MAX(report_date)",
-        merge=False,
+        merge=True,
     )
 
 
@@ -747,10 +795,12 @@ if __name__ == "__main__":
         p = argparse.ArgumentParser(description="Fetch A-share cash flow statement")
         p.add_argument("--years", default="")
         p.add_argument("--periods", default="Q1,Q2,Q3,FY")
+        p.add_argument("--incremental", action="store_true")
         args = p.parse_args()
         await run(
             years=[int(y) for y in args.years.split(",") if y] or None,
             periods=args.periods,
+            incremental=args.incremental,
         )
 
     asyncio.run(_main())

@@ -44,7 +44,7 @@ class TestMainCliIndexDaily:
         # Current code: parser.error() → SystemExit before dispatch. GREEN:
         # the choice is accepted and dispatch_fetch called once.
         main_mod.main()
-        mock_dispatch.assert_called_once_with("index_daily", years=None)
+        mock_dispatch.assert_called_once_with("index_daily", years=None, incremental=False)
 
     def test_import_cli_accepts_index_daily(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RED: `main.py import index_daily` is currently rejected by argparse."""

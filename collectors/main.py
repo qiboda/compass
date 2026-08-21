@@ -4,9 +4,9 @@
 Usage:
     uv run python main.py fetch stock_basic
     uv run python main.py fetch fin_indicators [--years 2024,2025]
-    uv run python main.py fetch balance_sheet [--years 2024,2025]
-    uv run python main.py fetch income [--years 2024,2025]
-    uv run python main.py fetch cash_flow [--years 2024,2025]
+    uv run python main.py fetch balance_sheet [--years 2024,2025] [--incremental]
+    uv run python main.py fetch income [--years 2024,2025] [--incremental]
+    uv run python main.py fetch cash_flow [--years 2024,2025] [--incremental]
     uv run python main.py fetch dragon
     uv run python main.py fetch block_trade
     uv run python main.py fetch institution_survey
@@ -352,6 +352,7 @@ def sync_investment_data(restart: bool = False) -> None:
 def dispatch_fetch(
     target: str,
     years: list[int] | None = None,
+    incremental: bool = False,
 ) -> None:
     """Fetch data for the given target table.
 
@@ -360,6 +361,8 @@ def dispatch_fetch(
             cash_flow, main_flow, dragon, block_trade, institution_survey,
             index_daily.
         years: Years to fetch (financial tables only; defaults to sub-module default).
+        incremental: For F10 financial tables, use UPDATE_DATE anchor fetch
+            (issue #299). fin_indicators also supports this flag.
     """
     if target == "stock_basic":
         import fetch_stock_basic_official
@@ -371,6 +374,8 @@ def dispatch_fetch(
         import fetch_fin_indicators
 
         sys.argv = ["fetch_fin_indicators"]
+        if incremental:
+            sys.argv.append("--incremental")
         if years:
             sys.argv.extend(["--years", ",".join(str(y) for y in years)])
         asyncio.run(fetch_fin_indicators.main())
@@ -378,17 +383,17 @@ def dispatch_fetch(
     elif target == "balance_sheet":
         import fetch_balance_sheet
 
-        asyncio.run(fetch_balance_sheet.run(years=years))
+        asyncio.run(fetch_balance_sheet.run(years=years, incremental=incremental))
 
     elif target == "income":
         import fetch_income
 
-        asyncio.run(fetch_income.run(years=years))
+        asyncio.run(fetch_income.run(years=years, incremental=incremental))
 
     elif target == "cash_flow":
         import fetch_cash_flow
 
-        asyncio.run(fetch_cash_flow.run(years=years))
+        asyncio.run(fetch_cash_flow.run(years=years, incremental=incremental))
 
     elif target == "dragon":
         import fetch_dragon
@@ -557,24 +562,24 @@ def do_sync(restart: bool = False) -> None:
     _import_fin_indicators()
 
     # 3. balance_sheet
-    print("\n[sync] Fetching balance_sheet...", file=sys.stderr)
+    print("\n[sync] Fetching balance_sheet (incremental)...", file=sys.stderr)
     import fetch_balance_sheet
 
-    asyncio.run(fetch_balance_sheet.run())
+    asyncio.run(fetch_balance_sheet.run(incremental=True))
     fetch_balance_sheet.import_to_dolt()
 
     # 4. income
-    print("\n[sync] Fetching income...", file=sys.stderr)
+    print("\n[sync] Fetching income (incremental)...", file=sys.stderr)
     import fetch_income
 
-    asyncio.run(fetch_income.run())
+    asyncio.run(fetch_income.run(incremental=True))
     fetch_income.import_to_dolt()
 
     # 5. cash_flow
-    print("\n[sync] Fetching cash_flow...", file=sys.stderr)
+    print("\n[sync] Fetching cash_flow (incremental)...", file=sys.stderr)
     import fetch_cash_flow
 
-    asyncio.run(fetch_cash_flow.run())
+    asyncio.run(fetch_cash_flow.run(incremental=True))
     fetch_cash_flow.import_to_dolt()
 
     # 6. dragon_list (龙虎榜席位)
@@ -655,6 +660,11 @@ def main() -> None:
         ],
     )
     fetch.add_argument("--years", default="", help="Years to fetch (financial tables)")
+    fetch.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Use UPDATE_DATE incremental fetch for fin_indicators / balance_sheet / income / cash_flow",
+    )
 
     imp = sub.add_parser("import", help="Import CSV into Dolt")
     imp.add_argument(
@@ -697,7 +707,7 @@ def main() -> None:
 
     if args.command == "fetch":
         years = _parse_years(args.years)
-        dispatch_fetch(args.target, years=years)
+        dispatch_fetch(args.target, years=years, incremental=args.incremental)
 
     elif args.command == "import":
         dispatch_import(args.target)

@@ -16,7 +16,7 @@ Usage:
     # Balance sheet / income / cashflow
     uv run python fetch_fin_indicators.py --report-name RPT_DMSK_FN_BALANCE
 
-State file: {report_name}.state.json caches last fetch.
+State file: csv_dir()/{report_name}.state.json caches last fetch.
 
 Incremental mode (RPT_LICO_FN_CPD only) fetches every row whose UPDATE_DATE is
 >= the anchor = min(data_updates.last_updated, state.json last_update_date) —
@@ -37,9 +37,7 @@ import asyncio
 import csv
 import json
 import random
-import re
 import sys
-import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -47,12 +45,18 @@ from curl_cffi.requests import AsyncSession
 
 from common import (
     ProxyPool,
+    Throttle,
     csv_dir,
     dedupe_csv,
-    dolt_dir,
-    dolt_sql_csv,
+    fetch_by_update_date,
     make_proxy_pool,
     proxy_get,
+)
+from common import (
+    normalize_update_date as _normalize_update_date,
+)
+from common import (
+    update_date_anchor as _update_anchor,
 )
 
 # ── Constants ───────────────────────────────────────────────────
@@ -116,90 +120,6 @@ def _last_report_date(report_name: str, state_path: Path) -> str:
     if state_path.exists():
         return json.loads(state_path.read_text()).get("last_report_date", "")
     return ""
-
-
-def _normalize_update_date(value: object) -> str | None:
-    """Normalize an API UPDATE_DATE to its YYYY-MM-DD date prefix.
-
-    Handles time-suffixed values ("2026-08-05 00:00:00") and slash / zero-
-    padded variants ("2026/08/13", "2026-8-3").  Returns None for empty,
-    missing, or unparseable values so callers can SKIP them (they must never
-    crash the filter construction or the state max computation).
-    """
-    if value is None:
-        return None
-    s = str(value).strip()
-    if not s:
-        return None
-    m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
-    if not m:
-        return None
-    year, month, day = m.groups()
-    return f"{year}-{int(month):02d}-{int(day):02d}"
-
-
-def _update_anchor(report_name: str, state_path: Path) -> str:
-    """Resolve the incremental UPDATE_DATE anchor for a report.
-
-    Anchor = min(data_updates.last_updated (table for ``report_name``),
-    state.json ``last_update_date``) — the EARLIER of the two sources, so a
-    cross-day fetch/import or a standalone import can never push the anchor
-    past rows updated in the fetch-import gap.
-
-    - data_updates row with NULL/empty ``last_updated`` → that source missing
-    - state.json lacking the ``last_update_date`` key (old single-key format)
-      → that source missing
-    - both sources missing → "" (triggers full REPORTDATE enumeration)
-    - anchor > today → clamped to today (no-update semantics)
-
-    Read via common.dolt_dir()/dolt_sql_csv (COMPASS_DATA_DIR env-aware) —
-    deliberately NOT the repo-relative ``_last_report_date`` path, which has
-    never resolved on any checkout.
-    """
-    sources: list[str] = []
-    if (dolt_dir() / ".dolt").exists():
-        table = "fin_indicators" if report_name == "RPT_LICO_FN_CPD" else report_name
-        stdout = dolt_sql_csv(
-            f"SELECT last_updated FROM data_updates WHERE table_name='{table}'"
-        )
-        lines = stdout.strip().split("\n")
-        last = lines[-1].strip() if len(lines) > 1 else ""
-        if last and last != "NULL":
-            sources.append(last)
-
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            state = {}
-        last_update = state.get("last_update_date")
-        if last_update:
-            sources.append(str(last_update))
-
-    if not sources:
-        return ""
-    anchor = min(sources)
-    today = date.today().isoformat()
-    return today if anchor > today else anchor
-
-
-# ── Throttle ────────────────────────────────────────────────────
-
-
-class Throttle:
-    def __init__(self, min_interval: float = EM_MIN_INTERVAL):
-        self._min_interval = min_interval
-        self._last: float = 0.0
-
-    async def acquire(self):
-        now = time.monotonic()
-        since_last = now - self._last
-        if since_last < self._min_interval:
-            wait = self._min_interval - since_last + random.uniform(*EM_JITTER)
-            await asyncio.sleep(wait)
-        else:
-            await asyncio.sleep(random.uniform(0, 0.15))
-        self._last = time.monotonic()
 
 
 # ── Field flattener ─────────────────────────────────────────────
@@ -295,93 +215,6 @@ async def fetch_period(
     return all_records
 
 
-async def fetch_by_update_date(
-    session: AsyncSession,
-    throttle: Throttle,
-    report_name: str,
-    anchor: str,
-    page_size: int = EM_PAGE_SIZE,
-    *,
-    pool: "ProxyPool | None" = None,
-) -> list[dict]:
-    """Fetch all rows with UPDATE_DATE >= anchor (incremental revision detect).
-
-    Single UPDATE_DATE filter instead of per-period REPORTDATE enumeration:
-    catches revisions to any previously-fetched report period.  Sorted by
-    UPDATE_DATE so pagination walks revisions in stable order; total_pages is
-    capped at 500 and pagination progress is logged to stderr.
-    """
-    all_records = []
-    page = 1
-    total_pages = 1
-
-    while page <= total_pages:
-        params = {
-            "reportName": report_name,
-            "columns": "ALL",
-            "filter": f"(UPDATE_DATE>='{anchor}')",
-            "sortColumns": "UPDATE_DATE",
-            "sortTypes": "1",
-            "pageSize": page_size,
-            "pageNumber": page,
-            "source": "WEB",
-            "client": "WEB",
-        }
-
-        data: dict | None = None  # per-page: never reuse a stale response across pages
-        for attempt in range(EM_MAX_RETRIES):
-            try:
-                await throttle.acquire()
-                resp = await proxy_get(session, pool, EM_BASE, params=params, headers=EM_HEADERS)
-
-                if resp.status_code == 429:
-                    wait = 15 + random.uniform(0, 5)
-                    print(f"    429, waiting {wait:.0f}s...", file=sys.stderr)
-                    await asyncio.sleep(wait)
-                    continue
-
-                resp.raise_for_status()
-                data = resp.json()
-                break
-
-            except Exception as e:
-                wait = min(2**attempt, 30) + random.uniform(0, 3)
-                if attempt < EM_MAX_RETRIES - 1:
-                    print(
-                        f"    retry {attempt + 1}/{EM_MAX_RETRIES} in {wait:.0f}s: {e}",
-                        file=sys.stderr,
-                    )
-                    await asyncio.sleep(wait)
-                else:
-                    raise
-
-        if data is None:
-            print("    No data returned", file=sys.stderr)
-            break
-        assert data is not None
-        if not data.get("success"):
-            print(f"    API error: {data.get('message', 'unknown')}", file=sys.stderr)
-            break
-
-        result = data.get("result")
-        if result is None:
-            break
-
-        items = result.get("data", [])
-        if not items:
-            break
-
-        for item in items:
-            all_records.append(flatten_record(item))
-
-        total_pages = min(result.get("pages", 1), 500)  # safety cap
-        if page > 1 or total_pages > 1:
-            print(f"    page {page}/{total_pages}", file=sys.stderr)
-        page += 1
-
-    return all_records
-
-
 # ── CSV writer ──────────────────────────────────────────────────
 
 
@@ -437,8 +270,9 @@ async def main():
     report_name = args.report_name
     current_year = datetime.now().year
 
-    # State file for incremental updates
-    state_path = Path(f"{report_name}.state.json")
+    # State file for incremental updates — keep it beside the CSV in
+    # csv_dir(), not in the process CWD, so anchors survive run-directory changes.
+    state_path = csv_dir() / f"{report_name}.state.json"
 
     # Build date list
     if args.years:
@@ -521,14 +355,14 @@ async def main():
                 )
             except Exception as e:
                 print(f"FAILED: {e}", file=sys.stderr)
-                records = []
+                raise
 
             if records:
                 write_csv(records, output_path, append=not first_write)
                 first_write = False
                 total_records += len(records)
                 for rec in records:
-                    rpt = rec.get("REPORTDATE") or ""
+                    rpt = str(rec.get("REPORTDATE") or "")
                     if rpt:
                         max_report_date = max(max_report_date, rpt)
                     upd = _normalize_update_date(rec.get("UPDATE_DATE"))

@@ -410,6 +410,45 @@ class TestMain:
         assert state["last_report_date"] == "2024-12-31"
         assert state["total_rows"] == 1
 
+    async def test_main_writes_state_json_under_csv_dir_not_cwd(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """State file must live beside the CSV in csv_dir(), not in the CWD.
+
+        RED: state_path is currently ``Path(f"{report_name}.state.json")``,
+        so running from a different directory silently loses the anchor.
+        """
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(
+            json_data={
+                "success": True,
+                "result": {
+                    "data": [{"code": "000001", "REPORTDATE": "2024-12-31"}],
+                    "pages": 1,
+                },
+            }
+        )
+
+        with (
+            patch.object(fetch_fin_indicators, "AsyncSession", return_value=stub),
+            patch.object(
+                fetch_fin_indicators.sys,
+                "argv",
+                ["fetch_fin_indicators.py", "--report-name", "RPT_CUSTOM", "--years", "2024", "--periods", "FY"],
+            ),
+        ):
+            await fetch_fin_indicators.main()
+
+        # COMPASS_CSV_DIR points at tmp_path via the autouse fixture; the
+        # state file must be written there, not into the process CWD.
+        assert (tmp_path / "RPT_CUSTOM.state.json").exists()
+        assert not (cwd / "RPT_CUSTOM.state.json").exists()
+
     async def test_default_years_covers_2020_to_now(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -564,6 +603,35 @@ class TestMain:
         assert not (tmp_path / "RPT_LICO_FN_CPD.csv").exists()
         assert not (tmp_path / "RPT_LICO_FN_CPD.state.json").exists()
         assert "FAILED: boom" in capsys.readouterr().err
+
+    async def test_incremental_fetch_failure_propagates(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """增量路径抓取异常必须向上传播（与 F10 三表一致），不能伪装成空窗口。
+
+        RED: 当前 anchor 分支吞掉异常并继续，main() 正常返回。
+        """
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            fetch_fin_indicators, "_update_anchor", lambda *a, **k: "2025-01-01"
+        )
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        stub = make_stub_session(exc=RuntimeError("boom"))
+        with (
+            patch.object(fetch_fin_indicators, "AsyncSession", return_value=stub),
+            patch.object(
+                fetch_fin_indicators.sys,
+                "argv",
+                ["fetch_fin_indicators.py", "--incremental", "--years", "2024", "--periods", "FY"],
+            ),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            await fetch_fin_indicators.main()
+
+        assert not (tmp_path / "RPT_LICO_FN_CPD.csv").exists()
+        assert not (tmp_path / "RPT_LICO_FN_CPD.state.json").exists()
 
     async def test_empty_records_prints_empty(
         self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
