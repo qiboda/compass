@@ -153,7 +153,7 @@ let range = db.get_stored_range("SZ000001").await?;
 - **双 tab 视觉断言**：Chart+Sepa 双 tab leaf → 扫描 `output.shapes` 断言激活 tab
   与未激活 tab 的样式形状差异（accent vs text_secondary），**禁目测**
 - **`score_color` 单测**：色阶端点/边界/中点 lerp/单调性
-- **UI 问题一律客观证据定位**（形状/像素采样/断言），不靠"看起来对不对"猜
+- **UI 问题可用截图/多模态视觉检查辅助定位**：截图可作为证据，但仍须结合形状/像素采样/断言等客观证据交叉验证
 
 ### 脚本自测（scripts/tests/，ref #151）
 
@@ -369,7 +369,7 @@ GUI 冒烟同理：**组件尺寸语义必须以渲染输出为准**，不信任
 
 #### GUI 冒烟：像素采样法（ref #226/#228）
 
-GUI 冒烟验证不依赖视觉模型"看起来对不对"，用客观像素证据：
+GUI 冒烟验证可用截图/多模态视觉检查辅助，同时以客观像素证据交叉验证：
 
 ```sh
 # Wayland: grim；X11: import（注意参数顺序，ref #226）
@@ -384,7 +384,7 @@ convert screenshot.png -format %c -colors 5 histogram:info:
 - 截图工具链：Wayland 用 `grim`（`xwininfo` 在 Wayland 无输出，ref #226）；
   X11 用 `import`（注意 `-window root` 参数顺序）
 - 断言对象是**直方图/像素统计**（区域主色、颜色计数），不是人眼判图
-- 视觉模型无图像输入能力时（ref #226），像素采样是唯一客观证据路径
+- 视觉模型支持图像输入时，截图可作辅助证据；像素采样等客观证据仍作为最终验证手段
 
 ### Python 网络 mock（stub AsyncSession）
 
