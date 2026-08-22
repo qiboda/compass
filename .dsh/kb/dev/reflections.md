@@ -443,3 +443,21 @@
 3. 子代理反复因 token 上限中断时，记录委派失败并主 agent 补写测试（附 evidence）比无限重试更高效。
 
 **Process improvements**: None（一次性教训；对抗性测试 fallback 已记录在 evidence 文件）。
+
+## 2026-08-22 — ref #301 docs: 移除截图修 bug 禁令，适配多模态图像输入
+
+**What was done**: 删除 AGENTS.md 中「禁止依赖视觉表现来 debug」硬禁令，改为允许截图/多模态视觉检查辅助 UI 调试；同步更新 `.dsh/kb/dev/testing.md` 三处旧口径。创建 issue #301，commit `4700d56`。
+
+**User corrections** (if any): 无。用户最初要求修改 AGENTS.md/项目书，确认推荐方案（同步 testing.md）后按推荐执行。
+
+**What went wrong**: ①使用 `edit` 工具前未先通过 `read` 工具读取文件，4 次编辑调用被拒绝（工具要求先 read）；改用 `read` 后成功。②`reflect-audit.sh` 默认 `find -maxdepth 2` 找不到当前 session trace（实际嵌套在 workspace slug 目录下第 3 层），改为手动 `zstd -dc` 读取。③`gh issue list --search "..." in:title,body` 参数语法错误，换用 `gh issue list --search` 成功（小摩擦）。
+
+**Lessons learned**:
+1. 对 `edit` 工具编辑任何文件前，先通过 `read` 工具读取该文件，避免工具拒绝往返。
+2. 运行 `reflect-audit.sh` 失败时，先定位实际 trace 路径（`find ... -maxdepth 3 -name 'session-*'`），再手动解压读取，不跳过第 0 步。
+3. 使用 `gh issue search` 语法前参考 `gh issue list --help`；简单搜索用 `--search` 单参数即可。
+
+**Process improvements**: 本次已完成 AGENTS.md + `.dsh/kb/dev/testing.md` 文档同步（commit `4700d56`）；无新增 hook/脚本/自动化机制。
+
+### Trends (last 10)
+- No significant patterns observed.
