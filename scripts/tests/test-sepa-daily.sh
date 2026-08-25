@@ -61,6 +61,17 @@ case "${1:-}" in
             else
                 printf 'd\n2026-07-31\n'
             fi
+        elif [ -n "${FAKE_DOLT_SQL_DISTINCT:-}" ]; then
+            # Per-table anchors with distinct dates, to prove each table uses
+            # its own anchor rather than a shared global MAX.
+            case "$*" in
+                *"capital_main_flow"*) printf 'd\n2026-07-30\n' ;;
+                *"dragon_list"*) printf 'd\n2026-07-31\n' ;;
+                *"block_trade"*) printf 'd\n2026-08-01\n' ;;
+                *"institution_survey"*) printf 'd\n2026-08-02\n' ;;
+                *"index_daily"*) printf 'd\n2026-08-03\n' ;;
+                *) printf 'd\nNULL\n' ;;
+            esac
         else
             printf 'd\n2026-07-31\n'
         fi
@@ -205,7 +216,7 @@ assert_order "step 2: fetch/import are paired for index_daily" "$T1/calls.log" \
 assert_order "step 2: index_daily pair follows institution_survey pair" "$T1/calls.log" \
     "uv run python main.py import institution_survey" "uv run python main.py fetch index_daily"
 
-assert_true "step 4: 6 append tables — 5 incremental plus full index_basic" \
+assert_true "step 4: 6 table exports — 5 incremental plus full index_basic" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-07-31" "$T1/calls.log" &&
@@ -351,10 +362,10 @@ assert_false "no step ran" 'grep -q "^cargo " "$T6/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 7. Five-source contract: step 2 fetch/import index_daily as the last source,
-#    header info says 5 sources + 6 append tables (index_daily + index_basic)
+#    header info says 5 sources + 6 table exports (index_daily + index_basic)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 7. five-source contract: index_daily fetch/import + 6 append imports ---"
+echo "--- 7. five-source contract: index_daily fetch/import + 6 table exports ---"
 T7="$TMP_ROOT/t7"
 mkdir -p "$T7"
 setup_fakes "$T7"
@@ -378,8 +389,8 @@ assert_order "step 2: fetch index_daily after institution_survey import" "$T7/ca
     "uv run python main.py import institution_survey" "uv run python main.py fetch index_daily"
 assert_order "step 2: import index_daily after fetch index_daily" "$T7/calls.log" \
     "uv run python main.py fetch index_daily" "uv run python main.py import index_daily"
-assert_true "script header says 5 sources and 6 append tables (not 4 sources)" \
-    'grep -q "5 sources" "$SEPA_SCRIPT" && grep -q "6 append tables" "$SEPA_SCRIPT" && ! grep -q "4 sources" "$SEPA_SCRIPT"'
+assert_true "script header says 5 sources and 6 tables (not 4 sources)" \
+    'grep -q "5 sources" "$SEPA_SCRIPT" && grep -q "6 tables" "$SEPA_SCRIPT" && ! grep -q "4 sources" "$SEPA_SCRIPT"'
 assert_true "step 4: per-table anchor query includes index_daily" \
     'grep "dolt .* sql" "$T7/calls.log" | grep -q "table_name = .index_daily"'
 assert_true "step 4: exactly 6 import-compass calls" \
@@ -593,6 +604,36 @@ assert_true "error names step 4 anchor query" \
     'grep -q "step 4 failed: dolt sql anchor query" "$T12C/err.log"'
 assert_false "no import-compass attempt after anchor failure" \
     'grep -q "import-compass" "$T12C/calls.log"'
+
+# ---------------------------------------------------------------------------
+# 12d. Distinct per-table anchors: each non-index_basic table must use its own
+#      data_updates.last_report_date, not a shared global value
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 12d. distinct per-table anchors used independently ---"
+T12D="$TMP_ROOT/t12d"
+mkdir -p "$T12D"
+setup_fakes "$T12D"
+cat > "$T12D/status.seq" <<'EOF'
+On branch main
+nothing to commit, working tree clean
+===
+On branch main
+nothing to commit, working tree clean
+===
+EOF
+run_script "$T12D" FAKE_DOLT_SQL_DISTINCT=1
+assert_true "exit 0 on distinct anchors" 'test "$(cat "$T12D/exit.code")" = 0'
+assert_true "capital_main_flow uses its own 2026-07-30" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-30" "$T12D/calls.log"'
+assert_true "dragon_list uses its own 2026-07-31" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T12D/calls.log"'
+assert_true "block_trade uses its own 2026-08-01" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-08-01" "$T12D/calls.log"'
+assert_true "institution_survey uses its own 2026-08-02" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-08-02" "$T12D/calls.log"'
+assert_true "index_daily uses its own 2026-08-03" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-08-03" "$T12D/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 13. Basic error: step 2 fetch failure on an existing source (main_flow) stops

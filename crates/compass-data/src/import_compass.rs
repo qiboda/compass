@@ -400,7 +400,11 @@ fn import_append_table<'a>(
     let parquet_name = format!("{table_name}.parquet");
     let path = output.join(&parquet_name);
 
-    let date_filter = match since {
+    // First export: never apply `--since` filtering even when the Dolt table
+    // already has a data_updates anchor. Writing a since-filtered slice as the
+    // initial parquet would permanently lose history.
+    let effective_since = if path.exists() { since } else { None };
+    let date_filter = match effective_since {
         Some(s) if !s.is_empty() => format!(" WHERE {date_col} >= '{s}'"),
         _ => String::new(),
     };
@@ -416,7 +420,7 @@ fn import_append_table<'a>(
         return Ok(());
     }
 
-    if since.is_some() && !overwrite && path.exists() {
+    if effective_since.is_some() && !overwrite && path.exists() {
         info!("Merging incremental data with existing parquet...");
         std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
@@ -1565,6 +1569,53 @@ mod tests {
         assert!(
             (inflow - 2.0e8).abs() < 1.0,
             "new Dolt value must override old parquet value, got {inflow}"
+        );
+    }
+
+    #[test]
+    fn append_table_first_export_with_since_imports_full_history() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(MAIN_FLOW_SCHEMA)
+            .output()
+            .expect("create table");
+
+        // Two historical rows exist in Dolt before the first Parquet export.
+        Command::new("dolt")
+            .arg("--data-dir")
+            .arg(tmp.path())
+            .arg("sql")
+            .arg("-q")
+            .arg(
+                "INSERT INTO capital_main_flow (symbol, trade_date, main_net_inflow) VALUES \
+                ('SZ000001', '2026-01-04', 0.5e8), \
+                ('SH600519', '2026-01-05', 1.0e8)",
+            )
+            .output()
+            .expect("insert history");
+
+        // First export with a --since anchor still writes the full history:
+        // the parquet file does not exist yet, so `--since` must be ignored.
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::MainFlow,
+            false,
+            Some("2026-01-05"),
+        )
+        .expect("first export with since");
+
+        let parquet = tmp.path().join("capital_main_flow.parquet");
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            2,
+            "first export must not be truncated by --since"
         );
     }
 

@@ -5,7 +5,7 @@
 #   1. market data:  compass-data import           (investment_data Dolt → Parquet)
 #   2. collect:      collectors fetch 5 sources    (EastMoney → compass_data Dolt)
 #   3. Dolt commit:  collector tables              (limited add, push; skipped when clean)
-#   4. import:       import-compass 6 append tables (index_basic is a full overwrite)
+#   4. import:       import-compass 6 tables (5 incremental + index_basic full overwrite)
 #   5. compute:      sepa temperature + sepa score --top 50 (DELETE+append write-back)
 #   6. Dolt commit:  compute tables                (limited add, push; skipped when clean)
 #   7. print TOP50:  reuse step 5 output, never recompute
