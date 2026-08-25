@@ -47,8 +47,20 @@ case "${1:-}" in
         exit 0
         ;;
     sql)
+        if [ -n "${FAKE_DOLT_SQL_FAIL:-}" ]; then
+            echo "mock dolt sql: failing" >&2
+            exit 1
+        fi
         if [ -n "${FAKE_DOLT_SQL_NULL:-}" ]; then
             printf 'd\nNULL\n'
+        elif [ -n "${FAKE_DOLT_SQL_MIXED_NULL:-}" ]; then
+            # Per-table anchors: index_daily/index_basic have no anchor yet,
+            # the other collector tables already have one.
+            if printf '%s\n' "$*" | grep -qE "table_name = '(index_daily|index_basic)'"; then
+                printf 'd\nNULL\n'
+            else
+                printf 'd\n2026-07-31\n'
+            fi
         else
             printf 'd\n2026-07-31\n'
         fi
@@ -193,21 +205,26 @@ assert_order "step 2: fetch/import are paired for index_daily" "$T1/calls.log" \
 assert_order "step 2: index_daily pair follows institution_survey pair" "$T1/calls.log" \
     "uv run python main.py import institution_survey" "uv run python main.py fetch index_daily"
 
-assert_true "step 4: 5 append tables with since anchor" \
+assert_true "step 4: 6 append tables — 5 incremental plus full index_basic" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-07-31" "$T1/calls.log" &&
-     grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-07-31" "$T1/calls.log"'
+     grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-07-31" "$T1/calls.log" &&
+     grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T1/calls.log"'
+assert_true "step 4: index_basic is a full overwrite (no --since)" \
+    '! grep -q "import-compass --table index_basic --since" "$T1/calls.log"'
 
-assert_order "step 4: append imports in allowlist order (index_daily last)" "$T1/calls.log" \
+assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
     "import-compass --table capital_main_flow" "import-compass --table dragon_list"
-assert_order "step 4: append imports in allowlist order (index_daily last)" "$T1/calls.log" \
+assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
     "import-compass --table dragon_list" "import-compass --table block_trade"
-assert_order "step 4: append imports in allowlist order (index_daily last)" "$T1/calls.log" \
+assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
     "import-compass --table block_trade" "import-compass --table institution_survey"
-assert_order "step 4: append imports in allowlist order (index_daily last)" "$T1/calls.log" \
+assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
     "import-compass --table institution_survey" "import-compass --table index_daily"
+assert_order "step 4: index_basic full overwrite follows index_daily" "$T1/calls.log" \
+    "import-compass --table index_daily" "import-compass --table index_basic"
 
 assert_true "step 5: temperature before score" \
     'grep -qx "cargo run --bin compass-data -- sepa temperature" "$T1/calls.log" &&
@@ -334,10 +351,10 @@ assert_false "no step ran" 'grep -q "^cargo " "$T6/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 7. Five-source contract: step 2 fetch/import index_daily as the last source,
-#    header info says 5 sources, and step 4 produces 5 append imports
+#    header info says 5 sources + 6 append tables (index_daily + index_basic)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 7. five-source contract: index_daily fetch/import + 5 append imports ---"
+echo "--- 7. five-source contract: index_daily fetch/import + 6 append imports ---"
 T7="$TMP_ROOT/t7"
 mkdir -p "$T7"
 setup_fakes "$T7"
@@ -361,13 +378,14 @@ assert_order "step 2: fetch index_daily after institution_survey import" "$T7/ca
     "uv run python main.py import institution_survey" "uv run python main.py fetch index_daily"
 assert_order "step 2: import index_daily after fetch index_daily" "$T7/calls.log" \
     "uv run python main.py fetch index_daily" "uv run python main.py import index_daily"
-assert_true "script header comment says 5 sources (not 4)" \
-    'grep -q "5 sources" "$SEPA_SCRIPT" && ! grep -q "4 sources" "$SEPA_SCRIPT"'
-assert_true "step 4: SQL anchor query includes index_daily" \
-    'grep "dolt .* sql" "$T7/calls.log" | grep -q "table_name IN" &&
-     grep "table_name IN" "$T7/calls.log" | grep -q "index_daily"'
-assert_true "step 4: exactly 5 import-compass calls" \
-    'test "$(grep -c "cargo run --bin compass-data -- import-compass --table " "$T7/calls.log")" -eq 5'
+assert_true "script header says 5 sources and 6 append tables (not 4 sources)" \
+    'grep -q "5 sources" "$SEPA_SCRIPT" && grep -q "6 append tables" "$SEPA_SCRIPT" && ! grep -q "4 sources" "$SEPA_SCRIPT"'
+assert_true "step 4: per-table anchor query includes index_daily" \
+    'grep "dolt .* sql" "$T7/calls.log" | grep -q "table_name = .index_daily"'
+assert_true "step 4: exactly 6 import-compass calls" \
+    'test "$(grep -c "cargo run --bin compass-data -- import-compass --table " "$T7/calls.log")" -eq 6'
+assert_true "step 4: index_basic full overwrite imported last" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T7/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 8. Error path: step 2 fails at index_daily fetch → non-zero exit, no step 4/5
@@ -396,11 +414,11 @@ assert_false "no step 4/5 after failure" \
     'grep -q "import-compass" "$T8/calls.log" || grep -q "sepa temperature" "$T8/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 9. Allowlist boundary: index_daily + existing collector both changed → staged
-#    in allowlist order; unrelated/new table not staged; no `dolt add .`
+# 9. Allowlist boundary: index_daily + index_basic + existing collector changed
+#    → staged in allowlist order; unrelated/new table not staged; no `dolt add .`
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 9. allowlist: index_daily plus existing collector staged in order ---"
+echo "--- 9. allowlist: index_daily + index_basic plus existing collector staged ---"
 T9="$TMP_ROOT/t9"
 mkdir -p "$T9"
 setup_fakes "$T9"
@@ -409,6 +427,7 @@ On branch main
 Changes not staged for commit:
 	modified:         capital_main_flow
 	modified:         index_daily
+	modified:         index_basic
 	new table:        some_unrelated_table
 ===
 On branch main
@@ -418,7 +437,7 @@ EOF
 run_script "$T9"
 assert_true "exit 0" 'test "$(cat "$T9/exit.code")" = 0'
 assert_true "add limited to changed collector allowlist in order" \
-    'grep -qx "dolt --data-dir $T9/repos/compass_data add capital_main_flow index_daily" "$T9/calls.log"'
+    'grep -qx "dolt --data-dir $T9/repos/compass_data add capital_main_flow index_daily index_basic" "$T9/calls.log"'
 assert_false "unrelated/new table never staged" \
     'grep -q "some_unrelated_table" "$T9/calls.log"'
 assert_false "no dolt add ." 'grep -q "dolt .* add \." "$T9/calls.log"'
@@ -456,11 +475,11 @@ assert_true "no other collector tables staged" \
     '! grep -qE "dolt .* add (capital_main_flow|dragon_list|block_trade|institution_survey)" "$T10/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 11. Incremental anchor: data_updates query includes index_daily; index_daily
-#     append import uses the same --since as all other allowlisted tables
+# 11. Incremental anchor: per-table data_updates queries include index_daily;
+#     all 5 incremental tables use --since 2026-07-31, index_basic full overwrite
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 11. incremental anchor includes index_daily ---"
+echo "--- 11. per-table incremental anchor: index_daily + 4 tables since, index_basic full ---"
 T11="$TMP_ROOT/t11"
 mkdir -p "$T11"
 setup_fakes "$T11"
@@ -474,24 +493,28 @@ nothing to commit, working tree clean
 EOF
 run_script "$T11"
 assert_true "exit 0" 'test "$(cat "$T11/exit.code")" = 0'
-assert_true "sql anchor query includes index_daily" \
-    'grep "dolt .* sql" "$T11/calls.log" | grep -q "table_name IN" &&
-     grep "table_name IN" "$T11/calls.log" | grep -q "index_daily"'
-assert_true "import-compass index_daily uses same since 2026-07-31" \
+assert_true "per-table anchor query for index_daily" \
+    'grep "dolt .* sql" "$T11/calls.log" | grep -q "table_name = .index_daily"'
+assert_true "index_basic does not need an anchor query (full overwrite)" \
+    '! grep "dolt .* sql" "$T11/calls.log" | grep -q "table_name = .index_basic"'
+assert_true "import-compass index_daily uses since 2026-07-31" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-07-31" "$T11/calls.log"'
-assert_true "all 5 append tables use same since anchor" \
+assert_true "all 5 incremental tables use same since anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-07-31" "$T11/calls.log"'
+assert_true "index_basic stays full overwrite even with an anchor" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T11/calls.log" &&
+     ! grep -q "import-compass --table index_basic --since" "$T11/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 12. Empty anchor: dolt sql returns NULL → full import path for all 5 tables,
-#     including index_daily (no --since on NULL anchor)
+# 12. Empty anchor: all per-table dolt sql queries return NULL → full import
+#     path for all 6 tables, including index_daily and index_basic
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 12. empty anchor NULL → full import for all 5 (incl. index_daily) ---"
+echo "--- 12. empty anchor NULL → full import for all 6 (incl. index_daily) ---"
 T12="$TMP_ROOT/t12"
 mkdir -p "$T12"
 setup_fakes "$T12"
@@ -509,14 +532,67 @@ assert_true "index_daily full import (no --since)" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table index_daily" "$T12/calls.log"'
 assert_false "index_daily import must not include --since on NULL anchor" \
     'grep -q "cargo run --bin compass-data -- import-compass --table index_daily --since" "$T12/calls.log"'
-assert_true "all 5 tables take full import path on NULL anchor" \
+assert_true "all 6 tables take full import path on NULL anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey" "$T12/calls.log" &&
-     grep -qx "cargo run --bin compass-data -- import-compass --table index_daily" "$T12/calls.log"'
+     grep -qx "cargo run --bin compass-data -- import-compass --table index_daily" "$T12/calls.log" &&
+     grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T12/calls.log"'
 assert_false "no table uses --since on NULL anchor" \
     'grep -q "import-compass --table .* --since" "$T12/calls.log"'
+
+# ---------------------------------------------------------------------------
+# 12b. Mixed anchor: index_daily/index_basic have no anchor while other tables
+#      do → the two new index tables get a full import, not a stale --since
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 12b. mixed anchor: new index tables full, existing tables incremental ---"
+T12B="$TMP_ROOT/t12b"
+mkdir -p "$T12B"
+setup_fakes "$T12B"
+cat > "$T12B/status.seq" <<'EOF'
+On branch main
+nothing to commit, working tree clean
+===
+On branch main
+nothing to commit, working tree clean
+===
+EOF
+run_script "$T12B" FAKE_DOLT_SQL_MIXED_NULL=1
+assert_true "exit 0 on mixed anchors" 'test "$(cat "$T12B/exit.code")" = 0'
+assert_true "existing table still uses incremental --since" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T12B/calls.log"'
+assert_true "index_daily with no own anchor uses full import" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table index_daily" "$T12B/calls.log" &&
+     ! grep -q "import-compass --table index_daily --since" "$T12B/calls.log"'
+assert_true "index_basic with no own anchor still full overwrite" \
+    'grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T12B/calls.log" &&
+     ! grep -q "import-compass --table index_basic --since" "$T12B/calls.log"'
+
+# ---------------------------------------------------------------------------
+# 12c. dolt sql anchor failure: a real query error must abort loudly, not
+#      silently degrade to a full import
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 12c. dolt sql anchor failure aborts loudly ---"
+T12C="$TMP_ROOT/t12c"
+mkdir -p "$T12C"
+setup_fakes "$T12C"
+cat > "$T12C/status.seq" <<'EOF'
+On branch main
+nothing to commit, working tree clean
+===
+On branch main
+nothing to commit, working tree clean
+===
+EOF
+run_script "$T12C" FAKE_DOLT_SQL_FAIL=1
+assert_true "non-zero exit on dolt sql failure" 'test "$(cat "$T12C/exit.code")" != 0'
+assert_true "error names step 4 anchor query" \
+    'grep -q "step 4 failed: dolt sql anchor query" "$T12C/err.log"'
+assert_false "no import-compass attempt after anchor failure" \
+    'grep -q "import-compass" "$T12C/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 13. Basic error: step 2 fetch failure on an existing source (main_flow) stops

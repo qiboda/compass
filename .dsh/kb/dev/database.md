@@ -31,12 +31,12 @@
 
 - 上游：`origin` → `https://doltremoteapi.dolthub.com/skwy/compass_data`
 - 分支：`main`
-- 16 张表，分三类：
+- 17 张表，分三类：
 
 | 类别 | 表 | 说明 |
 |---|---|---|
 | 基本面 | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow` | 公司概况与三大报表 |
-| SEPA 采集 | `block_trade`、`capital_main_flow`、`concept_member`、`dragon_list`、`index_daily`、`institution_survey` | 龙虎榜/大宗/主力资金/概念/指数与板块日线/机构调研 |
+| SEPA 采集 | `block_trade`、`capital_main_flow`、`concept_member`、`dragon_list`、`index_daily`、`index_basic`、`institution_survey` | 龙虎榜/大宗/主力资金/概念/指数与板块日线/指数与板块名称表/机构调研 |
 | 计算产物 | `final_score`、`market_temperature`、`capital_factor`、`industry_factor`、`technical_factor`、`data_updates` | SEPA 评分与因子输出、抓取状态 |
 
 **data_updates 表（抓取/计算状态登记）**：schema 权威定义见
@@ -51,15 +51,17 @@ row_count + last_report_date）。消费方：
   `csv_dir()/{REPORT_NAME}.state.json`），双源皆缺时固定 `2020-01-01`
   全历史拉一次，以捕获历史修订并减少全量拉取；`last_report_date` 仍由
   import 写入，供新鲜度校验使用。
-- **sepa_daily.sh 增量锚点**（`scripts/sepa_daily.sh:157-158`）：取 SEPA 行情表
-  最新 `last_report_date` 判断当日是否需采集（含 `index_daily`）
+- **sepa_daily.sh 增量锚点**（`scripts/sepa_daily.sh` step 4）：**逐表读取**
+  SEPA 行情表各自的 `last_report_date`（含 `index_daily`）；缺失/NULL 锚点的
+  表走全量导入，不再用全局 MAX 锚点；`index_basic` 是版本快照，始终全量覆盖，
+  不查询锚点
 - **import-compass 新鲜度校验（ref #136）**：导入后读 `last_report_date`，过期
   仅 warn 不退出（财务表 120 天 / 行情表 7 天 / stock_basic 不检查）
 
 `last_report_date` 语义（collectors 写库时按表类填写）：`fin_*` 财务表
 （fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）= `MAX(report_date)`；
 行情表 capital_main_flow/dragon_list/block_trade/index_daily = `MAX(trade_date)`、
-institution_survey = `MAX(survey_date)`；concept_member = `CURDATE()`；
+institution_survey = `MAX(survey_date)`；concept_member / index_basic = `CURDATE()`；
 stock_basic = NULL（写库只填 4 列，`collectors/main.py:79-85`）。
 
 ## investment_data 同步（pull → push → import）
@@ -243,4 +245,4 @@ print('rows:', f.metadata.num_rows)
 |---|---|---|---|---|
 | investment_data 同步目标 | 仅 pull 上游 / pull + push 到 skwy fork | pull + push skwy | 本地单份拷贝，fork 作备份且供其他机器/CI 拉取；AGENTS.md 数据变更 push 规则的精神延伸 | 仅 pull 无法异地恢复；上游 chenditc 只读不可 push |
 | database.md 与 process.md 关系 | 全量并入 process.md / 新建独立文件 + 迁移查询章节 | 新建独立文件，查询章节迁移 | 维护/同步是独立主题域，独立文件便于导航；避免同主题两处维护漂移 | 并入 process.md 使其臃肿且查询/维护混杂 |
-| compass_data 表分类 | 不分类 / 按来源分类 | 按基本面/SEPA 采集/计算产物三类 | 16 张表来源与用途各异，分类便于理解数据管线 | 不分类则新贡献者难以判断表来源 |
+| compass_data 表分类 | 不分类 / 按来源分类 | 按基本面/SEPA 采集/计算产物三类 | 17 张表来源与用途各异，分类便于理解数据管线 | 不分类则新贡献者难以判断表来源 |

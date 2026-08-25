@@ -5,7 +5,7 @@
 #   1. market data:  compass-data import           (investment_data Dolt → Parquet)
 #   2. collect:      collectors fetch 5 sources    (EastMoney → compass_data Dolt)
 #   3. Dolt commit:  collector tables              (limited add, push; skipped when clean)
-#   4. import:       import-compass 5 append tables
+#   4. import:       import-compass 6 append tables (index_basic is a full overwrite)
 #   5. compute:      sepa temperature + sepa score --top 50 (DELETE+append write-back)
 #   6. Dolt commit:  compute tables                (limited add, push; skipped when clean)
 #   7. print TOP50:  reuse step 5 output, never recompute
@@ -31,7 +31,7 @@ INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-/data/compass-data/investment_d
 COMPASS_DATA_DIR="${SEPA_COMPASS_DATA_DIR:-/data/compass-data/compass_data}"
 
 # Allowlisted table sets for the two Dolt commits (never `dolt add .`).
-COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey index_daily)
+COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey index_daily index_basic)
 COMPUTE_TABLES=(technical_factor industry_factor capital_factor final_score market_temperature data_updates)
 
 # --- helpers ---
@@ -148,21 +148,34 @@ dolt_commit_changed "$COMPASS_DATA_DIR" 3 "collector" "feat: sepa collectors dat
     "${COLLECTOR_TABLES[@]}"
 
 # --- 4. Import collector tables into Parquet ---
-# Incremental anchor: the newest last_report_date across the collector tables —
-# the collectors only append rows after it, so importing from there forward is a
-# complete, minimal window (import_append_table merges prefer-new into the
-# existing parquet). Empty on first run → full export.
+# Incremental anchor is per-table: each collector stores its own
+# last_report_date in data_updates.  A missing/NULL anchor means that table has
+# never been imported yet, so that table gets a full export instead of
+# inheriting another table's anchor (a global MAX would let a newly added table
+# skip its history).  index_basic is always a full overwrite by design.
 info "Step 4: import collector tables into Parquet"
-SINCE=""
-if SINCE_RAW="$(dolt --data-dir "$COMPASS_DATA_DIR" sql -r csv -q \
-        "SELECT MAX(last_report_date) FROM data_updates WHERE table_name IN ('capital_main_flow','dragon_list','block_trade','institution_survey','index_daily')" 2>/dev/null)"; then
-    SINCE="$(printf '%s\n' "$SINCE_RAW" | tail -n 1 | tr -d '\r')"
-    [ "$SINCE" = "NULL" ] && SINCE=""
-fi
+anchor_for() {
+    local table="$1" raw="" date=""
+    if ! raw="$(dolt --data-dir "$COMPASS_DATA_DIR" sql -r csv -q \
+            "SELECT MAX(last_report_date) FROM data_updates WHERE table_name = '$table'")"; then
+        red "step 4 failed: dolt sql anchor query for $table"
+        exit 1
+    fi
+    date="$(printf '%s\n' "$raw" | tail -n 1 | tr -d '\r')"
+    [ "$date" = "NULL" ] && date=""
+    printf '%s' "$date"
+}
 
-for table in capital_main_flow dragon_list block_trade institution_survey index_daily; do
+for table in "${COLLECTOR_TABLES[@]}"; do
+    if [ "$table" = "index_basic" ]; then
+        # Version-tracked name table: always mirror current Dolt state.
+        run_step 4 "import-compass --table $table (full overwrite)" "$PROJECT_ROOT" \
+            cargo run --bin compass-data -- import-compass --table "$table"
+        continue
+    fi
+    SINCE="$(anchor_for "$table")"
     if [ -n "$SINCE" ]; then
-        run_step 4 "import-compass --table $table (incremental)" "$PROJECT_ROOT" \
+        run_step 4 "import-compass --table $table (incremental, since $SINCE)" "$PROJECT_ROOT" \
             cargo run --bin compass-data -- import-compass --table "$table" --since "$SINCE"
     else
         run_step 4 "import-compass --table $table (full, no anchor yet)" "$PROJECT_ROOT" \

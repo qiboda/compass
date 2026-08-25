@@ -244,6 +244,7 @@ SEPA 采集器说明：
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
 - `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
 - `index_daily`：指数/板块日线（官方指数白名单 + THS 行业板块，增量按 `MAX(trade_date)`；merge 导入）
+- `index_basic`：指数/板块名称表（官方指数 + 概念/行业板块，版本快照，全量覆盖导出；`import index_daily` 时伴生写入）
 - `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照；导入时
   `TRIM(BOARD_NAME)` 去除 EastMoney 尾随空格，ref #217 验收）
 
@@ -341,7 +342,7 @@ cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 只�
 | `--top` | `50` | 终端表格输出条数上限（不影响 Dolt 写回内容——写回总是全量计算集） |
 | `--date` | 数据内最新交易日 | 计算日期（YYYY-MM-DD）；不传时取 Parquet 中最大 trade_date，周末/节假日运行不会写出非交易日行 |
 
-每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → 采集 → Dolt commit → Parquet 导入 → 计算 → Dolt commit → TOP50）。
+每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → 采集 → Dolt commit → Parquet 导入（5 个时序表增量 + `index_basic` 全量覆盖）→ 计算 → Dolt commit → TOP50）。
 
 ### `sepa backtest` — 历史批量回测
 
