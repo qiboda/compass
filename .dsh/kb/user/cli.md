@@ -137,7 +137,7 @@ cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 **数据质量校验（ref #136）**：`import-compass` 写盘后自动校验数据完整性：
 
 - **全量导入**（无 `--since`/`--overwrite`/首次）：源 Dolt COUNT（含过滤条件）vs parquet 行数精确对比，不一致 → 报错退出（exit 1）
-- **增量 merge**：校验"不丢数据"——merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败走 fallback 时跳过此校验（fallback 是修复损坏文件的恢复机制，改为对比过滤后的源 COUNT）
+- **增量 merge**：校验"不丢数据"——merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败走 fallback 时改为**不带 `--since` 的真全量导出**写回（保留历史），并对全量 Dolt COUNT 校验（ref #298）
 - **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/institution_survey/concept_member/index_daily/index_basic）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，collectors 写库时不填）
 
 ---
