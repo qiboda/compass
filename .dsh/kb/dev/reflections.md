@@ -10,34 +10,6 @@
 ——值得处理的条目建 issue 后归档、已处理的直接归档、剩余的保留待下次归档时
 重新检阅；归档后仍超 500 行则交用户判断。
 
-## 2026-08-15 — ref #264 kb/ 迁移到 .dsh/kb/ + OpenCode 工作流语义重写为 DSH 版
-
-**What was done**: kb/（24 文件）git mv 至 .dsh/kb/，全仓 91 处 kb/ 引用替换；opencode-ci-fix.yml 改名 ci-fix.yml、opencode.yml（GitHub 评论 bot）删除；AGENTS.md（15 处）+ process.md 的 OpenCode 机制重写为 DSH 语义（skill 工具、subagent_ui_designer / subagent_skwy_requirement_test / subagent_skwy_adversarial_test、subagent_review、GitHub MCP、plan mode、/home/skwy/.dsh/skills/ 路径、~/.dsh/.agent-presets/ 模型规则）；toolchain.md / workflow-skills.md 头部注记。3 实现 commit（4148c0d/6017ed8/935c5c2）+ 本反思 commit；subagent_review 独立审查（无 P0，P1×1/P2×1/P3×1 已修复）。
-
-**User corrections**:
-1. "好的，另外kb目录也移到.dsh里面去。" —— 范围扩展：kb/ 知识库整体迁入 .dsh/
-2. "按推荐，使用精确工具名。然后 /ulw-plan agent 这个使用 dsh的 plan 命令" —— 指定 /ulw-plan 映射为 DSH plan 命令（plan mode）
-3. "opencode-ci-fix.yml 迁移，里面并没有使用opencode。 另一个删除。" —— 纠正我推荐"两个 workflow 都删"：ci-fix 实际不含 opencode 依赖应改名迁移，仅 opencode.yml 删除
-4. "push" —— 授权 push
-
-**What went wrong**:
-1. **漏改 .dsh/skills/product/SKILL.md 的 .omo/plans/**（review P1 抓出）：#263 的 sed 替换文件列表用 `grep -rl` 生成，路径参数漏了当时还在 .opencode/skills/ 的技能文件（迁移后 .dsh/skills/），该文件两处 .omo/plans/ 残留——替换规则存在但文件没进替换列表。这是"引用范围侦察不完整"系列（#117→#263→#264）的第三次变体。
-2. **workflow 改名不彻底**（review P2 抓出）：git mv opencode-ci-fix.yml→ci-fix.yml 只改文件名，未检查文件内 `name:` 字段残留 opencode-ci-fix。
-3. **决策判断依赖文件名而非内容**：推荐删除 opencode-ci-fix.yml 时只看名字（含 opencode），用户纠正"里面并没有使用opencode"——文件内容审查应先于命名推断。
-
-**Lessons learned**:
-1. 迁移/替换的 grep 路径范围必须覆盖全仓所有目录（含被迁移目录、技能目录、隐藏目录），不预设排除；替换后对全部已编辑文件再跑一次残留扫描——已补入 process.md 全仓 grep 规则（ref #264）。
-2. 重命名文件后必须检查文件内容中的自身名字引用（workflow `name:`、package name 等）。
-3. 删除/迁移决策前先读文件内容判断实际依赖，不凭文件名推断。
-
-**Process improvements**:
-- process.md「知识库同步」全仓 grep 规则补充两条：① grep 路径范围覆盖全仓所有目录（含隐藏目录与被迁移目录本身），不预设排除；② 替换完成后对全部已编辑文件再跑一次全量残留扫描（ref #264 落实）
-- 反思文件归档执行：11 条已处理/过时条目归档至 reflections-archive.md（181/203/208/238/234-240/46-132-71/250/135/246/247/263），保留 5 条含 proposed 条目（230/235-213/244/245/255），行级校验通过
-
-### Trends (last 10)
-- **引用范围侦察缺陷第三次出现**（ref #117 archive → #263 只搜 md → #264 grep 路径漏技能目录）：前两次教训均已固化但执行变体仍再现——本次补充"路径范围覆盖全仓（含被迁移目录）"到 process.md 规则；独立 subagent_review 成功抓出主 agent 验证盲区（P1 漏改），审查-修复闭环价值持续实证（#255 → #264）
-- **文件名推断 vs 内容事实**（#264 ci-fix.yml）：文件名含 opencode 但内容无依赖，用户纠正删除决策——文件操作类决策（删除/迁移/改名）必须先读内容再判断
-
 ## 2026-08-15 — ref #265 justfile：便捷启动与常用命令集
 
 **What was done**: 根目录新增 `justfile`（9 recipes：run/build/test/fmt/clippy/check/import/export/backup，run 为默认 recipe，`just` 即启动 GUI）+ 两批回归测试（需求 22 断言 `justfile-test.sh` + 对抗 18 项 `justfile-adversarial-test.sh`）+ 文档同步（AGENTS.md Commands、gui.md 启动、index.md 快速开始）。2 实现 commit（351c19a / 3a52eba），RED→GREEN 全流程，subagent_review 无 blocking（P1×1 已修）。
@@ -481,3 +453,40 @@
 4. 子代理后台任务等待结算通知，不反复 list_agents 轮询。
 
 **Process improvements**: toolchain.md #298 卡已记录 duplicate fallback 副本与“grep 所有拷贝”教训；其余为一次性执行摩擦，无新增机制。
+
+## 2026-08-25 — ref #303 sepa_daily.sh 每日流程纳入 index_daily/index_basic
+
+**What was done**: 将 `index_daily` 及伴生 `index_basic` 纳入 `scripts/sepa_daily.sh` 每日流程：step2 fetch+import、`COLLECTOR_TABLES` allowlist、step4 per-table 增量锚点 + `index_basic` 全量覆盖；`dolt sql` 锚点查询失败改为 loud abort；并修复 `import_append_table` 首导出忽略 `--since`，补 shell/Rust 回归测试与文档同步（3 commits：5ecdf8e/276a70d/8a27017）。
+
+**User corrections** (if any):
+- 用户通过澄清问题选择：“纳入 COLLECTOR_TABLES + step4 导入” （`index_basic` 范围）。
+- 用户通过澄清问题选择：“两项都加固”（per-table 锚点 + dolt sql 失败 loud abort）。
+- 用户早期选择“只做本 PR，等 #298 PR 先合并”，随后告知“issue #298 已关闭，合并到主干了，可以拉取一下”，并批准 push。
+- 上下文来自父会话：用户观察到“指数的数据没有更新？”，并确认“每日的数据收集也是需要的”“按推荐”。
+
+**What went wrong**:
+1. 初版 commit `1c6a033` 漏掉 `collectors/main.py import index_daily` 的伴生副作用 `index_basic`，且 step4 用全局 MAX 锚点会在“新表有 Dolt anchor 但 Parquet 不存在”时造成首导出截断；review P1 发现后追加 2 个 fix commit。
+2. `edit` 工具多次报 “requires reading file first”（database.md/cli.md/data-providers.md/import_compass.rs），与 #301 同型摩擦。
+3. commit-msg hook 首次拒绝：`could not verify issue states (gh issue list failed or returned empty)`；诊断 issue #303 确实 OPEN 后原样重试成功（瞬时环境问题）。
+4. `cargo check -p compass-data` 120s 超时被 kill；改用定向 `cargo test -p compass-data import_compass::tests` 完成验证。
+5. `git rebase --continue` 因 dumb terminal 报错，用 `GIT_EDITOR=true` 解决；handoff.md 冲突用 `--theirs` 保留本 worktree 版。
+6. `reflect-audit.sh` 因嵌套 session 目录（`find -maxdepth 2`）和 `session-` 前缀双重问题找不到 trace；本次已 patch 全局脚本。
+7. 子代理完成后仍多次 `list_agents` 轮询，未等结算通知（与 #298 教训重复）。
+
+**Lessons learned**:
+1. 新增采集源时必须 grep 其 import 侧的所有伴生写表/副作用（如 `import_to_dolt` 同时写 `index_basic`），否则 Dolt 脏工作区或 Parquet 过期。
+2. 流水线增量锚点应 per-table；且“有 Dolt anchor 但无 parquet”首导出必须在 Rust 侧忽略 `--since`，否则历史被截断。
+3. review P1 必须在同轮补测试（12b/12c/12d + Rust 首导出测试），不要留下欠账。
+4. 编辑仓库文件前先 `read`，避免 edit 工具拒绝对话。
+5. commit hook 瞬时失败先 `gh issue view` 诊断，再重试；不静默绕过。
+6. reflect-audit 的 session trace 定位已自动化修复；下次遇到 trace 找不到先检查脚本而非手工解压。
+
+**Process improvements**:
+- 已 patch `/home/skwy/.dsh/skills/skwy-reflect/resources/reflect-audit.sh`：`find -maxdepth 2 → 3`，并在查找前 normalize `session-` prefix；嵌套 worktree 会话 trace 可被脚本直接定位。
+- 已新增 Rust 回归测试 `append_table_first_export_with_since_imports_full_history`，把“首导出不得截断”固化为测试。
+- 其余为一次性执行摩擦，无新增 repo hook/流程规则。
+
+### Trends (last 10)
+- `reflect-audit.sh` 找不到嵌套 session trace 在 #301 与本次重复出现；本次已通过 maxdepth 3 + prefix normalize 固化。
+- `edit` 工具未先 read 的摩擦在 #298/#301 与本次多次出现；尚未固化为自动检查。
+- 子代理完成前主动 `list_agents` 轮询在 #298 与本次重复出现；应改为等结算通知，避免无效轮询。
