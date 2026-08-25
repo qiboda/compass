@@ -292,63 +292,18 @@ fn import_fin_indicators(
     overwrite: bool,
     since: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let path = output.join("fin_indicators.parquet");
-
-    let date_filter = match since {
-        Some(s) if !s.is_empty() => format!(" WHERE report_date >= '{s}'"),
-        _ => String::new(),
-    };
-    let query = format!(
-        "SELECT report_date, update_date, notice_date, \
-         data_type, qdate, data_year, date_label, \
-         symbol, secucode, name, trade_market, trade_market_code, trade_market_zjg, \
-         security_type, security_type_code, industry, \
-         board_code, board_name, ori_board_code, org_code, is_new, \
-         basic_eps, deduct_basic_eps, revenue, net_profit, roe, bps, \
-         cash_flow_per_share, gross_margin, \
-         revenue_yoy, net_profit_yoy, operating_profit_yoy, net_profit_qoq, \
-         shares_growth, dividend_plan, dividend_year \
-         FROM fin_indicators{} ORDER BY symbol, report_date",
-        date_filter
-    );
-
-    info!("Exporting fin_indicators...");
-    let new_data = run_dolt_sql_parquet(dolt_dir, &query)?;
-    if new_data.len() < 500 {
-        warn!("fin_indicators returned empty or tiny data, skipping");
-        return Ok(());
-    }
-
-    if since.is_some() && !overwrite && path.exists() {
-        // Incremental merge: old parquet (priority 1) + new dolt (priority 2)
-        info!("Merging incremental data with existing parquet...");
-        std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
-
-        // Row-count baseline for the no-loss check. A corrupt old parquet
-        // (the fallback's recovery trigger) yields None, skipping the check.
-        let old_count = crate::validate::parquet_row_count(&path).ok();
-
-        let new_path = unique_work_path("fin.new");
-        std::fs::write(&new_path, &new_data)?;
-
-        let tmp_path = unique_work_path("fin.merged");
-        let duck = Connection::open_in_memory()?;
-        let sql = format!(
-            "COPY (SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) AS rn \
-             FROM (SELECT *, 1 AS priority FROM read_parquet('{}') \
-             UNION ALL SELECT *, 2 FROM read_parquet('{}'))) WHERE rn = 1 ORDER BY symbol, report_date) \
-             TO '{}' (FORMAT PARQUET)",
-            path.display(),
-            new_path.display(),
-            tmp_path.display(),
-        );
-        if let Err(e) = duck.execute_batch(&sql) {
-            warn!("DuckDB merge failed: {e}, falling back to full export");
-            // Bug #298: the fallback must not overwrite with the
-            // `--since`-filtered `new_data`; rerun the same SELECT without the
-            // date filter and write a genuine full export.
-            let full_query = format!(
-                "SELECT report_date, update_date, notice_date, \
+    // fin_indicators uses a fixed SELECT list; all merge/fallback logic is the
+    // shared `import_append_table` path so partition/fallback fixes stay in one
+    // place (bug #298).
+    import_append_table(
+        AppendTableSpec {
+            table_name: "fin_indicators",
+            date_col: "report_date",
+            partition_cols: "symbol, report_date",
+            prefer_new: false,
+            dolt_order_cols: None,
+            select_cols: Some(
+                "report_date, update_date, notice_date, \
                  data_type, qdate, data_year, date_label, \
                  symbol, secucode, name, trade_market, trade_market_code, trade_market_zjg, \
                  security_type, security_type_code, industry, \
@@ -356,36 +311,14 @@ fn import_fin_indicators(
                  basic_eps, deduct_basic_eps, revenue, net_profit, roe, bps, \
                  cash_flow_per_share, gross_margin, \
                  revenue_yoy, net_profit_yoy, operating_profit_yoy, net_profit_qoq, \
-                 shares_growth, dividend_plan, dividend_year \
-                 FROM fin_indicators ORDER BY symbol, report_date"
-            );
-            let full_data = run_dolt_sql_parquet(dolt_dir, &full_query)?;
-            std::fs::write(&path, &full_data)?;
-            let src_count = crate::validate::dolt_count(dolt_dir, "fin_indicators", "")?;
-            let parquet_count = crate::validate::parquet_row_count(&path)?;
-            crate::validate::verify_row_count(src_count, parquet_count, "fin_indicators")?;
-        } else {
-            std::fs::copy(&tmp_path, &path)?;
-            let merged_count = crate::validate::parquet_row_count(&path)?;
-            if let Some(old_rows) = old_count
-                && merged_count < old_rows
-            {
-                return Err(format!(
-                    "row count mismatch: merge lost rows old={old_rows} parquet={merged_count} (table fin_indicators)"
-                )
-                .into());
-            }
-        }
-        let _ = std::fs::remove_file(&new_path);
-        let _ = std::fs::remove_file(&tmp_path);
-    } else {
-        std::fs::write(&path, &new_data)?;
-        let src_count = crate::validate::dolt_count(dolt_dir, "fin_indicators", &date_filter)?;
-        let parquet_count = crate::validate::parquet_row_count(&path)?;
-        crate::validate::verify_row_count(src_count, parquet_count, "fin_indicators")?;
-    }
-
-    info!("  → {}", path.display());
+                 shares_growth, dividend_plan, dividend_year",
+            ),
+        },
+        dolt_dir,
+        output,
+        overwrite,
+        since,
+    )?;
     warn_if_stale(dolt_dir, "fin_indicators", FIN_FRESHNESS_DAYS);
     Ok(())
 }
@@ -426,7 +359,9 @@ struct AppendTableSpec<'a> {
     ///
     /// These are the **parquet-side** column names — use
     /// [`AppendTableSpec::dolt_order_cols`] when the export renames Dolt
-    /// columns (e.g. index_daily `trade_date` → `tradedate`).
+    /// columns (e.g. index_daily `trade_date` → `tradedate`). They must match
+    /// the production Dolt PK exactly; a narrower partition collapses distinct
+    /// real rows and loses history (bug #298).
     partition_cols: &'a str,
     /// Dolt-side ORDER BY columns for the source query (defaults to
     /// `partition_cols` when the Dolt and parquet column names agree).
@@ -578,11 +513,11 @@ mod tests {
         CREATE TABLE fin_indicators (\
         symbol VARCHAR(20) NOT NULL, report_date DATE NOT NULL, \
         update_date DATE, notice_date DATE, \
-        data_type VARCHAR(20), qdate VARCHAR(8), data_year INT, date_label VARCHAR(10), \
+        data_type VARCHAR(20), qdate VARCHAR(8), eitime DATETIME, data_year INT, date_label VARCHAR(10), \
         secucode VARCHAR(20), name VARCHAR(100), \
         trade_market VARCHAR(20), trade_market_code VARCHAR(20), trade_market_zjg VARCHAR(10), \
         security_type VARCHAR(10), security_type_code VARCHAR(20), industry VARCHAR(50), \
-        board_code VARCHAR(10), board_name VARCHAR(50), ori_board_code INT, org_code VARCHAR(20), is_new TINYINT, \
+        board_code VARCHAR(10), board_name VARCHAR(50), ori_board_code VARCHAR(10), org_code VARCHAR(20), is_new TINYINT, \
         basic_eps DOUBLE, deduct_basic_eps DOUBLE, revenue DOUBLE, net_profit DOUBLE, roe DOUBLE, bps DOUBLE, \
         cash_flow_per_share DOUBLE, gross_margin DOUBLE, \
         revenue_yoy DOUBLE, net_profit_yoy DOUBLE, operating_profit_yoy DOUBLE, net_profit_qoq DOUBLE, \
@@ -622,17 +557,12 @@ mod tests {
         update_date DATE, \
         PRIMARY KEY (symbol, trade_date, price, volume, amount, buyer, seller))";
 
-    /// Production Dolt `block_trade` schema. Kept as a named alias so tests
-    /// that need the production-complete schema read the same constant as
-    /// `BLOCK_TRADE_SCHEMA` (bug #298).
-    const BLOCK_TRADE_PRODUCTION_SCHEMA: &str = BLOCK_TRADE_SCHEMA;
-
     const INSTITUTION_SURVEY_SCHEMA: &str = "\
         CREATE TABLE institution_survey (\
         symbol VARCHAR(20) NOT NULL, \
         survey_date DATE NOT NULL, \
-        org_name VARCHAR(100) NOT NULL, \
-        survey_type VARCHAR(20), \
+        org_name VARCHAR(1000) NOT NULL, \
+        survey_type VARCHAR(300), \
         update_date DATE, \
         PRIMARY KEY (symbol, survey_date, org_name))";
 
@@ -1855,7 +1785,7 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg("CREATE TABLE fin_indicators (symbol VARCHAR(20), report_date DATE, update_date DATE, notice_date DATE, data_type VARCHAR(20), qdate VARCHAR(8), data_year INT, date_label VARCHAR(10), secucode VARCHAR(20), name VARCHAR(100), trade_market VARCHAR(20), trade_market_code VARCHAR(20), trade_market_zjg VARCHAR(10), security_type VARCHAR(10), security_type_code VARCHAR(20), industry VARCHAR(50), board_code VARCHAR(10), board_name VARCHAR(50), ori_board_code INT, org_code VARCHAR(20), is_new TINYINT, basic_eps DOUBLE, deduct_basic_eps DOUBLE, revenue DOUBLE, net_profit DOUBLE, roe DOUBLE, bps DOUBLE, cash_flow_per_share DOUBLE, gross_margin DOUBLE, revenue_yoy DOUBLE, net_profit_yoy DOUBLE, operating_profit_yoy DOUBLE, net_profit_qoq DOUBLE, shares_growth DOUBLE, dividend_plan TEXT, dividend_year VARCHAR(10))")
+            .arg("CREATE TABLE fin_indicators (symbol VARCHAR(20), report_date DATE, update_date DATE, notice_date DATE, data_type VARCHAR(20), qdate VARCHAR(8), eitime DATETIME, data_year INT, date_label VARCHAR(10), secucode VARCHAR(20), name VARCHAR(100), trade_market VARCHAR(20), trade_market_code VARCHAR(20), trade_market_zjg VARCHAR(10), security_type VARCHAR(10), security_type_code VARCHAR(20), industry VARCHAR(50), board_code VARCHAR(10), board_name VARCHAR(50), ori_board_code VARCHAR(10), org_code VARCHAR(20), is_new TINYINT, basic_eps DOUBLE, deduct_basic_eps DOUBLE, revenue DOUBLE, net_profit DOUBLE, roe DOUBLE, bps DOUBLE, cash_flow_per_share DOUBLE, gross_margin DOUBLE, revenue_yoy DOUBLE, net_profit_yoy DOUBLE, operating_profit_yoy DOUBLE, net_profit_qoq DOUBLE, shares_growth DOUBLE, dividend_plan TEXT, dividend_year VARCHAR(10))")
             .output()
             .expect("create keyless");
         Command::new("dolt")
@@ -1985,7 +1915,7 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg(BLOCK_TRADE_PRODUCTION_SCHEMA)
+            .arg(BLOCK_TRADE_SCHEMA)
             .output()
             .expect("create block_trade");
 
@@ -2088,7 +2018,7 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg(BLOCK_TRADE_PRODUCTION_SCHEMA)
+            .arg(BLOCK_TRADE_SCHEMA)
             .output()
             .expect("create block_trade");
 
@@ -2182,7 +2112,7 @@ mod tests {
             .arg(tmp.path())
             .arg("sql")
             .arg("-q")
-            .arg(BLOCK_TRADE_PRODUCTION_SCHEMA)
+            .arg(BLOCK_TRADE_SCHEMA)
             .output()
             .expect("create block_trade");
 
@@ -2458,7 +2388,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
 
-        dolt_sql(tmp.path(), BLOCK_TRADE_PRODUCTION_SCHEMA);
+        dolt_sql(tmp.path(), BLOCK_TRADE_SCHEMA);
 
         // Two real, distinct block trades: same (symbol, trade_date, price)
         // narrow key but different production-PK suffix

@@ -449,6 +449,9 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
   `fin_income`、`fin_cash_flow`）导入 Parquet
 - `--overwrite` 替换已有数据；默认合并/跳过（仅新增数据）
 - `--since` 用于增量导入
+- append 表（fin_*、capital_main_flow、dragon_list、block_trade、
+  institution_survey、index_daily）的 merge 分区列必须与生产 Dolt 全主键一致；
+  merge 失败 fallback 改为不带 `--since` 的真全量导出（ref #298）
 
 ### export：Parquet → 其他格式
 - 读取 parquet_data/ 目录
