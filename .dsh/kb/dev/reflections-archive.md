@@ -1803,3 +1803,30 @@ Pass 4a 全部 .dsh/kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池
 - **hook 静态检查预检缺失跨批重复**（#245 pre-commit 拒绝 → #255 ruff SIM 4 处）：实现 agent 提交前不预检 lint/fmt，靠 hook 弹回——建议委派 prompt 内置"提交前 ruff/fmt 预检"条款
 - **review-work 独立发现 scope 遗漏是稳定收益**（#255 Goal/Security FAIL 暴露 T8 文档缺失 + 决策 6 未实现 + 注入校验缺失）：独立审查 agent 发现主 agent 盲区——5-lane review 价值持续实证，保持强制
 
+## 2026-08-15 — ref #264 kb/ 迁移到 .dsh/kb/ + OpenCode 工作流语义重写为 DSH 版
+
+**What was done**: kb/（24 文件）git mv 至 .dsh/kb/，全仓 91 处 kb/ 引用替换；opencode-ci-fix.yml 改名 ci-fix.yml、opencode.yml（GitHub 评论 bot）删除；AGENTS.md（15 处）+ process.md 的 OpenCode 机制重写为 DSH 语义（skill 工具、subagent_ui_designer / subagent_skwy_requirement_test / subagent_skwy_adversarial_test、subagent_review、GitHub MCP、plan mode、/home/skwy/.dsh/skills/ 路径、~/.dsh/.agent-presets/ 模型规则）；toolchain.md / workflow-skills.md 头部注记。3 实现 commit（4148c0d/6017ed8/935c5c2）+ 本反思 commit；subagent_review 独立审查（无 P0，P1×1/P2×1/P3×1 已修复）。
+
+**User corrections**:
+1. "好的，另外kb目录也移到.dsh里面去。" —— 范围扩展：kb/ 知识库整体迁入 .dsh/
+2. "按推荐，使用精确工具名。然后 /ulw-plan agent 这个使用 dsh的 plan 命令" —— 指定 /ulw-plan 映射为 DSH plan 命令（plan mode）
+3. "opencode-ci-fix.yml 迁移，里面并没有使用opencode。 另一个删除。" —— 纠正我推荐"两个 workflow 都删"：ci-fix 实际不含 opencode 依赖应改名迁移，仅 opencode.yml 删除
+4. "push" —— 授权 push
+
+**What went wrong**:
+1. **漏改 .dsh/skills/product/SKILL.md 的 .omo/plans/**（review P1 抓出）：#263 的 sed 替换文件列表用 `grep -rl` 生成，路径参数漏了当时还在 .opencode/skills/ 的技能文件（迁移后 .dsh/skills/），该文件两处 .omo/plans/ 残留——替换规则存在但文件没进替换列表。这是"引用范围侦察不完整"系列（#117→#263→#264）的第三次变体。
+2. **workflow 改名不彻底**（review P2 抓出）：git mv opencode-ci-fix.yml→ci-fix.yml 只改文件名，未检查文件内 `name:` 字段残留 opencode-ci-fix。
+3. **决策判断依赖文件名而非内容**：推荐删除 opencode-ci-fix.yml 时只看名字（含 opencode），用户纠正"里面并没有使用opencode"——文件内容审查应先于命名推断。
+
+**Lessons learned**:
+1. 迁移/替换的 grep 路径范围必须覆盖全仓所有目录（含被迁移目录、技能目录、隐藏目录），不预设排除；替换后对全部已编辑文件再跑一次残留扫描——已补入 process.md 全仓 grep 规则（ref #264）。
+2. 重命名文件后必须检查文件内容中的自身名字引用（workflow `name:`、package name 等）。
+3. 删除/迁移决策前先读文件内容判断实际依赖，不凭文件名推断。
+
+**Process improvements**:
+- process.md「知识库同步」全仓 grep 规则补充两条：① grep 路径范围覆盖全仓所有目录（含隐藏目录与被迁移目录本身），不预设排除；② 替换完成后对全部已编辑文件再跑一次全量残留扫描（ref #264 落实）
+- 反思文件归档执行：11 条已处理/过时条目归档至 reflections-archive.md（181/203/208/238/234-240/46-132-71/250/135/246/247/263），保留 5 条含 proposed 条目（230/235-213/244/245/255），行级校验通过
+
+### Trends (last 10)
+- **引用范围侦察缺陷第三次出现**（ref #117 archive → #263 只搜 md → #264 grep 路径漏技能目录）：前两次教训均已固化但执行变体仍再现——本次补充"路径范围覆盖全仓（含被迁移目录）"到 process.md 规则；独立 subagent_review 成功抓出主 agent 验证盲区（P1 漏改），审查-修复闭环价值持续实证（#255 → #264）
+- **文件名推断 vs 内容事实**（#264 ci-fix.yml）：文件名含 opencode 但内容无依赖，用户纠正删除决策——文件操作类决策（删除/迁移/改名）必须先读内容再判断
