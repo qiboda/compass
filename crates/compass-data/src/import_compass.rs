@@ -445,6 +445,18 @@ fn import_append_table<'a>(
         );
         if let Err(e) = duck.execute_batch(&sql) {
             warn!("DuckDB merge failed: {e}, falling back to full export");
+            // Bug #298: preserve the pre-merge parquet before the fallback
+            // overwrites it, so a schema mismatch can be diagnosed afterwards.
+            if path.exists() {
+                let backup_path = unique_work_path(&format!("{table_name}.pre_merge_backup"));
+                match std::fs::copy(&path, &backup_path) {
+                    Ok(_) => warn!(
+                        "preserved pre-merge parquet for diagnosis at {}",
+                        backup_path.display()
+                    ),
+                    Err(copy_err) => warn!("failed to preserve pre-merge parquet: {copy_err}"),
+                }
+            }
             // The fallback must NOT write the `--since`-filtered `new_data`
             // over the full parquet — that is exactly bug #298's history-loss
             // path. Instead, rerun the Dolt query without the date filter and
@@ -1686,7 +1698,7 @@ mod tests {
     /// Issue #136: when `data_updates.last_report_date` for a fin table is older
     /// than the 120-day freshness threshold, import-compass must emit a
     /// `freshness` warn (but still succeed — Q5 decision: warn only, never Err).
-    /// RED: no warn is emitted today (validation not implemented yet).
+    /// Before fix: no warn was emitted today (validation not implemented yet).
     #[test]
     fn fin_indicators_warns_when_data_updates_stale() {
         use std::io::Write;
@@ -1771,7 +1783,7 @@ mod tests {
     /// Issue #136: the incremental-merge path must not silently lose rows.
     /// Old parquet holds 3 physical rows (one duplicate key from a keyless Dolt
     /// table); the merge's ROW_NUMBER dedup collapses to 2 distinct rows →
-    /// merged < old must surface as an Err. RED: merge returns Ok today.
+    /// merged < old must surface as an Err. Before fix: merge returned Ok today.
     #[test]
     fn fin_indicators_merge_detects_row_loss() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1779,7 +1791,7 @@ mod tests {
 
         // Keyless table (no PRIMARY KEY) so duplicate (symbol, report_date)
         // rows are allowed — full FIN_SCHEMA column set minus the PK
-        // constraint, so the 37-column SELECT in import_fin_indicators works.
+        // constraint, so the selected columns in import_fin_indicators work.
         Command::new("dolt")
             .arg("--data-dir")
             .arg(tmp.path())
@@ -1899,7 +1911,7 @@ mod tests {
     // bug #298 adversarial tests
     // ------------------------------------------------------------------
 
-    /// Bug #298 RED: with the production Dolt block_trade PK, two real rows can
+    /// Bug #298 regression guard (originally RED): with the production Dolt block_trade PK, two real rows can
     /// share the narrow merge key `(symbol, trade_date, price)` but differ in
     /// `volume/amount/buyer/seller`. When a *new* third such row arrives and the
     /// incremental merge dedups on the narrow key, it collapses all three rows
@@ -1967,8 +1979,8 @@ mod tests {
             .output()
             .expect("insert third row");
 
-        // Current code: merge `ROW_NUMBER() OVER (PARTITION BY symbol, trade_date, price)`
-        // returns only 1 row → old=2 > merged=1 → Err. RED: this test expects
+        // Before fix: merge `ROW_NUMBER() OVER (PARTITION BY symbol, trade_date, price)`
+        // returns only 1 row → old=2 > merged=1 → Err. Before fix, this test was RED and expected
         // the merge to succeed and all three real rows to survive.
         run(
             tmp.path().to_path_buf(),
@@ -2002,7 +2014,7 @@ mod tests {
         }
     }
 
-    /// Bug #298 RED (silent-loss variant): when the old parquet holds exactly
+    /// Bug #298 regression guard (silent-loss variant; originally RED): when the old parquet holds exactly
     /// one row for a narrow key and the incremental batch contains a *different*
     /// full-PK row for the same narrow key, the merge is row-count-neutral
     /// (old=1, merged=1) so the "merge lost rows" guard does NOT fire. The old
@@ -2060,9 +2072,9 @@ mod tests {
             .output()
             .expect("insert second row");
 
-        // Current code: merge succeeds (old=1, merged=1) but the ROW_NUMBER
+        // Before fix: merge succeeds (old=1, merged=1) but the ROW_NUMBER
         // dedup on `(symbol, trade_date, price)` keeps only the new row.
-        // RED: this expects both rows to be present.
+        // Before fix (RED) expected both rows to be present; now GREEN.
         run(
             tmp.path().to_path_buf(),
             tmp.path().to_path_buf(),
@@ -2095,7 +2107,7 @@ mod tests {
         }
     }
 
-    /// Bug #298 RED + prefer_new semantics: one existing full-PK row is
+    /// Bug #298 regression guard + prefer_new semantics (originally RED): one existing full-PK row is
     /// corrected (non-PK column changes so the full PK stays identical), and a
     /// new distinct full-PK row arrives on the same narrow key. With the
     /// production PK the merge must keep the old sibling, apply the corrected
@@ -2169,9 +2181,9 @@ mod tests {
             .output()
             .expect("insert third row");
 
-        // Current code: merge groups by narrow key, so it cannot express
+        // Before fix: merge groups by narrow key, so it cannot express
         // "update the QFII row while preserving the institutional row and adding
-        // the individual row"; it errors with old=2 parquet=1. RED.
+        // the individual row"; it errors with old=2 parquet=1. Before fix, this was RED.
         run(
             tmp.path().to_path_buf(),
             tmp.path().to_path_buf(),
@@ -2375,7 +2387,7 @@ mod tests {
     /// distinct real rows and must all survive both full import and
     /// incremental `--since` merge.
     ///
-    /// RED (current code): the incremental merge partitions by the narrow key
+    /// Regression guard (bug #298), originally RED: the incremental merge partitions by the narrow key
     /// and collapses all same-narrow-key rows to one, causing a
     /// `row count mismatch` error (old=2, merged=1) when more than one old
     /// row exists. The `run(...).expect(...)` below therefore fails on the
@@ -2425,9 +2437,9 @@ mod tests {
              ('SH600519', '2026-01-05', 1500.0, 3e5, 4.5e8, '个人', '国泰君安', 0.03)",
         );
 
-        // Current code: `ROW_NUMBER() OVER (PARTITION BY symbol, trade_date, price)`
+        // Before fix: `ROW_NUMBER() OVER (PARTITION BY symbol, trade_date, price)`
         // returns one row for the three old/new rows, so old=2 > merged=1 and
-        // `import_append_table` returns Err("row count mismatch ..."). RED.
+        // `import_append_table` returns Err("row count mismatch ..."). Before fix, this was RED.
         run(
             tmp.path().to_path_buf(),
             tmp.path().to_path_buf(),
@@ -3088,7 +3100,7 @@ mod tests {
     /// true full export (no `--since` filter) and write the complete Dolt
     /// state back to the parquet, preserving history.
     ///
-    /// RED (current code): on merge failure the fallback writes `new_data`,
+    /// Regression guard (bug #298), originally RED: on merge failure the fallback writes `new_data`,
     /// which was produced with `WHERE report_date >= '2025-01-01'`; the 2024
     /// historical row is lost, so the parquet contains only 1 row and the
     /// `assert_eq!(..., 2)` below fails.
@@ -3142,7 +3154,7 @@ mod tests {
         )
         .expect("fallback after merge failure must succeed");
 
-        // RED on current code: fallback writes only the since-filtered 2025
+        // Before fix (RED): fallback wrote only the since-filtered 2025
         // row, dropping the 2024 historical row -> count is 1, not 2.
         assert_eq!(
             read_parquet_row_count(&parquet),

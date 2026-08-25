@@ -2,7 +2,7 @@
 
 Date: 2026-08-25
 Branch: `fix/import-compass-merge-key-mismatch`
-Commit: `bbc0425` (after review fixes will be amended/superseded)
+Commit: `33488a7` (review-fix commit on top of `bbc0425`; current HEAD)
 
 ## Purpose
 

@@ -98,7 +98,7 @@ cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 
 | 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow`、`index_daily`、`index_basic` |
+| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow`、`capital_main_flow`、`dragon_list`、`block_trade`、`institution_survey`、`index_daily`、`index_basic` |
 | `--dolt-dir` | 来自配置 `[dolt].compass_data_dir` | Dolt 数据库目录 |
 | `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
 | `--overwrite` | `false` | 替换已有数据而非合并 |

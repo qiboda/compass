@@ -733,12 +733,14 @@
      `(symbol, trade_date, price, volume, amount, buyer, seller)`；
      `ROW_NUMBER() OVER (PARTITION BY partition_cols)` 把同窄 key 的多条真实行折叠成一行，
      导致增量 merge 丢行/`row count mismatch`（2026-08-21 实测 old=19724 parquet=8872）。
-  3. `import_fin_indicators` 自带一份相同的 merge/fallback 副本，fallback 同样用 since 过滤数据覆盖历史。
+  3. `import_fin_indicators` 原自带一份相同的 merge/fallback 副本，fallback 同样用 since 过滤数据覆盖历史；
+     后续已将其改为走共享 `import_append_table`，消除副本。
 - **修复（代码）**:
   - `block_trade` 的 `partition_cols` 扩为生产全主键
     `symbol, trade_date, price, volume, amount, buyer, seller`。
-  - `import_append_table` fallback 改为不带 `--since` 的真全量导出，写回并与全量 Dolt COUNT 校验。
-  - `import_fin_indicators` 的 fallback 同步改为真全量导出。
+  - `import_append_table` fallback 改为不带 `--since` 的真全量导出，写回前保留旧 parquet 备份，
+    写回后与全量 Dolt COUNT 校验。
+  - `import_fin_indicators` 改为通过共享 `import_append_table` 路径，不再维护独立 fallback 副本。
   - 新增生产 PK 防漂移回归测试（全部 append/import-compass 表）+ block_trade 增量 merge 保行测试 +
     fallback 保留历史测试（`cargo test -p compass-data --lib` 104 passed）。
 - **修复（本次数据恢复，先前已完成）**: 对 5 个 append 表（capital_main_flow, dragon_list, block_trade, institution_survey, index_daily）

@@ -25,7 +25,7 @@
   - `index_daily` PK = (symbol, trade_date)（代码 parquet 侧用 tradedate）— 一致
   - `index_basic` 全量覆盖无 merge — 无 partition 键
   - `block_trade` PK = (symbol, trade_date, price, volume, amount, buyer, seller) — **不一致，需修**
-- 相关测试常量：`BLOCK_TRADE_SCHEMA`（import_compass.rs 测试内）同样是窄 PK `PRIMARY KEY (symbol, trade_date, price)`，需同步为生产完整 PK。
+- 相关测试常量：`BLOCK_TRADE_SCHEMA`（import_compass.rs 测试内）原为窄 PK `PRIMARY KEY (symbol, trade_date, price)`；已随修复同步为生产完整 PK。
 
 ## 流程提醒
 - 本 worktree 从 `master` 创建；开始工作前先 `git fetch origin master && git rebase origin/master` 同步基点。
