@@ -83,7 +83,7 @@ enum Command {
         #[arg(long, default_value_t = false)]
         overwrite: bool,
 
-        /// Incremental: only import data with report_date >= since (YYYYMMDD)
+        /// Incremental: only import data with report_date >= since (YYYY-MM-DD)
         #[arg(long)]
         since: Option<String>,
     },

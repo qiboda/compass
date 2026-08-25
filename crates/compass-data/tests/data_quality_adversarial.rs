@@ -27,17 +27,18 @@ use compass_data::import_compass::{self, CompassTable};
 use compass_data::import_dolt;
 use compass_data::validate;
 
-/// Full fin_indicators schema matching the 37-column SELECT in
-/// `import_fin_indicators` (mirrors the in-source test fixture).
+/// Full fin_indicators schema matching the production Dolt DDL (mirrors the
+/// in-source test fixture); the fixed SELECT in `import_fin_indicators` does
+/// not export `eitime`, but the schema stays aligned with production.
 const FIN_SCHEMA: &str = "\
     CREATE TABLE fin_indicators (\
     symbol VARCHAR(20) NOT NULL, report_date DATE NOT NULL, \
     update_date DATE, notice_date DATE, \
-    data_type VARCHAR(20), qdate VARCHAR(8), data_year INT, date_label VARCHAR(10), \
+    data_type VARCHAR(20), qdate VARCHAR(8), eitime DATETIME, data_year INT, date_label VARCHAR(10), \
     secucode VARCHAR(20), name VARCHAR(100), \
     trade_market VARCHAR(20), trade_market_code VARCHAR(20), trade_market_zjg VARCHAR(10), \
     security_type VARCHAR(10), security_type_code VARCHAR(20), industry VARCHAR(50), \
-    board_code VARCHAR(10), board_name VARCHAR(50), ori_board_code INT, org_code VARCHAR(20), is_new TINYINT, \
+    board_code VARCHAR(10), board_name VARCHAR(50), ori_board_code VARCHAR(10), org_code VARCHAR(20), is_new TINYINT, \
     basic_eps DOUBLE, deduct_basic_eps DOUBLE, revenue DOUBLE, net_profit DOUBLE, roe DOUBLE, bps DOUBLE, \
     cash_flow_per_share DOUBLE, gross_margin DOUBLE, \
     revenue_yoy DOUBLE, net_profit_yoy DOUBLE, operating_profit_yoy DOUBLE, net_profit_qoq DOUBLE, \

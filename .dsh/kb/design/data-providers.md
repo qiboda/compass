@@ -400,6 +400,13 @@ dolt sql -r csv -q "SELECT DISTINCT symbol FROM final_a_stock_eod_price"
 
 导入直接写入完整数据集 — 没有合并模式，也没有 `--overwrite` 标志。重新运行会用 Dolt 的新导出替换文件。使用 `--since` 进行增量导入更新数据。
 
+**`import-compass` append 表增量合并（ref #298）**：所有走 `import_append_table` 的
+append 表（fin_*、capital_main_flow、dragon_list、block_trade、institution_survey、
+index_daily）的 merge 分区列必须与生产 Dolt 表全主键一致；`block_trade` 全主键为
+`(symbol, trade_date, price, volume, amount, buyer, seller)`。merge 失败时的 fallback
+必须执行不带 `--since` 的真全量导出，不能再用过滤后的增量数据覆盖旧 parquet
+（#298 历史丢失根因）。
+
 **导入侧换算与过滤（ref #201）**：主查询对 `volume × 100`（手→股）、`amount × 1000`（千元→元），
 并无条件追加 `symbol NOT IN (6 个指数代码)` 过滤（即使 `--symbols` 显式指定指数也剔除）；
 symbol 枚举查询（symbols.txt）同步过滤。Dolt 源表 `final_a_stock_eod_price` 保持原样（手/千元）。
@@ -560,3 +567,4 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 有界重试后兜底（issue #294） | 放弃请求 / 直连兜底 | **直连兜底一次**，失败交给模块既有 retry | 锁定决策"池空/坏代理均降级直连" | 放弃请求导致数据缺失，违反不因代理失败 |
 | keepalive 实现（issue #294） | 独立脚本 / 并入 main.py | **独立 `proxy_keepalive.py` + `--once`** | 可后台常驻也可单轮测试/冒烟，职责单一 | 并入 main.py 增加 CLI 复杂度，且 sync 不应被 keepalive 阻塞 |
 | 快照兜底解析（issue #294） | keepalive 自写下载逻辑 / 重构 fetch_freeproxy | **拆 `fetch_json_payload` + `records_from_json_data` 复用** | 单一解析/过滤/归一化实现，快照与在线源同路径 | keepalive 自写重复逻辑，后续变更易漂移 |
+| append-table merge 分区键（issue #298） | 用各自 parquet 侧分区列（可能窄于 Dolt PK）/ **与生产 Dolt 全主键一致** | `block_trade` 从 `(symbol, trade_date, price)` 扩为 `(symbol, trade_date, price, volume, amount, buyer, seller)`；其余 append 表已一致；merge fallback 改为真正全量导出（不带 `--since`） | 增量 merge 按分区键去重，分区键窄于 Dolt PK 会把同窄 key 的多条真实行折叠成一行，导致 `row count mismatch` 或静默丢历史（#298 实测 block_trade 19724→8872）；fallback 用 since 过滤数据覆盖全文件同样丢历史 | 弃用 merge 改为全量重导可避开 bug 但失去增量性能；只修 block_trade 不修 fallback 无法关闭 #298 的 fallback 丢历史根因 |

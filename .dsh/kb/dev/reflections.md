@@ -461,3 +461,23 @@
 
 ### Trends (last 10)
 - No significant patterns observed.
+
+## 2026-08-25 — ref #298 import-compass merge key mismatch + fallback history loss
+
+**What was done**: 修复 `import-compass` append 表增量 merge 丢行：`block_trade.partition_cols` 扩为生产 Dolt 全主键，`import_append_table`/`import_fin_indicators` fallback 改为不带 `--since` 的真全量导出并保留旧 parquet 备份；新增全部 append/import-compass 表生产 PK 防漂移测试、block_trade RED→GREEN 测试与 fallback 历史测试；同步 data-providers/toolchain/testing/cli/architecture 文档与 real smoke evidence。
+
+**User corrections**: 无显式纠正。初始消息为 worktree 启动指令；末尾用户仅确认允许 push（流程批准，非纠偏）。
+
+**What went wrong**:
+1. 修复共享 `import_append_table` fallback 后，`fin_indicators_merge_failure_falls_back_to_full_export` 仍失败，才暴露 `import_fin_indicators` 自带一份相同的 merge/fallback 副本——实现前没有先 grep 所有 `falling back to full export` 拷贝，导致第一轮修复漏掉一个路径。
+2. `edit` 工具多次报错（file changed since it was read / requires reading first / old_string not found / matched 2 times），与 #286/#287/#294/#299/#301 同型摩擦。
+3. 子代理完成前反复 list_agents 轮询（本 session 31 次），应等结算通知而非主动轮询。
+4. 首轮 `cargo check --tests` / `cargo test --lib` 全绿，但 review 指出集成测试 fixture `data_quality_adversarial.rs` 的 FIN_SCHEMA 未同步生产 DDL；push 前补跑完整 `cargo test -p compass-data` 才覆盖到。
+
+**Lessons learned**:
+1. 修复“重复实现”型 bug 前，先 grep 全部同模式拷贝（如 `falling back to full export` / `std::fs::write(&path, &new_data)`），确保所有路径一次修完，不能依赖单个单元测试暴露遗漏。
+2. 对本项目大 Rust 文件编辑前先 read；如果 edit 报 stale，重新 read 再改，避免往返。
+3. push 前应跑 `cargo test -p <crate>`（含 integration tests），不只跑 `--lib`；集成 fixture 漂移只能由全 target 测试暴露。
+4. 子代理后台任务等待结算通知，不反复 list_agents 轮询。
+
+**Process improvements**: toolchain.md #298 卡已记录 duplicate fallback 副本与“grep 所有拷贝”教训；其余为一次性执行摩擦，无新增机制。

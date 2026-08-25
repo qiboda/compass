@@ -166,6 +166,22 @@ let range = db.get_stored_range("SZ000001").await?;
   9 个、性能、无 justfile 区分性）。只读操作（`just -n`/`--list`/`--fmt --check`），
   禁 cargo 重型命令。手动运行：`bash scripts/tests/justfile-test.sh`
 
+### append/import-compass 增量 merge 防漂移测试（ref #298）
+
+- 测试 schema 必须使用**生产 Dolt 全主键**，不要沿用只覆盖部分列的旧测试常量
+  （`block_trade` 旧测试常量曾只有 `PRIMARY KEY (symbol, trade_date, price)`，无法表达
+  真实同窄 key 的多条行）。
+- 每个 append 表至少一组「同符号/同日期/不同主键后缀」的真实行：先全量导入，再增量
+  `--since` 导入新行，断言所有真实行都保留、无静默替换。
+- `block_trade` 必须覆盖两类失败形态：
+  1. 显式 `row count mismatch`（旧行多于 merge 后行）；
+  2. 静默替换历史（old=1, merged=1，count 守卫不触发，但历史行被新行替代）。
+- fallback 语义测试：损坏 parquet 强制 DuckDB merge 失败后，断言 fallback 写入的是
+  **不带 `--since` 的真全量导出**（保留 since 之前的历史），而不是过滤后的增量数据。
+- 统一用 `run(CompassTable::X, ...)` 驱动；Dolt 临时库用真实 `dolt` CLI + 现有
+  `setup_dolt` / `dolt_sql` 模式，无 mock。
+
+
 **委派测试 agent 的自验可信度（ref #265 教训）**：测试 agent 汇报的 self-GREEN
 模拟若使用与需求契约**逐字不一致**的 fixture（如契约 `cargo fmt -- --check`、
 fixture 却写 `cargo fmt`），自验全绿也不可信——断言可能永远落空。委派时必须

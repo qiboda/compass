@@ -725,13 +725,28 @@
   随后 `capital_main_flow.parquet` 只剩 2026-08-20 一天 5544 行，Dolt 表共 27706 行。
   进一步检查发现 dragon_list（parquet 278 / Dolt 6143）、block_trade（118 / 19654）、
   institution_survey（478 / 304848）、index_daily（528116 / 528476）也均少于 Dolt，疑为历史 fallback 覆盖累积。
-- **根因**: `crates/compass-data/src/import_compass.rs` `import_append_table` fallback 分支（约 497-503 行）
-  在 merge 失败时执行 `std::fs::write(&path, &new_data)`，而 `new_data` 是 `WHERE date_col >= since`
-  的查询结果，并非日志声称的 “full export”——增量数据覆盖全文件导致历史丢失。
-  merge 失败的具体 schema 不匹配原因未能在复现中定位（parquet 已被覆盖后无法重现，需保留旧文件才能诊断）。
-- **修复（本次数据恢复）**: 对 5 个 append 表（capital_main_flow, dragon_list, block_trade, institution_survey, index_daily）
+- **根因（两条）**:
+  1. `crates/compass-data/src/import_compass.rs` `import_append_table` fallback 分支（原约 497-503 行）
+     在 merge 失败时执行 `std::fs::write(&path, &new_data)`，而 `new_data` 是 `WHERE date_col >= since`
+     的查询结果，并非日志声称的 “full export”——增量数据覆盖全文件导致历史丢失。
+  2. `block_trade` 的 `partition_cols: "symbol, trade_date, price"` 窄于生产 Dolt 全主键
+     `(symbol, trade_date, price, volume, amount, buyer, seller)`；
+     `ROW_NUMBER() OVER (PARTITION BY partition_cols)` 把同窄 key 的多条真实行折叠成一行，
+     导致增量 merge 丢行/`row count mismatch`（2026-08-21 实测 old=19724 parquet=8872）。
+  3. `import_fin_indicators` 原自带一份相同的 merge/fallback 副本，fallback 同样用 since 过滤数据覆盖历史；
+     后续已将其改为走共享 `import_append_table`，消除副本。
+- **修复（代码）**:
+  - `block_trade` 的 `partition_cols` 扩为生产全主键
+    `symbol, trade_date, price, volume, amount, buyer, seller`。
+  - `import_append_table` fallback 改为不带 `--since` 的真全量导出，写回前保留旧 parquet 备份，
+    写回后与全量 Dolt COUNT 校验。
+  - `import_fin_indicators` 改为通过共享 `import_append_table` 路径，不再维护独立 fallback 副本。
+  - 新增生产 PK 防漂移回归测试（全部 append/import-compass 表）+ block_trade 增量 merge 保行测试 +
+    fallback 保留历史测试（`cargo test -p compass-data --lib` 104 passed）。
+- **修复（本次数据恢复，先前已完成）**: 对 5 个 append 表（capital_main_flow, dragon_list, block_trade, institution_survey, index_daily）
   执行无 `--since` 的 `import-compass` 全量重导，parquet 行数与 Dolt 一致后重跑 SEPA。
-  代码修复（fallback 改为真正全量导出或报错退出、保留现场日志）见 issue #298。
-- **验证**: 5 表 parquet 行数 = Dolt 行数（27706 / 6143 / 19654 / 304848 / 528476）。
+- **验证（代码修复后）**:
+  - `cargo test -p compass-data --lib`：104 passed, 0 failed。
+  - real smoke: `import-compass --table block_trade --since 2026-08-21` 成功，Dolt 19724 行 / parquet 19724 行，无丢行。
 - **教训**: 任何 fallback 若覆盖数据文件，必须保证覆盖内容与声明一致（全量）；数据文件写操作前后应校验行数，
-  不能静默用增量数据覆盖历史。
+  不能静默用增量数据覆盖历史。merge 去重分区列必须与生产 Dolt 全主键一致，不能只靠事后 row-count 守卫兜底。
