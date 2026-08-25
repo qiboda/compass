@@ -5,7 +5,7 @@
 #   1. market data:  compass-data import           (investment_data Dolt → Parquet)
 #   2. collect:      collectors fetch 5 sources    (EastMoney → compass_data Dolt)
 #   3. Dolt commit:  collector tables              (limited add, push; skipped when clean)
-#   4. import:       import-compass 4 append tables
+#   4. import:       import-compass 5 append tables
 #   5. compute:      sepa temperature + sepa score --top 50 (DELETE+append write-back)
 #   6. Dolt commit:  compute tables                (limited add, push; skipped when clean)
 #   7. print TOP50:  reuse step 5 output, never recompute
@@ -31,7 +31,7 @@ INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-/data/compass-data/investment_d
 COMPASS_DATA_DIR="${SEPA_COMPASS_DATA_DIR:-/data/compass-data/compass_data}"
 
 # Allowlisted table sets for the two Dolt commits (never `dolt add .`).
-COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey)
+COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey index_daily)
 COMPUTE_TABLES=(technical_factor industry_factor capital_factor final_score market_temperature data_updates)
 
 # --- helpers ---
@@ -131,11 +131,11 @@ run_step 1 "import market data (investment_data → Parquet)" "$PROJECT_ROOT" \
 # Each fetcher short-circuits when data_updates.last_report_date already covers
 # the day, so re-runs add nothing. main.py fetch accepts ONE target per call
 # (choices list, not nargs="+") and only writes the CSV — the Dolt import is a
-# separate command, so each source is fetched AND imported (the 4 time-series
+# separate command, so each source is fetched AND imported (the 5 time-series
 # collectors merge-import with INSERT IGNORE on the PK, so re-runs are
 # idempotent either way (concept_member removed with issue #283 D4).
-run_step 2 "collect EastMoney data (4 sources)" "$PROJECT_ROOT/collectors" \
-    bash -c 'for src in main_flow dragon block_trade institution_survey; do
+run_step 2 "collect EastMoney data (5 sources)" "$PROJECT_ROOT/collectors" \
+    bash -c 'for src in main_flow dragon block_trade institution_survey index_daily; do
         echo "--- fetch $src ---"
         uv run python main.py fetch "$src" || exit 1
         echo "--- import $src ---"
@@ -155,12 +155,12 @@ dolt_commit_changed "$COMPASS_DATA_DIR" 3 "collector" "feat: sepa collectors dat
 info "Step 4: import collector tables into Parquet"
 SINCE=""
 if SINCE_RAW="$(dolt --data-dir "$COMPASS_DATA_DIR" sql -r csv -q \
-        "SELECT MAX(last_report_date) FROM data_updates WHERE table_name IN ('capital_main_flow','dragon_list','block_trade','institution_survey')" 2>/dev/null)"; then
+        "SELECT MAX(last_report_date) FROM data_updates WHERE table_name IN ('capital_main_flow','dragon_list','block_trade','institution_survey','index_daily')" 2>/dev/null)"; then
     SINCE="$(printf '%s\n' "$SINCE_RAW" | tail -n 1 | tr -d '\r')"
     [ "$SINCE" = "NULL" ] && SINCE=""
 fi
 
-for table in capital_main_flow dragon_list block_trade institution_survey; do
+for table in capital_main_flow dragon_list block_trade institution_survey index_daily; do
     if [ -n "$SINCE" ]; then
         run_step 4 "import-compass --table $table (incremental)" "$PROJECT_ROOT" \
             cargo run --bin compass-data -- import-compass --table "$table" --since "$SINCE"

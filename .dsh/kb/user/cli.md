@@ -207,6 +207,7 @@ uv run python main.py fetch main_flow     # SEPA: 主力资金流（push2 当日
 uv run python main.py fetch dragon        # SEPA: 龙虎榜席位
 uv run python main.py fetch block_trade   # SEPA: 大宗交易
 uv run python main.py fetch institution_survey  # SEPA: 机构调研
+uv run python main.py fetch index_daily         # SEPA: 指数/板块日线
 uv run python main.py fetch concept_member      # SEPA: 概念板块成分
 uv run python main.py sync             # 获取 + 导入全部
 uv run python main.py sync-investment --restart
@@ -231,7 +232,7 @@ uv run python main.py progress block_trade --json
 关键概念：
 - **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt
-- **增量机制**：财务三表（fin_balance_sheet/fin_income/fin_cash_flow）与 fin_indicators 使用 **UPDATE_DATE 时间锚点**增量（见下方说明）；SEPA 时间序列表（main_flow/dragon/block_trade/institution_survey）继续用 Dolt `data_updates.last_report_date` 锚点，只抓 `>= 最新已抓报告期` 的窗口；任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。财务三表自 ref #202 起改用 **F10 完整版报表**（RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW，203/319/254 字段），自 issue #299 起采用 **UPDATE_DATE 增量 + merge/ODKU 导入**（历史永不丢失、修订覆盖）；fin_indicators + 4 个时间序列表（main_flow/dragon/block_trade/institution_survey）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 或 ODKU 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史；concept_member 是全量重写（版本快照）。长文本表（institution_survey org_name 可达 ~800 字节）与宽表（财务三表 203-319 列超 Dolt `-c` 推断行尺寸上限）用显式宽 schema 建临时表导入（`dolt table import -u`，采集器 `create_sql` 参数），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8 或 65504 字节行尺寸超限。
+- **增量机制**：财务三表（fin_balance_sheet/fin_income/fin_cash_flow）与 fin_indicators 使用 **UPDATE_DATE 时间锚点**增量（见下方说明）；SEPA 时间序列表（main_flow/dragon/block_trade/institution_survey/index_daily）继续用 Dolt `data_updates.last_report_date` 锚点，只抓 `>= 最新已抓报告期` 的窗口；任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。财务三表自 ref #202 起改用 **F10 完整版报表**（RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW，203/319/254 字段），自 issue #299 起采用 **UPDATE_DATE 增量 + merge/ODKU 导入**（历史永不丢失、修订覆盖）；fin_indicators + 5 个时间序列表（main_flow/dragon/block_trade/institution_survey/index_daily）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 或 ODKU 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史；concept_member 是全量重写（版本快照）。长文本表（institution_survey org_name 可达 ~800 字节）与宽表（财务三表 203-319 列超 Dolt `-c` 推断行尺寸上限）用显式宽 schema 建临时表导入（`dolt table import -u`，采集器 `create_sql` 参数），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8 或 65504 字节行尺寸超限。
 
 **fin_indicators 增量修订检测（issue #135，替代 #27 的 `--refresh N`）**：`fetch_fin_indicators.py --incremental` 改用 **UPDATE_DATE 时间锚点**——filter=`(UPDATE_DATE>='{anchor}')`，锚点 = `min(data_updates.last_updated, state.json last_update_date)`（Dolt 为 source of truth，state.json 兜底；两源皆无则全量 REPORTDATE 枚举）。增量模式忽略 `--years/--periods`（锚点过滤跨报告期，旧报告期修订与新披露一体覆盖）。`_import_fin_indicators` 改 **UPSERT**（`INSERT ... SELECT ... ON DUPLICATE KEY UPDATE`，SELECT 侧全列别名 + ODKU 无前缀别名引用——Dolt 2.2.3 不支持限定源列引用与 `VALUES()`），修订后的行覆盖 Dolt 旧 PK 行；CSV 每次写入后整文件 keep-LAST 去重（键 `(SECURITY_CODE, REPORTDATE)`）。**已知限制**：不做历史回补（锚点前的存量修订不重抓，风险自担）；fetch 与 import 应同日运行（跨日/单独 import 会致锚点超前漏抓间隙修订）；API 侧下架/删除的行不传播到 Dolt（UPSERT 只能覆盖不能删除）。
 
@@ -242,6 +243,7 @@ SEPA 采集器说明：
 - `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
 - `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
+- `index_daily`：指数/板块日线（官方指数白名单 + THS 行业板块，增量按 `MAX(trade_date)`；merge 导入）
 - `concept_member`：概念板块成分（版本跟踪，全量重写非每日快照；导入时
   `TRIM(BOARD_NAME)` 去除 EastMoney 尾随空格，ref #217 验收）
 
