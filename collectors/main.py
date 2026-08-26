@@ -93,11 +93,26 @@ def _import_stock_basic() -> None:
         )
         raise RuntimeError("stock_basic import: candidate row count is too small; refusing to replace existing data")
 
+    def _checked_sql(sql: str, desc: str) -> None:
+        result = dolt_sql(sql)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"stock_basic import: {desc} failed: "
+                f"{getattr(result, 'stderr', '') or ''}".strip()
+            )
+
+    # Replace-by-rename: keep the previous table aside so an INSERT failure can
+    # restore it. This avoids the old non-atomic DELETE-then-INSERT that left no
+    # recovery if the INSERT failed.
+    if before_total > 0:
+        _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop old stock_basic backup")
+        _checked_sql("RENAME TABLE stock_basic TO _sb_backup", "rename stock_basic to backup")
+        _checked_sql("CREATE TABLE stock_basic LIKE _sb_backup", "recreate stock_basic schema")
+
     mapping = load_name_en_mapping()
     try:
-        dolt_sql("DELETE FROM stock_basic")
-        # Column names match the Dolt schema directly; dolt table import already
-        # typed the date/float columns and converted empty strings to NULL.
+        # The fresh stock_basic is empty (recreated from backup or already
+        # empty), so no DELETE is needed.
         if mapping:
             # Dual-key JOIN: exact TRIMmed industry, or its Roman-numeral
             # suffix stripped (白酒Ⅱ → 白酒) so suffixed industries hit the
@@ -131,9 +146,17 @@ def _import_stock_basic() -> None:
             FROM _tmp_sb t
             {join}
         """
-        dolt_sql(sql)
+        _checked_sql(sql, "insert stock_basic")
+    except Exception:
+        if before_total > 0:
+            _checked_sql("DROP TABLE IF EXISTS stock_basic", "drop partial stock_basic")
+            _checked_sql("RENAME TABLE _sb_backup TO stock_basic", "restore stock_basic backup")
+        raise
     finally:
         drop_name_en_mapping()
+        if before_total > 0:
+            _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop stock_basic backup")
+
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
 
     stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
