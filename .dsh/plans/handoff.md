@@ -1,54 +1,43 @@
-# Handoff — fix-index-daily-in-daily-pipeline
+# Handoff — Fix complete Compass data daily refresh
 
-## Purpose
-把 `index_daily`（指数日线）纳入每日数据收集/标准刷新流程，避免数据库更新时指数数据停留在旧交易日。
+## 用途
+把 `scripts/sepa_daily.sh` 从 SEPA-only 扩成**完整 compass_data 每日刷新入口**，覆盖
+`stock_basic` + 财务四表（`fin_indicators`, `fin_balance_sheet`, `fin_income`,
+`fin_cash_flow`）+ SEPA 表（`capital_main_flow`, `dragon_list`, `block_trade`,
+`institution_survey`）+ 指数（`index_daily`/`index_basic`）。同时修正文档中对
+「每日一键流水线」的不准确描述。
 
-## User observation (quote)
-- 用户说：「指数的数据没有更新？」（2026-08-25 22:28）
-- 用户确认要补跑指数日线采集链路，并确认「每日的数据收集也是需要的」「按推荐」。
+## Issue URL
+https://github.com/qiboda/compass/issues/306
 
-## Locked decisions
-1. 现在补跑指数日线采集链路（数据操作，主 session 正在执行）：
-   - `collectors/main.py fetch index_daily`
-   - `collectors/main.py import index_daily`
-   - commit/push `compass_data` Dolt
-   - `import-compass --table index_daily` 更新 Parquet
-   - 不 export DuckDB
-2. 代码变更：把 `index_daily` 纳入标准刷新流程（用户选择“按推荐”，认为是每日数据收集必需）。
-3. 本修复使用独立 worktree：`fix-index-daily-in-daily-pipeline`
-   - 与已有 block_trade worktree（`fix/import-compass-merge-key-mismatch`）隔离。
-4. 具体代码方向（worktree agent 可细化并走 PRE-IMPLEMENTATION GATE）：
-   - 大概率修改 `scripts/sepa_daily.sh`：
-     - step 2 增加 `index_daily` 的 fetch + import
-     - step 3 collector tables allowlist 加入 `index_daily`
-     - step 4 增量锚点查询和数据表列表加入 `index_daily`
-     - 更新脚本头部注释（4 sources → 5 sources）
-   - 同步修改 `scripts/tests/test-sepa-daily.sh` 的断言（4 sources → 5 sources）
-   - 按映射表同步相关 `.dsh/kb/` 文档。
+## 已锁定 grill-me 决策
+- Q1 选 **1**：扩展现有 `scripts/sepa_daily.sh`，不新建 update-all.sh。
+- Q2 选 **1**：包含 `stock_basic`（全部 compass_data 表）。
+- Q3 选 **1**：step 2 改用 `uv run python main.py sync`，避免 shell 重复维护源列表；
+  同步扩展 Dolt allowlist 和 import-compass 表清单。
+- 用户指令：「修复一下，然后再更新数据。」 → 先修脚本（走 PRE-IMPLEMENTATION GATE），
+  再跑修复后的脚本更新全部数据。
+- 不执行 `export`（DuckDB）。
 
-## Newly discovered issue during main-session data operation (2026-08-25)
-- 补跑 `collectors fetch/import index_daily` 后，运行 `import-compass --table index_daily --since 2026-08-21` 时第一次出现：
-  `DuckDB merge failed: Binder Error: Set operations can only apply to expressions with the same number of result columns, falling back to full export`
-- 该 fallback 用 **since 过滤后的数据** 直接覆盖了 `index_daily.parquet`，导致临时只剩 360 行（08-21/08-24/08-25 各 120 行）。
-- 已用全量 `import-compass --table index_daily` 恢复为 528,874 行；随后重试增量 `--since 2026-08-21` 成功，未再触发 fallback。当前 Parquet 数据健康。
-- 根因初步判断：`import_compass.rs` 的 merge fallback 本身是危险路径——一旦 merge 失败，会以 `--since` 过滤集覆盖全量 Parquet，丢弃历史。即使本次已恢复，这个 fallback 仍是数据丢失隐患。
-- 重要：该问题已有已知 issue **#298**（open）：“import-compass incremental merge fallback overwrites parquet with since-filtered data, losing history”。现有 block_trade worktree `fix/import-compass-merge-key-mismatch` 的 commit `bbc0425` 可能已包含 fallback 修复（“widen block_trade merge key and fallback full export”），但尚未合入 master；本 worktree 应避免重复开 issue，并与 #298 / block_trade PR 协调。
-- 本 worktree 至少应记录到 `.dsh/kb/dev/toolchain.md`；是否把 fallback 修复也纳入本 PR 由 worktree agent 判断/与用户确认。
+## 根因（已诊断）
+- `scripts/sepa_daily.sh` step 2 只 fetch/import `main_flow dragon block_trade
+  institution_survey index_daily`；`COLLECTOR_TABLES` 只有 6 表；step 4 只
+  import-compass 这 6 表。财务四表与 `stock_basic` 没有进每日管线。
+- `collectors/main.py sync` 已是全量刷新入口（`fetch all + import all`），
+  并非能力缺失，是流程用错脚本。
+- `.dsh/kb/user/cli.md` 把 sepa_daily.sh 称为“每日一键流水线”，但未说明不含财务表。
 
-## Process reminders (AGENTS.md)
-- 这是 feature/bugfix/代码变更，必须走 PRE-IMPLEMENTATION GATE：
-  - 创建 GitHub issue（含 A- 与 C- 标签）
-  - 失败测试（RED，委派 skwy-requirement-test / skwy-adversarial-test）
-  - 文档同步（第 5b 步）
-  - 决策记录（第 5c 步：检查 `.dsh/kb/design/` 相关文档是否有 `## 决策记录`）
-- worktree 会话启动后第一步读取本 handoff；然后 `git fetch origin master && git rebase origin/master` 同步原始分支再开始。
-- 提交信息必须含独立成行的 `ref #N`；不要 push 除非用户明确说"push"。
+## 后续步骤（worktree 会话自主完成）
+1. `git fetch origin master && git rebase origin/master`（同步原始分支）。
+2. 按 `skwy-workflow` 门禁完成：issue → plan → 对抗性测试/需求测试（RED）→ 实现 →
+   文档同步（`.dsh/kb/user/cli.md` 等）→ 决策记录 → 提交/review/PR。
+3. 真实数据冒烟：跑修复后的 `scripts/sepa_daily.sh`，验证 Dolt/Parquet 全部表
+   （含财务表）更新、行数与 data_updates 锚点一致。
+4. 完成后关闭 worktree 并通知主 session。
 
-## Current state notes (as of handoff)
-- master at `accee7f`; new branch `fix/index-daily-in-daily-pipeline` based on master.
-- 数据现状：Dolt `index_daily` max `trade_date = 2026-08-25`（528,874 行），Parquet 已同步到 08-25（528,874 行）；市场 `stock_daily.parquet` 已到 08-25。
-- 根因：本轮“更新数据库”只做了 Dolt→Parquet 导入，没有跑 Python 采集器；`sepa_daily.sh` 原本只采集 4 个 SEPA 源，不包含 `index_daily`。
-- 本轮主 session 已在后台补跑 `collectors/main.py fetch index_daily` + `import index_daily`，并已 commit/push Dolt 与更新 Parquet。
-
-## Note
-本 worktree 的 `.dsh/plans/handoff.md` 在 master 上是被 git 跟踪的旧文件（内容原为 issue #299 财务三表 UPDATE_DATE 增量）；本次覆盖为本修复上下文；worktree 初始 sync/rebase 可能把该跟踪文件重置回旧内容，本次再次覆盖，请以本文件为准。
+## 关键路径
+- 主 repo `/data/codes/compass`（master `dd83939`）
+- Dolt compass_data `/data/compass-data/compass_data`；investment_data
+  `/data/compass-data/investment_data`
+- `scripts/sepa_daily.sh` 需修改；`collectors/main.py sync` 现有全量能力
+- `cargo run --bin compass-data -- import-compass --table <table> [--since ...]`

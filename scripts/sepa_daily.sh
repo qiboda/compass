@@ -1,16 +1,16 @@
 #!/bin/bash
-# sepa_daily.sh — one-shot idempotent SEPA daily pipeline (epic #139, issue #151).
+# sepa_daily.sh — one-shot idempotent daily compass_data pipeline (epic #139, issue #151).
 #
 # Seven steps:
 #   1. market data:  compass-data import           (investment_data Dolt → Parquet)
-#   2. collect:      collectors fetch 5 sources    (EastMoney → compass_data Dolt)
+#   2. collect:      collectors main.py sync       (all compass_data sources → Dolt)
 #   3. Dolt commit:  collector tables              (limited add, push; skipped when clean)
-#   4. import:       import-compass 6 tables (5 incremental + index_basic full overwrite)
+#   4. import:       import-compass 11 tables (9 incremental/anchored + stock_basic + index_basic full overwrite)
 #   5. compute:      sepa temperature + sepa score --top 50 (DELETE+append write-back)
 #   6. Dolt commit:  compute tables                (limited add, push; skipped when clean)
 #   7. print TOP50:  reuse step 5 output, never recompute
 #
-# Idempotency: the collectors skip already-fetched dates (data_updates.
+# Idempotency: collectors/main.py sync skips already-fetched dates (data_updates.
 # last_report_date); the sepa CLI write-back is DELETE+append per trade_date; the
 # Dolt commits are skipped when none of the allowlisted tables changed. The whole
 # script can be re-run any day without double-counting or data loss.
@@ -31,7 +31,10 @@ INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-/data/compass-data/investment_d
 COMPASS_DATA_DIR="${SEPA_COMPASS_DATA_DIR:-/data/compass-data/compass_data}"
 
 # Allowlisted table sets for the two Dolt commits (never `dolt add .`).
-COLLECTOR_TABLES=(capital_main_flow dragon_list block_trade institution_survey index_daily index_basic)
+# The collector allowlist covers every compass_data table refreshed by the daily
+# pipeline: stock_basic, the four financial tables, the SEPA time-series tables,
+# and the index tables (index_basic is a side effect of index_daily import).
+COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic)
 COMPUTE_TABLES=(technical_factor industry_factor capital_factor final_score market_temperature data_updates)
 
 # --- helpers ---
@@ -127,20 +130,14 @@ cd "$PROJECT_ROOT"
 run_step 1 "import market data (investment_data → Parquet)" "$PROJECT_ROOT" \
     cargo run --bin compass-data -- import
 
-# --- 2. Collect: EastMoney data → compass_data Dolt ---
-# Each fetcher short-circuits when data_updates.last_report_date already covers
-# the day, so re-runs add nothing. main.py fetch accepts ONE target per call
-# (choices list, not nargs="+") and only writes the CSV — the Dolt import is a
-# separate command, so each source is fetched AND imported (the 5 time-series
-# collectors merge-import with INSERT IGNORE on the PK, so re-runs are
-# idempotent either way (concept_member removed with issue #283 D4).
-run_step 2 "collect EastMoney data (5 sources)" "$PROJECT_ROOT/collectors" \
-    bash -c 'for src in main_flow dragon block_trade institution_survey index_daily; do
-        echo "--- fetch $src ---"
-        uv run python main.py fetch "$src" || exit 1
-        echo "--- import $src ---"
-        uv run python main.py import "$src" || exit 1
-    done'
+# --- 2. Collect: all compass_data sources → Dolt ---
+# collectors/main.py sync is the single full-refresh entry: it fetches and imports
+# stock_basic, all four financial tables, the SEPA time-series tables, and
+# index_daily (index_basic is written as a side effect of index_daily import).
+# Keeping one generation/import entry point means the shell no longer maintains a
+# separate per-source fetch/import list.
+run_step 2 "collect all compass_data sources (main.py sync)" "$PROJECT_ROOT/collectors" \
+    uv run python main.py sync
 
 # --- 3. Dolt commit: collector tables ---
 info "Step 3: Dolt commit collector tables"
@@ -152,7 +149,9 @@ dolt_commit_changed "$COMPASS_DATA_DIR" 3 "collector" "feat: sepa collectors dat
 # last_report_date in data_updates.  A missing/NULL anchor means that table has
 # never been imported yet, so that table gets a full export instead of
 # inheriting another table's anchor (a global MAX would let a newly added table
-# skip its history).  index_basic is always a full overwrite by design.
+# skip its history).  stock_basic and index_basic are always full overwrites:
+# stock_basic import ignores --since by design, and index_basic is a version
+# snapshot.
 info "Step 4: import collector tables into Parquet"
 anchor_for() {
     local table="$1" raw="" date=""
@@ -167,8 +166,9 @@ anchor_for() {
 }
 
 for table in "${COLLECTOR_TABLES[@]}"; do
-    if [ "$table" = "index_basic" ]; then
-        # Version-tracked name table: always mirror current Dolt state.
+    if [ "$table" = "stock_basic" ] || [ "$table" = "index_basic" ]; then
+        # Full-overwrite tables: stock_basic is authoritative (no --since in
+        # import_compass), index_basic is a version snapshot.
         run_step 4 "import-compass --table $table (full overwrite)" "$PROJECT_ROOT" \
             cargo run --bin compass-data -- import-compass --table "$table"
         continue

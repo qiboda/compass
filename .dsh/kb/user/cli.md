@@ -342,7 +342,7 @@ cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 只�
 | `--top` | `50` | 终端表格输出条数上限（不影响 Dolt 写回内容——写回总是全量计算集） |
 | `--date` | 数据内最新交易日 | 计算日期（YYYY-MM-DD）；不传时取 Parquet 中最大 trade_date，周末/节假日运行不会写出非交易日行 |
 
-每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → 采集 → Dolt commit → Parquet 导入（5 个时序表增量 + `index_basic` 全量覆盖）→ 计算 → Dolt commit → TOP50）。
+每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → `collectors/main.py sync` 完整 `compass_data` 采集：`stock_basic` + 财务四表（`fin_indicators`/`fin_balance_sheet`/`fin_income`/`fin_cash_flow`）+ SEPA 表 + 指数 → Dolt commit → Parquet 导入（11 张表，`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量）→ 计算 → Dolt commit → TOP50）。
 
 ### `sepa backtest` — 历史批量回测
 
