@@ -1146,7 +1146,9 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         if rows > 0:
             _verify_recent_points(csv_path)
         return rows
-    _import_index_basic(csv_dir() / "index_basic.csv")
+    basic_rows = _import_index_basic(csv_dir() / "index_basic.csv")
+    if basic_rows == 0:
+        raise RuntimeError("index_basic import returned 0 rows")
     rows = _import_index_daily(csv_dir() / "index_daily.csv")
     if rows > 0:
         _verify_recent_points(csv_dir() / "index_daily.csv")

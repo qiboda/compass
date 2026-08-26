@@ -585,6 +585,8 @@ def main() -> None:
     try:
         sse_data = _with_retry(fetch_sse, session, pool=pool, desc="上交所")
         sse_records = parse_sse_json(sse_data, update_date)
+        if not sse_records:
+            raise ValueError("返回空记录")
         exchange_records.append(sse_records)
         print(f"  ✓ 上交所: {len(sse_records)} 条（含退市）", file=sys.stderr)
     except Exception as exc:
@@ -598,6 +600,8 @@ def main() -> None:
             fetch_szse_xlsx, session, "1110", "tab1", pool=pool, desc="深交所 正常上市"
         )
         szse_records = parse_szse_xlsx(szse_active_xml, update_date)
+        if not szse_records:
+            raise ValueError("返回空记录")
         exchange_records.append(szse_records)
         print(f"  ✓ 深交所 正常上市: {len(szse_records)} 条", file=sys.stderr)
     except Exception as exc:
@@ -611,6 +615,8 @@ def main() -> None:
             fetch_szse_xlsx, session, "1793_ssgs", "tab2", pool=pool, desc="深交所 退市"
         )
         szse_delisted_records = parse_szse_delisted(szse_delisted_xml, update_date)
+        if not szse_delisted_records:
+            raise ValueError("返回空记录")
         exchange_records.append(szse_delisted_records)
         print(f"  ✓ 深交所 退市: {len(szse_delisted_records)} 条", file=sys.stderr)
     except Exception as exc:
@@ -624,6 +630,8 @@ def main() -> None:
         # 将原始行重新打包为 JSONP body 再调用 parse_bse_json
         bse_body = f"null([{{\"content\": {json.dumps(bse_raw_rows)}}}])"
         bse_records = parse_bse_json(bse_body, update_date)
+        if not bse_records:
+            raise ValueError("返回空记录")
         exchange_records.append(bse_records)
         print(f"  ✓ 北交所: {len(bse_records)} 条", file=sys.stderr)
     except Exception as exc:
