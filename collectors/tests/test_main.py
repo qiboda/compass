@@ -904,6 +904,32 @@ class TestImportStockBasic:
         delete_calls = [c for c in mock_sql.call_args_list if c.args[0] == "DELETE FROM stock_basic"]
         assert delete_calls == []
 
+    def test_partial_staging_aborts_before_delete(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A dramatically undersized stock_basic candidate must not replace history."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+        mock_sql = Mock()
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        # _tmp_sb has 1 row; existing stock_basic has 100 rows (drop >50%).
+        mock_sql_csv = Mock(side_effect=["Count\n1", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="row count is too small"):
+            main_mod._import_stock_basic()
+
+        delete_calls = [c for c in mock_sql.call_args_list if c.args[0] == "DELETE FROM stock_basic"]
+        assert delete_calls == []
+
 
 # ═══════════════════════════════════════════════════════════════════
 # _import_fin_indicators — legacy import helper (uses common dolt fns)

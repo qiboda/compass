@@ -82,6 +82,17 @@ def _import_stock_basic() -> None:
         print("  ERROR: _tmp_sb is empty; refusing to overwrite stock_basic", file=sys.stderr)
         raise RuntimeError("stock_basic import: _tmp_sb is empty; refusing to clear stock_basic")
 
+    before_lines = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").strip().split("\n")
+    before_total = int(before_lines[-1]) if len(before_lines) > 1 else 0
+    if before_total > 0 and tmp_total < before_total // 2:
+        dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
+        print(
+            f"  ERROR: stock_basic candidate is too small ({tmp_total} < {before_total // 2}); "
+            "refusing to clear the existing table",
+            file=sys.stderr,
+        )
+        raise RuntimeError("stock_basic import: candidate row count is too small; refusing to replace existing data")
+
     mapping = load_name_en_mapping()
     try:
         dolt_sql("DELETE FROM stock_basic")
