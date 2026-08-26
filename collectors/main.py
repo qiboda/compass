@@ -157,6 +157,14 @@ def _import_stock_basic() -> None:
             {join}
         """
         _checked_sql(sql, "insert stock_basic")
+        # Validate the final table before dropping the backup, so a suspicious
+        # empty result can still restore the previous stock_basic.
+        stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
+        lines = stdout.strip().split("\n")
+        total = lines[-1] if len(lines) > 1 else "?"
+        if total in ("0", "?"):
+            print("  ERROR: stock_basic final count is suspiciously empty", file=sys.stderr)
+            raise RuntimeError("stock_basic import: final row count is empty")
     except Exception:
         failed = True
         if renamed:
@@ -177,12 +185,6 @@ def _import_stock_basic() -> None:
 
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
 
-    stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
-    lines = stdout.strip().split("\n")
-    total = lines[-1] if len(lines) > 1 else "?"
-    if total in ("0", "?"):
-        print("  ERROR: stock_basic final count is suspiciously empty", file=sys.stderr)
-        raise RuntimeError("stock_basic import: final row count is empty")
     dolt_sql(
         "INSERT INTO data_updates (table_name, last_updated, source, row_count) "
         "VALUES ('stock_basic', CURDATE(), 'SSE/SZSE/BSE official', "
