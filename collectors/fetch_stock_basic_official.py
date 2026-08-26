@@ -578,6 +578,7 @@ def main() -> None:
 
     # 收集各交易所记录
     exchange_records: list[list[dict[str, Any]]] = []
+    failures: list[str] = []
 
     # ── 上交所 ──
     print("\n[1/4] 上交所 SSE ...", file=sys.stderr)
@@ -588,6 +589,7 @@ def main() -> None:
         print(f"  ✓ 上交所: {len(sse_records)} 条（含退市）", file=sys.stderr)
     except Exception as exc:
         print(f"  ✗ 上交所失败: {exc}", file=sys.stderr)
+        failures.append(f"上交所: {exc}")
 
     # ── 深交所（正常上市） ──
     print("\n[2/4] 深交所 SZSE 正常上市 ...", file=sys.stderr)
@@ -600,6 +602,7 @@ def main() -> None:
         print(f"  ✓ 深交所 正常上市: {len(szse_records)} 条", file=sys.stderr)
     except Exception as exc:
         print(f"  ✗ 深交所 正常上市 失败: {exc}", file=sys.stderr)
+        failures.append(f"深交所 正常上市: {exc}")
 
     # ── 深交所（退市） ──
     print("\n[3/4] 深交所 SZSE 退市股 ...", file=sys.stderr)
@@ -612,6 +615,7 @@ def main() -> None:
         print(f"  ✓ 深交所 退市: {len(szse_delisted_records)} 条", file=sys.stderr)
     except Exception as exc:
         print(f"  ✗ 深交所 退市 失败: {exc}", file=sys.stderr)
+        failures.append(f"深交所 退市: {exc}")
 
     # ── 北交所 ──
     print("\n[4/4] 北交所 BSE ...", file=sys.stderr)
@@ -624,11 +628,22 @@ def main() -> None:
         print(f"  ✓ 北交所: {len(bse_records)} 条", file=sys.stderr)
     except Exception as exc:
         print(f"  ✗ 北交所失败: {exc}", file=sys.stderr)
+        failures.append(f"北交所: {exc}")
+
+    # ── 失败即中止：避免用部分/空数据覆盖 stock_basic ──
+    if failures:
+        print("错误：有交易所抓取失败，拒绝覆盖 stock_basic CSV：", file=sys.stderr)
+        for failure in failures:
+            print(f"  - {failure}", file=sys.stderr)
+        sys.exit(1)
 
     # ── 合并、去重、排序 ──
     print("\n合并各交易所数据...", file=sys.stderr)
     merged = merge_exchanges(exchange_records)
     print(f"  合并后: {len(merged)} 条（去重后）", file=sys.stderr)
+    if not merged:
+        print("错误：三大交易所返回空数据，拒绝写出 stock_basic CSV", file=sys.stderr)
+        sys.exit(1)
 
     # ── 输出 CSV ──
     records_to_csv(merged, output_path)

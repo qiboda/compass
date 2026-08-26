@@ -607,7 +607,7 @@ class TestMain:
             fsbo.main()
         assert "日期格式无效" in capsys.readouterr().err
 
-    def test_all_exchanges_failed_still_writes_header(self, tmp_path, monkeypatch):
+    def test_all_exchanges_failed_aborts_without_writing_csv(self, tmp_path, monkeypatch):
         stub = SyncStubSession()
 
         def _get(url, params=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
@@ -627,8 +627,8 @@ class TestMain:
              "--update-date", "2026-07-31"],
         )
 
-        fsbo.main()
+        with pytest.raises(SystemExit):
+            fsbo.main()
 
         out = tmp_path / "out.csv"
-        assert out.exists()
-        assert out.read_text(encoding="utf-8-sig").strip() == ",".join(COLUMNS)
+        assert not out.exists()

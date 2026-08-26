@@ -68,10 +68,19 @@ def _import_stock_basic() -> None:
 
     if not csv_path.exists():
         print(f"  ERROR: {csv_path} not found.", file=sys.stderr)
-        return
+        raise RuntimeError("stock_basic import: CSV not found; refusing to continue")
 
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
-    dolt_table_import("_tmp_sb", csv_path, timeout=120)
+    if not dolt_table_import("_tmp_sb", csv_path, timeout=120):
+        print("  ERROR: failed to stage stock_basic CSV into _tmp_sb", file=sys.stderr)
+        raise RuntimeError("stock_basic import: dolt_table_import failed for _tmp_sb")
+
+    tmp_lines = dolt_sql_csv("SELECT COUNT(*) FROM _tmp_sb").strip().split("\n")
+    tmp_total = int(tmp_lines[-1]) if len(tmp_lines) > 1 else 0
+    if tmp_total <= 0:
+        dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
+        print("  ERROR: _tmp_sb is empty; refusing to overwrite stock_basic", file=sys.stderr)
+        raise RuntimeError("stock_basic import: _tmp_sb is empty; refusing to clear stock_basic")
 
     mapping = load_name_en_mapping()
     try:
@@ -119,6 +128,9 @@ def _import_stock_basic() -> None:
     stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
     lines = stdout.strip().split("\n")
     total = lines[-1] if len(lines) > 1 else "?"
+    if total in ("0", "?"):
+        print("  ERROR: stock_basic final count is suspiciously empty", file=sys.stderr)
+        raise RuntimeError("stock_basic import: final row count is empty")
     dolt_sql(
         "INSERT INTO data_updates (table_name, last_updated, source, row_count) "
         "VALUES ('stock_basic', CURDATE(), 'SSE/SZSE/BSE official', "
@@ -535,6 +547,17 @@ def dispatch_import(target: str) -> None:
         fetch_index_daily.import_to_dolt()
 
 
+def _require_import(result: int, label: str) -> None:
+    """Abort sync when an import reports zero rows.
+
+    ``import_replace_table`` returns the full row count after import and only
+    returns 0 when the CSV is missing or the SQL import failed, so a zero here
+    must stop the pipeline instead of silently continuing.
+    """
+    if result == 0:
+        raise RuntimeError(f"sync failed: {label} import returned 0 rows")
+
+
 def do_sync(restart: bool = False) -> None:
     """Fetch all tables from EastMoney, import into Dolt, and update data_updates.
 
@@ -559,63 +582,63 @@ def do_sync(restart: bool = False) -> None:
 
     sys.argv = ["fetch_fin_indicators", "--incremental"]
     asyncio.run(fetch_fin_indicators.main())
-    _import_fin_indicators()
+    _require_import(_import_fin_indicators(), "fin_indicators")
 
     # 3. balance_sheet
     print("\n[sync] Fetching balance_sheet (incremental)...", file=sys.stderr)
     import fetch_balance_sheet
 
     asyncio.run(fetch_balance_sheet.run(incremental=True))
-    fetch_balance_sheet.import_to_dolt()
+    _require_import(fetch_balance_sheet.import_to_dolt(), "fin_balance_sheet")
 
     # 4. income
     print("\n[sync] Fetching income (incremental)...", file=sys.stderr)
     import fetch_income
 
     asyncio.run(fetch_income.run(incremental=True))
-    fetch_income.import_to_dolt()
+    _require_import(fetch_income.import_to_dolt(), "fin_income")
 
     # 5. cash_flow
     print("\n[sync] Fetching cash_flow (incremental)...", file=sys.stderr)
     import fetch_cash_flow
 
     asyncio.run(fetch_cash_flow.run(incremental=True))
-    fetch_cash_flow.import_to_dolt()
+    _require_import(fetch_cash_flow.import_to_dolt(), "fin_cash_flow")
 
     # 6. dragon_list (龙虎榜席位)
     print("\n[sync] Fetching dragon_list...", file=sys.stderr)
     import fetch_dragon
 
     asyncio.run(fetch_dragon.run())
-    fetch_dragon.import_to_dolt()
+    _require_import(fetch_dragon.import_to_dolt(), "dragon_list")
 
     # 7. block_trade (大宗交易)
     print("\n[sync] Fetching block_trade...", file=sys.stderr)
     import fetch_block_trade
 
     asyncio.run(fetch_block_trade.run())
-    fetch_block_trade.import_to_dolt()
+    _require_import(fetch_block_trade.import_to_dolt(), "block_trade")
 
     # 8. institution_survey (机构调研)
     print("\n[sync] Fetching institution_survey...", file=sys.stderr)
     import fetch_institution_survey
 
     asyncio.run(fetch_institution_survey.run())
-    fetch_institution_survey.import_to_dolt()
+    _require_import(fetch_institution_survey.import_to_dolt(), "institution_survey")
 
     # 10. main_flow (主力资金流)
     print("\n[sync] Fetching main_flow...", file=sys.stderr)
     import fetch_main_flow
 
     asyncio.run(fetch_main_flow.run())
-    fetch_main_flow.import_to_dolt()
+    _require_import(fetch_main_flow.import_to_dolt(), "capital_main_flow")
 
     # 11. index_daily (指数日线: 官方指数/行业板块)
     print("\n[sync] Fetching index_daily...", file=sys.stderr)
     import fetch_index_daily
 
     asyncio.run(fetch_index_daily.run())
-    fetch_index_daily.import_to_dolt()
+    _require_import(fetch_index_daily.import_to_dolt(), "index_daily")
 
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)
