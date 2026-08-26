@@ -490,3 +490,24 @@
 - `reflect-audit.sh` 找不到嵌套 session trace 在 #301 与本次重复出现；本次已通过 maxdepth 3 + prefix normalize 固化。
 - `edit` 工具未先 read 的摩擦在 #298/#301 与本次多次出现；尚未固化为自动检查。
 - 子代理完成前主动 `list_agents` 轮询在 #298 与本次重复出现；应改为等结算通知，避免无效轮询。
+
+## 2026-08-27 — ref #306 sepa_daily.sh 完整 compass_data 每日刷新 + sync 硬化
+
+**What was done**: 将 `scripts/sepa_daily.sh` 从 6 表 SEPA-only 扩展为 11 表完整 `compass_data` 每日刷新入口（step 2 改用 `collectors/main.py sync`，step 4 覆盖 stock_basic/财务四表/SEPA/指数）；同时强化 `main.py` sync/import 失败即中止、`fetch_stock_basic_official` 空/部分数据拒绝覆盖、`fetch_index_daily` index_basic 失败传播、`_import_stock_basic` 原子替换与恢复；真实数据冒烟已跑并推送 Dolt。
+
+**User corrections**:
+- 「运行完，自动完成后面的流程。我去睡觉了」——授权 auto 模式，push/PR 自动推进。
+
+**What went wrong**:
+1. 两次 `edit` 因未先 read 文件被拒绝（`.dsh/plans/complete-daily-compass-refresh.md`、`collectors/fetch_index_daily.py`）。
+2. 安全硬化在 review 中连续暴露多个 P1：部分 stock_basic 可能清库、sync 内部 import 失败不传播、原子替换边界不完整、测试未同步；最终多轮 review 后才全部关闭。说明这类数据完整性改动应先在实现前把失败路径与测试矩阵设计完整。
+
+**Lessons learned**:
+1. 对会影响权威数据表的采集/导入改动，先列出所有失败路径（fetch 空/部分、import 0、备份恢复失败、final count 异常）并写测试再实现。
+2. 修改模块行为时，同步 grep 所有调用方测试（`test_csv_output_dir.py`/`test_f10_incremental_requirement.py`/`test_index_main_cli.py`），避免旧断言成为 P1。
+3. 自动模式下 push 前仍必须完成 review 无 P0/P1 与 rebase/反思 commit。
+
+**Process improvements**: None（本次未固化新 hook/脚本；建议后续把“修改 import 行为必须同步相关测试”纳入流程，暂未建 issue）。
+
+### Trends (last 10)
+- 近 10 条反思多次围绕数据管线安全性（ref #292/#294/#298/#299/#303/#306），集中在“增量/每日流程边界必须 fail-loud、防止历史丢失”主题；建议后续在 collectors 测试中固化“增量空 CSV/部分覆盖”回归套件。
