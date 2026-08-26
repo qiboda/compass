@@ -101,16 +101,23 @@ def _import_stock_basic() -> None:
                 f"{getattr(result, 'stderr', '') or ''}".strip()
             )
 
-    # Replace-by-rename: keep the previous table aside so an INSERT failure can
-    # restore it. This avoids the old non-atomic DELETE-then-INSERT that left no
-    # recovery if the INSERT failed.
-    if before_total > 0:
-        _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop old stock_basic backup")
-        _checked_sql("RENAME TABLE stock_basic TO _sb_backup", "rename stock_basic to backup")
-        _checked_sql("CREATE TABLE stock_basic LIKE _sb_backup", "recreate stock_basic schema")
-
-    mapping = load_name_en_mapping()
+    # Replace-by-rename: keep the previous table aside so any failure after the
+    # rename can restore it. This avoids the old non-atomic DELETE-then-INSERT
+    # that left no recovery if the INSERT or schema preparation failed.
+    mapping = None
     try:
+        if before_total > 0:
+            _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop old stock_basic backup")
+            _checked_sql(
+                "RENAME TABLE stock_basic TO _sb_backup",
+                "rename stock_basic to backup",
+            )
+            _checked_sql(
+                "CREATE TABLE stock_basic LIKE _sb_backup",
+                "recreate stock_basic schema",
+            )
+
+        mapping = load_name_en_mapping()
         # The fresh stock_basic is empty (recreated from backup or already
         # empty), so no DELETE is needed.
         if mapping:
@@ -150,10 +157,14 @@ def _import_stock_basic() -> None:
     except Exception:
         if before_total > 0:
             _checked_sql("DROP TABLE IF EXISTS stock_basic", "drop partial stock_basic")
-            _checked_sql("RENAME TABLE _sb_backup TO stock_basic", "restore stock_basic backup")
+            _checked_sql(
+                "RENAME TABLE _sb_backup TO stock_basic",
+                "restore stock_basic backup",
+            )
         raise
     finally:
-        drop_name_en_mapping()
+        if mapping is not None:
+            drop_name_en_mapping()
         if before_total > 0:
             _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop stock_basic backup")
 

@@ -930,6 +930,92 @@ class TestImportStockBasic:
         delete_calls = [c for c in mock_sql.call_args_list if c.args[0] == "DELETE FROM stock_basic"]
         assert delete_calls == []
 
+    def test_mapping_failure_restores_backup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """If loading the name-en mapping fails after rename, restore stock_basic."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\nSZ000002\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            common,
+            "load_name_en_mapping",
+            lambda: (_ for _ in ()).throw(RuntimeError("mapping boom")),
+        )
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # rename stock_basic -> _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # create stock_basic LIKE _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # drop partial stock_basic
+                subprocess.CompletedProcess([], 0, ""),  # restore rename
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="mapping boom"):
+            main_mod._import_stock_basic()
+
+        restore_calls = [
+            c.args[0]
+            for c in mock_sql.call_args_list
+            if c.args[0] == "RENAME TABLE _sb_backup TO stock_basic"
+        ]
+        assert restore_calls == ["RENAME TABLE _sb_backup TO stock_basic"]
+
+    def test_insert_failure_restores_backup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """If the final stock_basic INSERT fails, restore the previous table."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\nSZ000002\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        monkeypatch.setattr(common, "load_name_en_mapping", lambda: {})
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # rename stock_basic -> _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # create stock_basic LIKE _sb_backup
+                subprocess.CompletedProcess([], 1, "insert boom"),  # INSERT fails
+                subprocess.CompletedProcess([], 0, ""),  # drop partial stock_basic
+                subprocess.CompletedProcess([], 0, ""),  # restore rename
+                subprocess.CompletedProcess([], 0, ""),  # drop name_en mapping
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="insert stock_basic failed"):
+            main_mod._import_stock_basic()
+
+        restore_calls = [
+            c.args[0]
+            for c in mock_sql.call_args_list
+            if c.args[0] == "RENAME TABLE _sb_backup TO stock_basic"
+        ]
+        assert restore_calls == ["RENAME TABLE _sb_backup TO stock_basic"]
+
 
 # ═══════════════════════════════════════════════════════════════════
 # _import_fin_indicators — legacy import helper (uses common dolt fns)

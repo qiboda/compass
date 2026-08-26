@@ -120,6 +120,7 @@ class TestDoSyncIndexDaily:
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
+        import fetch_index_daily as fid
         import fetch_institution_survey as fis
         import fetch_main_flow as fmf
         import fetch_stock_basic_official as fsbo
@@ -136,9 +137,10 @@ class TestDoSyncIndexDaily:
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
+        monkeypatch.setattr(fid, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
-        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf):
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf, fid):
             monkeypatch.setattr(mod, "import_to_dolt", Mock())
 
         return mock_run
