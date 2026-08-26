@@ -275,6 +275,18 @@ class TestDispatchImport:
         main_mod.dispatch_import("fin_indicators")
         mock_import.assert_called_once()
 
+    def test_fin_indicators_zero_import_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI import must abort loudly when fin_indicators returns 0 rows."""
+        import main as main_mod
+
+        monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock(return_value=0))
+
+        with pytest.raises(RuntimeError, match="fin_indicators import returned 0 rows"):
+            main_mod.dispatch_import("fin_indicators")
+
     def test_balance_sheet_calls_import_to_dolt(
         self,
         monkeypatch: pytest.MonkeyPatch,

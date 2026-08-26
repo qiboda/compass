@@ -105,6 +105,7 @@ def _import_stock_basic() -> None:
     # rename can restore it. This avoids the old non-atomic DELETE-then-INSERT
     # that left no recovery if the INSERT or schema preparation failed.
     mapping = None
+    failed = False
     try:
         if before_total > 0:
             _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop old stock_basic backup")
@@ -155,6 +156,7 @@ def _import_stock_basic() -> None:
         """
         _checked_sql(sql, "insert stock_basic")
     except Exception:
+        failed = True
         if before_total > 0:
             _checked_sql("DROP TABLE IF EXISTS stock_basic", "drop partial stock_basic")
             _checked_sql(
@@ -165,7 +167,7 @@ def _import_stock_basic() -> None:
     finally:
         if mapping is not None:
             drop_name_en_mapping()
-        if before_total > 0:
+        if before_total > 0 and not failed:
             _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop stock_basic backup")
 
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
@@ -556,40 +558,40 @@ def dispatch_import(target: str) -> None:
     if target == "stock_basic":
         _import_stock_basic()
     elif target == "fin_indicators":
-        _import_fin_indicators()
+        _require_import(_import_fin_indicators(), "fin_indicators")
     elif target == "balance_sheet":
         import fetch_balance_sheet
 
-        fetch_balance_sheet.import_to_dolt()
+        _require_import(fetch_balance_sheet.import_to_dolt(), "fin_balance_sheet")
     elif target == "income":
         import fetch_income
 
-        fetch_income.import_to_dolt()
+        _require_import(fetch_income.import_to_dolt(), "fin_income")
     elif target == "cash_flow":
         import fetch_cash_flow
 
-        fetch_cash_flow.import_to_dolt()
+        _require_import(fetch_cash_flow.import_to_dolt(), "fin_cash_flow")
     elif target == "dragon":
         import fetch_dragon
 
-        fetch_dragon.import_to_dolt()
+        _require_import(fetch_dragon.import_to_dolt(), "dragon_list")
     elif target == "block_trade":
         import fetch_block_trade
 
-        fetch_block_trade.import_to_dolt()
+        _require_import(fetch_block_trade.import_to_dolt(), "block_trade")
     elif target == "institution_survey":
         import fetch_institution_survey
 
-        fetch_institution_survey.import_to_dolt()
+        _require_import(fetch_institution_survey.import_to_dolt(), "institution_survey")
     elif target == "main_flow":
         import fetch_main_flow
 
-        fetch_main_flow.import_to_dolt()
+        _require_import(fetch_main_flow.import_to_dolt(), "capital_main_flow")
 
     elif target == "index_daily":
         import fetch_index_daily
 
-        fetch_index_daily.import_to_dolt()
+        _require_import(fetch_index_daily.import_to_dolt(), "index_daily")
 
 
 def _require_import(result: int, label: str) -> None:
