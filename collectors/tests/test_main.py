@@ -1028,6 +1028,39 @@ class TestImportStockBasic:
         ]
         assert restore_calls == ["RENAME TABLE _sb_backup TO stock_basic"]
 
+    def test_rename_failure_keeps_original_table(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """If creating the backup rename fails, never drop the current table."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 1, "rename boom"),  # RENAME fails
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="rename stock_basic to backup failed"):
+            main_mod._import_stock_basic()
+
+        assert all(
+            c.args[0] != "DROP TABLE IF EXISTS stock_basic"
+            for c in mock_sql.call_args_list
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════
 # _import_fin_indicators — legacy import helper (uses common dolt fns)

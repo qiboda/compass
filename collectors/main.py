@@ -106,6 +106,7 @@ def _import_stock_basic() -> None:
     # that left no recovery if the INSERT or schema preparation failed.
     mapping = None
     failed = False
+    renamed = False
     try:
         if before_total > 0:
             _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop old stock_basic backup")
@@ -113,6 +114,7 @@ def _import_stock_basic() -> None:
                 "RENAME TABLE stock_basic TO _sb_backup",
                 "rename stock_basic to backup",
             )
+            renamed = True
             _checked_sql(
                 "CREATE TABLE stock_basic LIKE _sb_backup",
                 "recreate stock_basic schema",
@@ -157,7 +159,10 @@ def _import_stock_basic() -> None:
         _checked_sql(sql, "insert stock_basic")
     except Exception:
         failed = True
-        if before_total > 0:
+        if renamed:
+            # Only restore when the original table has actually been renamed
+            # aside. If the backup/rename preparation failed, the original
+            # stock_basic is still intact and must not be touched.
             _checked_sql("DROP TABLE IF EXISTS stock_basic", "drop partial stock_basic")
             _checked_sql(
                 "RENAME TABLE _sb_backup TO stock_basic",
