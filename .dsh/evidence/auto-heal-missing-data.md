@@ -13,6 +13,8 @@
 | `148e095` | fix | Review round 1: backfill imports to Dolt, strict symbol resolution, dragon range, production autostrict shim, print cap |
 | `2141afa` | fix | Review round 2: `dolt_sql_csv_strict`, empty-source backfill no-op, tests |
 | `fea4f6e` | fix | Real-data validation: per-table auto-heal range + deterministic test gating |
+| `81f4787` | docs | Auto-heal evidence + plan status |
+| `2417446` | docs | Worktree investment_data symlink note |
 
 ## Verification
 
