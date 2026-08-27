@@ -37,6 +37,11 @@ PARQUET_DIR="${PARQUET_DIR:-/data/compass-data/parquet_data}"
 # Test hook: point at a fake sync script in the shell unit tests.
 SYNC_INVESTMENT_SCRIPT="${SYNC_INVESTMENT_SCRIPT:-scripts/sync-investment-data.sh}"
 
+# Pass the resolved absolute Dolt paths to child scripts/collectors so a
+# worktree without the gitignored repo-root symlink still works.
+export COMPASS_INVESTMENT_DATA_DIR="${COMPASS_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DIR}"
+export SEPA_INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DIR}"
+
 # Allowlisted table sets for the two Dolt commits (never `dolt add .`).
 # The collector allowlist covers every compass_data table refreshed by the daily
 # pipeline: stock_basic, the four financial tables, the SEPA time-series tables,
