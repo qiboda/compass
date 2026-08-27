@@ -15,6 +15,8 @@
 | `fea4f6e` | fix | Real-data validation: per-table auto-heal range + deterministic test gating |
 | `81f4787` | docs | Auto-heal evidence + plan status |
 | `2417446` | docs | Worktree investment_data symlink note |
+| `d9e53b0` | docs | Include doc commits in auto-heal evidence |
+| `1e320b2` | fix | Final review P1: per-table ranges, current-day exclusion, strict THS, first-run bootstrap, partial-compute repair |
 
 ## Verification
 
@@ -33,10 +35,10 @@
 
 - `cargo run --bin compass-data -- check-stock-daily` → exit 0 (no stock_daily calendar gap in real data)
 - Per-table gap detection on real local Dolt:
-  - `capital_main_flow`: range `2026-07-31..2026-08-28`, **13 missing** (bounded; no full-history flood)
-  - `index_daily`: **1 missing** (`2026-08-28`)
-  - `dragon_list`: **1 missing** (`2026-08-28`)
-  - `block_trade`: **1 missing** (`2026-08-28`)
+  - `capital_main_flow`: range `2026-07-31..2026-08-27`, **12 missing** (bounded; no full-history flood)
+  - `index_daily`: **0 missing** (current date excluded from scan)
+  - `dragon_list`: **0 missing** (current date excluded from scan)
+  - `block_trade`: **0 missing** (current date excluded from scan)
 - Worktree local `investment_data` symlink was absent; created `investment_data -> /data/compass-data/investment_data` (gitignored, not part of commit) to run the read-only smoke in this worktree.
 
 ### F4 status
