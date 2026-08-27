@@ -4,7 +4,8 @@
 - Worktree: `feat-auto-heal-missing-data`
 - Type: data pipeline feature (Python collectors + Rust CLI + shell script + docs)
 - 已锁定 grill-me 决策：见 `.dsh/plans/handoff.md`（本 plan 为执行契约，不得偏离）
-- 当前状态：Batch 1-3 实现与自动化测试已完成；F4 真实数据冒烟仍在待办（需用户/环境允许时跑 `update-database.sh`）。
+- 当前状态：Batch 1-3 实现与自动化测试已完成；F4 完整真实数据冒烟（跑 `update-database.sh`）仍在待办（需用户/环境允许时执行）。
+- Evidence：`.dsh/evidence/auto-heal-missing-data.md`（自动化全绿 + 只读真实数据冒烟记录）。
 
 ## 目标
 
