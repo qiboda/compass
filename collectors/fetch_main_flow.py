@@ -339,17 +339,20 @@ _TEST_FALLBACK_SYMBOLS = ["SH600519"]
 
 
 def _backfill_symbols() -> list[str]:
-    """Resolve the symbol universe from stock_basic, or a test fallback."""
+    """Resolve the symbol universe from stock_basic, or a test fallback.
+
+    When a compass_data Dolt repo exists, a stock_basic query failure or an
+    empty symbol list is a hard error (issue #308 decision 11: strict
+    failure).  The test fallback is only for environments with no Dolt repo.
+    """
     dolt = dolt_dir()
     if (dolt / ".dolt").exists():
-        try:
-            out = dolt_sql_csv("SELECT symbol FROM stock_basic ORDER BY symbol")
-            lines = [line.strip() for line in out.splitlines() if line.strip()]
-            symbols = [line for line in lines[1:] if line]
-            if symbols:
-                return symbols
-        except Exception:
-            pass
+        out = dolt_sql_csv("SELECT symbol FROM stock_basic ORDER BY symbol")
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+        symbols = [line for line in lines[1:] if line]
+        if not symbols:
+            raise RuntimeError("backfill: stock_basic contains no symbols")
+        return symbols
     return list(_TEST_FALLBACK_SYMBOLS)
 
 

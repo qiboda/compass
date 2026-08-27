@@ -724,6 +724,34 @@ class TestFetchMainFlowBackfillAdversarial:
         )
         assert row == "2026-08-25", f"backfill must not regress anchor to {row}"
 
+    def test_backfill_symbols_query_failure_is_strict(
+        self,
+        dolt_envs: tuple[Path, Path, Callable[[str, str], str]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_main_flow  # noqa: F401
+
+        _, compass_dir, _ = dolt_envs
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(compass_dir))
+        # A missing stock_basic table must not silently fall back to the single
+        # test symbol in production (issue #308 decision 11).
+        _dolt_sql(compass_dir.parent, "DROP TABLE stock_basic", db_name="compass_data")
+        with pytest.raises(RuntimeError, match="stock_basic"):
+            fetch_main_flow._backfill_symbols()
+
+    def test_backfill_symbols_empty_universe_is_strict(
+        self,
+        dolt_envs: tuple[Path, Path, Callable[[str, str], str]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_main_flow  # noqa: F401
+
+        _, compass_dir, _ = dolt_envs
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(compass_dir))
+        _dolt_sql(compass_dir.parent, "DELETE FROM stock_basic", db_name="compass_data")
+        with pytest.raises(RuntimeError, match="no symbols"):
+            fetch_main_flow._backfill_symbols()
+
 
 # ---------------------------------------------------------------------------
 # fetch_index_daily.backfill — range / pollution / strict failure

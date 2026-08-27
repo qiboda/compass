@@ -784,3 +784,56 @@ class TestMainSyncAutoHeal:
 
         with pytest.raises(RuntimeError, match="backfill failed"):
             main_mod.do_sync()
+
+
+class TestMainBackfillImports:
+    """Contract: main.backfill fetches each source and imports it into Dolt."""
+
+    async def test_backfill_fetches_and_imports_all_four_sources(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_block_trade  # noqa: F401
+        import fetch_dragon  # noqa: F401
+        import fetch_index_daily  # noqa: F401
+        import fetch_main_flow  # noqa: F401
+        import main as main_mod  # noqa: F401
+
+        mf_path = Path("/tmp/capital_main_flow_backfill.csv")
+        idx_path = Path("/tmp/index_daily_backfill.csv")
+        dragon_path = Path("/tmp/dragon.csv")
+        block_path = Path("/tmp/block_trade.csv")
+
+        monkeypatch.setattr(fetch_main_flow, "backfill", AsyncMock(return_value=mf_path))
+        monkeypatch.setattr(fetch_main_flow, "import_to_dolt", Mock(return_value=1))
+        monkeypatch.setattr(fetch_index_daily, "backfill", AsyncMock(return_value=idx_path))
+        monkeypatch.setattr(fetch_index_daily, "import_to_dolt", Mock(return_value=1))
+        monkeypatch.setattr(fetch_dragon, "run", AsyncMock(return_value=dragon_path))
+        monkeypatch.setattr(fetch_dragon, "import_to_dolt", Mock(return_value=1))
+        monkeypatch.setattr(fetch_block_trade, "run", AsyncMock(return_value=block_path))
+        monkeypatch.setattr(fetch_block_trade, "import_to_dolt", Mock(return_value=1))
+
+        await main_mod.backfill("2026-08-13", "2026-08-25")
+
+        fetch_main_flow.import_to_dolt.assert_called_once_with(mf_path)
+        fetch_index_daily.import_to_dolt.assert_called_once_with(idx_path)
+        fetch_dragon.import_to_dolt.assert_called_once_with(dragon_path)
+        fetch_block_trade.import_to_dolt.assert_called_once_with(block_path)
+
+    async def test_backfill_import_zero_rows_aborts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import fetch_main_flow  # noqa: F401
+        import main as main_mod  # noqa: F401
+
+        # Only the first import can be reached before the strict abort.
+        monkeypatch.setattr(
+            fetch_main_flow,
+            "backfill",
+            AsyncMock(return_value=Path("/tmp/capital_main_flow_backfill.csv")),
+        )
+        monkeypatch.setattr(fetch_main_flow, "import_to_dolt", Mock(return_value=0))
+
+        with pytest.raises(RuntimeError, match="capital_main_flow import returned 0 rows"):
+            await main_mod.backfill("2026-08-13", "2026-08-25")

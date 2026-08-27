@@ -172,10 +172,7 @@ class TestImportToDolt:
 
         rows = import_to_dolt(csv_path)
         assert rows == 0
-        cnt = self._last(
-            dolt_sql_csv("SELECT COUNT(*) FROM dragon_list")
-
-        )
+        cnt = self._last(dolt_sql_csv("SELECT COUNT(*) FROM dragon_list"))
         assert cnt == "0"
 
     def test_rerun_insert_failure_rolls_back(
@@ -433,6 +430,55 @@ class TestRun:
             await run(start_date="2024-12-30", end_date="2024-12-30")
 
         assert not stale.exists()
+
+    async def test_explicit_start_ignores_anchor_for_backfill(
+        self, make_stub_session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """issue #308: an explicit start/end must refill even if the Dolt
+        watermark is already newer (middle-gap backfill)."""
+        from fetch_dragon import run  # noqa: E402
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(tmp_path / "no_dolt"))
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+        monkeypatch.setattr("fetch_dragon.last_report_date", lambda _tbl: "2099-12-31")
+
+        call_count = [0]
+
+        async def _get(*args, **kwargs):  # noqa: ANN002, ANN003
+            call_count[0] += 1
+            return StubResponse(
+                json_data={
+                    "success": True,
+                    "result": {
+                        "data": [
+                            {
+                                "SECUCODE": "600519.SH",
+                                "SECURITY_CODE": "600519",
+                                "TRADE_DATE": "2024-12-30 00:00:00",
+                                "OPERATEDEPT_NAME": "机构专用",
+                                "BUY": 1000,
+                                "SELL": 400,
+                                "NET": 600,
+                            },
+                        ],
+                        "pages": 1,
+                    },
+                }
+            )
+
+        stub = make_stub_session()
+        stub.get = _get  # type: ignore[method-assign]
+
+        with patch("fetch_dragon.AsyncSession", return_value=stub):
+            result = await run(start_date="2024-12-30", end_date="2024-12-30")
+
+        # Even though the anchor (2099-12-31) is far newer, the explicit
+        # backfill range must still be fetched: 2 reports x 1 day.
+        assert call_count[0] == 2
+        assert result.name == "RPT_DAILYBILLBOARD_DETAILSNEW.csv"
+        assert (tmp_path / "RPT_DAILYBILLBOARD_DETAILSNEW.csv").exists()
 
 
 # ── _as_float tests ──

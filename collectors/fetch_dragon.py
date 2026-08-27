@@ -159,16 +159,23 @@ async def run(
     output_path = csv_dir() / f"{REPORT_NAME}.csv"
     end_date = end_date or datetime.now().strftime("%Y-%m-%d")
 
-    since = last_report_date(DOLT_TABLE)
-    if since:
-        print(f"Last trade date in Dolt: {since}, fetching only newer days", file=sys.stderr)
-        start_date = _next_day(since)
-    elif start_date is None:
-        start_date = START_DATE
-
-    if start_date > end_date:
-        print("No new trading days to fetch.", file=sys.stderr)
-        return output_path
+    # An explicit start_date is a backfill request (issue #308): it must
+    # ignore the data_updates watermark so middle/trailing gaps can be refilled.
+    # A lone end_date keeps the historical incremental contract (anchor-driven).
+    explicit_range = start_date is not None
+    if explicit_range:
+        if start_date > end_date:
+            raise ValueError(f"inverted dragon range: {start_date} > {end_date}")
+    else:
+        since = last_report_date(DOLT_TABLE)
+        if since:
+            print(f"Last trade date in Dolt: {since}, fetching only newer days", file=sys.stderr)
+            start_date = _next_day(since)
+        else:
+            start_date = START_DATE
+        if start_date > end_date:
+            print("No new trading days to fetch.", file=sys.stderr)
+            return output_path
 
     print(f"Report: {REPORT_NAME} ({BUY_REPORT_NAME}/{SELL_REPORT_NAME})", file=sys.stderr)
     print(f"Range: {start_date}..{end_date}", file=sys.stderr)
@@ -179,9 +186,7 @@ async def run(
     end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
     total_days = max((end_dt - start_dt).days + 1, 0)
 
-    with Progress(
-        "dragon", total_items=total_days, output_csv=output_path
-    ) as progress:
+    with Progress("dragon", total_items=total_days, output_csv=output_path) as progress:
         throttle = Throttle()
         pool = make_proxy_pool()
         all_records: list[dict[str, str | int | float]] = []

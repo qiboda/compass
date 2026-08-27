@@ -204,7 +204,10 @@ pub fn run_backfill_dates(
             continue;
         }
         info!(date = %day, "backfilling sepa compute date");
-        run_score(usize::MAX, Some(day), reader, dolt_dir)?;
+        // DEFAULT_TOP_N still computes/persists the full market set (top only
+        // caps the printed table); backfilling many days must not dump 6000+
+        // rows per date to stdout.
+        run_score(DEFAULT_TOP_N, Some(day), reader, dolt_dir)?;
         run_temperature(reader, dolt_dir, Some(day))?;
     }
     Ok(())

@@ -226,6 +226,16 @@ assert_true "step 2: no per-source import remains" \
     '! grep -q "uv run python main.py import " "$T1/calls.log"'
 assert_order "step 2: sync runs before step 4 first import-compass" "$T1/calls.log" \
     "uv run python main.py sync" "import-compass --table stock_basic"
+assert_true "step 0: sync-investment-data runs before import" \
+    'grep -q "^sync-investment" "$T1/calls.log"'
+assert_order "step 0: investment sync before market import" "$T1/calls.log" \
+    "sync-investment" "cargo run --bin compass-data -- import"
+assert_true "step 1b: stock_daily gap check runs after import" \
+    'grep -q "cargo run --bin compass-data -- check-stock-daily" "$T1/calls.log"'
+assert_order "step 1b: gap check after import before sync" "$T1/calls.log" \
+    "cargo run --bin compass-data -- import" "check-stock-daily"
+assert_order "step 1b: gap check before main.py sync" "$T1/calls.log" \
+    "check-stock-daily" "uv run python main.py sync"
 
 assert_true "step 4: 11 table exports (stock_basic + index_basic full + 9 anchored)" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T1/calls.log" &&
@@ -270,6 +280,12 @@ assert_true "step 5: temperature before score" \
      grep -qx "cargo run --bin compass-data -- sepa score --top 50" "$T1/calls.log"'
 assert_order "step 5: temperature runs before score" "$T1/calls.log" \
     "sepa temperature" "sepa score --top 50"
+assert_true "step 4b: sepa backfill-dates runs" \
+    'grep -qx "cargo run --bin compass-data -- sepa backfill-dates" "$T1/calls.log"'
+assert_order "step 4b: backfill after last import-compass" "$T1/calls.log" \
+    "import-compass --table index_basic" "sepa backfill-dates"
+assert_order "step 4b: backfill before temperature" "$T1/calls.log" \
+    "sepa backfill-dates" "sepa temperature"
 assert_true "no dolt commit/push when nothing changed" \
     '! grep -qE "^dolt (add|commit|push) " "$T1/calls.log"'
 assert_true "skip message shown for both commit steps" \
