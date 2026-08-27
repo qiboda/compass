@@ -683,26 +683,22 @@ async def backfill(start: str, end: str) -> None:
     _import_backfill_csv(block_path, "block_trade", fetch_block_trade.import_to_dolt)
 
 
-def _auto_heal_range() -> tuple[str, str]:
-    """Return (start, end) for the daily-table gap scan.
+def _auto_heal_table_range(table: str, col: str) -> tuple[str, str]:
+    """Return (start, end) for one daily table's gap scan.
 
-    The end is today; the start is the earliest existing trade date across
-    the daily tables (so backfill never attempts pre-history data the tables
-    were never meant to carry), falling back to the last 90 days when no
-    daily rows exist yet.
+    The end is today; the start is that table's own earliest existing trade
+    date (issue #308: backfill from existing earliest, never pre-history),
+    falling back to the last 90 days when the table has no rows yet.
     """
     from common import dolt_dir, dolt_sql_csv_strict
 
     end = date.today().isoformat()
-    earliest: list[str] = []
-    if (dolt_dir() / ".dolt").exists():
-        for table, col in DAILY_AUTO_HEAL_TABLES:
-            out = dolt_sql_csv_strict(f"SELECT MIN({col}) FROM {table}")
-            lines = [line.strip() for line in out.splitlines() if line.strip()]
-            value = lines[-1] if len(lines) > 1 else ""
-            if value and value != "NULL":
-                earliest.append(value)
-    start = min(earliest) if earliest else (date.today() - timedelta(days=90)).isoformat()
+    if not (dolt_dir() / ".dolt").exists():
+        return (date.today() - timedelta(days=90)).isoformat(), end
+    out = dolt_sql_csv_strict(f"SELECT MIN({col}) FROM {table}")
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    value = lines[-1] if len(lines) > 1 else ""
+    start = value if value and value != "NULL" else (date.today() - timedelta(days=90)).isoformat()
     return start, end
 
 
@@ -722,51 +718,54 @@ def do_sync(restart: bool = False) -> None:
     # set up a Dolt repo; skip only that specific wrapper failure so those tests
     # keep exercising the rest of do_sync. A deliberately patched missing_dates
     # (e.g. a Mock in the auto-heal tests) still propagates strictly.
-    print("[sync] Auto-heal: checking missing trading dates...", file=sys.stderr)
-    try:
-        scan_start, scan_end = _auto_heal_range()
-        all_missing: set[str] = set()
-        for table, col in DAILY_AUTO_HEAL_TABLES:
-            missing = missing_dates(table, col, scan_start, scan_end)
-            if missing:
+    if os.environ.get("COMPASS_AUTO_HEAL", "1") == "0":
+        print("[sync] Auto-heal disabled (COMPASS_AUTO_HEAL=0)", file=sys.stderr)
+    else:
+        print("[sync] Auto-heal: checking missing trading dates...", file=sys.stderr)
+        try:
+            all_missing: set[str] = set()
+            for table, col in DAILY_AUTO_HEAL_TABLES:
+                table_start, table_end = _auto_heal_table_range(table, col)
+                missing = missing_dates(table, col, table_start, table_end)
+                if missing:
+                    print(
+                        f"[sync] Auto-heal: {table} missing {len(missing)} dates",
+                        file=sys.stderr,
+                    )
+                    all_missing.update(missing)
+            if all_missing:
+                gap_start = min(all_missing)
+                gap_end = max(all_missing)
                 print(
-                    f"[sync] Auto-heal: {table} missing {len(missing)} dates",
+                    f"[sync] Auto-heal: backfilling {len(all_missing)} dates ({gap_start}..{gap_end})",
                     file=sys.stderr,
                 )
-                all_missing.update(missing)
-        if all_missing:
-            gap_start = min(all_missing)
-            gap_end = max(all_missing)
-            print(
-                f"[sync] Auto-heal: backfilling {len(all_missing)} dates ({gap_start}..{gap_end})",
-                file=sys.stderr,
-            )
-            # Use an explicit event loop rather than asyncio.run() so the failure
-            # of the (possibly mocked in unit tests) backfill coroutine always
-            # propagates even when callers have patched asyncio.run itself.
-            _loop = asyncio.new_event_loop()
-            try:
-                _loop.run_until_complete(backfill(gap_start, gap_end))
-            finally:
-                _loop.close()
-            for table, _col in DAILY_AUTO_HEAL_TABLES:
-                set_last_report_date(table, gap_end)
-    except RuntimeError as exc:
-        # Unit tests without investment_data Dolt exercise do_sync's legacy
-        # path; production must never silently skip auto-heal, so the shim is
-        # active only under pytest and only for the real wrapper (not for a
-        # deliberately patched missing_dates, which must still propagate).
-        if (
-            isinstance(missing_dates, types.FunctionType)
-            and "investment_data Dolt repo missing" in str(exc)
-            and os.environ.get("PYTEST_CURRENT_TEST")
-        ):
-            print(
-                "[sync] Auto-heal skipped (investment_data Dolt repo unavailable)",
-                file=sys.stderr,
-            )
-        else:
-            raise
+                # Use an explicit event loop rather than asyncio.run() so the failure
+                # of the (possibly mocked in unit tests) backfill coroutine always
+                # propagates even when callers have patched asyncio.run itself.
+                _loop = asyncio.new_event_loop()
+                try:
+                    _loop.run_until_complete(backfill(gap_start, gap_end))
+                finally:
+                    _loop.close()
+                for table, _col in DAILY_AUTO_HEAL_TABLES:
+                    set_last_report_date(table, gap_end)
+        except RuntimeError as exc:
+            # Unit tests without investment_data Dolt exercise do_sync's legacy
+            # path; production must never silently skip auto-heal, so the shim is
+            # active only under pytest and only for the real wrapper (not for a
+            # deliberately patched missing_dates, which must still propagate).
+            if (
+                isinstance(missing_dates, types.FunctionType)
+                and "investment_data Dolt repo missing" in str(exc)
+                and os.environ.get("PYTEST_CURRENT_TEST")
+            ):
+                print(
+                    "[sync] Auto-heal skipped (investment_data Dolt repo unavailable)",
+                    file=sys.stderr,
+                )
+            else:
+                raise
 
     # 1. stock_basic
     print("[sync] Fetching stock_basic...", file=sys.stderr)

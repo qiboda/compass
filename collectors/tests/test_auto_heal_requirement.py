@@ -786,6 +786,29 @@ class TestMainSyncAutoHeal:
             main_mod.do_sync()
 
 
+class TestAutoHealTableRange:
+    """Contract: each daily table is scanned from its own earliest date."""
+
+    def test_range_uses_per_table_earliest_not_global_min(
+        self,
+        dolt_envs: tuple[Path, Path, Callable[[str, str], str]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import main as main_mod  # noqa: F401
+
+        _, compass_dir, _ = dolt_envs
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(compass_dir))
+
+        start, end = main_mod._auto_heal_table_range("capital_main_flow", "trade_date")
+        assert start == "2026-08-17"
+        assert end >= "2026-08-17"
+
+        # An empty table must fall back to the 90-day window, not to the
+        # earliest date of a much older table (which would flood backfill).
+        empty_start, empty_end = main_mod._auto_heal_table_range("index_daily", "trade_date")
+        assert empty_start > "1990-01-01", f"unexpected global-min scan: {empty_start}"
+
+
 class TestMainBackfillImports:
     """Contract: main.backfill fetches each source and imports it into Dolt."""
 

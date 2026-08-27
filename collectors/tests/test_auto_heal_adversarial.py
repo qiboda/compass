@@ -1082,4 +1082,4 @@ class TestMainSyncAutoHealAdversarial:
         # The fixture only creates some daily tables; a missing table must not
         # be silently treated as "no data" (issue #308 strict failure).
         with pytest.raises(RuntimeError, match="dolt_sql_csv_strict failed|Dolt|table"):
-            main_mod._auto_heal_range()
+            main_mod._auto_heal_table_range("index_daily", "trade_date")
