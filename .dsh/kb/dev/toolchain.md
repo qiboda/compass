@@ -706,6 +706,9 @@
   `.gitignore` 原规则 `investment_data/` 不匹配符号链接，需改为 `investment_data`（无斜杠）才能忽略。
 - **验证**: 符号链接后 `scripts/sync-investment-data.sh` 重跑成功，fast-forward 到
   `nta67cibl6412uhg3oo5dmeffcf1775e`。
+- **worktree 额外注意**: 该符号链接被 `.gitignore` 忽略，新 worktree 不会自动带上；
+  在 worktree 里跑 `update-database.sh` / `main.py sync` 自动回补前需先
+  `ln -s /data/compass-data/investment_data <worktree>/investment_data`（issue #308 实测）。
 - **教训**: 环境路径差异不要硬编码到脚本；若保留现有硬编码，需保证符号链接/统一数据目录约定并记入 toolchain。
 
 ### [collectors] stock_basic 导入后残留 `_tmp_name_en` 临时表
