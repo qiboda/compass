@@ -32,7 +32,6 @@ import json
 import os
 import subprocess
 import sys
-import types
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -746,59 +745,40 @@ def do_sync(restart: bool = False) -> None:
     from common import dolt_sql
 
     # 0. Auto-heal missing daily rows (issue #308) — before any fetch/import.
-    # In unit-test environments without investment_data Dolt, the real wrapper
-    # raises a missing-repo error. Existing do_sync tests intentionally don't
-    # set up a Dolt repo; skip only that specific wrapper failure so those tests
-    # keep exercising the rest of do_sync. A deliberately patched missing_dates
-    # (e.g. a Mock in the auto-heal tests) still propagates strictly.
+    # Production always runs auto-heal strictly; tests disable it explicitly
+    # through COMPASS_AUTO_HEAL=0 (conftest keeps legacy do_sync tests away
+    # from real Dolt/network).
     if os.environ.get("COMPASS_AUTO_HEAL", "1") == "0":
         print("[sync] Auto-heal disabled (COMPASS_AUTO_HEAL=0)", file=sys.stderr)
     else:
         print("[sync] Auto-heal: checking missing trading dates...", file=sys.stderr)
-        try:
-            ranges: dict[str, tuple[str, str]] = {}
-            total_missing = 0
-            for table, col in DAILY_AUTO_HEAL_TABLES:
-                table_start, table_end = _auto_heal_table_range(table, col)
-                missing = missing_dates(table, col, table_start, table_end)
-                if missing:
-                    print(
-                        f"[sync] Auto-heal: {table} missing {len(missing)} dates",
-                        file=sys.stderr,
-                    )
-                    ranges[table] = (min(missing), max(missing))
-                    total_missing += len(missing)
-            if ranges:
+        ranges: dict[str, tuple[str, str]] = {}
+        total_missing = 0
+        for table, col in DAILY_AUTO_HEAL_TABLES:
+            table_start, table_end = _auto_heal_table_range(table, col)
+            missing = missing_dates(table, col, table_start, table_end)
+            if missing:
                 print(
-                    f"[sync] Auto-heal: backfilling {total_missing} dates per table",
+                    f"[sync] Auto-heal: {table} missing {len(missing)} dates",
                     file=sys.stderr,
                 )
-                # Use an explicit event loop rather than asyncio.run() so the failure
-                # of the (possibly mocked in unit tests) backfill coroutine always
-                # propagates even when callers have patched asyncio.run itself.
-                _loop = asyncio.new_event_loop()
-                try:
-                    _loop.run_until_complete(backfill(ranges))
-                finally:
-                    _loop.close()
-                for table, (_start, end) in ranges.items():
-                    set_last_report_date(table, end)
-        except RuntimeError as exc:
-            # Unit tests without investment_data Dolt exercise do_sync's legacy
-            # path; production must never silently skip auto-heal, so the shim is
-            # active only under pytest and only for the real wrapper (not for a
-            # deliberately patched missing_dates, which must still propagate).
-            if (
-                isinstance(missing_dates, types.FunctionType)
-                and "investment_data Dolt repo missing" in str(exc)
-                and os.environ.get("PYTEST_CURRENT_TEST")
-            ):
-                print(
-                    "[sync] Auto-heal skipped (investment_data Dolt repo unavailable)",
-                    file=sys.stderr,
-                )
-            else:
-                raise
+                ranges[table] = (min(missing), max(missing))
+                total_missing += len(missing)
+        if ranges:
+            print(
+                f"[sync] Auto-heal: backfilling {total_missing} dates per table",
+                file=sys.stderr,
+            )
+            # Use an explicit event loop rather than asyncio.run() so the failure
+            # of the (possibly mocked in unit tests) backfill coroutine always
+            # propagates even when callers have patched asyncio.run itself.
+            _loop = asyncio.new_event_loop()
+            try:
+                _loop.run_until_complete(backfill(ranges))
+            finally:
+                _loop.close()
+            for table, (_start, end) in ranges.items():
+                set_last_report_date(table, end)
 
     # 1. stock_basic
     print("[sync] Fetching stock_basic...", file=sys.stderr)
