@@ -792,6 +792,11 @@ class TestFetchIndexDailyBackfillAdversarial:
         monkeypatch.setattr(
             fetch_index_daily,
             "fetch_ths_industry_list",
+            AsyncMock(return_value=[("881001", "TestIndustry")]),
+        )
+        monkeypatch.setattr(
+            fetch_index_daily,
+            "fetch_ths_kline",
             AsyncMock(return_value=[]),
         )
         monkeypatch.setattr(
@@ -848,7 +853,12 @@ class TestFetchIndexDailyBackfillAdversarial:
         monkeypatch.setattr(
             fetch_index_daily,
             "fetch_ths_industry_list",
-            AsyncMock(return_value=[]),
+            AsyncMock(return_value=[("881001", "TestIndustry")]),
+        )
+        monkeypatch.setattr(
+            fetch_index_daily,
+            "fetch_ths_kline",
+            AsyncMock(return_value=["2026-08-13,1,2,3,4,5,6,7"]),
         )
         calls = {"n": 0}
 
@@ -1070,7 +1080,7 @@ class TestMainSyncAutoHealAdversarial:
         with pytest.raises(RuntimeError, match="stock_basic"):
             main_mod.do_sync()
 
-    def test_auto_heal_range_missing_table_raises(
+    def test_auto_heal_range_missing_table_uses_fallback(
         self,
         dolt_envs: tuple[Path, Path, Callable[[str, str], str]],
         monkeypatch: pytest.MonkeyPatch,
@@ -1079,7 +1089,8 @@ class TestMainSyncAutoHealAdversarial:
 
         _, compass_dir, _ = dolt_envs
         monkeypatch.setenv("COMPASS_DATA_DIR", str(compass_dir))
-        # The fixture only creates some daily tables; a missing table must not
-        # be silently treated as "no data" (issue #308 strict failure).
-        with pytest.raises(RuntimeError, match="dolt_sql_csv_strict failed|Dolt|table"):
-            main_mod._auto_heal_table_range("index_daily", "trade_date")
+        # A fresh Dolt may not have daily tables yet; first-run auto-heal must
+        # not abort. The missing table is treated as empty (90-day fallback).
+        start, end = main_mod._auto_heal_table_range("index_daily", "trade_date")
+        assert start > "1990-01-01", f"unexpected global-min scan: {start}"
+        assert end <= "2099-12-31"

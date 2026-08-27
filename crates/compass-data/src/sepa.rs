@@ -149,30 +149,58 @@ pub fn run_temperature(
     write_back(dolt_dir, &data, &["market_temperature"])
 }
 
-/// Return the set of trade dates already present in Dolt `final_score`.
+/// Return the set of trade dates present in **all** SEPA compute tables.
+///
+/// A date is complete only when every derived table has rows for it;
+/// otherwise a partial write (final_score present but market_temperature
+/// missing) must be recomputed by `run_backfill_dates`.
 fn existing_compute_dates(dolt_dir: &Path) -> Result<BTreeSet<NaiveDate>, Box<dyn Error>> {
     if !dolt_dir.join(".dolt").exists() {
         return Err("missing dolt repo (backfill has no target)".into());
     }
-    // Ensure the anchor table exists so the query is empty-but-valid on a
-    // fresh Dolt repo; run_score later creates the rest of the schemas.
+    // Ensure the two completeness sentinels exist so the queries are valid on
+    // a fresh repo. A date is complete only when both final_score and
+    // market_temperature have rows; a write-back that fails after final_score
+    // but before the last table is therefore repaired on the next run.
     dolt_sql(dolt_dir, FINAL_SCHEMA)?;
+    dolt_sql(dolt_dir, TEMPERATURE_SCHEMA)?;
+
+    let mut final_dates = BTreeSet::new();
     let csv = crate::import_dolt::run_dolt_sql_csv(
         dolt_dir,
         "SELECT DISTINCT DATE_FORMAT(trade_date, '%Y-%m-%d') FROM final_score",
     )
     .map_err(|e| format!("dolt query final_score dates failed: {e}"))?;
-    let mut out = BTreeSet::new();
     for line in csv.lines().skip(1) {
         let s = line.trim();
         if s.is_empty() {
             continue;
         }
         if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            out.insert(d);
+            final_dates.insert(d);
         }
     }
-    Ok(out)
+
+    let mut temperature_dates = BTreeSet::new();
+    let csv = crate::import_dolt::run_dolt_sql_csv(
+        dolt_dir,
+        "SELECT DISTINCT DATE_FORMAT(trade_date, '%Y-%m-%d') FROM market_temperature",
+    )
+    .map_err(|e| format!("dolt query market_temperature dates failed: {e}"))?;
+    for line in csv.lines().skip(1) {
+        let s = line.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            temperature_dates.insert(d);
+        }
+    }
+
+    Ok(final_dates
+        .intersection(&temperature_dates)
+        .copied()
+        .collect())
 }
 
 /// Backfill every missing SEPA compute date in [start, end].
@@ -1527,6 +1555,14 @@ mod tests {
              VALUES ('SZ000001', '2026-08-20', 1, 1, 1, 1, 1, 1, '2026-08-20')",
         )
         .expect("seed existing date");
+        dolt_sql(dolt_tmp.path(), TEMPERATURE_SCHEMA).expect("create temperature");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO market_temperature (trade_date, score, hs300_trend, zz1000_trend, \
+             limit_up_count, total_amount, breadth, position_suggestion, update_date) \
+             VALUES ('2026-08-20', 50, 0.1, 0.2, 10, 100.0, 0.5, 'neutral', '2026-08-20')",
+        )
+        .expect("seed existing temperature");
 
         let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
         let end = Some(NaiveDate::from_ymd_opt(2026, 8, 21).expect("end"));
@@ -1543,6 +1579,41 @@ mod tests {
         );
         // Missing dates are still filled.
         assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-13"), 3);
+    }
+
+    #[test]
+    fn run_backfill_dates_repairs_partial_final_score_without_temperature() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // A partial write: final_score has the date but market_temperature does
+        // not (e.g. an abort after final_score on a previous run).
+        dolt_sql(dolt_tmp.path(), FINAL_SCHEMA).expect("create final_score");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_score (symbol, trade_date, trend_score, money_score, \
+             pattern_score, risk_score, total_score, `rank`, update_date) \
+             VALUES ('SZ000001', '2026-08-20', 1, 1, 1, 1, 1, 1, '2026-08-20')",
+        )
+        .expect("seed partial final_score");
+
+        let day = Some(NaiveDate::from_ymd_opt(2026, 8, 20).expect("day"));
+        run_backfill_dates(day, day, &reader, dolt_tmp.path()).expect("repair");
+
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "final_score", "2026-08-20"),
+            3,
+            "partial final_score must be recomputed with the full set"
+        );
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-08-20"),
+            1,
+            "missing market_temperature must be filled"
+        );
     }
 
     #[test]
@@ -1688,6 +1759,14 @@ mod tests {
                     ('SZ000001', '2026-08-21', 9, 9, 9, 9, 9, 9, '2026-08-21')",
         )
         .expect("seed existing dates");
+        dolt_sql(dolt_tmp.path(), TEMPERATURE_SCHEMA).expect("create temperature");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO market_temperature (trade_date, score, hs300_trend, zz1000_trend, \
+             limit_up_count, total_amount, breadth, position_suggestion, update_date) \
+             VALUES ('2026-08-17', 50, 0.1, 0.2, 10, 100.0, 0.5, 'neutral', '2026-08-17')",
+        )
+        .expect("seed existing temperature");
 
         let start = Some(NaiveDate::from_ymd_opt(2026, 8, 17).expect("start"));
         let end = Some(NaiveDate::from_ymd_opt(2026, 8, 17).expect("end"));
@@ -1725,6 +1804,14 @@ mod tests {
                     ('SZ000001', '2026-08-21', 9, 9, 9, 9, 9, 9, '2026-08-21')",
         )
         .expect("seed existing dates");
+        dolt_sql(dolt_tmp.path(), TEMPERATURE_SCHEMA).expect("create temperature");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO market_temperature (trade_date, score, hs300_trend, zz1000_trend, \
+             limit_up_count, total_amount, breadth, position_suggestion, update_date) \
+             VALUES ('2026-08-13', 50, 0.1, 0.2, 10, 100.0, 0.5, 'neutral', '2026-08-13')",
+        )
+        .expect("seed existing temperature");
 
         let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
         let end = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("end"));

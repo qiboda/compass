@@ -1249,6 +1249,11 @@ async def backfill(start: str, end: str) -> Path:
         pool = make_proxy_pool()
 
         industries = await fetch_ths_industry_list(session, throttle, pool=pool)
+        if not industries:
+            raise RuntimeError(
+                "index_daily backfill: THS industry list is empty, refusing to"
+                " leave industry gaps unhealed"
+            )
         for code, _name in industries:
             symbol = f"BK{code}"
             for year in range(start_dt.year, end_dt.year + 1):

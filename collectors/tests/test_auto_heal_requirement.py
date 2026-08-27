@@ -526,13 +526,18 @@ class TestFetchIndexDailyBackfill:
         monkeypatch.setattr(
             fetch_index_daily,
             "fetch_ths_industry_list",
-            AsyncMock(return_value=[]),
+            AsyncMock(return_value=[("881001", "TestIndustry")]),
         )
         klines = [
             "2026-08-13,1,2,3,4,5,6",
             "2026-08-14,1,2,3,4,5,6",
             "2026-08-25,1,2,3,4,5,6",
         ]
+        monkeypatch.setattr(
+            fetch_index_daily,
+            "fetch_ths_kline",
+            AsyncMock(return_value=klines),
+        )
         monkeypatch.setattr(
             fetch_index_daily,
             "fetch_kline",
@@ -898,3 +903,33 @@ class TestMainBackfillImports:
         fetch_index_daily.import_to_dolt.assert_not_called()
         fetch_dragon.import_to_dolt.assert_not_called()
         fetch_block_trade.import_to_dolt.assert_not_called()
+
+    async def test_backfill_dict_only_fetches_listed_sources(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import fetch_block_trade  # noqa: F401
+        import fetch_dragon  # noqa: F401
+        import fetch_index_daily  # noqa: F401
+        import fetch_main_flow  # noqa: F401
+        import main as main_mod  # noqa: F401
+
+        mf_path = tmp_path / "capital_main_flow_backfill.csv"
+        mf_path.write_text("symbol,trade_date\n", encoding="utf-8")
+
+        monkeypatch.setattr(fetch_main_flow, "backfill", AsyncMock(return_value=mf_path))
+        monkeypatch.setattr(fetch_main_flow, "import_to_dolt", Mock(return_value=1))
+        monkeypatch.setattr(fetch_index_daily, "backfill", AsyncMock(return_value=mf_path))
+        monkeypatch.setattr(fetch_index_daily, "import_to_dolt", Mock(return_value=1))
+        monkeypatch.setattr(fetch_dragon, "run", AsyncMock(return_value=mf_path))
+        monkeypatch.setattr(fetch_dragon, "import_to_dolt", Mock(return_value=1))
+        monkeypatch.setattr(fetch_block_trade, "run", AsyncMock(return_value=mf_path))
+        monkeypatch.setattr(fetch_block_trade, "import_to_dolt", Mock(return_value=1))
+
+        await main_mod.backfill({"capital_main_flow": ("2026-08-13", "2026-08-14")})
+
+        fetch_main_flow.backfill.assert_awaited_once_with("2026-08-13", "2026-08-14")
+        fetch_index_daily.backfill.assert_not_awaited()
+        fetch_dragon.run.assert_not_awaited()
+        fetch_block_trade.run.assert_not_awaited()
