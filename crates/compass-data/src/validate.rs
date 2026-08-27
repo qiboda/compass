@@ -14,7 +14,11 @@
 //! (`dolt sql -r csv`, see [`crate::import_dolt::run_dolt_sql_csv`]) or to
 //! Parquet via an in-memory DuckDB.
 
+use std::collections::BTreeSet;
 use std::path::Path;
+
+use chrono::NaiveDate;
+use compass_core::data::parquet::ParquetReader;
 
 /// Count the data rows in a Parquet file via an in-memory DuckDB.
 ///
@@ -229,6 +233,59 @@ pub fn freshness_days(
 ) -> Result<i64, Box<dyn std::error::Error>> {
     let report_date = chrono::NaiveDate::parse_from_str(last_report_date, "%Y-%m-%d")?;
     Ok((today - report_date).num_days().max(0))
+}
+
+/// Verify `stock_daily.parquet` covers every SSE open trading day that falls
+/// within the Parquet's own [min, max] date range.
+///
+/// This is the issue #308 stock_daily auto-heal gate: after synchronizing
+/// investment_data and re-importing Parquet, a missing trading day means the
+/// upstream Dolt/import pipeline lost data and the run must stop loudly
+/// instead of silently proceeding with incomplete history.
+pub fn check_stock_daily_gaps(
+    dolt_dir: &Path,
+    parquet_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let reader = ParquetReader::new(parquet_dir)?;
+    let parquet_dates: BTreeSet<NaiveDate> = reader.trade_dates()?.into_iter().collect();
+    if parquet_dates.is_empty() {
+        return Err("check_stock_daily: stock_daily.parquet has no trade dates".into());
+    }
+
+    let csv = crate::import_dolt::run_dolt_sql_csv(
+        dolt_dir,
+        "SELECT DISTINCT DATE_FORMAT(`date`, '%Y-%m-%d') FROM ts_trade_day_calendar \
+         WHERE exchange = 'SSE' AND is_open = 1",
+    )
+    .map_err(|e| format!("check_stock_daily: calendar query failed: {e}"))?;
+    let mut calendar = BTreeSet::new();
+    for line in csv.lines().skip(1) {
+        let s = line.trim();
+        if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            calendar.insert(d);
+        }
+    }
+    if calendar.is_empty() {
+        return Err("check_stock_daily: SSE trading calendar is empty".into());
+    }
+
+    let min = *parquet_dates.iter().next().expect("non-empty");
+    let max = *parquet_dates.iter().next_back().expect("non-empty");
+    let missing: Vec<NaiveDate> = calendar
+        .range(min..=max)
+        .filter(|d| !parquet_dates.contains(d))
+        .copied()
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let shown: Vec<String> = missing.iter().take(10).map(|d| d.to_string()).collect();
+    Err(format!(
+        "check_stock_daily: {} missing trading dates (first: {})",
+        missing.len(),
+        shown.join(", ")
+    )
+    .into())
 }
 
 #[cfg(test)]
@@ -605,6 +662,88 @@ mod tests {
         assert!(
             freshness_days("2026/07/31", today).is_err(),
             "wrong format must error"
+        );
+    }
+
+    #[test]
+    fn check_stock_daily_ok_when_calendar_covered() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let parquet = tmp.path().join("parquet");
+        std::fs::create_dir_all(&parquet).expect("parquet dir");
+        write_parquet(
+            &parquet,
+            "stock_daily.parquet",
+            "CREATE TABLE t (symbol VARCHAR, tradedate TIMESTAMP)",
+            "INSERT INTO t VALUES ('SH600519','2026-07-01 09:30:00'), \
+             ('SH600519','2026-07-02 09:30:00'), ('SH600519','2026-07-03 09:30:00')",
+        );
+        setup_dolt(tmp.path());
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE ts_trade_day_calendar (`exchange` VARCHAR(20), \
+             `date` DATE, `is_open` INT)",
+        );
+        dolt_sql(
+            tmp.path(),
+            "INSERT INTO ts_trade_day_calendar VALUES \
+             ('SSE','2026-07-01',1), ('SSE','2026-07-02',1), ('SSE','2026-07-03',1)",
+        );
+        assert!(
+            check_stock_daily_gaps(tmp.path(), &parquet).is_ok(),
+            "all calendar dates in [min,max] are present"
+        );
+    }
+
+    #[test]
+    fn check_stock_daily_reports_missing_trading_date() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let parquet = tmp.path().join("parquet");
+        std::fs::create_dir_all(&parquet).expect("parquet dir");
+        write_parquet(
+            &parquet,
+            "stock_daily.parquet",
+            "CREATE TABLE t (symbol VARCHAR, tradedate TIMESTAMP)",
+            "INSERT INTO t VALUES ('SH600519','2026-07-01 09:30:00'), \
+             ('SH600519','2026-07-03 09:30:00')",
+        );
+        setup_dolt(tmp.path());
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE ts_trade_day_calendar (`exchange` VARCHAR(20), \
+             `date` DATE, `is_open` INT)",
+        );
+        dolt_sql(
+            tmp.path(),
+            "INSERT INTO ts_trade_day_calendar VALUES \
+             ('SSE','2026-07-01',1), ('SSE','2026-07-02',1), ('SSE','2026-07-03',1)",
+        );
+        let err = check_stock_daily_gaps(tmp.path(), &parquet)
+            .expect_err("missing 07-02 must fail")
+            .to_string();
+        assert!(
+            err.contains("1 missing trading dates") && err.contains("2026-07-02"),
+            "error must name the missing date: {err}"
+        );
+    }
+
+    #[test]
+    fn check_stock_daily_empty_parquet_errors() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let parquet = tmp.path().join("parquet");
+        std::fs::create_dir_all(&parquet).expect("parquet dir");
+        write_parquet(
+            &parquet,
+            "stock_daily.parquet",
+            "CREATE TABLE t (symbol VARCHAR, tradedate TIMESTAMP)",
+            "",
+        );
+        setup_dolt(tmp.path());
+        let err = check_stock_daily_gaps(tmp.path(), &parquet)
+            .expect_err("empty stock_daily must fail")
+            .to_string();
+        assert!(
+            err.contains("stock_daily.parquet has no trade dates"),
+            "error must explain why: {err}"
         );
     }
 }

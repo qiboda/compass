@@ -436,6 +436,17 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 - **无 anchor 首跑**：财务三表 `--incremental` 在无 anchor 时固定
   `2020-01-01` 走 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举（issue #299）
 
+### 自动回补缺失数据（issue #308）
+
+数据管线允许不每天运行：`collectors/main.py sync` 在采集前用
+`investment_data.ts_trade_day_calendar`（SSE `is_open=1`）与各日频表 Dolt
+现有日期做缺口扫描，缺失时自动回补——`capital_main_flow` 走 EastMoney
+`fflow/daykline` 逐股历史 API，`index_daily`/`dragon_list`/`block_trade`
+按显式范围回补；回补失败严格 abort。`scripts/update-database.sh`
+（原每日一键脚本，已彻底改名）在 import-compass 之后调用
+`sepa backfill-dates` 补算缺失的 SEPA 派生表，并在 import 后通过
+`check-stock-daily` 硬校验 `stock_daily.parquet` 的交易日历缺口。
+
 ### import：Dolt investment_data → Parquet
 - 通过 `dolt sql -r parquet` 查询 Dolt `investment_data` 数据库
 - 从 `final_a_stock_eod_price` 表中提取 6000+ 只股票（18M+ 行）

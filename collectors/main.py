@@ -29,8 +29,10 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import subprocess
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -91,14 +93,15 @@ def _import_stock_basic() -> None:
             "refusing to clear the existing table",
             file=sys.stderr,
         )
-        raise RuntimeError("stock_basic import: candidate row count is too small; refusing to replace existing data")
+        raise RuntimeError(
+            "stock_basic import: candidate row count is too small; refusing to replace existing data"
+        )
 
     def _checked_sql(sql: str, desc: str) -> None:
         result = dolt_sql(sql)
         if result.returncode != 0:
             raise RuntimeError(
-                f"stock_basic import: {desc} failed: "
-                f"{getattr(result, 'stderr', '') or ''}".strip()
+                f"stock_basic import: {desc} failed: {getattr(result, 'stderr', '') or ''}".strip()
             )
 
     # Replace-by-rename: keep the previous table aside so any failure after the
@@ -612,6 +615,125 @@ def _require_import(result: int, label: str) -> None:
         raise RuntimeError(f"sync failed: {label} import returned 0 rows")
 
 
+# ── issue #308 auto-heal wrappers (module-level so tests can monkeypatch) ──
+
+DAILY_AUTO_HEAL_TABLES: list[tuple[str, str]] = [
+    ("capital_main_flow", "trade_date"),
+    ("index_daily", "trade_date"),
+    ("dragon_list", "trade_date"),
+    ("block_trade", "trade_date"),
+]
+
+
+def missing_dates(table: str, date_col: str, start: str, end: str) -> list[str]:
+    """Thin wrapper over common.missing_dates (monkeypatchable by tests)."""
+    from common import missing_dates as _missing_dates
+
+    return _missing_dates(table, date_col, start, end)
+
+
+def set_last_report_date(table: str, report_date: str) -> None:
+    """Thin wrapper over common.set_last_report_date (monkeypatchable)."""
+    from common import set_last_report_date as _set
+
+    _set(table, report_date)
+
+
+def _import_backfill_csv(path: Path, label: str, import_fn) -> None:
+    """Import a backfill CSV when the source produced rows.
+
+    Daily sources such as dragon/block_trade legitimately have zero records on
+    some trading days; those fetchers remove their output file to signal
+    "no data".  A missing file is a no-op, while an existing file must import
+    with a positive row count (strict failure).
+    """
+    if not path.exists():
+        print(
+            f"[sync] Auto-heal: {label}: no rows in backfill range, skipping import",
+            file=sys.stderr,
+        )
+        return
+    _require_import(import_fn(path), label)
+
+
+async def backfill(
+    start_or_ranges: str | dict[str, tuple[str, str]],
+    end: str | None = None,
+) -> None:
+    """Run per-source backfills for missing ranges.
+
+    ``start_or_ranges`` may be a plain ``(start, end)`` pair (all four daily
+    sources use the same range) or a dict mapping each daily table to its own
+    ``(start, end)`` range.  The dict form avoids re-fetching already-present
+    dates for sources with no or narrower gaps (issue #308 per-table healing).
+    """
+    import fetch_block_trade
+    import fetch_dragon
+    import fetch_index_daily
+    import fetch_main_flow
+
+    if isinstance(start_or_ranges, dict):
+        ranges = start_or_ranges
+    else:
+        if end is None:
+            raise ValueError("backfill: end date is required for a plain range")
+        ranges = {table: (start_or_ranges, end) for table, _ in DAILY_AUTO_HEAL_TABLES}
+
+    if "capital_main_flow" in ranges:
+        start, end = ranges["capital_main_flow"]
+        main_flow_path = await fetch_main_flow.backfill(start, end)
+        _require_import(fetch_main_flow.import_to_dolt(main_flow_path), "capital_main_flow")
+
+    if "index_daily" in ranges:
+        start, end = ranges["index_daily"]
+        index_path = await fetch_index_daily.backfill(start, end)
+        _import_backfill_csv(index_path, "index_daily", fetch_index_daily.import_to_dolt)
+
+    if "dragon_list" in ranges:
+        start, end = ranges["dragon_list"]
+        dragon_path = await fetch_dragon.run(start_date=start, end_date=end)
+        _import_backfill_csv(dragon_path, "dragon_list", fetch_dragon.import_to_dolt)
+
+    if "block_trade" in ranges:
+        start, end = ranges["block_trade"]
+        block_path = await fetch_block_trade.run(start=start, end=end)
+        _import_backfill_csv(block_path, "block_trade", fetch_block_trade.import_to_dolt)
+
+
+def _auto_heal_table_range(table: str, col: str) -> tuple[str, str]:
+    """Return (start, end) for one daily table's gap scan.
+
+    The end is today; the start is that table's own earliest existing trade
+    date (issue #308: backfill from existing earliest, never pre-history),
+    falling back to the last 90 days when the table has no rows yet.
+    """
+    from common import dolt_dir, dolt_sql_csv_strict
+
+    # Exclude the current date: it is not a reliable "missing" until the next
+    # day (market/EOD data may not be published yet in a morning run).
+    end = (date.today() - timedelta(days=1)).isoformat()
+    fallback_start = (date.today() - timedelta(days=90)).isoformat()
+    if not (dolt_dir() / ".dolt").exists():
+        return fallback_start, end
+
+    # A fresh compass_data Dolt may not have the daily tables yet; they are
+    # created later by the normal sync imports. Treat a missing table as empty
+    # (90-day fallback) so first-run bootstrap is not blocked by auto-heal.
+    exists_out = dolt_sql_csv_strict(
+        f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{table}'"
+    )
+    exists_lines = [line.strip() for line in exists_out.splitlines() if line.strip()]
+    exists = len(exists_lines) > 1 and int(exists_lines[-1]) > 0
+    if not exists:
+        return fallback_start, end
+
+    out = dolt_sql_csv_strict(f"SELECT MIN({col}) FROM {table}")
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    value = lines[-1] if len(lines) > 1 else ""
+    start = value if value and value != "NULL" else fallback_start
+    return start, end
+
+
 def do_sync(restart: bool = False) -> None:
     """Fetch all tables from EastMoney, import into Dolt, and update data_updates.
 
@@ -621,6 +743,42 @@ def do_sync(restart: bool = False) -> None:
     _ = restart  # reserved — no behavior change in sync subcommand
 
     from common import dolt_sql
+
+    # 0. Auto-heal missing daily rows (issue #308) — before any fetch/import.
+    # Production always runs auto-heal strictly; tests disable it explicitly
+    # through COMPASS_AUTO_HEAL=0 (conftest keeps legacy do_sync tests away
+    # from real Dolt/network).
+    if os.environ.get("COMPASS_AUTO_HEAL", "1") == "0":
+        print("[sync] Auto-heal disabled (COMPASS_AUTO_HEAL=0)", file=sys.stderr)
+    else:
+        print("[sync] Auto-heal: checking missing trading dates...", file=sys.stderr)
+        ranges: dict[str, tuple[str, str]] = {}
+        total_missing = 0
+        for table, col in DAILY_AUTO_HEAL_TABLES:
+            table_start, table_end = _auto_heal_table_range(table, col)
+            missing = missing_dates(table, col, table_start, table_end)
+            if missing:
+                print(
+                    f"[sync] Auto-heal: {table} missing {len(missing)} dates",
+                    file=sys.stderr,
+                )
+                ranges[table] = (min(missing), max(missing))
+                total_missing += len(missing)
+        if ranges:
+            print(
+                f"[sync] Auto-heal: backfilling {total_missing} dates per table",
+                file=sys.stderr,
+            )
+            # Use an explicit event loop rather than asyncio.run() so the failure
+            # of the (possibly mocked in unit tests) backfill coroutine always
+            # propagates even when callers have patched asyncio.run itself.
+            _loop = asyncio.new_event_loop()
+            try:
+                _loop.run_until_complete(backfill(ranges))
+            finally:
+                _loop.close()
+            for table, (_start, end) in ranges.items():
+                set_last_report_date(table, end)
 
     # 1. stock_basic
     print("[sync] Fetching stock_basic...", file=sys.stderr)

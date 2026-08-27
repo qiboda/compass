@@ -1,9 +1,9 @@
 #!/bin/bash
-# Tests for scripts/sepa_daily.sh (issue #306).
+# Tests for scripts/update-database.sh (issue #306).
 # Mirrors the pre-push-ref-regex-test.sh precedent: a `bash -n` syntax gate plus
 # behavioral assertions against mocked cargo/uv/dolt in a temp dir — no real
 # network access, no real Dolt mutation, no data repos touched.
-# Run: scripts/tests/test-sepa-daily.sh
+# Run: scripts/tests/test-update-database.sh
 #
 # This suite carries the adversarial RED contract for issue #306:
 #   - COLLECTOR_TABLES = all 11 compass_data tables, in declared order
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-SEPA_SCRIPT="$PROJECT_ROOT/scripts/sepa_daily.sh"
+SEPA_SCRIPT="$PROJECT_ROOT/scripts/update-database.sh"
 
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
@@ -27,9 +27,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # --- 0. Syntax gate ---
 echo "--- 0. syntax ---"
 if bash -n "$SEPA_SCRIPT" 2>&1; then
-    echo "PASS: bash -n sepa_daily.sh"
+    echo "PASS: bash -n update-database.sh"
 else
-    echo "FAIL: bash -n sepa_daily.sh"
+    echo "FAIL: bash -n update-database.sh"
     exit 1
 fi
 
@@ -42,7 +42,7 @@ setup_fakes() {
 
     cat > "$t/bin/dolt" <<'EOF'
 #!/bin/bash
-# Mock dolt: logs argv, emulates the subcommands sepa_daily.sh uses.
+# Mock dolt: logs argv, emulates the subcommands update-database.sh uses.
 echo "dolt $*" >> "${FAKE_LOG:?fake log unset}"
 if [ "${1:-}" = "--data-dir" ]; then shift 2; fi
 case "${1:-}" in
@@ -126,9 +126,18 @@ exit 0
 EOF
 
     chmod +x "$t/bin/dolt" "$t/bin/cargo" "$t/bin/uv"
+
+    # Fake investment-data sync: run_script points update-database.sh at this
+    # file via SYNC_INVESTMENT_SCRIPT so no real upstream Dolt fetch happens.
+    cat > "$t/sync-fake.sh" <<'EOF'
+#!/bin/bash
+echo "sync-investment $*" >> "${FAKE_LOG:?fake log unset}"
+exit 0
+EOF
+    chmod +x "$t/sync-fake.sh"
 }
 
-# Run sepa_daily.sh against the mocked environment in $1; capture exit code.
+# Run update-database.sh against the mocked environment in $1; capture exit code.
 # Usage: run_script <tmpdir> [extra env assignments...]
 run_script() {
     local t="$1"
@@ -144,6 +153,7 @@ run_script() {
         FAKE_STATUS_SEQ="$t/status.seq" \
         SEPA_INVESTMENT_DATA_DIR="$t/repos/investment_data" \
         SEPA_COMPASS_DATA_DIR="$t/repos/compass_data" \
+        SYNC_INVESTMENT_SCRIPT="$t/sync-fake.sh" \
         TMPDIR="$t" \
         "${envs[@]}" \
         bash "$SEPA_SCRIPT" > "$t/out.log" 2> "$t/err.log"
@@ -216,6 +226,16 @@ assert_true "step 2: no per-source import remains" \
     '! grep -q "uv run python main.py import " "$T1/calls.log"'
 assert_order "step 2: sync runs before step 4 first import-compass" "$T1/calls.log" \
     "uv run python main.py sync" "import-compass --table stock_basic"
+assert_true "step 0: sync-investment-data runs before import" \
+    'grep -q "^sync-investment" "$T1/calls.log"'
+assert_order "step 0: investment sync before market import" "$T1/calls.log" \
+    "sync-investment" "cargo run --bin compass-data -- import"
+assert_true "step 1b: stock_daily gap check runs after import" \
+    'grep -q "cargo run --bin compass-data -- check-stock-daily" "$T1/calls.log"'
+assert_order "step 1b: gap check after import before sync" "$T1/calls.log" \
+    "cargo run --bin compass-data -- import" "check-stock-daily"
+assert_order "step 1b: gap check before main.py sync" "$T1/calls.log" \
+    "check-stock-daily" "uv run python main.py sync"
 
 assert_true "step 4: 11 table exports (stock_basic + index_basic full + 9 anchored)" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T1/calls.log" &&
@@ -260,6 +280,12 @@ assert_true "step 5: temperature before score" \
      grep -qx "cargo run --bin compass-data -- sepa score --top 50" "$T1/calls.log"'
 assert_order "step 5: temperature runs before score" "$T1/calls.log" \
     "sepa temperature" "sepa score --top 50"
+assert_true "step 4b: sepa backfill-dates runs" \
+    'grep -qx "cargo run --bin compass-data -- sepa backfill-dates" "$T1/calls.log"'
+assert_order "step 4b: backfill after last import-compass" "$T1/calls.log" \
+    "import-compass --table index_basic" "sepa backfill-dates"
+assert_order "step 4b: backfill before temperature" "$T1/calls.log" \
+    "sepa backfill-dates" "sepa temperature"
 assert_true "no dolt commit/push when nothing changed" \
     '! grep -qE "^dolt (add|commit|push) " "$T1/calls.log"'
 assert_true "skip message shown for both commit steps" \

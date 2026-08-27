@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DATA_DIR="${PROJECT_ROOT}/investment_data"
+DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-${PROJECT_ROOT}/investment_data}"
 UPSTREAM_REMOTE="origin"
 UPSTREAM_URL="https://doltremoteapi.dolthub.com/chenditc/investment_data"
 FORK_REMOTE="skwy"

@@ -117,6 +117,146 @@ def csv_dir() -> Path:
     return path
 
 
+# Investment-data Dolt directory. The repo root has a symlink at
+# <repo>/investment_data -> /data/compass-data/investment_data, so the default
+# is the repo-relative path. Tests override with COMPASS_INVESTMENT_DATA_DIR.
+_DEFAULT_INVESTMENT_DIR = Path(__file__).resolve().parent.parent / "investment_data"
+
+
+def investment_data_dir() -> Path:
+    """Resolve the investment_data Dolt directory at call time.
+
+    Env override (COMPASS_INVESTMENT_DATA_DIR) is honoured for tests; the
+    production default is the repo-relative path used by the data pipeline.
+    """
+    return Path(os.environ.get("COMPASS_INVESTMENT_DATA_DIR", str(_DEFAULT_INVESTMENT_DIR)))
+
+
+def dolt_sql_investment(sql: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    """Run a Dolt SQL query against investment_data."""
+    return subprocess.run(
+        ["dolt", "--data-dir", str(investment_data_dir()), "sql", "-q", sql],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _parse_iso_date(value: str, label: str) -> date:
+    """Parse an ISO YYYY-MM-DD date, raising a clear error for non-ISO input.
+
+    Used by the auto-heal calendar/missing-date helpers so invalid ranges fail
+    loudly instead of being silently treated as empty/no-op.
+    """
+    try:
+        return date.fromisoformat(value.strip())
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"invalid {label} date {value!r} (expected YYYY-MM-DD)") from e
+
+
+def trade_calendar(start: str, end: str) -> list[str]:
+    """Return SSE open trading days in [start, end] from investment_data.
+
+    Reads ``ts_trade_day_calendar`` (exchange='SSE', is_open=1) via the
+    local investment_data Dolt repo. Returns a sorted, de-duplicated list of
+    ISO date strings. Raises RuntimeError/ValueError on invalid ranges,
+    missing Dolt repo, missing calendar table, or an empty calendar — never a
+    silent empty result (issue #308).
+    """
+    start_dt = _parse_iso_date(start, "start")
+    end_dt = _parse_iso_date(end, "end")
+    if start_dt > end_dt:
+        raise ValueError(f"inverted date range: start {start!r} after end {end!r}")
+
+    invest_dir = investment_data_dir()
+    if not (invest_dir / ".dolt").exists():
+        raise RuntimeError(f"investment_data Dolt repo missing: {invest_dir}")
+
+    sql = (
+        "SELECT DISTINCT DATE_FORMAT(`date`, '%Y-%m-%d') AS d "
+        "FROM ts_trade_day_calendar "
+        "WHERE exchange = 'SSE' AND is_open = 1 "
+        f"AND `date` BETWEEN '{start_dt.isoformat()}' AND '{end_dt.isoformat()}' "
+        "ORDER BY `date`"
+    )
+    result = subprocess.run(
+        ["dolt", "--data-dir", str(invest_dir), "sql", "-r", "csv", "-q", sql],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"trade_calendar failed to read ts_trade_day_calendar: {stderr}")
+    lines = [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
+    days = [line for line in lines[1:] if line]
+    if not days:
+        raise RuntimeError(
+            "empty trading calendar in requested range; refusing to auto-heal without a calendar"
+        )
+    # DISTINCT + ORDER BY already guarantees uniqueness/sort; normalize once more.
+    return sorted(set(days))
+
+
+def missing_dates(
+    table: str,
+    date_col: str,
+    start: str,
+    end: str,
+) -> list[str]:
+    """Return trading days in [start, end] absent from ``table``.
+
+    Compares the SSE trading calendar against DISTINCT ``date_col`` values
+    already present in the compass_data Dolt ``table``. Raises on missing
+    Dolt repo/table or invalid ranges; duplicate existing rows never create
+    false gaps (set-based comparison).
+    """
+    calendar = trade_calendar(start, end)
+    compass_dir = dolt_dir()
+    if not (compass_dir / ".dolt").exists():
+        raise RuntimeError(f"compass_data Dolt repo missing: {compass_dir}")
+
+    sql = (
+        f"SELECT DISTINCT DATE_FORMAT({date_col}, '%Y-%m-%d') AS d "
+        f"FROM {table} "
+        f"WHERE {date_col} BETWEEN '{start}' AND '{end}'"
+    )
+    result = subprocess.run(
+        ["dolt", "--data-dir", str(compass_dir), "sql", "-r", "csv", "-q", sql],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"missing_dates failed to read {table} ({date_col}): {stderr}")
+    lines = [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
+    existing = {line for line in lines[1:] if line}
+    return [day for day in calendar if day not in existing]
+
+
+def set_last_report_date(table: str, report_date: str) -> None:
+    """Advance (never regress) the data_updates anchor for ``table``.
+
+    Used after auto-heal backfills: the anchor should always track the newest
+    known report date, so backfilling older gaps must not roll it backwards.
+    If no row exists, create one (source 'auto-heal').
+    """
+    _parse_iso_date(report_date, "report_date")
+    query = (
+        "INSERT INTO data_updates "
+        "(table_name, last_updated, source, row_count, last_report_date) "
+        f"VALUES ('{table}', CURDATE(), 'auto-heal', 0, '{report_date}') "
+        "ON DUPLICATE KEY UPDATE "
+        "last_updated = CURDATE(), "
+        "source = 'auto-heal', "
+        "last_report_date = IF("
+        "  COALESCE(last_report_date, '0000-00-00') < VALUES(last_report_date), "
+        "  VALUES(last_report_date), last_report_date)"
+    )
+    dolt_sql(query)
+
+
 # ── Progress tracking ───────────────────────────────────────────
 
 
@@ -309,6 +449,20 @@ def dolt_sql_csv(sql: str, timeout: int = 300) -> str:
     return result.stdout
 
 
+def dolt_sql_csv_strict(sql: str, timeout: int = 300) -> str:
+    """Run a Dolt SQL query and raise on non-zero exit.
+
+    Strict variant for auto-heal/backfill paths: a failed query must never be
+    mistaken for an empty result (issue #308 decision 11).
+    """
+    args = ["dolt", "--data-dir", str(dolt_dir()), "sql", "-r", "csv", "-q", sql]
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"dolt_sql_csv_strict failed: {stderr}")
+    return result.stdout
+
+
 def dolt_table_import(
     table_name: str,
     csv_path: Path,
@@ -477,9 +631,7 @@ def update_date_anchor(
             if dolt_table is not None
             else ("fin_indicators" if report_name == "RPT_LICO_FN_CPD" else report_name)
         )
-        stdout = dolt_sql_csv(
-            f"SELECT last_updated FROM data_updates WHERE table_name='{table}'"
-        )
+        stdout = dolt_sql_csv(f"SELECT last_updated FROM data_updates WHERE table_name='{table}'")
         lines = stdout.strip().split("\n")
         last = lines[-1].strip() if len(lines) > 1 else ""
         if last and last != "NULL":
@@ -603,7 +755,8 @@ def import_replace_table(
         f"INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) "
         f"VALUES ('{dolt_table}', CURDATE(), '{source_label}', {total}, {last_val}) "
         f"ON DUPLICATE KEY UPDATE last_updated=CURDATE(), row_count={total}, "
-        f"last_report_date=VALUES(last_report_date)"
+        f"last_report_date=IF(COALESCE(last_report_date, '0000-00-00') < "
+        f"VALUES(last_report_date), VALUES(last_report_date), last_report_date)"
     )
     if merge:
         inserted = max(total - before_total, 0)

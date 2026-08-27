@@ -1,4 +1,5 @@
 """Pytest configuration — add collectors dir to Python path, plus stub HTTP fixtures."""
+
 from __future__ import annotations
 
 import sys
@@ -21,6 +22,22 @@ def _isolate_csv_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     this value with their own monkeypatch.setenv.
     """
     monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def _disable_auto_heal_outside_auto_heal_tests(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disable do_sync auto-heal for legacy/main tests.
+
+    Only the dedicated ``test_auto_heal_*`` suites exercise the real
+    auto-heal path.  Other do_sync tests must not depend on the presence or
+    absence of the local investment_data Dolt, otherwise they accidentally
+    hit real network/backfill when the symlink exists in the worktree.
+    """
+    if "auto_heal" not in Path(request.node.path).name:
+        monkeypatch.setenv("COMPASS_AUTO_HEAL", "0")
 
 
 class StubResponse:
@@ -90,9 +107,7 @@ class StubSession:
         self._json_data = json_data
         self._exc = exc
 
-    async def get(
-        self, url: str, params: Any = None, headers: Any = None
-    ) -> StubResponse:
+    async def get(self, url: str, params: Any = None, headers: Any = None) -> StubResponse:
         cfg = self._canned.get(url)
         if cfg is not None:
             if isinstance(cfg, StubResponse):
@@ -215,10 +230,12 @@ class SyncStubSession:
             exc=self._exc,
         )
 
-    def get(self, url: str, params: Any = None, headers: Any = None,
-            timeout: Any = None) -> SyncStubResponse:
+    def get(
+        self, url: str, params: Any = None, headers: Any = None, timeout: Any = None
+    ) -> SyncStubResponse:
         return self._dispatch("GET", url, params)
 
-    def post(self, url: str, data: Any = None, headers: Any = None,
-             timeout: Any = None) -> SyncStubResponse:
+    def post(
+        self, url: str, data: Any = None, headers: Any = None, timeout: Any = None
+    ) -> SyncStubResponse:
         return self._dispatch("POST", url, data)

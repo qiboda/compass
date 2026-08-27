@@ -352,6 +352,39 @@ impl ParquetReader {
         }
     }
 
+    /// All distinct trade dates present in `stock_daily.parquet`, ascending.
+    ///
+    /// Used by the SEPA backfill command to know which dates the scoring
+    /// engine can legitimately compute. Returns an empty vec when the file is
+    /// missing or empty.
+    pub fn trade_dates(&self) -> Result<Vec<NaiveDate>, DataError> {
+        if !self.daily_path.exists() {
+            return Ok(Vec::new());
+        }
+        let path_str = self.daily_path.to_string_lossy();
+        let escaped = escape_sql_path(&path_str);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DataError::Parse(format!("mutex poisoned: {e}")))?;
+        let sql = format!(
+            "SELECT DISTINCT CAST(tradedate AS VARCHAR) FROM read_parquet('{escaped}') ORDER BY 1"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+        let rows: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(DataError::Database)?
+            .collect::<Result<Vec<_>, duckdb::Error>>()
+            .map_err(DataError::Database)?;
+        let mut dates = Vec::with_capacity(rows.len());
+        for s in rows {
+            if let Some(dt) = date_str_to_utc(&s) {
+                dates.push(dt.date_naive());
+            }
+        }
+        Ok(dates)
+    }
+
     /// Get stock basic info by reading stock_basic.parquet and filtering.
     pub fn get_stock_basic_blocking(&self, symbol: &str) -> Result<Option<StockBasic>, DataError> {
         validate_symbol(symbol)?;
@@ -1793,6 +1826,40 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
         assert!(reader.latest_trade_date().expect("no error").is_none());
+    }
+
+    #[test]
+    fn trade_dates_returns_unique_ascending_dates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        create_test_stock_daily_parquet(
+            &tmp,
+            &[(
+                "SH600519",
+                &[
+                    ("2024-06-02", 1510.0),
+                    ("2024-06-01", 1500.0),
+                    ("2024-06-02", 1511.0),
+                ],
+            )],
+        );
+
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        let dates = reader.trade_dates().expect("trade dates");
+        assert_eq!(
+            dates,
+            vec![
+                chrono::NaiveDate::from_ymd_opt(2024, 6, 1).expect("date"),
+                chrono::NaiveDate::from_ymd_opt(2024, 6, 2).expect("date"),
+            ],
+            "distinct dates, ascending"
+        );
+    }
+
+    #[test]
+    fn trade_dates_empty_when_file_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reader = ParquetReader::new(tmp.path()).expect("create reader");
+        assert!(reader.trade_dates().expect("trade dates").is_empty());
     }
 
     #[test]
