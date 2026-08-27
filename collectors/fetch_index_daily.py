@@ -173,6 +173,7 @@ def _persist_outputs(
         daily_path.unlink(missing_ok=True)
         basic_path.unlink(missing_ok=True)
 
+
 # kline 11 fields: 日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
 _KLINE_FIELDS = (
     "trade_date",
@@ -797,12 +798,12 @@ async def run() -> Path:
                 if abort_reason is not None:
                     break
                 symbol = f"BK{code}"
-                basic_records.append(
-                    {"symbol": symbol, "name": name, "index_type": "industry"}
-                )
+                basic_records.append({"symbol": symbol, "name": name, "index_type": "industry"})
                 print(
                     f"  [industry] {symbol} {name} ...",
-                    file=sys.stderr, end=" ", flush=True,
+                    file=sys.stderr,
+                    end=" ",
+                    flush=True,
                 )
                 # Per-symbol incremental window (issue #292): an existing board
                 # starts at the year of its MAX(trade_date) (or the next year
@@ -858,10 +859,7 @@ async def run() -> Path:
                             break
                         continue
                     if max_iso is not None:
-                        kept = [
-                            row for row in year_rows
-                            if row.split(",", 1)[0] > max_iso
-                        ]
+                        kept = [row for row in year_rows if row.split(",", 1)[0] > max_iso]
                         if not kept:
                             continue
                         klines.extend(kept)
@@ -885,9 +883,7 @@ async def run() -> Path:
                         consecutive_failures, abort_reason = _bump_failure(consecutive_failures)
                         print("FAILED (no klines)", file=sys.stderr)
                 else:
-                    daily_records.extend(
-                        _kline_records(symbol, "industry", klines, _today())
-                    )
+                    daily_records.extend(_kline_records(symbol, "industry", klines, _today()))
                     print(f"{len(klines)} bars", file=sys.stderr)
                     consecutive_failures = 0
                 progress.update(
@@ -907,11 +903,16 @@ async def run() -> Path:
             for j, target in enumerate(OFFICIAL_INDICES, start=len(industries)):
                 if abort_reason is not None:
                     break
-                symbol = f"SH{target['code']}" if target["secid"].startswith("1.") \
+                symbol = (
+                    f"SH{target['code']}"
+                    if target["secid"].startswith("1.")
                     else f"SZ{target['code']}"
+                )
                 print(
                     f"  [official] {target['secid']} {target['name']} ...",
-                    file=sys.stderr, end=" ", flush=True,
+                    file=sys.stderr,
+                    end=" ",
+                    flush=True,
                 )
                 # Per-symbol incremental window (issue #292): pass the stored
                 # MAX(trade_date) so EastMoney/Tencent only fetch newer bars.
@@ -988,9 +989,7 @@ async def run() -> Path:
                         basic_records.append(
                             {"symbol": symbol, "name": target["name"], "index_type": "official"}
                         )
-                        daily_records.extend(
-                            _kline_records(symbol, "official", klines, _today())
-                        )
+                        daily_records.extend(_kline_records(symbol, "official", klines, _today()))
                         print(f"{len(klines)} bars", file=sys.stderr)
                 progress.update(
                     completed=j + 1,
@@ -1002,23 +1001,14 @@ async def run() -> Path:
                     break
 
         if abort_reason is not None:
-            _persist_outputs(
-                daily_records, basic_records, daily_path, basic_path
-            )
+            _persist_outputs(daily_records, basic_records, daily_path, basic_path)
             raise RuntimeError(abort_reason)
 
         if not daily_records and not basic_records:
-            _persist_outputs(
-                daily_records, basic_records, daily_path, basic_path
-            )
-            raise RuntimeError(
-                "No index data (rate-limited or empty) — "
-                "aborting, no CSV written"
-            )
+            _persist_outputs(daily_records, basic_records, daily_path, basic_path)
+            raise RuntimeError("No index data (rate-limited or empty) — aborting, no CSV written")
 
-        _persist_outputs(
-            daily_records, basic_records, daily_path, basic_path
-        )
+        _persist_outputs(daily_records, basic_records, daily_path, basic_path)
         progress.finish(
             fetched_rows=len(daily_records),
             message=f"Done: {len(daily_records)} daily rows",
@@ -1105,9 +1095,7 @@ def _import_index_basic(csv_path: Path) -> int:
                   ON m2.section = 'industry' AND m2.`key` = t.name
             """
             insert_cols = "(symbol, name, index_type, name_en)"
-            select_cols = (
-                "t.symbol, t.name, t.index_type, COALESCE(m1.value, m2.value)"
-            )
+            select_cols = "t.symbol, t.name, t.index_type, COALESCE(m1.value, m2.value)"
         else:
             joins = ""
             insert_cols = "(symbol, name, index_type)"
@@ -1236,6 +1224,65 @@ def _dolt_close(dolt_dir: Path, symbol: str, trade_date: str) -> float | None:
         return float(lines[-1])
     except ValueError:
         return None
+
+
+async def backfill(start: str, end: str) -> Path:
+    """Fetch index/industry daily klines for an explicit [start, end] range.
+
+    Used for middle-gap auto-heal (issue #308): unlike the normal incremental
+    ``run()``, this asks each symbol for data covering the requested range and
+    filters/deduplicates the result.  Fetches the THS industry universe when
+    available and always includes the official indices.  Strict failure: any
+    per-symbol request failure aborts without writing a CSV (no partial
+    backfill).
+    """
+    start_dt = date.fromisoformat(start)
+    end_dt = date.fromisoformat(end)
+    if start_dt > end_dt:
+        raise ValueError(f"inverted index_daily backfill range: {start} > {end}")
+
+    output_path = csv_dir() / "index_daily_backfill.csv"
+    records: list[dict[str, object]] = []
+
+    async with AsyncSession(impersonate="chrome142") as session:
+        throttle = Throttle()
+        pool = make_proxy_pool()
+
+        industries = await fetch_ths_industry_list(session, throttle, pool=pool)
+        for code, _name in industries:
+            symbol = f"BK{code}"
+            for year in range(start_dt.year, end_dt.year + 1):
+                klines = await fetch_ths_kline(session, throttle, code, year, pool=pool)
+                if klines is None:
+                    raise RuntimeError(f"index_daily backfill failed for THS {symbol} year {year}")
+                records.extend(_kline_records(symbol, "industry", klines, _today()))
+
+        for target in OFFICIAL_INDICES:
+            symbol = (
+                f"SH{target['code']}" if target["secid"].startswith("1.") else f"SZ{target['code']}"
+            )
+            result = await fetch_kline(session, throttle, target["secid"], pool=pool)
+            if result is None:
+                raise RuntimeError(f"index_daily backfill failed for official {symbol}")
+            klines, _code = result
+            records.extend(_kline_records(symbol, "official", klines, _today()))
+
+    # Filter to the requested window and de-duplicate.
+    seen: dict[tuple[str, str], dict[str, object]] = {}
+    for record in records:
+        day = str(record.get("trade_date") or "")
+        if not (start <= day <= end):
+            continue
+        key = (str(record["symbol"]), day)
+        if key not in seen:
+            seen[key] = record
+
+    if not seen:
+        return output_path
+
+    ordered = [seen[key] for key in sorted(seen, key=lambda k: (k[1], k[0]))]
+    write_csv(ordered, output_path)
+    return output_path
 
 
 if __name__ == "__main__":  # pragma: no cover — __main__ block, never executed under pytest

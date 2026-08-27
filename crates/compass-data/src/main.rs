@@ -4,6 +4,7 @@ mod export;
 mod sepa;
 use compass_data::import_compass;
 use compass_data::import_dolt;
+use compass_data::validate;
 
 use std::path::PathBuf;
 
@@ -63,6 +64,17 @@ enum Command {
         /// — NOT an incremental append. For incremental imports use import-compass.
         #[arg(long)]
         since: Option<String>,
+    },
+
+    /// Check stock_daily.parquet against the SSE trading calendar for gaps
+    CheckStockDaily {
+        /// Dolt investment_data directory (default from config)
+        #[arg(long)]
+        dolt_dir: Option<PathBuf>,
+
+        /// Parquet directory (default from config)
+        #[arg(long)]
+        parquet_dir: Option<PathBuf>,
     },
 
     /// Import data from compass_data Dolt into Parquet
@@ -138,7 +150,20 @@ enum SepaCmd {
         date: Option<String>,
     },
     /// 计算市场温度计，写回 Dolt
-    Temperature,
+    Temperature {
+        /// 指定日期（默认最新交易日；YYYY-MM-DD）
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// 按日期范围补算缺失的 SEPA 派生表（自动回补，issue #308）
+    BackfillDates {
+        /// 起始日期（默认自动判定；YYYY-MM-DD）
+        #[arg(long)]
+        start: Option<String>,
+        /// 结束日期（默认自动判定；YYYY-MM-DD）
+        #[arg(long)]
+        end: Option<String>,
+    },
     /// 历史批量回测：逐日重算评分，模拟 TOP-N 等权 N 日换仓策略
     Backtest {
         /// 回测窗口起始（默认 2025-01-01；YYYY-MM-DD）
@@ -167,7 +192,8 @@ impl SepaCmd {
     fn name(&self) -> &'static str {
         match self {
             SepaCmd::Score { .. } => "score",
-            SepaCmd::Temperature => "temperature",
+            SepaCmd::Temperature { .. } => "temperature",
+            SepaCmd::BackfillDates { .. } => "backfill-dates",
             SepaCmd::Backtest { .. } => "backtest",
         }
     }
@@ -252,6 +278,17 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
                 return Err(format!("Import failed: {e}").into());
             }
         }
+        Command::CheckStockDaily {
+            dolt_dir,
+            parquet_dir,
+        } => {
+            let dolt_dir =
+                dolt_dir.unwrap_or_else(|| PathBuf::from(&config.dolt.investment_data_dir));
+            let parquet_dir = parquet_dir.unwrap_or_else(|| PathBuf::from(&config.parquet.dir));
+            if let Err(e) = validate::check_stock_daily_gaps(&dolt_dir, &parquet_dir) {
+                return Err(format!("CheckStockDaily failed: {e}").into());
+            }
+        }
         Command::ImportCompass {
             dolt_dir,
             output,
@@ -310,8 +347,25 @@ async fn run(cli: Cli, config: AppConfig) -> Result<(), Box<dyn std::error::Erro
                         return Err(format!("Sepa {cmd_name} failed: {e}").into());
                     }
                 }
-                SepaCmd::Temperature => {
-                    if let Err(e) = sepa::run_temperature(&reader, &dolt_dir) {
+                SepaCmd::Temperature { date } => {
+                    let date = date
+                        .map(|s| {
+                            chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                                .map_err(|e| format!("invalid --date {s:?}: {e}"))
+                        })
+                        .transpose()?;
+                    if let Err(e) = sepa::run_temperature(&reader, &dolt_dir, date) {
+                        return Err(format!("Sepa {cmd_name} failed: {e}").into());
+                    }
+                }
+                SepaCmd::BackfillDates { start, end } => {
+                    let parse = |s: String, flag: &str| {
+                        chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                            .map_err(|e| format!("invalid {flag} {s:?}: {e}"))
+                    };
+                    let start = start.map(|s| parse(s, "--start")).transpose()?;
+                    let end = end.map(|s| parse(s, "--end")).transpose()?;
+                    if let Err(e) = sepa::run_backfill_dates(start, end, &reader, &dolt_dir) {
                         return Err(format!("Sepa {cmd_name} failed: {e}").into());
                     }
                 }
@@ -625,9 +679,158 @@ compass_data_dir = "/custom/compass"
         assert!(matches!(
             cli.command,
             Command::Sepa {
-                cmd: SepaCmd::Temperature
+                cmd: SepaCmd::Temperature { .. }
             }
         ));
+    }
+
+    // ── issue #308: temperature --date + new backfill-dates subcommand ──
+
+    #[test]
+    fn cli_sepa_temperature_parses_date() {
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "sepa",
+            "temperature",
+            "--date",
+            "2026-08-14",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                // RED: production variant is still `SepaCmd::Temperature` (no date field).
+                SepaCmd::Temperature { date } => {
+                    assert_eq!(date.as_deref(), Some("2026-08-14"));
+                }
+                _ => panic!("expected Temperature"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_temperature_date_default_none() {
+        let cli = Cli::try_parse_from(["compass-data", "sepa", "temperature"]).unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                // RED: production variant is still `SepaCmd::Temperature` (no date field).
+                SepaCmd::Temperature { date } => {
+                    assert_eq!(date, None);
+                }
+                _ => panic!("expected Temperature"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_backfill_dates_parses_start_end() {
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "sepa",
+            "backfill-dates",
+            "--start",
+            "2026-08-13",
+            "--end",
+            "2026-08-25",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                // RED: production has no BackfillDates variant.
+                SepaCmd::BackfillDates { start, end } => {
+                    assert_eq!(start.as_deref(), Some("2026-08-13"));
+                    assert_eq!(end.as_deref(), Some("2026-08-25"));
+                }
+                _ => panic!("expected BackfillDates"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_backfill_dates_defaults() {
+        let cli = Cli::try_parse_from(["compass-data", "sepa", "backfill-dates"]).unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                // RED: production has no BackfillDates variant.
+                SepaCmd::BackfillDates { start, end } => {
+                    assert_eq!(start, None);
+                    assert_eq!(end, None);
+                }
+                _ => panic!("expected BackfillDates"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[test]
+    fn cli_sepa_backfill_dates_rejects_invalid_date() {
+        let cli = Cli::try_parse_from([
+            "compass-data",
+            "sepa",
+            "backfill-dates",
+            "--start",
+            "not-a-date",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Sepa { cmd } => match cmd {
+                // RED: production has no BackfillDates variant.
+                SepaCmd::BackfillDates { start, .. } => {
+                    assert_eq!(start.as_deref(), Some("not-a-date"));
+                }
+                _ => panic!("expected BackfillDates"),
+            },
+            _ => panic!("expected Sepa"),
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_MUTEX serializes HOME mutation vs dolt spawns
+    async fn run_sepa_temperature_date_errors_on_missing_dolt() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let parquet_dir = tempdir().unwrap();
+        build_minimal_sepa_fixture(parquet_dir.path());
+        let mut config = AppConfig::default();
+        config.parquet.dir = parquet_dir.path().to_string_lossy().to_string();
+        config.dolt.compass_data_dir = dir.path().to_string_lossy().to_string();
+        let cli = Cli {
+            command: Command::Sepa {
+                cmd: SepaCmd::Temperature {
+                    date: Some("2026-07-31".to_string()),
+                },
+            },
+        };
+        let result = run(cli, config).await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Sepa temperature failed"), "error: {msg}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // ENV_MUTEX serializes HOME mutation vs dolt spawns
+    async fn run_sepa_backfill_dates_errors_on_missing_dolt() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let parquet_dir = tempdir().unwrap();
+        build_minimal_sepa_fixture(parquet_dir.path());
+        let mut config = AppConfig::default();
+        config.parquet.dir = parquet_dir.path().to_string_lossy().to_string();
+        config.dolt.compass_data_dir = dir.path().to_string_lossy().to_string();
+        let cli = Cli {
+            command: Command::Sepa {
+                cmd: SepaCmd::BackfillDates {
+                    start: Some("2026-08-13".to_string()),
+                    end: Some("2026-08-25".to_string()),
+                },
+            },
+        };
+        let result = run(cli, config).await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Sepa backfill-dates failed"), "error: {msg}");
     }
 
     #[test]
@@ -942,7 +1145,7 @@ compass_data_dir = "/custom/compass"
         config.dolt.compass_data_dir = dir.path().to_string_lossy().to_string();
         let cli = Cli {
             command: Command::Sepa {
-                cmd: SepaCmd::Temperature,
+                cmd: SepaCmd::Temperature { date: None },
             },
         };
         let result = run(cli, config).await;

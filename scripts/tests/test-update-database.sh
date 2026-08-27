@@ -1,9 +1,9 @@
 #!/bin/bash
-# Tests for scripts/sepa_daily.sh (issue #306).
+# Tests for scripts/update-database.sh (issue #306).
 # Mirrors the pre-push-ref-regex-test.sh precedent: a `bash -n` syntax gate plus
 # behavioral assertions against mocked cargo/uv/dolt in a temp dir — no real
 # network access, no real Dolt mutation, no data repos touched.
-# Run: scripts/tests/test-sepa-daily.sh
+# Run: scripts/tests/test-update-database.sh
 #
 # This suite carries the adversarial RED contract for issue #306:
 #   - COLLECTOR_TABLES = all 11 compass_data tables, in declared order
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-SEPA_SCRIPT="$PROJECT_ROOT/scripts/sepa_daily.sh"
+SEPA_SCRIPT="$PROJECT_ROOT/scripts/update-database.sh"
 
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
@@ -27,9 +27,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # --- 0. Syntax gate ---
 echo "--- 0. syntax ---"
 if bash -n "$SEPA_SCRIPT" 2>&1; then
-    echo "PASS: bash -n sepa_daily.sh"
+    echo "PASS: bash -n update-database.sh"
 else
-    echo "FAIL: bash -n sepa_daily.sh"
+    echo "FAIL: bash -n update-database.sh"
     exit 1
 fi
 
@@ -42,7 +42,7 @@ setup_fakes() {
 
     cat > "$t/bin/dolt" <<'EOF'
 #!/bin/bash
-# Mock dolt: logs argv, emulates the subcommands sepa_daily.sh uses.
+# Mock dolt: logs argv, emulates the subcommands update-database.sh uses.
 echo "dolt $*" >> "${FAKE_LOG:?fake log unset}"
 if [ "${1:-}" = "--data-dir" ]; then shift 2; fi
 case "${1:-}" in
@@ -126,9 +126,18 @@ exit 0
 EOF
 
     chmod +x "$t/bin/dolt" "$t/bin/cargo" "$t/bin/uv"
+
+    # Fake investment-data sync: run_script points update-database.sh at this
+    # file via SYNC_INVESTMENT_SCRIPT so no real upstream Dolt fetch happens.
+    cat > "$t/sync-fake.sh" <<'EOF'
+#!/bin/bash
+echo "sync-investment $*" >> "${FAKE_LOG:?fake log unset}"
+exit 0
+EOF
+    chmod +x "$t/sync-fake.sh"
 }
 
-# Run sepa_daily.sh against the mocked environment in $1; capture exit code.
+# Run update-database.sh against the mocked environment in $1; capture exit code.
 # Usage: run_script <tmpdir> [extra env assignments...]
 run_script() {
     local t="$1"
@@ -144,6 +153,7 @@ run_script() {
         FAKE_STATUS_SEQ="$t/status.seq" \
         SEPA_INVESTMENT_DATA_DIR="$t/repos/investment_data" \
         SEPA_COMPASS_DATA_DIR="$t/repos/compass_data" \
+        SYNC_INVESTMENT_SCRIPT="$t/sync-fake.sh" \
         TMPDIR="$t" \
         "${envs[@]}" \
         bash "$SEPA_SCRIPT" > "$t/out.log" 2> "$t/err.log"

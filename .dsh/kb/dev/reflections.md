@@ -454,9 +454,9 @@
 
 **Process improvements**: toolchain.md #298 卡已记录 duplicate fallback 副本与“grep 所有拷贝”教训；其余为一次性执行摩擦，无新增机制。
 
-## 2026-08-25 — ref #303 sepa_daily.sh 每日流程纳入 index_daily/index_basic
+## 2026-08-25 — ref #303 update-database.sh 每日流程纳入 index_daily/index_basic
 
-**What was done**: 将 `index_daily` 及伴生 `index_basic` 纳入 `scripts/sepa_daily.sh` 每日流程：step2 fetch+import、`COLLECTOR_TABLES` allowlist、step4 per-table 增量锚点 + `index_basic` 全量覆盖；`dolt sql` 锚点查询失败改为 loud abort；并修复 `import_append_table` 首导出忽略 `--since`，补 shell/Rust 回归测试与文档同步（3 commits：5ecdf8e/276a70d/8a27017）。
+**What was done**: 将 `index_daily` 及伴生 `index_basic` 纳入 `scripts/update-database.sh` 每日流程：step2 fetch+import、`COLLECTOR_TABLES` allowlist、step4 per-table 增量锚点 + `index_basic` 全量覆盖；`dolt sql` 锚点查询失败改为 loud abort；并修复 `import_append_table` 首导出忽略 `--since`，补 shell/Rust 回归测试与文档同步（3 commits：5ecdf8e/276a70d/8a27017）。
 
 **User corrections** (if any):
 - 用户通过澄清问题选择：“纳入 COLLECTOR_TABLES + step4 导入” （`index_basic` 范围）。
@@ -491,9 +491,9 @@
 - `edit` 工具未先 read 的摩擦在 #298/#301 与本次多次出现；尚未固化为自动检查。
 - 子代理完成前主动 `list_agents` 轮询在 #298 与本次重复出现；应改为等结算通知，避免无效轮询。
 
-## 2026-08-27 — ref #306 sepa_daily.sh 完整 compass_data 每日刷新 + sync 硬化
+## 2026-08-27 — ref #306 update-database.sh 完整 compass_data 每日刷新 + sync 硬化
 
-**What was done**: 将 `scripts/sepa_daily.sh` 从 6 表 SEPA-only 扩展为 11 表完整 `compass_data` 每日刷新入口（step 2 改用 `collectors/main.py sync`，step 4 覆盖 stock_basic/财务四表/SEPA/指数）；同时强化 `main.py` sync/import 失败即中止、`fetch_stock_basic_official` 空/部分数据拒绝覆盖、`fetch_index_daily` index_basic 失败传播、`_import_stock_basic` 原子替换与恢复；真实数据冒烟已跑并推送 Dolt。
+**What was done**: 将 `scripts/update-database.sh` 从 6 表 SEPA-only 扩展为 11 表完整 `compass_data` 每日刷新入口（step 2 改用 `collectors/main.py sync`，step 4 覆盖 stock_basic/财务四表/SEPA/指数）；同时强化 `main.py` sync/import 失败即中止、`fetch_stock_basic_official` 空/部分数据拒绝覆盖、`fetch_index_daily` index_basic 失败传播、`_import_stock_basic` 原子替换与恢复；真实数据冒烟已跑并推送 Dolt。
 
 **User corrections**:
 - 「运行完，自动完成后面的流程。我去睡觉了」——授权 auto 模式，push/PR 自动推进。

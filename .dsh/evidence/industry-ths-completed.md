@@ -10,7 +10,7 @@
 | 6150a93 | feat: Rust 侧 concept 全链路移除 + industry 聚合 + BK 4-6 + theme_score 删 |
 | 5661e89 | docs: KB 同步（data-providers/symbols/ui/gui/toolchain）+ plan + cleanup 脚本 |
 | d257cf3 / b47807b | docs: D3 两次修正定稿（先保留→后删除东财 BK 行） |
-| fd08242 | fix: review 修复（THS 日期归一化/年循环失败不截断/fetch 重试/列表空告警/除零 guard/sepa_daily.sh/新对抗测试 23 个） |
+| fd08242 | fix: review 修复（THS 日期归一化/年循环失败不截断/fetch 重试/列表空告警/除零 guard/update-database.sh/新对抗测试 23 个） |
 | f24e8bb | docs: P3 注释清理 |
 | 6c1666b | fix: sepa theme 断言修复（fixture amount 5e8→9e8 + margin 断言） |
 | 639c864 | test: 删 importorskip 死测试 |
@@ -43,7 +43,7 @@
 ## 审查记录（五角度全过）
 
 - quality：P1-1 年循环（fd08242 修）
-- general：P1-1 sepa_daily.sh（fd08242 修）、P1-2 年循环（fd08242 修）
+- general：P1-1 update-database.sh（fd08242 修）、P1-2 年循环（fd08242 修）
 - security：无 blocking（P2 _dolt_close 已加固）
 - goal：9/9 决策、8/8 验收全达成；遗留 Dolt 工作区残留 → 本次采集收尾已清理
 - qa：P0-1 theme=16.67（6c1666b 修）、P0-2 Dolt 无 THS 数据（aq7b7sk 已入）、P1-3 industry_factor 列名（l9b2ft8 已改）

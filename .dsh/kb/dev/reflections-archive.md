@@ -650,7 +650,7 @@ Pass 4a 全部 .dsh/kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池
 **User corrections**: 无纠正型消息——用户经 question 工具选择"补齐 F3 真实端到端 + 清理周日行 (Recommended)"路径。
 
 **What went wrong**:
-1. **F3 端到端声称"已验证"但脚本数据路径从未打通**：sepa_daily.sh step 2 只跑 `main.py fetch`（写 CSV），从不 import 进 Dolt——脚本声称的端到端从未真正完成，数据全靠手动 import（context mining review 实证）。根本原因：写脚本时未验证 main.py 的 fetch/import 命令分离语义，自测 mock 只断言命令调用序列而非数据终态。
+1. **F3 端到端声称"已验证"但脚本数据路径从未打通**：update-database.sh step 2 只跑 `main.py fetch`（写 CSV），从不 import 进 Dolt——脚本声称的端到端从未真正完成，数据全靠手动 import（context mining review 实证）。根本原因：写脚本时未验证 main.py 的 fetch/import 命令分离语义，自测 mock 只断言命令调用序列而非数据终态。
 2. **5-way review 连续三轮 FAIL，每轮发现真实缺陷**：alter_sql 无效（dolt `-c` 推断固定 varchar(200) 字节截断，post-import ALTER 无法修复）、增量窗口 + 整表替换覆盖历史（institution_survey 40096→29 行）、survey 去重 `GROUP BY gk` 仅按机构分组坍缩事件（293916→40115 行，长信基金 484→1）。这些都在 F3"已验证通过"后才被 review 抓出——真实数据验证本身不够深。
 3. **声称的"Dolt utf8mb4 GROUP BY bug"不成立**：HEX(org) 分组 workaround 的前提（中文分组列触发 bug）在 dolt 2.2.3 实测不成立；该 workaround 反而引入更严重的粒度坍缩。为规避一个不存在的 bug 而引入数据丢失。
 4. **Dolt 数据已污染**：坍缩态 40115 行被 commit 并 push 到 remote，需重抓全量 + 重导修复（147 行窗口微差源于重导日期锚点，非剩余丢失）。
@@ -892,7 +892,7 @@ Pass 4a 全部 .dsh/kb/ 19 文件中文化；Pass 4b roadmap→backlog 需求池
 
 **Process improvements**:
 - 已落实：AGENTS.md「compass_data Dolt 仓库 — 每次数据变更后 commit & push（所有路径）」章节重写（含程序写回路径同 session 收尾 + `dolt status` 验证 + 违规记录 reflections）；`.dsh/kb/dev/database.md`「compass_data 提交推送」同步（`21bbfdf`，ref #190）
-- 建议（代码类，未排期）：`sepa backtest` CLI 的 `write_back_result()` 内置 Dolt commit 收尾（同 `sepa_daily.sh` 模式）——走 gate 建 issue 时评估
+- 建议（代码类，未排期）：`sepa backtest` CLI 的 `write_back_result()` 内置 Dolt commit 收尾（同 `update-database.sh` 模式）——走 gate 建 issue 时评估
 
 ### Trends (last 10)
 - **「文档已固化但未遵守」模式第四次出现**（ref #96 → #104 → #171 fmt 三件套 → 本次 Dolt 写回无 commit）：AGENTS.md 规则写入 ≠ 行为固化——本次规则已扩为"任何路径 + 程序写回"，但真正的兜底是 CLI 内置 commit（同 #182 pre-commit hook 思路：执行侧硬钩子而非文档约束）

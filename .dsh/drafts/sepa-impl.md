@@ -19,7 +19,7 @@ approach: "14 子 issue 分批实现：Batch1 采集(#140-144, 5 collectors) →
 | C3 | import-compass 支持 6 张新表（concept_daily/concept_member/capital_main_flow/dragon_list/block_trade/institution_survey） | active | import_compass.rs:13-57 CompassTable + 增量合并 L83-208 |
 | C4 | compass-strategy mod sepa：指标库(MA/ATR/RS/VCP) + 温度计 + 五模块评分 + 过滤 | active | lib.rs run_screener 模式（L44-97） |
 | C5 | compass-data sepa CLI 子命令（score/temperature）+ 写回 Dolt | active | main.rs Command 枚举 L24-109（需新 SepaCmd） |
-| C6 | scripts/sepa_daily.sh 幂等每日脚本（含 investment_data 更新） | active | scripts/sync-investment-data.sh 骨架 |
+| C6 | scripts/update-database.sh 幂等每日脚本（含 investment_data 更新） | active | scripts/sync-investment-data.sh 骨架 |
 | C7 | GUI SEPA 面板扩展 | active | .omo/designs/sepa-gui.md（已确认+审查修订） |
 
 ## Open assumptions (announced defaults)
@@ -28,7 +28,7 @@ approach: "14 子 issue 分批实现：Batch1 采集(#140-144, 5 collectors) →
 |-----------|----------------|-----------|-------------|
 | READ_WINDOW_DAYS=400 不足 | SEPA 用独立窗口常量 ~550 日历日 | MA250 需 250 根 bar，400 日仅 268 根余量 18；RS 双窗口+VCP 120 天需更多 | 是（常量） |
 | Rust 写回 Dolt 无先例 | 扩展 import_dolt.rs 的 subprocess 封装风格，新增写 SQL/dolt table import 函数，路径取 config.dolt.compass_data_dir | 现有模式 `dolt --data-dir <dir> sql`，写回同构 | 是 |
-| compass_data commit/push 无自动化 | sepa_daily.sh 末尾承担 dolt add/commit/push（commit message 含 ref #N） | AGENTS.md 规定每次数据变更后必须 commit/push；脚本是每日唯一入口 | 是 |
+| compass_data commit/push 无自动化 | update-database.sh 末尾承担 dolt add/commit/push（commit message 含 ref #N） | AGENTS.md 规定每次数据变更后必须 commit/push；脚本是每日唯一入口 | 是 |
 | 嵌套子命令无先例 | main.rs 新增 `#[derive(Subcommand)] SepaCmd { Score, Temperature }` + Command::Sepa 变体 | clap derive 原生支持 | 否（接口形态） |
 | data_updates 登记 | SEPA 新表沿用 5 列 upsert（table_name/last_updated/source/row_count/last_report_date） | 现有模式统一（main.py:70-76, fetch_income.py:214-219） | 否 |
 | symbol 约定 | Dolt 表 symbol 用 `SZ000001` 前缀格式，collectors 用 CONCAT 拼接 | 与 stock_basic/财务表对齐 | 否 |
@@ -44,7 +44,7 @@ approach: "14 子 issue 分批实现：Batch1 采集(#140-144, 5 collectors) →
 5. **run_screener 模式**：fetch_cross_section(range_start, now) 单次全市场加载 + load_all_stock_basics + HashMap<&str, Vec<&CrossSectionBar>> 分组 + 逐标的 Ok(None) 短路 + total_cmp 排序 + MAX_RESULTS 截断；指标基于 adjclose；窗口不足跳过不崩溃；READ_WINDOW_DAYS=400 日历日 ≈ 268 交易日。（bg_2bd253e5）
 6. **CLI 结构**：main.rs Command 枚举 4 变体（Import/ImportCompass/Export/Backup）+ load_config + run() dispatch；错误类型 Result<(), Box<dyn Error>>；ImportCompass 已有 --dolt-dir 默认 config.dolt.compass_data_dir；CompassTable FromStr 映射先例；测试内嵌 L236-624。（bg_39a88db6）
 7. **import-compass 增量合并**：since.is_some() && !overwrite && path.exists() → DuckDB ROW_NUMBER() OVER (PARTITION BY symbol, report_date ORDER BY priority) UNION ALL 旧(1)+新(2) WHERE rn=1；new_data.len()<500 空守卫；DuckDB 失败回退全量。（bg_39a88db6）
-8. **scripts 风格**：set -euo pipefail + 头部注释 + PROJECT_ROOT + preflight（command -v dolt/creds/.dolt）+ red/green/info 彩色输出；sync-investment-data.sh(L124) 是最接近 sepa_daily.sh 的样板；scripts/tests/ 有自测先例。（bg_e560f882）
+8. **scripts 风格**：set -euo pipefail + 头部注释 + PROJECT_ROOT + preflight（command -v dolt/creds/.dolt）+ red/green/info 彩色输出；sync-investment-data.sh(L124) 是最接近 update-database.sh 的样板；scripts/tests/ 有自测先例。（bg_e560f882）
 9. **GUI 接线**：DataCell enum{Text,Price,Count}（data_table.rs:31-44）可加 Score/Rank 变体；TabKind{Chart,Logger,Screener}（tabs.rs:50-54）可加 Sepa；SharedState 字段模式（state.rs:11-34）；wire_backend 2-tuple 波及 main.rs:73/backend.rs 4 处/main.rs:1044；egui_dock 0.20.1 per-tab 状态判定使 dock_style 无需修改。（Oracle 审查 + 代码验证）
 
 ## Decisions (with rationale)
@@ -54,7 +54,7 @@ approach: "14 子 issue 分批实现：Batch1 采集(#140-144, 5 collectors) →
    - 采集层增量表（collectors 写）：`-a --continue` 追加（幂等重跑安全）
    - 计算层评分表（compass-data 写）：两段式 `DELETE WHERE trade_date=...` + `-a --continue`，或 dolt sql `INSERT ... ON DUPLICATE KEY UPDATE`（dolt 支持 MySQL 语法）
    - compass-data 新增 `sepa.rs`，复用 import_dolt.rs 的 `dolt --data-dir` subprocess 封装风格；**Cargo.toml 新增 `compass-strategy = { path = "../compass-strategy" }` 依赖**（无循环：strategy → core/types，data 已有 core）
-3. **commit/push 归属**：sepa_daily.sh 末尾执行 dolt add/commit/push（compass_data 仓库，分支 main，message 含 ref #139），幂等——无变更则跳过；**dolt add 限定 SEPA 相关表**，勿 `add .` 卷入 collectors 未提交变更。
+3. **commit/push 归属**：update-database.sh 末尾执行 dolt add/commit/push（compass_data 仓库，分支 main，message 含 ref #139），幂等——无变更则跳过；**dolt add 限定 SEPA 相关表**，勿 `add .` 卷入 collectors 未提交变更。
 4. **CLI 形态**：`Command::Sepa { #[command(subcommand)] cmd: SepaCmd }`，SepaCmd::{Score{--top, --date}, Temperature}；输出 TOP50 表格 + 写回 Dolt + data_updates 登记。
 5. **collectors 架构（审查修正）**：4 个数据源 collector（主力资金流/龙虎榜/大宗/机构调研）照抄 fetch_income.py 重构范本（common.py 复用），走 datacenter 接口（RPT_MAIN_MONEY_FLOW / RPT_DAILYBILLBOARD_DETAILSNEW / RPT_BLOCKTRADE_DETAILS / RPT_ORG_SURVEYNEW）；concept_member 成分映射采集走 datacenter（RPT_F10_CORETHEME_BOARDTYPE）。**concept_daily 不采集**——由引擎本地聚合（用户确认，自己的权重）：板块日线 = 成分股等权（当日涨跌幅等权平均、成交额合计、上涨家数），`concept_member` + `stock_daily`（Batch2 扩展后含 amount）本地计算，作为计算层产物。
 6. **引擎模块化（审查修正）**：compass-strategy 拆 `mod sepa`，**第一步先定义 compass-types 边界契约类型**（SepaQuery/SepaData/SepaRow/SepaDetails/SepaFactor/MarketThermometer/SepaIndicator——GUI 与 CLI 均依赖，必须先落地否则 Batch5 无法编译），再实现指标库（indicator/temperature/scoring/filter），入口 `run_sepa(query: &SepaQuery, reader: &ParquetReader, now) -> Result<SepaData, ScreenerError>`。
@@ -74,7 +74,7 @@ B1 (采集 #140-144) — 无依赖
 
 - B1：5 collector 文件 + 5 测试文件（TestRun stub session + TestImportToDolt 真实 temp Dolt），`--cov-fail-under=80` 现有门槛
 - B3：指标库 800-1500 行为覆盖率稀释主风险——TDD 先行，边界用例强制（除零/空序列/窗口不足/平台期）；契约类型测试随类型定义
-- B4：sepa.rs 写回路径（temp Dolt fixture 已有先例）+ CLI 解析测试；sepa_daily.sh 幂等测试（scripts/tests/ 自测先例）
+- B4：sepa.rs 写回路径（temp Dolt fixture 已有先例）+ CLI 解析测试；update-database.sh 幂等测试（scripts/tests/ 自测先例）
 - B5：egui_kittest 面板渲染/交互 + 双 tab leaf 视觉断言（形状测试，禁目测）
 
 ## Scope IN
@@ -82,7 +82,7 @@ B1 (采集 #140-144) — 无依赖
 - Batch1：4 个数据源 collectors + concept_member 成分采集 + Dolt 新表（concept_member/capital_main_flow/dragon_list/block_trade/institution_survey）+ main.py 注册 + 测试
 - Batch2：CrossSectionBar 扩展 4 字段 + fetch_cross_section SQL + 测试 + import-compass 5 新表 + data_updates 登记
 - Batch3：compass-types 契约类型（SepaQuery/SepaData/SepaRow/SepaDetails/SepaFactor/MarketThermometer/SepaIndicator）→ mod sepa 指标库（MA/ATR/RS/VCP/量比/回撤）+ concept_daily 本地聚合（成分股等权）+ 市场温度计 + 五模块评分 + 过滤规则 + run_sepa 入口 + 测试
-- Batch4：compass-data sepa CLI（score/temperature）+ 写回 Dolt 机制（DELETE+append 两段式）+ data_updates + sepa_daily.sh（含 investment_data import 步骤）
+- Batch4：compass-data sepa CLI（score/temperature）+ 写回 Dolt 机制（DELETE+append 两段式）+ data_updates + update-database.sh（含 investment_data import 步骤）
 - Batch5：GUI SEPA 面板（按 sepa-gui.md 全套）+ egui_kittest 测试 + 双 tab leaf 视觉断言
 - 文档：kb/design/data-providers.md（CrossSectionBar 字段决策记录）、kb/design/ui.md（SEPA 面板）、kb/user/cli.md（sepa 命令）、kb/dev/testing.md（如新测试模式）、kb/user/config.md（如新增配置）
 
@@ -92,7 +92,7 @@ B1 (采集 #140-144) — 无依赖
 - 不新增任何 crate/UI 依赖（compass-data 新增 workspace 内 compass-strategy path 依赖除外；东财接口若需新 Python 依赖需单独评估）
 - 不采集东财官方概念板块指数（concept_daily 用本地成分股等权聚合，用户确认）
 - 不做历史批量回算（只算最新交易日，增量累积）
-- 不做自动定时触发（sepa_daily.sh 手动执行）
+- 不做自动定时触发（update-database.sh 手动执行）
 - 不引入 serde 到 SEPA 类型（无 TOML 持久化需求）
 
 ## Open questions

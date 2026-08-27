@@ -1,14 +1,18 @@
 #!/bin/bash
-# sepa_daily.sh — one-shot idempotent daily compass_data pipeline (epic #139, issue #151).
+# update-database.sh — one-shot idempotent daily compass_data pipeline
+# (auto-heal missing data, issue #308).
 #
-# Seven steps:
-#   1. market data:  compass-data import           (investment_data Dolt → Parquet)
-#   2. collect:      collectors main.py sync       (all compass_data sources → Dolt)
-#   3. Dolt commit:  collector tables              (limited add, push; skipped when clean)
-#   4. import:       import-compass 11 tables (9 incremental/anchored + stock_basic + index_basic full overwrite)
-#   5. compute:      sepa temperature + sepa score --top 50 (DELETE+append write-back)
-#   6. Dolt commit:  compute tables                (limited add, push; skipped when clean)
-#   7. print TOP50:  reuse step 5 output, never recompute
+# Steps:
+#   0. sync:        sync-investment-data.sh          (investment_data Dolt ← upstream)
+#   1. market data: compass-data import              (investment_data Dolt → Parquet)
+#   1b. verify:     check-stock-daily gaps           (missing trading day ⇒ hard fail)
+#   2. collect:     collectors main.py sync          (all compass_data sources → Dolt, auto-heal gaps)
+#   3. Dolt commit: collector tables                 (limited add, push; skipped when clean)
+#   4. import:      import-compass 11 tables         (9 incremental/anchored + stock_basic/index_basic full)
+#   5. backfill:    sepa backfill-dates              (compute missing derived SEPA dates)
+#   6. compute:     sepa temperature + sepa score --top 50 (DELETE+append write-back)
+#   7. Dolt commit: compute tables                   (limited add, push; skipped when clean)
+#   8. print TOP50: reuse step 6 output, never recompute
 #
 # Idempotency: collectors/main.py sync skips already-fetched dates (data_updates.
 # last_report_date); the sepa CLI write-back is DELETE+append per trade_date; the
@@ -16,12 +20,12 @@
 # script can be re-run any day without double-counting or data loss.
 #
 # Usage:
-#   scripts/sepa_daily.sh
+#   scripts/update-database.sh
 #
 # Requires: dolt + uv + cargo on PATH, DoltHub credentials (dolt creds ls),
 #           local Dolt repos at the default paths below.
-# Env overrides (used by scripts/tests/test-sepa-daily.sh):
-#   SEPA_INVESTMENT_DATA_DIR, SEPA_COMPASS_DATA_DIR
+# Env overrides (used by scripts/tests/test-update-database.sh):
+#   SEPA_INVESTMENT_DATA_DIR, SEPA_COMPASS_DATA_DIR, PARQUET_DIR
 
 set -euo pipefail
 
@@ -29,6 +33,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-/data/compass-data/investment_data}"
 COMPASS_DATA_DIR="${SEPA_COMPASS_DATA_DIR:-/data/compass-data/compass_data}"
+PARQUET_DIR="${PARQUET_DIR:-/data/compass-data/parquet_data}"
+# Test hook: point at a fake sync script in the shell unit tests.
+SYNC_INVESTMENT_SCRIPT="${SYNC_INVESTMENT_SCRIPT:-scripts/sync-investment-data.sh}"
 
 # Allowlisted table sets for the two Dolt commits (never `dolt add .`).
 # The collector allowlist covers every compass_data table refreshed by the daily
@@ -80,6 +87,7 @@ dolt_commit_changed() {
     fi
     if ! dolt --data-dir "$data_dir" commit -m "$msg"; then
         red "step $step failed: dolt commit"
+        # dolt_commit_changed exit 1 on any dolt commit failure.
         exit 1
     fi
     if ! dolt --data-dir "$data_dir" push origin main; then
@@ -122,13 +130,29 @@ fi
 
 cd "$PROJECT_ROOT"
 
+# --- 0. Sync investment_data upstream before touching the local Parquet ---
+# The whole point of auto-heal is to pick up missed trading days; the upstream
+# Dolt fetch is the source of truth for those days, so it must run first.
+run_step 0 "sync investment_data upstream" "$PROJECT_ROOT" \
+    bash "$SYNC_INVESTMENT_SCRIPT"
+
 # --- 1. Market data: investment_data Dolt → Parquet main database ---
 # Full (not --since) import: stock_daily.parquet is written as a single file via
 # atomic rename, so a --since filter would DROP history. The local Dolt repo is
-# already kept incrementally fresh by scripts/sync-investment-data.sh; re-running
-# a full import is idempotent (identical regeneration).
+# kept incrementally fresh by step 0; re-running a full import is idempotent
+# (identical regeneration).
 run_step 1 "import market data (investment_data → Parquet)" "$PROJECT_ROOT" \
     cargo run --bin compass-data -- import
+
+# --- 1b. Verify no SSE trading day is missing from stock_daily.parquet ---
+# After a full import, any gap within [min, max] means the upstream data is
+# incomplete or the import silently dropped rows. This is a hard failure —
+# never continue with a hole in the OHLCV history (issue #308 decision 11/13).
+if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- check-stock-daily \
+        --dolt-dir "$INVESTMENT_DATA_DIR" --parquet-dir "$PARQUET_DIR"); then
+    red "step 1b failed: stock_daily calendar gap check"
+    exit 1
+fi
 
 # --- 2. Collect: all compass_data sources → Dolt ---
 # collectors/main.py sync is the single full-refresh entry: it fetches and imports
@@ -182,6 +206,17 @@ for table in "${COLLECTOR_TABLES[@]}"; do
             cargo run --bin compass-data -- import-compass --table "$table"
     fi
 done
+# --- 4b. Backfill missing derived SEPA compute dates ---
+# sepa backfill-dates scans the Parquet trading calendar against the Dolt
+# compute tables and computes every missing date (technical_factor /
+# industry_factor / capital_factor / final_score / market_temperature).
+# It is idempotent and strict: any failure aborts the whole run.
+info "Step 4b: backfill missing SEPA dates"
+if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- sepa backfill-dates); then
+    red "step 4b failed: sepa backfill-dates"
+    exit 1
+fi
+
 # --- 5. Compute: market temperature + TOP50, write back to Dolt ---
 # The CLI write-back is DELETE-by-trade_date + append, so re-running the same day
 # is idempotent. The score table is teed to a log so step 7 can reuse it without

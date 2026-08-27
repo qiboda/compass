@@ -335,14 +335,28 @@ cargo run --bin compass-data -- backup --keep-zip # 上传后保留本地 zip
 cargo run --bin compass-data -- sepa score --top 50    # 评分 + TOP50 表格 + 写回全量
 cargo run --bin compass-data -- sepa score --top 30 --date 2026-07-31  # 指定日期
 cargo run --bin compass-data -- sepa temperature       # 市场温度计 + 只写 market_temperature
+cargo run --bin compass-data -- sepa temperature --date 2026-08-14  # 指定日期温度计
+cargo run --bin compass-data -- sepa backfill-dates    # 自动补算缺失日期的全部 SEPA 派生表
+cargo run --bin compass-data -- sepa backfill-dates --start 2026-08-13 --end 2026-08-25  # 指定窗口
 ```
+
+`backfill-dates` 以 Parquet 中的交易日为基准，对比 Dolt 计算表已存在的日期，
+对每个缺失交易日依次执行 score + temperature 写回（5 张计算表 +
+`data_updates`），严格失败一票否决。
 
 | 选项 | 默认值 | 说明 |
 |---|---|---|
 | `--top` | `50` | 终端表格输出条数上限（不影响 Dolt 写回内容——写回总是全量计算集） |
 | `--date` | 数据内最新交易日 | 计算日期（YYYY-MM-DD）；不传时取 Parquet 中最大 trade_date，周末/节假日运行不会写出非交易日行 |
+| `backfill-dates --start/--end` | 自动判定 | 回补窗口；不传时自动覆盖 Parquet 中全部交易日 |
 
-每日一键流水线见 `scripts/sepa_daily.sh`（行情更新 → `collectors/main.py sync` 完整 `compass_data` 采集：`stock_basic` + 财务四表（`fin_indicators`/`fin_balance_sheet`/`fin_income`/`fin_cash_flow`）+ SEPA 表 + 指数 → Dolt commit → Parquet 导入（11 张表，`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量）→ 计算 → Dolt commit → TOP50）。
+每日一键流水线见 `scripts/update-database.sh`：step 0 同步
+`investment_data` 上游（`scripts/sync-investment-data.sh`）→ `cargo import`
+→ `check-stock-daily` 缺口硬校验 → `collectors/main.py sync`
+（自动检测并回补日频源数据缺口）→ Dolt commit → import-compass 11 张表
+（`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量）→ `sepa backfill-dates`
+补算缺失派生表 → `sepa temperature` + `sepa score --top 50` → Dolt commit →
+TOP50。
 
 ### `sepa backtest` — 历史批量回测
 

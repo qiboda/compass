@@ -49,9 +49,7 @@ CREATE TABLE IF NOT EXISTS block_trade (
 )"""
 
 # INSERT column list (lowercase DDL names), values mapped from API fields
-INSERT_COLS = (
-    "symbol, trade_date, price, volume, amount, buyer, seller, premium_rate, update_date"
-)
+INSERT_COLS = "symbol, trade_date, price, volume, amount, buyer, seller, premium_rate, update_date"
 
 
 def _daily_dates(years: list[int]) -> list[str]:
@@ -74,22 +72,42 @@ def _daily_dates(years: list[int]) -> list[str]:
 async def run(
     years: list[int] | None = None,
     page_size: int = 100,
+    start: str | None = None,
+    end: str | None = None,
 ) -> Path:
     if years is None:
         years = list(range(START_YEAR, datetime.now().year + 1))
 
     output_path = csv_dir() / f"{REPORT_NAME}.csv"
-    all_dates = _daily_dates(years)
+    if start is not None or end is not None:
+        # Explicit range backfill (issue #308): generate every calendar day
+        # in [start, end] regardless of the year list. Invalid/inverted
+        # ranges abort before any network I/O.
+        start_d = date.fromisoformat(start) if start else date(START_YEAR, 1, 1)
+        end_d = date.fromisoformat(end) if end else datetime.now().date()
+        if start_d > end_d:
+            raise ValueError(f"inverted block_trade range: {start} > {end}")
+        all_dates: list[str] = []
+        d = start_d
+        while d <= end_d:
+            all_dates.append(d.isoformat())
+            d += timedelta(days=1)
+    else:
+        all_dates = _daily_dates(years)
 
-    since = last_report_date(DOLT_TABLE)
-    if since:
-        print(f"Last trade date in Dolt: {since}, fetching only newer dates", file=sys.stderr)
-        # Exclusive boundary: dates at or before the watermark are not
-        # re-fetched; dates after today are never requested (the API returns
-        # empty for future dates, which would scan half a year pointlessly).
-        all_dates = [d for d in all_dates if since < d <= datetime.now().date().isoformat()]
-        if not all_dates:
-            print("No new trade dates to fetch.", file=sys.stderr)
+    # Explicit-range backfill ignores the data_updates watermark (it is
+    # meant to fill past middle gaps); the normal year-based path keeps the
+    # incremental "newer than anchor" filter.
+    if start is None and end is None:
+        since = last_report_date(DOLT_TABLE)
+        if since:
+            print(f"Last trade date in Dolt: {since}, fetching only newer dates", file=sys.stderr)
+            # Exclusive boundary: dates at or before the watermark are not
+            # re-fetched; dates after today are never requested (the API returns
+            # empty for future dates, which would scan half a year pointlessly).
+            all_dates = [d for d in all_dates if since < d <= datetime.now().date().isoformat()]
+            if not all_dates:
+                print("No new trade dates to fetch.", file=sys.stderr)
             return output_path
 
     print(f"Report: {REPORT_NAME}", file=sys.stderr)
@@ -101,9 +119,7 @@ async def run(
     print(f"Output: {output_path.resolve()}", file=sys.stderr)
     print(file=sys.stderr)
 
-    with Progress(
-        "block_trade", total_items=len(all_dates), output_csv=output_path
-    ) as progress:
+    with Progress("block_trade", total_items=len(all_dates), output_csv=output_path) as progress:
         throttle = Throttle()
         pool = make_proxy_pool()
         all_records: list[dict[str, str | int | float]] = []
@@ -113,11 +129,18 @@ async def run(
             for i, trade_date in enumerate(all_dates):
                 print(
                     f"[{i + 1}/{len(all_dates)}] {trade_date} ...",
-                    file=sys.stderr, end=" ", flush=True,
+                    file=sys.stderr,
+                    end=" ",
+                    flush=True,
                 )
                 try:
                     records = await fetch_paginated(
-                        session, throttle, REPORT_NAME, FILTER_COLUMN, trade_date, page_size,
+                        session,
+                        throttle,
+                        REPORT_NAME,
+                        FILTER_COLUMN,
+                        trade_date,
+                        page_size,
                         pool=pool,
                     )
                 except Exception as e:

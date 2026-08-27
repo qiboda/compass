@@ -6,7 +6,7 @@
 //! write-back (`DELETE` by trade_date + `dolt table import -a`) — never
 //! `REPLACE INTO`. The day-level delete makes re-runs idempotent.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -116,10 +116,22 @@ pub fn run_score(
 /// Compute the whole-market thermometer and write it back to the Dolt repo
 /// at `dolt_dir`. Only `market_temperature` is written (P0-2 regression:
 /// a temperature run must never touch the factor/score tables).
-pub fn run_temperature(reader: &ParquetReader, dolt_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let now = reader
-        .latest_trade_date()?
-        .unwrap_or_else(|| Utc::now().date_naive());
+pub fn run_temperature(
+    reader: &ParquetReader,
+    dolt_dir: &Path,
+    date: Option<NaiveDate>,
+) -> Result<(), Box<dyn Error>> {
+    let now = match date {
+        Some(d) => d,
+        None => reader
+            .latest_trade_date()?
+            .unwrap_or_else(|| Utc::now().date_naive()),
+    };
+    // An explicit date that has no bars is a hard error, not a silent 0.0
+    // temperature (issue #308 requirement: no-data date must fail loudly).
+    if date.is_some() && !reader.trade_dates()?.contains(&now) {
+        return Err(format!("temperature: no trade data for {now}").into());
+    }
     let started = std::time::Instant::now();
     let data = run_sepa(&SepaQuery { top_n: 1 }, reader, now)?;
     let tm = &data.thermometer;
@@ -135,6 +147,67 @@ pub fn run_temperature(reader: &ParquetReader, dolt_dir: &Path) -> Result<(), Bo
         data.date
     );
     write_back(dolt_dir, &data, &["market_temperature"])
+}
+
+/// Return the set of trade dates already present in Dolt `final_score`.
+fn existing_compute_dates(dolt_dir: &Path) -> Result<BTreeSet<NaiveDate>, Box<dyn Error>> {
+    if !dolt_dir.join(".dolt").exists() {
+        return Err("missing dolt repo (backfill has no target)".into());
+    }
+    // Ensure the anchor table exists so the query is empty-but-valid on a
+    // fresh Dolt repo; run_score later creates the rest of the schemas.
+    dolt_sql(dolt_dir, FINAL_SCHEMA)?;
+    let csv = crate::import_dolt::run_dolt_sql_csv(
+        dolt_dir,
+        "SELECT DISTINCT DATE_FORMAT(trade_date, '%Y-%m-%d') FROM final_score",
+    )
+    .map_err(|e| format!("dolt query final_score dates failed: {e}"))?;
+    let mut out = BTreeSet::new();
+    for line in csv.lines().skip(1) {
+        let s = line.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            out.insert(d);
+        }
+    }
+    Ok(out)
+}
+
+/// Backfill every missing SEPA compute date in [start, end].
+///
+/// Dates are sourced from `stock_daily.parquet` (the only legitimate trading
+/// calendar for the scoring engine). A date is considered missing when Dolt
+/// `final_score` has no rows for it; already-computed dates are left
+/// untouched (so a partial/older run never recomputes or overwrites newer
+/// data). Strict failure: any date computation or write-back abort exits
+/// without partial-success continuation (issue #308 decision 11).
+pub fn run_backfill_dates(
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+    reader: &ParquetReader,
+    dolt_dir: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let all_dates = reader.trade_dates()?;
+    if all_dates.is_empty() {
+        return Err("backfill: stock_daily.parquet has no trade dates".into());
+    }
+    let start = start.unwrap_or(all_dates[0]);
+    let end = end.unwrap_or(*all_dates.last().expect("non-empty"));
+    if start > end {
+        return Err(format!("backfill inverted range: {start} > {end}").into());
+    }
+    let existing = existing_compute_dates(dolt_dir)?;
+    for &day in all_dates.iter().filter(|d| **d >= start && **d <= end) {
+        if existing.contains(&day) {
+            continue;
+        }
+        info!(date = %day, "backfilling sepa compute date");
+        run_score(usize::MAX, Some(day), reader, dolt_dir)?;
+        run_temperature(reader, dolt_dir, Some(day))?;
+    }
+    Ok(())
 }
 
 /// Render the TOP-N table as a mono-spaced, `{:.1}`-aligned text table.
@@ -481,7 +554,9 @@ pub(crate) fn dolt_upsert_updates(
         "INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) \
          VALUES ('{table}', '{today}', 'compass-data sepa', {row_count}, '{report_date}') \
          ON DUPLICATE KEY UPDATE last_updated='{today}', source='compass-data sepa', \
-         row_count={row_count}, last_report_date='{report_date}'"
+         row_count={row_count}, \
+         last_report_date=IF(COALESCE(last_report_date, '0000-00-00') < '{report_date}', \
+             '{report_date}', last_report_date)"
     );
     dolt_sql(dolt_dir, &query)
 }
@@ -876,7 +951,7 @@ mod tests {
         build_fixture(parquet_tmp.path());
         let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
 
-        run_temperature(&reader, dolt_tmp.path()).expect("run_temperature");
+        run_temperature(&reader, dolt_tmp.path(), None).expect("run_temperature");
 
         let csv = crate::import_dolt::run_dolt_sql_csv(
             dolt_tmp.path(),
@@ -934,7 +1009,7 @@ mod tests {
         let date = Some(NaiveDate::from_ymd_opt(2026, 7, 31).expect("date"));
 
         run_score(50, date, &reader, dolt_tmp.path()).expect("score");
-        run_temperature(&reader, dolt_tmp.path()).expect("temperature");
+        run_temperature(&reader, dolt_tmp.path(), None).expect("temperature");
 
         // Score rows for the latest trading day must survive the temperature
         // run, and no score rows may appear for other (wall-clock) dates.
@@ -1198,5 +1273,581 @@ mod tests {
             !src.contains(&old_header_fragment),
             "final_score write-back export must no longer emit the removed column"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // issue #308 — auto-heal missing data:
+    //   - `run_temperature` gains an explicit `date: Option<NaiveDate>`
+    //   - new `run_backfill_dates(start, end, reader, dolt_dir)`
+    // -----------------------------------------------------------------------
+
+    /// Fixture containing several consecutive trading days in August 2026,
+    /// so backfill can fill a middle gap.  Reuses the 300-day history
+    /// generator and ends at 2026-08-21 (which includes 08-13..08-21).
+    fn build_multi_date_fixture(dir: &Path) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        let stocks = vec![
+            TestStock {
+                symbol: "SZ000001",
+                name: "平安银行",
+                exchange: "SZ",
+                bars: filler_series("2026-08-21"),
+            },
+            TestStock {
+                symbol: "SH600001",
+                name: "测试甲",
+                exchange: "SH",
+                bars: filler_series("2026-08-21"),
+            },
+            TestStock {
+                symbol: "SH600002",
+                name: "测试乙",
+                exchange: "SH",
+                bars: filler_series("2026-08-21"),
+            },
+        ];
+        for s in &stocks {
+            for b in &s.bars {
+                conn.execute(
+                    "INSERT INTO daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    duckdb::params![
+                        s.symbol,
+                        b.date.as_str(),
+                        b.close - 1.0,
+                        b.close + 0.1,
+                        b.close - 0.1,
+                        b.close,
+                        b.close,
+                        1.0e6,
+                        b.amount
+                    ],
+                )
+                .expect("insert daily");
+            }
+        }
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            dir.join("stock_daily.parquet").display()
+        ))
+        .expect("copy daily");
+
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        )
+        .expect("create basic");
+        for s in &stocks {
+            conn.execute(
+                "INSERT INTO basic VALUES (?, ?, ?, '2010-01-01', NULL, '主板', ?, 1.0e9, '测试', NULL)",
+                duckdb::params![s.symbol, s.name, s.exchange, s.name],
+            )
+            .expect("insert basic");
+        }
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            dir.join("stock_basic.parquet").display()
+        ))
+        .expect("copy basic");
+    }
+
+    /// Count rows in a compute table for the given date, tolerating an
+    /// absent table (returns 0 instead of panicking).
+    fn dolt_count_any(dolt_dir: &Path, table: &str, date: &str) -> i64 {
+        match crate::import_dolt::run_dolt_sql_csv(
+            dolt_dir,
+            &format!("SELECT COUNT(*) AS cnt FROM {table} WHERE trade_date = '{date}'"),
+        ) {
+            Ok(csv) => csv
+                .lines()
+                .nth(1)
+                .and_then(|l| l.parse::<i64>().ok())
+                .unwrap_or(0),
+            Err(_) => 0,
+        }
+    }
+
+    #[test]
+    fn run_temperature_with_date_writes_only_that_date() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+        let date = Some(NaiveDate::from_ymd_opt(2026, 8, 14).expect("date"));
+
+        // RED: production signature is `run_temperature(reader, dolt_dir)`.
+        run_temperature(&reader, dolt_tmp.path(), date).expect("run_temperature");
+
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-08-14"),
+            1
+        );
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-08-13"),
+            0
+        );
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-08-21"),
+            0
+        );
+        // temperature must not touch factor/score tables.
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-14"), 0);
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "technical_factor", "2026-08-14"),
+            0
+        );
+    }
+
+    #[test]
+    fn run_temperature_none_uses_latest_trading_day() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // RED: production signature lacks the `date` parameter.
+        run_temperature(&reader, dolt_tmp.path(), None).expect("run_temperature");
+
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-08-21"),
+            1
+        );
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        assert_eq!(dolt_count(dolt_tmp.path(), "market_temperature", &today), 0);
+    }
+
+    #[test]
+    fn run_temperature_with_date_no_data_returns_error() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // 2025-01-01 is outside the fixture trading-day range -> must error.
+        let date = Some(NaiveDate::from_ymd_opt(2025, 1, 1).expect("date"));
+        let result = run_temperature(&reader, dolt_tmp.path(), date);
+        assert!(result.is_err(), "no-data date must fail loudly");
+    }
+
+    #[test]
+    fn run_backfill_dates_fills_all_missing_dates() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 21).expect("end"));
+
+        // RED: production function does not exist yet.
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("backfill");
+
+        // All weekdays in the window are present in the fixture and must be
+        // computed (13,14,17,18,19,20,21).
+        for day in [
+            "2026-08-13",
+            "2026-08-14",
+            "2026-08-17",
+            "2026-08-18",
+            "2026-08-19",
+            "2026-08-20",
+            "2026-08-21",
+        ] {
+            assert_eq!(
+                dolt_count(dolt_tmp.path(), "final_score", day),
+                3,
+                "final_score missing {day}"
+            );
+            assert_eq!(
+                dolt_count(dolt_tmp.path(), "technical_factor", day),
+                3,
+                "technical_factor missing {day}"
+            );
+            assert_eq!(
+                dolt_count(dolt_tmp.path(), "capital_factor", day),
+                3,
+                "capital_factor missing {day}"
+            );
+            assert_eq!(
+                dolt_count(dolt_tmp.path(), "market_temperature", day),
+                1,
+                "market_temperature missing {day}"
+            );
+        }
+        // industry_factor has one "测试" industry per day in this fixture.
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "industry_factor", "2026-08-13"),
+            1
+        );
+
+        // data_updates must carry the compute-table rows.
+        let csv = crate::import_dolt::run_dolt_sql_csv(
+            dolt_tmp.path(),
+            "SELECT table_name, source, last_report_date FROM data_updates ORDER BY table_name, last_report_date",
+        )
+        .expect("data_updates query");
+        for table in COMPUTE_TABLES {
+            assert!(csv.contains(table), "data_updates missing {table}: {csv}");
+        }
+        assert!(csv.contains("compass-data sepa"), "source: {csv}");
+        assert!(
+            csv.contains("2026-08-21"),
+            "must record latest computed date: {csv}"
+        );
+    }
+
+    #[test]
+    fn run_backfill_dates_does_not_recompute_existing_date() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // Pre-seed final_score ONLY for 2026-08-20 with a single synthetic row.
+        dolt_sql(dolt_tmp.path(), FINAL_SCHEMA).expect("create final_score");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_score (symbol, trade_date, trend_score, money_score, \
+             pattern_score, risk_score, total_score, `rank`, update_date) \
+             VALUES ('SZ000001', '2026-08-20', 1, 1, 1, 1, 1, 1, '2026-08-20')",
+        )
+        .expect("seed existing date");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 21).expect("end"));
+
+        // RED: production function does not exist yet.
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("backfill");
+
+        // The existing date must not be recomputed/overwritten with the full
+        // 3-stock set; it keeps exactly the single pre-seeded row.
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "final_score", "2026-08-20"),
+            1,
+            "existing date must not be recomputed"
+        );
+        // Missing dates are still filled.
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-13"), 3);
+    }
+
+    #[test]
+    fn run_backfill_dates_start_end_limits_window() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 17).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 18).expect("end"));
+
+        // RED: production function does not exist yet.
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("backfill");
+
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-17"), 3);
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-18"), 3);
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-13"), 0);
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-21"), 0);
+        assert_eq!(
+            dolt_count(dolt_tmp.path(), "market_temperature", "2026-08-13"),
+            0
+        );
+    }
+
+    #[test]
+    fn run_backfill_dates_missing_dolt_returns_error_no_partial_success() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp"); // not a dolt repo
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 21).expect("end"));
+
+        // RED: production function does not exist yet.
+        let result = run_backfill_dates(start, end, &reader, dolt_tmp.path());
+        assert!(result.is_err(), "missing dolt repo must abort backfill");
+
+        // No partial success: no compute tables/data_updates can exist in a
+        // non-repo directory anyway; the key assertion is the strict Err.
+        assert_eq!(
+            dolt_count_any(dolt_tmp.path(), "final_score", "2026-08-13"),
+            0
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // issue #308 — adversarial auto-heal edge/error/idempotency/resource tests
+    // -----------------------------------------------------------------------
+
+    /// Build an empty (zero-row) Parquet fixture: valid schemas but no bars.
+    fn build_empty_fixture(dir: &Path) {
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(
+            "CREATE TABLE daily (symbol VARCHAR, tradedate DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, adjclose DOUBLE, volume DOUBLE, amount DOUBLE);",
+        )
+        .expect("create daily");
+        conn.execute_batch(&format!(
+            "COPY daily TO '{}' (FORMAT PARQUET)",
+            dir.join("stock_daily.parquet").display()
+        ))
+        .expect("copy empty daily");
+
+        conn.execute_batch(
+            "CREATE TABLE basic (symbol VARCHAR, name VARCHAR, exchange VARCHAR, list_date DATE, delist_date DATE, board VARCHAR, full_name VARCHAR, total_share DOUBLE, industry VARCHAR, region VARCHAR);",
+        )
+        .expect("create basic");
+        conn.execute_batch(&format!(
+            "COPY basic TO '{}' (FORMAT PARQUET)",
+            dir.join("stock_basic.parquet").display()
+        ))
+        .expect("copy empty basic");
+    }
+
+    /// Files in the shared stage_csv temp dir that contain `needle`.
+    fn staged_files_containing(needle: &str) -> Vec<PathBuf> {
+        let dir = std::env::temp_dir().join("compass_sepa_writeback");
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.contains(needle) {
+                    out.push(e.path());
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn run_backfill_dates_start_after_end_returns_error_no_partial() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 21).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("end"));
+
+        let result = run_backfill_dates(start, end, &reader, dolt_tmp.path());
+        assert!(
+            result.is_err(),
+            "inverted range must be a hard error, not an empty no-op"
+        );
+        // No date may have been written.
+        assert_eq!(
+            dolt_count_any(dolt_tmp.path(), "final_score", "2026-08-13"),
+            0
+        );
+        assert_eq!(
+            dolt_count_any(dolt_tmp.path(), "final_score", "2026-08-21"),
+            0
+        );
+        assert_eq!(
+            dolt_count_any(dolt_tmp.path(), "market_temperature", "2026-08-14"),
+            0
+        );
+    }
+
+    #[test]
+    fn run_backfill_dates_single_day_already_present_is_noop_and_preserves_others() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // Seed an existing date plus an unrelated newer date that must survive.
+        dolt_sql(dolt_tmp.path(), FINAL_SCHEMA).expect("create final_score");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_score (symbol, trade_date, trend_score, money_score, \
+             pattern_score, risk_score, total_score, `rank`, update_date) \
+             VALUES ('SZ000001', '2026-08-17', 1, 1, 1, 1, 1, 1, '2026-08-17'), \
+                    ('SH600001', '2026-08-17', 2, 2, 2, 2, 2, 2, '2026-08-17'), \
+                    ('SZ000001', '2026-08-21', 9, 9, 9, 9, 9, 9, '2026-08-21')",
+        )
+        .expect("seed existing dates");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 17).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 17).expect("end"));
+
+        let result = run_backfill_dates(start, end, &reader, dolt_tmp.path());
+        assert!(
+            result.is_ok(),
+            "already-present single day must be a clean no-op"
+        );
+
+        // Existing date is untouched (still 2 rows, not the full 3-stock set).
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-17"), 2);
+        // Unrelated newer date survived.
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-21"), 1);
+    }
+
+    #[test]
+    fn run_backfill_dates_no_missing_dates_does_not_delete_other_dates() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // Seed 08-13 (already present) and 08-21. Backfill the no-missing
+        // window 08-13..08-13; 08-21 must not be touched.
+        dolt_sql(dolt_tmp.path(), FINAL_SCHEMA).expect("create final_score");
+        dolt_sql(
+            dolt_tmp.path(),
+            "INSERT INTO final_score (symbol, trade_date, trend_score, money_score, \
+             pattern_score, risk_score, total_score, `rank`, update_date) \
+             VALUES ('SZ000001', '2026-08-13', 1, 1, 1, 1, 1, 1, '2026-08-13'), \
+                    ('SH600001', '2026-08-13', 2, 2, 2, 2, 2, 2, '2026-08-13'), \
+                    ('SZ000001', '2026-08-21', 9, 9, 9, 9, 9, 9, '2026-08-21')",
+        )
+        .expect("seed existing dates");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("end"));
+
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("no-op backfill");
+
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-13"), 2);
+        assert_eq!(dolt_count(dolt_tmp.path(), "final_score", "2026-08-21"), 1);
+    }
+
+    #[test]
+    fn run_backfill_dates_empty_parquet_returns_error() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_empty_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 21).expect("end"));
+
+        let result = run_backfill_dates(start, end, &reader, dolt_tmp.path());
+        assert!(
+            result.is_err(),
+            "empty Parquet must abort backfill, never silently succeed"
+        );
+        assert_eq!(
+            dolt_count_any(dolt_tmp.path(), "final_score", "2026-08-13"),
+            0
+        );
+    }
+
+    #[test]
+    fn run_backfill_dates_rerun_is_idempotent() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 14).expect("end"));
+
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("first backfill");
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("second backfill");
+
+        for day in ["2026-08-13", "2026-08-14"] {
+            assert_eq!(
+                dolt_count(dolt_tmp.path(), "final_score", day),
+                3,
+                "rerun must not grow final_score rows for {day}"
+            );
+            assert_eq!(
+                dolt_count(dolt_tmp.path(), "market_temperature", day),
+                1,
+                "rerun must not grow market_temperature rows for {day}"
+            );
+        }
+    }
+
+    #[test]
+    fn run_backfill_dates_stage_csv_temp_files_cleaned_after_success() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 14).expect("end"));
+
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("backfill");
+
+        // stage_csv writes under std::env::temp_dir()/compass_sepa_writeback;
+        // files must be removed after import, never left behind.
+        let leftovers = staged_files_containing("2026-08-13_")
+            .into_iter()
+            .chain(staged_files_containing("2026-08-14_"))
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "stage_csv temp files were not cleaned: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn run_backfill_dates_does_not_regress_data_updates_anchor() {
+        let _lock = crate::tests::ENV_MUTEX.lock().unwrap();
+        let dolt_tmp = tempfile::tempdir().expect("dolt tmp");
+        setup_dolt(dolt_tmp.path());
+        let parquet_tmp = tempfile::tempdir().expect("parquet tmp");
+        build_multi_date_fixture(parquet_tmp.path());
+        let reader = ParquetReader::new(parquet_tmp.path()).expect("reader");
+
+        // Seed a newer data_updates anchor for the compute tables.
+        dolt_sql(dolt_tmp.path(), UPDATES_SCHEMA).expect("create updates");
+        for table in COMPUTE_TABLES {
+            dolt_sql(
+                dolt_tmp.path(),
+                &format!(
+                    "INSERT INTO data_updates (table_name, last_updated, source, row_count, last_report_date) \
+                     VALUES ('{table}', '2026-08-21', 'compass-data sepa', 1, '2026-08-21')"
+                ),
+            )
+            .expect("seed updates");
+        }
+
+        let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
+        let end = Some(NaiveDate::from_ymd_opt(2026, 8, 14).expect("end"));
+
+        run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("backfill earlier days");
+
+        // Backfilling older dates must never roll the anchor backwards.
+        let csv = crate::import_dolt::run_dolt_sql_csv(
+            dolt_tmp.path(),
+            "SELECT table_name, last_report_date FROM data_updates ORDER BY table_name",
+        )
+        .expect("data_updates query");
+        for table in COMPUTE_TABLES {
+            assert!(
+                csv.contains(&format!("{table},2026-08-21")),
+                "data_updates anchor for {table} regressed: {csv}"
+            );
+        }
     }
 }

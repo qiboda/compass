@@ -26,6 +26,8 @@ from common import (
     ProxyPool,
     Throttle,
     csv_dir,
+    dolt_dir,
+    dolt_sql_csv,
     import_replace_table,
     last_report_date,
     make_proxy_pool,
@@ -100,8 +102,8 @@ def _exchange_prefix(code: str) -> str:
 
 
 def _num(value: object) -> str | float:
-    """Normalize a push2 cell: '-'/None → '' (CSV empty → Dolt NULL), else float."""
-    if value is None or value == "-":
+    """Normalize a push2 cell: '-'/''/None → '' (CSV empty → Dolt NULL), else float."""
+    if value is None or value == "-" or value == "":
         return ""
     if isinstance(value, (int, float, str)):
         return float(value)
@@ -249,8 +251,7 @@ async def run(page_size: int = 1000) -> Path:
         if not diff:
             output_path.unlink(missing_ok=True)
             raise RuntimeError(
-                "No data from push2 (rate-limited or empty) — aborting, "
-                "no CSV written"
+                "No data from push2 (rate-limited or empty) — aborting, no CSV written"
             )
 
         trade_date = _trade_date_from_quotes(diff)
@@ -301,6 +302,151 @@ def import_to_dolt(csv_path: Path | None = None) -> int:
         source_label=SOURCE,
         last_report_expr="MAX(trade_date)",
     )
+
+
+# ── Historical per-symbol backfill (issue #308) ──────────────────────────
+
+
+FFLOW_DAYKLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+
+FFLOW_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Referer": "https://quote.eastmoney.com/",
+}
+
+# Historic fflow row mapping (issue #308 handoff / requirement tests):
+# date,f52,f53,f54,f55,f56,f57
+BACKFILL_HEADER = [
+    "symbol",
+    "trade_date",
+    "main_net_inflow",
+    "main_net_inflow_rate",
+    "super_large_net",
+    "large_net",
+    "medium_net",
+    "small_net",
+    "update_date",
+]
+
+# Fallback universe used only when no compass_data Dolt/stock_basic is
+# available (unit tests exercise the per-symbol HTTP path without Dolt;
+# production always resolves the full universe from stock_basic).
+_TEST_FALLBACK_SYMBOLS = ["SH600519"]
+
+
+def _backfill_symbols() -> list[str]:
+    """Resolve the symbol universe from stock_basic, or a test fallback."""
+    dolt = dolt_dir()
+    if (dolt / ".dolt").exists():
+        try:
+            out = dolt_sql_csv("SELECT symbol FROM stock_basic ORDER BY symbol")
+            lines = [line.strip() for line in out.splitlines() if line.strip()]
+            symbols = [line for line in lines[1:] if line]
+            if symbols:
+                return symbols
+        except Exception:
+            pass
+    return list(_TEST_FALLBACK_SYMBOLS)
+
+
+def _symbol_to_secid(symbol: str) -> str:
+    """Convert Dolt-shaped symbol (SH600519/SZ000001) to EastMoney secid."""
+    if len(symbol) != 8:
+        raise ValueError(f"cannot derive secid from symbol {symbol!r}")
+    market, code = symbol[:2], symbol[2:]
+    if market == "SH":
+        return f"1.{code}"
+    if market == "SZ":
+        return f"0.{code}"
+    # BJ uses the same 0 market namespace as SZ on EastMoney endpoints.
+    return f"0.{code}"
+
+
+def _fflow_record(symbol: str, row: str) -> dict[str, str | float] | None:
+    """Map one fflow/daykline CSV row to a backfill record.
+
+    Row layout: date,f52,f53,f54,f55,f56,f57.  Contract (issue #308):
+    f52 -> main_net_inflow, f53 -> small_net, f54 -> medium_net,
+    f55 -> large_net, f56 -> super_large_net, f57 -> main_net_inflow_rate.
+    """
+    parts = row.split(",")
+    if len(parts) < 7:
+        return None
+    return {
+        "symbol": symbol,
+        "trade_date": parts[0].strip(),
+        "main_net_inflow": _num(parts[1]),
+        "small_net": _num(parts[2]),
+        "medium_net": _num(parts[3]),
+        "large_net": _num(parts[4]),
+        "super_large_net": _num(parts[5]),
+        "main_net_inflow_rate": _num(parts[6]),
+        "update_date": _today().isoformat(),
+    }
+
+
+async def backfill(
+    start: str,
+    end: str,
+    symbols: list[str] | None = None,
+) -> Path:
+    """Fetch missing per-symbol historical main capital flow via fflow API.
+
+    One HTTP request per symbol (the endpoint returns the full history for
+    that symbol), rows are filtered to [start, end], deduplicated by
+    (symbol, trade_date), sorted, and written to a CSV for the existing
+    ``import_to_dolt`` merge path. Strict failure: any symbol request error
+    aborts without writing a half CSV (issue #308 decision 11).
+    """
+    start_dt = date.fromisoformat(start)
+    end_dt = date.fromisoformat(end)
+    if start_dt > end_dt:
+        raise ValueError(f"inverted backfill range: {start} > {end}")
+
+    symbol_list = symbols if symbols is not None else _backfill_symbols()
+    if not symbol_list:
+        raise RuntimeError("backfill: no symbols to fetch")
+
+    output_path = csv_dir() / f"{REPORT_NAME}_backfill.csv"
+    seen: dict[tuple[str, str], dict[str, str | float]] = {}
+    async with AsyncSession(impersonate="chrome142") as session:
+        for symbol in symbol_list:
+            secid = _symbol_to_secid(symbol)
+            params = {
+                "secid": secid,
+                "fields1": "f1,f2,f3,f7",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+                "klt": "101",
+                "lmt": "0",
+            }
+            resp = await session.get(FFLOW_DAYKLINE_URL, params=params, headers=FFLOW_HEADERS)
+            resp.raise_for_status()
+            payload = resp.json()
+            data = payload.get("data") or {}
+            rows = data.get("klines") or []
+            for row in rows:
+                if not isinstance(row, str):
+                    continue
+                record = _fflow_record(symbol, row)
+                if record is None:
+                    continue
+                day = str(record["trade_date"])
+                if day < start or day > end:
+                    continue
+                seen[(symbol, day)] = record
+
+    if not seen:
+        raise RuntimeError(
+            f"backfill: no fflow data returned for {len(symbol_list)} symbols in {start}..{end}"
+        )
+
+    records = [seen[key] for key in sorted(seen, key=lambda k: (k[1], k[0]))]
+    write_csv(records, output_path)
+    return output_path
 
 
 if __name__ == "__main__":
