@@ -237,7 +237,13 @@ async def run(
             output_path.unlink(missing_ok=True)
             raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
 
-        write_csv(all_records, output_path)
+        if all_records:
+            write_csv(all_records, output_path)
+        else:
+            # An empty trading day is a legitimate no-op for dragon/block
+            # sources (not every day has records). Removing any stale file
+            # keeps the missing-file signal reliable for main.backfill.
+            output_path.unlink(missing_ok=True)
         progress.finish(
             fetched_rows=len(all_records),
             message=f"Done: {len(all_records)} records",

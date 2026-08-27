@@ -1278,6 +1278,7 @@ async def backfill(start: str, end: str) -> Path:
             seen[key] = record
 
     if not seen:
+        output_path.unlink(missing_ok=True)
         return output_path
 
     ordered = [seen[key] for key in sorted(seen, key=lambda k: (k[1], k[0]))]

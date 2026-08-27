@@ -1069,3 +1069,17 @@ class TestMainSyncAutoHealAdversarial:
 
         with pytest.raises(RuntimeError, match="stock_basic"):
             main_mod.do_sync()
+
+    def test_auto_heal_range_missing_table_raises(
+        self,
+        dolt_envs: tuple[Path, Path, Callable[[str, str], str]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import main as main_mod  # noqa: F401
+
+        _, compass_dir, _ = dolt_envs
+        monkeypatch.setenv("COMPASS_DATA_DIR", str(compass_dir))
+        # The fixture only creates some daily tables; a missing table must not
+        # be silently treated as "no data" (issue #308 strict failure).
+        with pytest.raises(RuntimeError, match="dolt_sql_csv_strict failed|Dolt|table"):
+            main_mod._auto_heal_range()

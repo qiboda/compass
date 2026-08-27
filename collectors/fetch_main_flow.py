@@ -27,7 +27,7 @@ from common import (
     Throttle,
     csv_dir,
     dolt_dir,
-    dolt_sql_csv,
+    dolt_sql_csv_strict,
     import_replace_table,
     last_report_date,
     make_proxy_pool,
@@ -347,7 +347,7 @@ def _backfill_symbols() -> list[str]:
     """
     dolt = dolt_dir()
     if (dolt / ".dolt").exists():
-        out = dolt_sql_csv("SELECT symbol FROM stock_basic ORDER BY symbol")
+        out = dolt_sql_csv_strict("SELECT symbol FROM stock_basic ORDER BY symbol")
         lines = [line.strip() for line in out.splitlines() if line.strip()]
         symbols = [line for line in lines[1:] if line]
         if not symbols:

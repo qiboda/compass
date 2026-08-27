@@ -449,6 +449,20 @@ def dolt_sql_csv(sql: str, timeout: int = 300) -> str:
     return result.stdout
 
 
+def dolt_sql_csv_strict(sql: str, timeout: int = 300) -> str:
+    """Run a Dolt SQL query and raise on non-zero exit.
+
+    Strict variant for auto-heal/backfill paths: a failed query must never be
+    mistaken for an empty result (issue #308 decision 11).
+    """
+    args = ["dolt", "--data-dir", str(dolt_dir()), "sql", "-r", "csv", "-q", sql]
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"dolt_sql_csv_strict failed: {stderr}")
+    return result.stdout
+
+
 def dolt_table_import(
     table_name: str,
     csv_path: Path,

@@ -640,6 +640,23 @@ def set_last_report_date(table: str, report_date: str) -> None:
     _set(table, report_date)
 
 
+def _import_backfill_csv(path: Path, label: str, import_fn) -> None:
+    """Import a backfill CSV when the source produced rows.
+
+    Daily sources such as dragon/block_trade legitimately have zero records on
+    some trading days; those fetchers remove their output file to signal
+    "no data".  A missing file is a no-op, while an existing file must import
+    with a positive row count (strict failure).
+    """
+    if not path.exists():
+        print(
+            f"[sync] Auto-heal: {label}: no rows in backfill range, skipping import",
+            file=sys.stderr,
+        )
+        return
+    _require_import(import_fn(path), label)
+
+
 async def backfill(start: str, end: str) -> None:
     """Run the per-source backfills for a missing date range.
 
@@ -657,13 +674,13 @@ async def backfill(start: str, end: str) -> None:
     _require_import(fetch_main_flow.import_to_dolt(main_flow_path), "capital_main_flow")
 
     index_path = await fetch_index_daily.backfill(start, end)
-    _require_import(fetch_index_daily.import_to_dolt(index_path), "index_daily")
+    _import_backfill_csv(index_path, "index_daily", fetch_index_daily.import_to_dolt)
 
     dragon_path = await fetch_dragon.run(start_date=start, end_date=end)
-    _require_import(fetch_dragon.import_to_dolt(dragon_path), "dragon_list")
+    _import_backfill_csv(dragon_path, "dragon_list", fetch_dragon.import_to_dolt)
 
     block_path = await fetch_block_trade.run(start=start, end=end)
-    _require_import(fetch_block_trade.import_to_dolt(block_path), "block_trade")
+    _import_backfill_csv(block_path, "block_trade", fetch_block_trade.import_to_dolt)
 
 
 def _auto_heal_range() -> tuple[str, str]:
@@ -674,13 +691,13 @@ def _auto_heal_range() -> tuple[str, str]:
     were never meant to carry), falling back to the last 90 days when no
     daily rows exist yet.
     """
-    from common import dolt_dir, dolt_sql_csv
+    from common import dolt_dir, dolt_sql_csv_strict
 
     end = date.today().isoformat()
     earliest: list[str] = []
     if (dolt_dir() / ".dolt").exists():
         for table, col in DAILY_AUTO_HEAL_TABLES:
-            out = dolt_sql_csv(f"SELECT MIN({col}) FROM {table}")
+            out = dolt_sql_csv_strict(f"SELECT MIN({col}) FROM {table}")
             lines = [line.strip() for line in out.splitlines() if line.strip()]
             value = lines[-1] if len(lines) > 1 else ""
             if value and value != "NULL":

@@ -161,7 +161,10 @@ async def run(
             output_path.unlink(missing_ok=True)
             raise RuntimeError(f"Fetch aborted at {failure} — no CSV written")
 
-        write_csv(all_records, output_path)
+        if all_records:
+            write_csv(all_records, output_path)
+        else:
+            output_path.unlink(missing_ok=True)
         progress.finish(
             fetched_rows=len(all_records),
             message=f"Done: {len(all_records)} records",
