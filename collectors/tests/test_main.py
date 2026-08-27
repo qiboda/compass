@@ -275,6 +275,18 @@ class TestDispatchImport:
         main_mod.dispatch_import("fin_indicators")
         mock_import.assert_called_once()
 
+    def test_fin_indicators_zero_import_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI import must abort loudly when fin_indicators returns 0 rows."""
+        import main as main_mod
+
+        monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock(return_value=0))
+
+        with pytest.raises(RuntimeError, match="fin_indicators import returned 0 rows"):
+            main_mod.dispatch_import("fin_indicators")
+
     def test_balance_sheet_calls_import_to_dolt(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -386,6 +398,7 @@ class TestDoSync:
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
+        import fetch_index_daily as fid
         import fetch_institution_survey as fis
         import fetch_main_flow as fmf
         import fetch_stock_basic_official as fsbo
@@ -403,6 +416,7 @@ class TestDoSync:
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
+        monkeypatch.setattr(fid, "run", Mock())
 
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
@@ -413,6 +427,7 @@ class TestDoSync:
         monkeypatch.setattr(fbt, "import_to_dolt", Mock())
         monkeypatch.setattr(fis, "import_to_dolt", Mock())
         monkeypatch.setattr(fmf, "import_to_dolt", Mock())
+        monkeypatch.setattr(fid, "import_to_dolt", Mock())
 
         mock_dolt = Mock()
         monkeypatch.setattr(common, "dolt_sql", mock_dolt)
@@ -437,6 +452,7 @@ class TestDoSync:
         import fetch_dragon as fdr
         import fetch_fin_indicators as ffi
         import fetch_income as fi
+        import fetch_index_daily as fid
         import fetch_institution_survey as fis
         import fetch_main_flow as fmf
         import fetch_stock_basic_official as fsbo
@@ -454,9 +470,10 @@ class TestDoSync:
         monkeypatch.setattr(fbt, "run", Mock())
         monkeypatch.setattr(fis, "run", Mock())
         monkeypatch.setattr(fmf, "run", Mock())
+        monkeypatch.setattr(fid, "run", Mock())
         monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
         monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock())
-        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf):
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf, fid):
             monkeypatch.setattr(mod, "import_to_dolt", Mock())
 
         mock_dolt = Mock()
@@ -466,6 +483,34 @@ class TestDoSync:
 
         # 10 asyncio steps: 9 legacy + index_daily step 11 (epic #255)
         assert mock_run.call_count == 9
+
+    def test_sync_raises_when_import_returns_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An internal import returning 0 must stop sync, not silently continue."""
+        import fetch_balance_sheet as fbs
+        import fetch_block_trade as fbt
+        import fetch_cash_flow as fcf
+        import fetch_dragon as fdr
+        import fetch_fin_indicators as ffi
+        import fetch_income as fi
+        import fetch_institution_survey as fis
+        import fetch_main_flow as fmf
+        import fetch_stock_basic_official as fsbo
+        import main as main_mod
+
+        monkeypatch.setattr(main_mod.asyncio, "run", Mock())
+        monkeypatch.setattr(fsbo, "main", Mock())
+        monkeypatch.setattr(ffi, "main", Mock())
+        monkeypatch.setattr(main_mod, "_import_stock_basic", Mock())
+        monkeypatch.setattr(main_mod, "_import_fin_indicators", Mock(return_value=0))
+        for mod in (fbs, fi, fcf, fdr, fbt, fis, fmf):
+            monkeypatch.setattr(mod, "run", Mock())
+            monkeypatch.setattr(mod, "import_to_dolt", Mock(return_value=1))
+
+        with pytest.raises(RuntimeError, match="fin_indicators import returned 0 rows"):
+            main_mod.do_sync()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -801,19 +846,19 @@ class TestMain:
 
 
 class TestImportStockBasic:
-    def test_csv_missing_exits_early(
+    def test_csv_missing_raises(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """When stock_basic.csv does not exist, function returns early."""
+        """When stock_basic.csv does not exist, the import must abort loudly."""
         import main as main_mod
 
         monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path / "nonexistent"))
         # csv_path would be csv_dir() / "stock_basic_official.csv" — doesn't exist
 
-        # Should not raise
-        main_mod._import_stock_basic()
+        with pytest.raises(RuntimeError):
+            main_mod._import_stock_basic()
 
     def test_csv_exists_imports_to_dolt(
         self,
@@ -844,6 +889,219 @@ class TestImportStockBasic:
         # name-en mapping staging table (when the checked-in mapping exists).
         assert mock_table_import.call_count == 2
         assert mock_sql_csv.call_count >= 1
+
+    def test_empty_staging_aborts_before_delete(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """An empty _tmp_sb must abort before DELETE stock_basic (no wipe)."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+        mock_sql = Mock()
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        # First COUNT(*) (_tmp_sb) returns 0; stock_basic DELETE must never run.
+        mock_sql_csv = Mock(return_value="Count\n0")
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="_tmp_sb is empty"):
+            main_mod._import_stock_basic()
+
+        delete_calls = [c for c in mock_sql.call_args_list if c.args[0] == "DELETE FROM stock_basic"]
+        assert delete_calls == []
+
+    def test_partial_staging_aborts_before_delete(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A dramatically undersized stock_basic candidate must not replace history."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+        mock_sql = Mock()
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        # _tmp_sb has 1 row; existing stock_basic has 100 rows (drop >50%).
+        mock_sql_csv = Mock(side_effect=["Count\n1", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="row count is too small"):
+            main_mod._import_stock_basic()
+
+        delete_calls = [c for c in mock_sql.call_args_list if c.args[0] == "DELETE FROM stock_basic"]
+        assert delete_calls == []
+
+    def test_mapping_failure_restores_backup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """If loading the name-en mapping fails after rename, restore stock_basic."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\nSZ000002\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            common,
+            "load_name_en_mapping",
+            lambda: (_ for _ in ()).throw(RuntimeError("mapping boom")),
+        )
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # rename stock_basic -> _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # create stock_basic LIKE _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # drop partial stock_basic
+                subprocess.CompletedProcess([], 0, ""),  # restore rename
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="mapping boom"):
+            main_mod._import_stock_basic()
+
+        restore_calls = [
+            c.args[0]
+            for c in mock_sql.call_args_list
+            if c.args[0] == "RENAME TABLE _sb_backup TO stock_basic"
+        ]
+        assert restore_calls == ["RENAME TABLE _sb_backup TO stock_basic"]
+
+    def test_insert_failure_restores_backup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """If the final stock_basic INSERT fails, restore the previous table."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\nSZ000002\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        monkeypatch.setattr(common, "load_name_en_mapping", lambda: {})
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # rename stock_basic -> _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # create stock_basic LIKE _sb_backup
+                subprocess.CompletedProcess([], 1, "insert boom"),  # INSERT fails
+                subprocess.CompletedProcess([], 0, ""),  # drop partial stock_basic
+                subprocess.CompletedProcess([], 0, ""),  # restore rename
+                subprocess.CompletedProcess([], 0, ""),  # drop name_en mapping
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="insert stock_basic failed"):
+            main_mod._import_stock_basic()
+
+        restore_calls = [
+            c.args[0]
+            for c in mock_sql.call_args_list
+            if c.args[0] == "RENAME TABLE _sb_backup TO stock_basic"
+        ]
+        assert restore_calls == ["RENAME TABLE _sb_backup TO stock_basic"]
+
+    def test_rename_failure_keeps_original_table(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """If creating the backup rename fails, never drop the current table."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 1, "rename boom"),  # RENAME fails
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="rename stock_basic to backup failed"):
+            main_mod._import_stock_basic()
+
+        assert all(
+            c.args[0] != "DROP TABLE IF EXISTS stock_basic"
+            for c in mock_sql.call_args_list
+        )
+
+    def test_empty_final_count_restores_backup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A zero final row count must restore the previous stock_basic."""
+        import common
+        import main as main_mod
+
+        csv_path = tmp_path / "stock_basic_official.csv"
+        csv_path.write_text("symbol\nSZ000001\n")
+        monkeypatch.setenv("COMPASS_CSV_DIR", str(tmp_path))
+        monkeypatch.setattr(common, "load_name_en_mapping", lambda: {})
+
+        mock_sql = Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, ""),  # drop _tmp_sb
+                subprocess.CompletedProcess([], 0, ""),  # drop _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # rename stock_basic -> _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # create stock_basic LIKE _sb_backup
+                subprocess.CompletedProcess([], 0, ""),  # INSERT succeeds
+                subprocess.CompletedProcess([], 0, ""),  # drop partial stock_basic
+                subprocess.CompletedProcess([], 0, ""),  # restore rename
+                subprocess.CompletedProcess([], 0, ""),  # drop name_en mapping
+                # No final DROP TABLE _sb_backup: restore path must preserve it.
+            ]
+        )
+        monkeypatch.setattr(common, "dolt_sql", mock_sql)
+        mock_sql_csv = Mock(side_effect=["Count\n60", "Count\n100", "Count\n0"])
+        monkeypatch.setattr(common, "dolt_sql_csv", mock_sql_csv)
+        monkeypatch.setattr(common, "dolt_table_import", Mock(return_value=True))
+
+        with pytest.raises(RuntimeError, match="final row count is empty"):
+            main_mod._import_stock_basic()
+
+        restore_calls = [
+            c.args[0]
+            for c in mock_sql.call_args_list
+            if c.args[0] == "RENAME TABLE _sb_backup TO stock_basic"
+        ]
+        assert restore_calls == ["RENAME TABLE _sb_backup TO stock_basic"]
 
 
 # ═══════════════════════════════════════════════════════════════════

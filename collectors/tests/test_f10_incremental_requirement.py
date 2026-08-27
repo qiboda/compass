@@ -516,7 +516,7 @@ class TestMainIncremental:
                 return Path("out.csv")
 
             monkeypatch.setattr(m, "run", fake_run, raising=False)
-            monkeypatch.setattr(m, "import_to_dolt", lambda *a, **k: 0, raising=False)
+            monkeypatch.setattr(m, "import_to_dolt", lambda *a, **k: 1, raising=False)
 
         for name in ("fetch_balance_sheet", "fetch_income", "fetch_cash_flow",
                      "fetch_dragon", "fetch_block_trade", "fetch_institution_survey",
@@ -529,7 +529,7 @@ class TestMainIncremental:
         monkeypatch.setattr(main, "_import_stock_basic", lambda: None, raising=False)
         fi = _import_module("fetch_fin_indicators")
         monkeypatch.setattr(fi, "main", _noop_async, raising=False)
-        monkeypatch.setattr(main, "_import_fin_indicators", lambda: 0, raising=False)
+        monkeypatch.setattr(main, "_import_fin_indicators", lambda: 1, raising=False)
         monkeypatch.setattr(main, "dolt_sql", lambda *a, **k: None, raising=False)
 
         main.do_sync()
@@ -556,7 +556,7 @@ class TestMainIncremental:
                 return Path("out.csv")
 
             monkeypatch.setattr(m, "run", fake_run, raising=False)
-            monkeypatch.setattr(m, "import_to_dolt", lambda *a, **k: 0, raising=False)
+            monkeypatch.setattr(m, "import_to_dolt", lambda *a, **k: 1, raising=False)
 
         for name in ("fetch_balance_sheet", "fetch_income", "fetch_cash_flow",
                      "fetch_dragon", "fetch_block_trade", "fetch_institution_survey",
@@ -579,7 +579,7 @@ class TestMainIncremental:
             return None
 
         monkeypatch.setattr(fi, "main", _noop_async, raising=False)
-        monkeypatch.setattr(main, "_import_fin_indicators", lambda: 0, raising=False)
+        monkeypatch.setattr(main, "_import_fin_indicators", lambda: 1, raising=False)
         monkeypatch.setattr(main, "dolt_sql", lambda *a, **k: None, raising=False)
 
         with pytest.raises(RuntimeError, match="boom"):

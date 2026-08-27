@@ -51,10 +51,11 @@ row_count + last_report_date）。消费方：
   `csv_dir()/{REPORT_NAME}.state.json`），双源皆缺时固定 `2020-01-01`
   全历史拉一次，以捕获历史修订并减少全量拉取；`last_report_date` 仍由
   import 写入，供新鲜度校验使用。
-- **sepa_daily.sh 增量锚点**（`scripts/sepa_daily.sh` step 4）：**逐表读取**
-  SEPA 行情表各自的 `last_report_date`（含 `index_daily`）；缺失/NULL 锚点的
-  表走全量导入，不再用全局 MAX 锚点；`index_basic` 是版本快照，始终全量覆盖，
-  不查询锚点
+- **sepa_daily.sh 增量锚点**（`scripts/sepa_daily.sh` step 2/4）：step 2 由
+  `collectors/main.py sync` 统一刷新全部 11 张 `compass_data` 表；step 4 对
+  **逐表读取**各表自身的 `last_report_date`（含 `fin_*` 财务表与 `index_daily`）；
+  缺失/NULL 锚点的表走全量导入，不再用全局 MAX 锚点；`stock_basic` 与
+  `index_basic` 是版本快照/权威表，始终全量覆盖，不查询锚点
 - **import-compass 新鲜度校验（ref #136）**：导入后读 `last_report_date`，过期
   仅 warn 不退出（财务表 120 天 / 行情表 7 天 / stock_basic 不检查）
 

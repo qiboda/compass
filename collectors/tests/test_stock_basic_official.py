@@ -607,7 +607,32 @@ class TestMain:
             fsbo.main()
         assert "日期格式无效" in capsys.readouterr().err
 
-    def test_all_exchanges_failed_still_writes_header(self, tmp_path, monkeypatch):
+    def test_one_exchange_empty_aborts_without_partial_csv(self, tmp_path, monkeypatch):
+        """SZSE active returning zero records must abort; never write partial stock."""
+        monkeypatch.setattr(
+            sys, "argv",
+            ["fetch_stock_basic_official.py", "-o", str(tmp_path / "out.csv"),
+             "--update-date", "2026-07-31"],
+        )
+        monkeypatch.setattr(fsbo, "make_proxy_pool", Mock(return_value=None))
+        monkeypatch.setattr(fsbo.requests, "Session", lambda: SyncStubSession())
+        monkeypatch.setattr(fsbo, "fetch_sse", Mock(return_value=_sse_payload([_sse_row()])))
+
+        def _fake_szse_xlsx(session, catalogid, tabkey, *, pool=None):
+            if catalogid == "1110":
+                return _szse_sheet([])
+            return _delisted_xml
+
+        monkeypatch.setattr(fsbo, "fetch_szse_xlsx", _fake_szse_xlsx)
+        monkeypatch.setattr(fsbo, "fetch_bse", Mock(return_value=[_bse_row()]))
+
+        with pytest.raises(SystemExit):
+            fsbo.main()
+
+        out = tmp_path / "out.csv"
+        assert not out.exists()
+
+    def test_all_exchanges_failed_aborts_without_writing_csv(self, tmp_path, monkeypatch):
         stub = SyncStubSession()
 
         def _get(url, params=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
@@ -627,8 +652,8 @@ class TestMain:
              "--update-date", "2026-07-31"],
         )
 
-        fsbo.main()
+        with pytest.raises(SystemExit):
+            fsbo.main()
 
         out = tmp_path / "out.csv"
-        assert out.exists()
-        assert out.read_text(encoding="utf-8-sig").strip() == ",".join(COLUMNS)
+        assert not out.exists()

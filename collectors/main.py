@@ -68,16 +68,61 @@ def _import_stock_basic() -> None:
 
     if not csv_path.exists():
         print(f"  ERROR: {csv_path} not found.", file=sys.stderr)
-        return
+        raise RuntimeError("stock_basic import: CSV not found; refusing to continue")
 
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
-    dolt_table_import("_tmp_sb", csv_path, timeout=120)
+    if not dolt_table_import("_tmp_sb", csv_path, timeout=120):
+        print("  ERROR: failed to stage stock_basic CSV into _tmp_sb", file=sys.stderr)
+        raise RuntimeError("stock_basic import: dolt_table_import failed for _tmp_sb")
 
-    mapping = load_name_en_mapping()
+    tmp_lines = dolt_sql_csv("SELECT COUNT(*) FROM _tmp_sb").strip().split("\n")
+    tmp_total = int(tmp_lines[-1]) if len(tmp_lines) > 1 else 0
+    if tmp_total <= 0:
+        dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
+        print("  ERROR: _tmp_sb is empty; refusing to overwrite stock_basic", file=sys.stderr)
+        raise RuntimeError("stock_basic import: _tmp_sb is empty; refusing to clear stock_basic")
+
+    before_lines = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").strip().split("\n")
+    before_total = int(before_lines[-1]) if len(before_lines) > 1 else 0
+    if before_total > 0 and tmp_total < before_total // 2:
+        dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
+        print(
+            f"  ERROR: stock_basic candidate is too small ({tmp_total} < {before_total // 2}); "
+            "refusing to clear the existing table",
+            file=sys.stderr,
+        )
+        raise RuntimeError("stock_basic import: candidate row count is too small; refusing to replace existing data")
+
+    def _checked_sql(sql: str, desc: str) -> None:
+        result = dolt_sql(sql)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"stock_basic import: {desc} failed: "
+                f"{getattr(result, 'stderr', '') or ''}".strip()
+            )
+
+    # Replace-by-rename: keep the previous table aside so any failure after the
+    # rename can restore it. This avoids the old non-atomic DELETE-then-INSERT
+    # that left no recovery if the INSERT or schema preparation failed.
+    mapping = None
+    failed = False
+    renamed = False
     try:
-        dolt_sql("DELETE FROM stock_basic")
-        # Column names match the Dolt schema directly; dolt table import already
-        # typed the date/float columns and converted empty strings to NULL.
+        if before_total > 0:
+            _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop old stock_basic backup")
+            _checked_sql(
+                "RENAME TABLE stock_basic TO _sb_backup",
+                "rename stock_basic to backup",
+            )
+            renamed = True
+            _checked_sql(
+                "CREATE TABLE stock_basic LIKE _sb_backup",
+                "recreate stock_basic schema",
+            )
+
+        mapping = load_name_en_mapping()
+        # The fresh stock_basic is empty (recreated from backup or already
+        # empty), so no DELETE is needed.
         if mapping:
             # Dual-key JOIN: exact TRIMmed industry, or its Roman-numeral
             # suffix stripped (白酒Ⅱ → 白酒) so suffixed industries hit the
@@ -111,14 +156,35 @@ def _import_stock_basic() -> None:
             FROM _tmp_sb t
             {join}
         """
-        dolt_sql(sql)
+        _checked_sql(sql, "insert stock_basic")
+        # Validate the final table before dropping the backup, so a suspicious
+        # empty result can still restore the previous stock_basic.
+        stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
+        lines = stdout.strip().split("\n")
+        total = lines[-1] if len(lines) > 1 else "?"
+        if total in ("0", "?"):
+            print("  ERROR: stock_basic final count is suspiciously empty", file=sys.stderr)
+            raise RuntimeError("stock_basic import: final row count is empty")
+    except Exception:
+        failed = True
+        if renamed:
+            # Only restore when the original table has actually been renamed
+            # aside. If the backup/rename preparation failed, the original
+            # stock_basic is still intact and must not be touched.
+            _checked_sql("DROP TABLE IF EXISTS stock_basic", "drop partial stock_basic")
+            _checked_sql(
+                "RENAME TABLE _sb_backup TO stock_basic",
+                "restore stock_basic backup",
+            )
+        raise
     finally:
-        drop_name_en_mapping()
+        if mapping is not None:
+            drop_name_en_mapping()
+        if before_total > 0 and not failed:
+            _checked_sql("DROP TABLE IF EXISTS _sb_backup", "drop stock_basic backup")
+
     dolt_sql("DROP TABLE IF EXISTS _tmp_sb")
 
-    stdout = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic")
-    lines = stdout.strip().split("\n")
-    total = lines[-1] if len(lines) > 1 else "?"
     dolt_sql(
         "INSERT INTO data_updates (table_name, last_updated, source, row_count) "
         "VALUES ('stock_basic', CURDATE(), 'SSE/SZSE/BSE official', "
@@ -499,40 +565,51 @@ def dispatch_import(target: str) -> None:
     if target == "stock_basic":
         _import_stock_basic()
     elif target == "fin_indicators":
-        _import_fin_indicators()
+        _require_import(_import_fin_indicators(), "fin_indicators")
     elif target == "balance_sheet":
         import fetch_balance_sheet
 
-        fetch_balance_sheet.import_to_dolt()
+        _require_import(fetch_balance_sheet.import_to_dolt(), "fin_balance_sheet")
     elif target == "income":
         import fetch_income
 
-        fetch_income.import_to_dolt()
+        _require_import(fetch_income.import_to_dolt(), "fin_income")
     elif target == "cash_flow":
         import fetch_cash_flow
 
-        fetch_cash_flow.import_to_dolt()
+        _require_import(fetch_cash_flow.import_to_dolt(), "fin_cash_flow")
     elif target == "dragon":
         import fetch_dragon
 
-        fetch_dragon.import_to_dolt()
+        _require_import(fetch_dragon.import_to_dolt(), "dragon_list")
     elif target == "block_trade":
         import fetch_block_trade
 
-        fetch_block_trade.import_to_dolt()
+        _require_import(fetch_block_trade.import_to_dolt(), "block_trade")
     elif target == "institution_survey":
         import fetch_institution_survey
 
-        fetch_institution_survey.import_to_dolt()
+        _require_import(fetch_institution_survey.import_to_dolt(), "institution_survey")
     elif target == "main_flow":
         import fetch_main_flow
 
-        fetch_main_flow.import_to_dolt()
+        _require_import(fetch_main_flow.import_to_dolt(), "capital_main_flow")
 
     elif target == "index_daily":
         import fetch_index_daily
 
-        fetch_index_daily.import_to_dolt()
+        _require_import(fetch_index_daily.import_to_dolt(), "index_daily")
+
+
+def _require_import(result: int, label: str) -> None:
+    """Abort sync when an import reports zero rows.
+
+    ``import_replace_table`` returns the full row count after import and only
+    returns 0 when the CSV is missing or the SQL import failed, so a zero here
+    must stop the pipeline instead of silently continuing.
+    """
+    if result == 0:
+        raise RuntimeError(f"sync failed: {label} import returned 0 rows")
 
 
 def do_sync(restart: bool = False) -> None:
@@ -559,63 +636,63 @@ def do_sync(restart: bool = False) -> None:
 
     sys.argv = ["fetch_fin_indicators", "--incremental"]
     asyncio.run(fetch_fin_indicators.main())
-    _import_fin_indicators()
+    _require_import(_import_fin_indicators(), "fin_indicators")
 
     # 3. balance_sheet
     print("\n[sync] Fetching balance_sheet (incremental)...", file=sys.stderr)
     import fetch_balance_sheet
 
     asyncio.run(fetch_balance_sheet.run(incremental=True))
-    fetch_balance_sheet.import_to_dolt()
+    _require_import(fetch_balance_sheet.import_to_dolt(), "fin_balance_sheet")
 
     # 4. income
     print("\n[sync] Fetching income (incremental)...", file=sys.stderr)
     import fetch_income
 
     asyncio.run(fetch_income.run(incremental=True))
-    fetch_income.import_to_dolt()
+    _require_import(fetch_income.import_to_dolt(), "fin_income")
 
     # 5. cash_flow
     print("\n[sync] Fetching cash_flow (incremental)...", file=sys.stderr)
     import fetch_cash_flow
 
     asyncio.run(fetch_cash_flow.run(incremental=True))
-    fetch_cash_flow.import_to_dolt()
+    _require_import(fetch_cash_flow.import_to_dolt(), "fin_cash_flow")
 
     # 6. dragon_list (龙虎榜席位)
     print("\n[sync] Fetching dragon_list...", file=sys.stderr)
     import fetch_dragon
 
     asyncio.run(fetch_dragon.run())
-    fetch_dragon.import_to_dolt()
+    _require_import(fetch_dragon.import_to_dolt(), "dragon_list")
 
     # 7. block_trade (大宗交易)
     print("\n[sync] Fetching block_trade...", file=sys.stderr)
     import fetch_block_trade
 
     asyncio.run(fetch_block_trade.run())
-    fetch_block_trade.import_to_dolt()
+    _require_import(fetch_block_trade.import_to_dolt(), "block_trade")
 
     # 8. institution_survey (机构调研)
     print("\n[sync] Fetching institution_survey...", file=sys.stderr)
     import fetch_institution_survey
 
     asyncio.run(fetch_institution_survey.run())
-    fetch_institution_survey.import_to_dolt()
+    _require_import(fetch_institution_survey.import_to_dolt(), "institution_survey")
 
     # 10. main_flow (主力资金流)
     print("\n[sync] Fetching main_flow...", file=sys.stderr)
     import fetch_main_flow
 
     asyncio.run(fetch_main_flow.run())
-    fetch_main_flow.import_to_dolt()
+    _require_import(fetch_main_flow.import_to_dolt(), "capital_main_flow")
 
     # 11. index_daily (指数日线: 官方指数/行业板块)
     print("\n[sync] Fetching index_daily...", file=sys.stderr)
     import fetch_index_daily
 
     asyncio.run(fetch_index_daily.run())
-    fetch_index_daily.import_to_dolt()
+    _require_import(fetch_index_daily.import_to_dolt(), "index_daily")
 
     # Update data_updates for all tables
     print("\n[sync] Updating data_updates...", file=sys.stderr)

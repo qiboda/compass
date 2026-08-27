@@ -128,7 +128,7 @@ class TestArgparseDefaultOutputInCsvDir:
         scratch.mkdir()
         monkeypatch.chdir(scratch)
 
-        # All exchanges fail — main() still writes the header-only CSV.
+        # All exchanges fail — main() must abort instead of writing a junk CSV.
         stub = SyncStubSession()
 
         def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
@@ -144,10 +144,11 @@ class TestArgparseDefaultOutputInCsvDir:
             ["fetch_stock_basic_official.py", "--update-date", "2026-07-31"],
         )
 
-        fsbo.main()
+        with pytest.raises(SystemExit):
+            fsbo.main()
 
         out = csv_dir / "stock_basic_official.csv"
-        assert out.exists()
+        assert not out.exists()
         assert not (scratch / "stock_basic_official.csv").exists()
 
     async def test_stock_basic_default_output_in_csv_dir(
@@ -240,9 +241,10 @@ class TestOutputOverrideWins:
             ["fetch_stock_basic_official.py", "-o", str(override), "--update-date", "2026-07-31"],
         )
 
-        fsbo.main()
+        with pytest.raises(SystemExit):
+            fsbo.main()
 
-        assert override.exists()
+        assert not override.exists()
         assert not (csv_dir / "stock_basic_official.csv").exists()
 
     async def test_fin_indicators_output_flag_overrides(
