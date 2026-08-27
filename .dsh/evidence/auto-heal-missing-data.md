@@ -17,6 +17,7 @@
 | `2417446` | docs | Worktree investment_data symlink note |
 | `d9e53b0` | docs | Include doc commits in auto-heal evidence |
 | `1e320b2` | fix | Final review P1: per-table ranges, current-day exclusion, strict THS, first-run bootstrap, partial-compute repair |
+| `f3fcf65` | refactor | Remove pytest-only auto-heal skip shim |
 
 ## Verification
 
