@@ -5,7 +5,7 @@ use crate::error::{CollectError, Result};
 
 /// Serialises tests that mutate process-global environment variables.
 #[cfg(test)]
-pub(crate) static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static ENV_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 const DEFAULT_DOLT_DIR: &str = "/data/compass-data/compass_data";
 const DEFAULT_INVESTMENT_DIR: &str = "/data/compass-data/investment_data";
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn csv_dir_creates_and_resolves() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.blocking_lock();
         let dir = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var("COMPASS_CSV_DIR", dir.path());

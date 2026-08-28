@@ -39,12 +39,12 @@ fn symbol_expr() -> &'static str {
 pub fn daily_dates(years: &[i32]) -> Vec<String> {
     let mut dates = Vec::new();
     for &year in years {
-        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
-        let end = chrono::NaiveDate::from_ymd_opt(year, 12, 31).unwrap();
+        let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1).expect("valid calendar date");
+        let end = chrono::NaiveDate::from_ymd_opt(year, 12, 31).expect("valid calendar date");
         let mut d = start;
         while d <= end {
             dates.push(d.format("%Y-%m-%d").to_string());
-            d = d.succ_opt().unwrap();
+            d = d.succ_opt().expect("date in valid range");
         }
     }
     dates
@@ -58,7 +58,7 @@ fn explicit_range_dates(start: Option<&str>, end: Option<&str>) -> Result<Vec<St
                 value: s.into(),
             }
         })?,
-        None => chrono::NaiveDate::from_ymd_opt(START_YEAR, 1, 1).unwrap(),
+        None => chrono::NaiveDate::from_ymd_opt(START_YEAR, 1, 1).expect("valid calendar date"),
     };
     let end = match end {
         Some(s) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
@@ -79,7 +79,7 @@ fn explicit_range_dates(start: Option<&str>, end: Option<&str>) -> Result<Vec<St
     let mut d = start;
     while d <= end {
         dates.push(d.format("%Y-%m-%d").to_string());
-        d = d.succ_opt().unwrap();
+        d = d.succ_opt().expect("date in valid range");
     }
     Ok(dates)
 }
@@ -100,6 +100,50 @@ pub async fn fetch_date(
         page_size,
     )
     .await
+}
+
+async fn fetch_dates_inner(
+    client: &HttpClient,
+    throttle: &mut Throttle,
+    dates: &[String],
+    page_size: usize,
+    progress: &mut Progress,
+) -> Result<Vec<Record>> {
+    let mut all_records = Vec::new();
+    for (i, date) in dates.iter().enumerate() {
+        let records = fetch_date(client, throttle, date, page_size).await?;
+        eprintln!("[{}] {}", i + 1, date);
+        all_records.extend(records);
+        let _ = progress.update(
+            Some((i + 1) as u64),
+            Some(all_records.len() as u64),
+            Some(date.clone()),
+            Some(format!("Fetched {date}")),
+            None,
+        );
+    }
+    Ok(all_records)
+}
+
+async fn run_fetch(
+    client: &HttpClient,
+    throttle: &mut Throttle,
+    dates: &[String],
+    page_size: usize,
+    output_path: &Path,
+    progress: &mut Progress,
+) -> Result<PathBuf> {
+    match fetch_dates_inner(client, throttle, dates, page_size, progress).await {
+        Ok(records) => {
+            finish_block_trade(output_path, records, progress).await?;
+            Ok(output_path.to_path_buf())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(output_path);
+            let _ = progress.fail(&e.to_string(), "failed");
+            Err(e)
+        }
+    }
 }
 
 /// Run the block_trade collector: fetch all dates into a CSV.
@@ -131,29 +175,34 @@ pub async fn run(
             .into_iter()
             .filter(|d| d.as_str() <= today.as_str())
             .collect::<Vec<_>>();
-        if !all_dates.is_empty() {
-            if let Some(since) = crate::dolt::last_report_date(DOLT_TABLE).await? {
-                let filtered: Vec<String> = all_dates
-                    .into_iter()
-                    .filter(|d| d.as_str() > since.as_str())
-                    .collect();
-                if filtered.is_empty() {
-                    eprintln!("No new trade dates to fetch.");
-                    return Ok(output_path);
-                }
-                let client = HttpClient::new()?;
-                let mut throttle = Throttle::new(EM_MIN_INTERVAL);
-                let mut progress = Progress::new(
-                    "block_trade",
-                    Some(filtered.len() as u64),
-                    Some(output_path.clone()),
-                    "start",
-                )?;
-                let records =
-                    fetch_dates_inner(&client, &mut throttle, &filtered, page_size).await?;
-                finish_block_trade(&output_path, records, &mut progress).await?;
+        if !all_dates.is_empty()
+            && let Some(since) = crate::dolt::last_report_date(DOLT_TABLE).await?
+        {
+            let filtered: Vec<String> = all_dates
+                .into_iter()
+                .filter(|d| d.as_str() > since.as_str())
+                .collect();
+            if filtered.is_empty() {
+                eprintln!("No new trade dates to fetch.");
                 return Ok(output_path);
             }
+            let client = HttpClient::new()?;
+            let mut throttle = Throttle::new(EM_MIN_INTERVAL);
+            let mut progress = Progress::new(
+                "block_trade",
+                Some(filtered.len() as u64),
+                Some(output_path.clone()),
+                "start",
+            )?;
+            return run_fetch(
+                &client,
+                &mut throttle,
+                &filtered,
+                page_size,
+                &output_path,
+                &mut progress,
+            )
+            .await;
         }
         let client = HttpClient::new()?;
         let mut throttle = Throttle::new(EM_MIN_INTERVAL);
@@ -163,9 +212,15 @@ pub async fn run(
             Some(output_path.clone()),
             "start",
         )?;
-        let records = fetch_dates_inner(&client, &mut throttle, &all_dates, page_size).await?;
-        finish_block_trade(&output_path, records, &mut progress).await?;
-        return Ok(output_path);
+        return run_fetch(
+            &client,
+            &mut throttle,
+            &all_dates,
+            page_size,
+            &output_path,
+            &mut progress,
+        )
+        .await;
     }
 
     let client = HttpClient::new()?;
@@ -176,27 +231,15 @@ pub async fn run(
         Some(output_path.clone()),
         "start",
     )?;
-    let records = fetch_dates_inner(&client, &mut throttle, &all_dates, page_size).await?;
-    finish_block_trade(&output_path, records, &mut progress).await?;
-    Ok(output_path)
-}
-
-async fn fetch_dates_inner(
-    client: &HttpClient,
-    throttle: &mut Throttle,
-    dates: &[String],
-    page_size: usize,
-) -> Result<Vec<Record>> {
-    let mut all_records = Vec::new();
-    for (i, date) in dates.iter().enumerate() {
-        let records = fetch_date(client, throttle, date, page_size).await?;
-        eprintln!("[{}] {}", i + 1, date);
-        all_records.extend(records);
-        // Progress update is best-effort here; a failed progress write must
-        // not abort collection.
-        // TODO: switch to best-effort Progress when available.
-    }
-    Ok(all_records)
+    run_fetch(
+        &client,
+        &mut throttle,
+        &all_dates,
+        page_size,
+        &output_path,
+        &mut progress,
+    )
+    .await
 }
 
 async fn finish_block_trade(
