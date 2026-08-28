@@ -90,7 +90,9 @@ pub fn dedupe_csv(path: &Path, date_col: &str) -> Result<()> {
         return Ok(());
     }
 
-    let mut writer = csv::WriterBuilder::new().from_path(path)?;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all("\u{feff}".as_bytes())?;
+    let mut writer = csv::WriterBuilder::new().from_writer(file);
     writer.write_record(&headers)?;
     for key in order {
         if let Some(row) = seen.get(&key) {

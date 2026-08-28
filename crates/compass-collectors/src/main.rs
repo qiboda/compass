@@ -583,6 +583,9 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     other => return Err(format!("unknown flag {other}").into()),
                 }
             }
+            if !timeout.is_finite() || timeout <= 0.0 {
+                return Err("--timeout must be a positive finite number".into());
+            }
             let payload = check_proxy_pool::run_with(&api_url, count, timeout).await?;
             println!("{}", serde_json::to_string_pretty(&payload)?);
             Ok(())

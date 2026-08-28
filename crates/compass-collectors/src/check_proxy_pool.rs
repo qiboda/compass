@@ -82,7 +82,7 @@ pub async fn fetch_with_proxy(url: &str, proxy: &str, timeout: f64) -> (bool, f6
         Err(e) => return (false, start.elapsed().as_secs_f64(), Some(e.to_string())),
     };
     let mut request = client.client().get(url);
-    if let Ok(p) = wreq::Proxy::all(proxy) {
+    if let Ok(p) = wreq::Proxy::all(crate::proxy::ProxyPool::proxy_spec(proxy)) {
         request = request.proxy(p);
     } else {
         return (

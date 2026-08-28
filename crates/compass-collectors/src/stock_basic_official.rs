@@ -418,7 +418,7 @@ async fn fetch_sse(client: &HttpClient) -> Result<Value> {
         .header("User-Agent", USER_AGENT)
         .header("Referer", "https://www.sse.com.cn/");
     if let Some(proxy_url) = pool_proxy(&mut pool).await {
-        let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+        let p = wreq::Proxy::all(crate::proxy::ProxyPool::proxy_spec(&proxy_url)).map_err(|e| {
             crate::error::CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
         })?;
         request = request.proxy(p);
@@ -447,7 +447,7 @@ async fn fetch_szse_xlsx(client: &HttpClient, catalogid: &str, tabkey: &str) -> 
         .header("User-Agent", USER_AGENT)
         .header("Referer", "https://www.szse.cn/");
     if let Some(proxy_url) = pool_proxy(&mut pool).await {
-        let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+        let p = wreq::Proxy::all(crate::proxy::ProxyPool::proxy_spec(&proxy_url)).map_err(|e| {
             crate::error::CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
         })?;
         request = request.proxy(p);
@@ -474,7 +474,7 @@ async fn fetch_bse(client: &HttpClient) -> Result<Vec<Value>> {
         .get(BSE_LISTED_URL)
         .header("User-Agent", USER_AGENT);
     if let Some(proxy_url) = pool_proxy(&mut pool).await {
-        let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+        let p = wreq::Proxy::all(crate::proxy::ProxyPool::proxy_spec(&proxy_url)).map_err(|e| {
             crate::error::CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
         })?;
         warmup = warmup.proxy(p);
@@ -500,11 +500,12 @@ async fn fetch_bse(client: &HttpClient) -> Result<Vec<Value>> {
             .header("Referer", "https://www.bse.cn/nq/listedcompany.html")
             .header("X-Requested-With", "XMLHttpRequest");
         if let Some(proxy_url) = pool_proxy(&mut pool).await {
-            let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
-                crate::error::CollectError::InvalidInput(format!(
-                    "invalid proxy {proxy_url:?}: {e}"
-                ))
-            })?;
+            let p =
+                wreq::Proxy::all(crate::proxy::ProxyPool::proxy_spec(&proxy_url)).map_err(|e| {
+                    crate::error::CollectError::InvalidInput(format!(
+                        "invalid proxy {proxy_url:?}: {e}"
+                    ))
+                })?;
             request = request.proxy(p);
         }
         let response = request.send().await?;

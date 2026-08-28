@@ -63,7 +63,7 @@ impl HttpClient {
             request = request.query(&params);
         }
         if let Some(proxy_url) = proxy {
-            let p = Proxy::all(proxy_url).map_err(|e| {
+            let p = Proxy::all(crate::proxy::ProxyPool::proxy_spec(proxy_url)).map_err(|e| {
                 CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
             })?;
             request = request.proxy(p);
@@ -95,7 +95,7 @@ impl HttpClient {
             request = request.query(&params);
         }
         if let Some(proxy_url) = proxy {
-            let p = Proxy::all(proxy_url).map_err(|e| {
+            let p = Proxy::all(crate::proxy::ProxyPool::proxy_spec(proxy_url)).map_err(|e| {
                 CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
             })?;
             request = request.proxy(p);
@@ -127,7 +127,7 @@ impl HttpClient {
             request = request.query(&params);
         }
         if let Some(proxy_url) = proxy {
-            let p = Proxy::all(proxy_url).map_err(|e| {
+            let p = Proxy::all(crate::proxy::ProxyPool::proxy_spec(proxy_url)).map_err(|e| {
                 CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
             })?;
             request = request.proxy(p);
@@ -159,7 +159,7 @@ impl HttpClient {
             request = request.query(&params);
         }
         if let Some(proxy_url) = proxy {
-            let p = Proxy::all(proxy_url).map_err(|e| {
+            let p = Proxy::all(crate::proxy::ProxyPool::proxy_spec(proxy_url)).map_err(|e| {
                 CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
             })?;
             request = request.proxy(p);
@@ -189,7 +189,7 @@ impl HttpClient {
             request = request.header(k, v);
         }
         if let Some(proxy_url) = proxy {
-            let p = Proxy::all(proxy_url).map_err(|e| {
+            let p = Proxy::all(crate::proxy::ProxyPool::proxy_spec(proxy_url)).map_err(|e| {
                 CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
             })?;
             request = request.proxy(p);
