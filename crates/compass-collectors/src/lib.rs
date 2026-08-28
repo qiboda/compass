@@ -9,11 +9,15 @@ pub mod calendar;
 pub mod config;
 pub mod csv;
 pub mod dolt;
+pub mod dragon;
 pub mod eastmoney;
 pub mod error;
 pub mod http;
 pub mod incremental;
+pub mod institution_survey;
+pub mod main_flow;
 pub mod progress;
 pub mod proxy;
+pub mod stock_basic;
 
 pub use error::{CollectError, Result};

@@ -184,7 +184,13 @@ Dual-run 方法：
 
 - [x] 0. Worktree：已创建并注册，handoff 已读，分支与 origin/master 对齐（5115c3f）
 - [x] 2. Issue：epic #310 + 16 个子 issue（#311–#326）已创建
-- [x] 3. Plan：本文件已编写，待用户批准
-- [ ] 3.5/4. 对抗性测试与需求测试 RED：计划批准后逐批委派
-- [ ] 5b/5c. 文档与决策记录：随 B1/B7 实施
-- [ ] 实现、dual-run、PR、切换、Python 退役：批准后开始
+- [x] 3. Plan：本文件已编写，用户已批准（2026-08-28）
+- [ ] 3.5/4. 对抗性测试与需求测试 RED：B1/B2 首次委派返回 DEFERRED；首个可编译接口后的重新委派待补
+- [x] 5b/5c. 文档与决策记录：B1 已同步 architecture.md/plan；决策记录已含 MIG-1..4
+- [x] B1 基础设施：PR #327
+- [x] B2 pilot block_trade：PR #328
+- [x] B3 简单/日常采集器（dragon/institution_survey/main_flow/stock_basic）：本地实现 + 单元测试 + dual-run 通过，待 PR
+- [ ] B4 财务报表
+- [ ] B5 复杂/特殊
+- [ ] B6 编排 CLI
+- [ ] B7 切换/退役
