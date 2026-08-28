@@ -21,9 +21,9 @@ collectors 全量迁移到 Rust，消除 Python 采集层；时序统计作为�
 | 2 | 并行验证 | Rust 采集器与 Python 并行开发；dual-run 同数据对比等价后才切换 `update-database.sh`；全部批次完成后删除 Python |
 | 3 | PR 结构 | **每个批次一个 PR**（用户确认覆盖仓库默认“一个 epic = 一个 PR”） |
 | 4 | 新 crate | `crates/compass-collectors`，独立于 `compass-data` |
-| 5 | HTTP/TLS | `rquest`（Chrome TLS 指纹/HTTP2，替代 Python `curl_cffi`）；`reqwest-impersonate` 为备份；**不静默降级到 reqwest** |
+| 5 | HTTP/TLS | `wreq`（Chrome TLS 指纹/HTTP2，替代 Python `curl_cffi`）；`reqwest-impersonate` 为备份；**不静默降级到 reqwest** |
 | 6 | 等价性 | dual-run + 迁移测试：对比 CSV/Dolt 行数、日期覆盖、关键字段 |
-| 7 | 批次顺序 | 基础设施（HTTP/rquest、CSV、Dolt 写入、交易日历、progress）→ 一个简单 pilot（`block_trade`）→ 扩展到其余 |
+| 7 | 批次顺序 | 基础设施（HTTP/wreq、CSV、Dolt 写入、交易日历、progress）→ 一个简单 pilot（`block_trade`）→ 扩展到其余 |
 | 8 | 切换前 | 保留 Python/tests；`update-database.sh` 继续跑 Python 直到等价 |
 | 9 | 时序统计 | 本 epic 完成后单独处理 |
 
@@ -40,13 +40,13 @@ collectors 全量迁移到 Rust，消除 Python 采集层；时序统计作为�
   - 财务：`RPT_F10_FINANCE_GBALANCE`（319 字段）/ `GINCOME`（203）/ `GCASHFLOW`（254）/ `RPT_LICO_FN_CPD`（fin_indicators 增量锚点）。
   - 指数日线：EastMoney push2his + Tencent 回退 + THS 行业板块（GBK、逐年 BK kline）。
   - stock_basic：EastMoney 全量 + 三大交易所官方源（SSE JSON / SZSE XLSX / BSE JSON）两条路径。
-- Rust 侧现状：workspace 已有 `compass-core` / `compass-data` / `compass` 等；`compass-data` 已有 Dolt 子进程封装；依赖含 reqwest/rustls、serde、tokio、clap、tracing、chrono、duckdb、indicatif。**尚无 rquest**。
+- Rust 侧现状：workspace 已有 `compass-core` / `compass-data` / `compass` 等；`compass-data` 已有 Dolt 子进程封装；依赖含 reqwest/rustls、serde、tokio、clap、tracing、chrono、duckdb、indicatif。**尚无 wreq**。
 
 ## 子 issue 分解
 
 | 子 issue | 批次 | 内容 | 依赖 |
 |---|---|---|---|
-| [#311](https://github.com/qiboda/compass/issues/311) | B1 | `crates/compass-collectors` 搭建 + rquest HTTP/TLS 客户端 + 分页/节流 + 代理池客户端集成 | 无 |
+| [#311](https://github.com/qiboda/compass/issues/311) | B1 | `crates/compass-collectors` 搭建 + wreq HTTP/TLS 客户端 + 分页/节流 + 代理池客户端集成 | 无 |
 | [#312](https://github.com/qiboda/compass/issues/312) | B1 | CSV / Dolt 写入 / data_updates / 交易日历 / missing_dates / progress 基础设施 | #311 |
 | [#313](https://github.com/qiboda/compass/issues/313) | B2 | **pilot**：`block_trade` 迁移到 Rust | #311, #312 |
 | [#314](https://github.com/qiboda/compass/issues/314) | B3 | dragon_list 迁移 | #313 |
@@ -72,8 +72,8 @@ DAG（简）：`#311 → #312 → #313 → {#314,#315,#316,#317,#318,#319,#320,#
 `feat/migrate-collectors-to-rust` 上从当前 origin/master `5115c3f` 开始。
 
 ### B1 — 基础设施（PR 1）
-- `crates/compass-collectors` crate 注册到 workspace；补 `rquest` 依赖。
-- HTTP：rquest 客户端（chrome TLS/HTTP2）、`Throttle`、分页拉取、proxy 支持。
+- `crates/compass-collectors` crate 注册到 workspace；补 `wreq` 依赖。
+- HTTP：wreq 客户端（chrome TLS/HTTP2）、`Throttle`、分页拉取、proxy 支持。
 - 存储：CSV 输出/去重、Dolt 子进程 SQL、`import_replace_table`、data_updates 水位、
   `trade_calendar` / `missing_dates`、`Progress` / 状态。
 - 测试：Rust 单测 + stub 网络；与 Python `common.py` 行为等价。
@@ -146,7 +146,7 @@ Dual-run 方法：
 
 | 变更 | 文件 |
 |---|---|
-| 新采集 crate / 管线 / rquest 选型 | `.dsh/kb/design/architecture.md`（主）+ `.dsh/kb/design/data-providers.md`（如涉及 provider 侧） |
+| 新采集 crate / 管线 / wreq 选型 | `.dsh/kb/design/architecture.md`（主）+ `.dsh/kb/design/data-providers.md`（如涉及 provider 侧） |
 | 新 CLI（compass-collectors / update-database.sh 变化） | `.dsh/kb/user/cli.md`（主）+ `.dsh/kb/dev/process.md` |
 | 测试模式（Rust 采集器 stub/dual-run） | `.dsh/kb/dev/testing.md` |
 | 工作流/脚本变化 | `.dsh/kb/dev/process.md` |
@@ -155,7 +155,7 @@ Dual-run 方法：
 ## 决策记录（Gate 5c）
 
 实施时在 `.dsh/kb/design/architecture.md` 增加 `## 决策记录` 表格，至少包含：
-`crates/compass-collectors` 独立 crate、`rquest` 选型（vs reqwest-impersonate / reqwest）、
+`crates/compass-collectors` 独立 crate、`wreq` 选型（vs reqwest-impersonate / reqwest）、
 每批一个 PR、dual-run 等价门槛、Python 退役时机。若新 crate 有独立设计文档，
 同样带决策记录章节。
 
@@ -169,7 +169,7 @@ Dual-run 方法：
 
 ## 风险与开放问题
 
-1. **rquest 成熟度**：作为 Chrome TLS 指纹客户端可能遇到 API/编译/兼容问题；
+1. **wreq 成熟度**：作为 Chrome TLS 指纹客户端可能遇到 API/编译/兼容问题；
    锁定决策明确“报告用户，不静默降级 reqwest”。若必须降级，需用户批准。
 2. **端点兼容**：EastMoney/THS/交易所端点可能随 Rust HTTP 客户端行为变化；
    以 dual-run 数值对比为准，不凭“看起来像”判断。
