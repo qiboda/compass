@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::error::{CollectError, Result};
-use crate::http::{EM_BASE, HttpClient, Throttle};
+use crate::http::{EM_BASE, EM_MAX_RETRIES, HttpClient, Throttle};
 use crate::proxy::{DEFAULT_PROXY_MAX_ATTEMPTS, ProxyPool, make_proxy_pool};
 
 /// Ordered string record: a flattened API row as key/value pairs.
@@ -44,41 +44,59 @@ async fn request_json(
     params: &HashMap<String, String>,
     pool: &mut Option<ProxyPool>,
 ) -> Result<Value> {
-    let mut last_err = None;
-    for attempt in 0..=DEFAULT_PROXY_MAX_ATTEMPTS {
-        let proxy: Option<String> = if attempt < DEFAULT_PROXY_MAX_ATTEMPTS {
-            if let Some(pool) = pool.as_mut() {
-                pool.get_proxy().await
+    for retry in 0..EM_MAX_RETRIES {
+        let mut last_err = None;
+        for attempt in 0..=DEFAULT_PROXY_MAX_ATTEMPTS {
+            let proxy: Option<String> = if attempt < DEFAULT_PROXY_MAX_ATTEMPTS {
+                if let Some(pool) = pool.as_mut() {
+                    pool.get_proxy().await
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
-        throttle.acquire().await;
-        match client
-            .get_json_with_proxy(EM_BASE, params, proxy.as_deref())
-            .await
-        {
-            Ok(data) => return Ok(data),
-            Err(e) => {
-                if let Some(proxy_url) = proxy {
-                    if let Some(pool) = pool.as_ref() {
-                        pool.delete_proxy(&proxy_url).await;
+            };
+            throttle.acquire().await;
+            match client
+                .get_json_with_proxy(EM_BASE, params, proxy.as_deref())
+                .await
+            {
+                Ok(data) => return Ok(data),
+                Err(e) => {
+                    if let Some(proxy_url) = proxy {
+                        // Only network/CONNECT errors are bad-proxy signals;
+                        // HTTP statuses (429/5xx) are service-side and must
+                        // not poison the pool (collectors-proxy.md decision).
+                        if !matches!(e, CollectError::HttpStatus(_)) {
+                            if let Some(pool) = pool.as_ref() {
+                                pool.delete_proxy(&proxy_url).await;
+                            }
+                            continue;
+                        }
+                        last_err = Some(e);
+                        break;
                     }
-                    continue;
+                    last_err = Some(e);
+                    break;
                 }
-                last_err = Some(e);
-                break;
             }
         }
+        if let Some(e) = last_err {
+            if retry + 1 < EM_MAX_RETRIES {
+                let wait = if matches!(e, CollectError::HttpStatus(429)) {
+                    std::time::Duration::from_secs(15)
+                } else {
+                    std::time::Duration::from_millis(((1u64 << retry.min(5)) * 1000).min(30_000))
+                };
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            return Err(e);
+        }
     }
-    match last_err {
-        Some(e) => Err(e),
-        None => Err(CollectError::InvalidInput(
-            "request failed without a recorded error".into(),
-        )),
-    }
+    Err(CollectError::InvalidInput(
+        "request failed without a recorded error".into(),
+    ))
 }
 
 /// Fetch all pages for a single EastMoney report period.
