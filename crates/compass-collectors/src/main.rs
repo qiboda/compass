@@ -1,6 +1,9 @@
 use std::process::ExitCode;
 
-use compass_collectors::{block_trade, dragon, institution_survey, main_flow, stock_basic};
+use compass_collectors::{
+    balance_sheet, block_trade, cash_flow, dragon, fin_indicators, income, institution_survey,
+    main_flow, stock_basic,
+};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -12,6 +15,57 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+struct FinancialCliArgs {
+    years: Option<Vec<i32>>,
+    periods: String,
+    page_size: usize,
+    incremental: bool,
+}
+
+fn parse_financial_args(args: &[String]) -> Result<FinancialCliArgs, Box<dyn std::error::Error>> {
+    let mut years: Option<Vec<i32>> = None;
+    let mut periods = "Q1,Q2,Q3,FY".to_string();
+    let mut page_size = 100usize;
+    let mut incremental = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--years" => {
+                let raw = args.get(i + 1).ok_or("--years requires a value")?;
+                years = Some(
+                    raw.split(',')
+                        .filter_map(|s| s.trim().parse::<i32>().ok())
+                        .collect(),
+                );
+                i += 2;
+            }
+            "--periods" => {
+                periods = args
+                    .get(i + 1)
+                    .ok_or("--periods requires a value")?
+                    .to_string();
+                i += 2;
+            }
+            "--page-size" => {
+                let raw = args.get(i + 1).ok_or("--page-size requires a value")?;
+                page_size = raw.parse()?;
+                i += 2;
+            }
+            "--incremental" => {
+                incremental = true;
+                i += 1;
+            }
+            other => return Err(format!("unknown flag {other}").into()),
+        }
+    }
+    Ok(FinancialCliArgs {
+        years,
+        periods,
+        page_size,
+        incremental,
+    })
 }
 
 async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -193,6 +247,54 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", out.display());
             Ok(())
         }
+        "fin-indicators" | "fin_indicators" => {
+            let args = parse_financial_args(args)?;
+            let out = fin_indicators::run(
+                args.years.as_deref(),
+                &args.periods,
+                args.page_size,
+                args.incremental,
+            )
+            .await?;
+            println!("{}", out.display());
+            Ok(())
+        }
+        "balance-sheet" | "balance_sheet" => {
+            let args = parse_financial_args(args)?;
+            let out = balance_sheet::run(
+                args.years.as_deref(),
+                &args.periods,
+                args.page_size,
+                args.incremental,
+            )
+            .await?;
+            println!("{}", out.display());
+            Ok(())
+        }
+        "income" => {
+            let args = parse_financial_args(args)?;
+            let out = income::run(
+                args.years.as_deref(),
+                &args.periods,
+                args.page_size,
+                args.incremental,
+            )
+            .await?;
+            println!("{}", out.display());
+            Ok(())
+        }
+        "cash-flow" | "cash_flow" => {
+            let args = parse_financial_args(args)?;
+            let out = cash_flow::run(
+                args.years.as_deref(),
+                &args.periods,
+                args.page_size,
+                args.incremental,
+            )
+            .await?;
+            println!("{}", out.display());
+            Ok(())
+        }
         _ => {
             print_usage();
             Ok(())
@@ -209,6 +311,10 @@ fn print_usage() {
          \x20 institution-survey [--start-date D] [--page-size N]\n\
          \x20 main-flow [--page-size N]\n\
          \x20 main-flow-backfill --start D --end D [--symbols S,S]\n\
+         \x20 fin-indicators [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\
+         \x20 balance-sheet [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\
+         \x20 income [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\
+         \x20 cash-flow [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\
          \x20 stock-basic [--output PATH] [--page-size N] [--max-pages N]"
     );
 }

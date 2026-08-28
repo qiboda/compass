@@ -445,10 +445,12 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 同一作者/同一指纹方案，不是降级到 reqwest），Chrome 142 指纹由 `wreq-util`
 提供。迁移按批次推进：B1 基础设施 → B2 pilot（block_trade）→ B3
 （dragon_list、institution_survey、main_flow、stock_basic EastMoney）→
-B4 财务报表 → B5 复杂/特殊 → B6 编排 CLI → B7 切换/退役 Python。
+B4 财务报表（fin_indicators、balance_sheet、income、cash_flow）→
+B5 复杂/特殊 → B6 编排 CLI → B7 切换/退役 Python。
 每批一个 PR。Python 采集器与 `update-database.sh`
 保持不变，直到 dual-run 等价。B3 的 `main_flow` 同时迁移了
-`backfill`（fflow/daykline 逐股历史回补）路径。
+`backfill`（fflow/daykline 逐股历史回补）路径；B4 的财务三表通过
+`crates/compass-collectors::financial` 共享 fetch/upsert 逻辑，仅 DDL/列清单各自保留。
 
 ### 自动回补缺失数据（issue #308）
 

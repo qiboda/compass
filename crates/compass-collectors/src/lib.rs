@@ -4,15 +4,20 @@
 //! write/import, trading-calendar helpers, proxy-pool client and progress
 //! tracking, as the infrastructure for A-share data collectors.
 
+pub mod balance_sheet;
 pub mod block_trade;
 pub mod calendar;
+pub mod cash_flow;
 pub mod config;
 pub mod csv;
 pub mod dolt;
 pub mod dragon;
 pub mod eastmoney;
 pub mod error;
+pub mod fin_indicators;
+pub mod financial;
 pub mod http;
+pub mod income;
 pub mod incremental;
 pub mod institution_survey;
 pub mod main_flow;
