@@ -1,20 +1,8 @@
 #!/bin/bash
-# pre-commit hook — fast Python lint + Rust fmt check before commit.
-# Full Rust + Python suites run in pre-push.
+# pre-commit hook — fast Rust fmt check before commit.
+# Full Rust suite runs in pre-push.
 
 has_error=0
-
-if [ -d "collectors" ] && [ -f "collectors/pyproject.toml" ]; then
-    changed_py=$(git diff --cached --name-only --diff-filter=ACM | grep '^collectors/.*\.py$' || true)
-    if [ -n "$changed_py" ]; then
-        echo "pre-commit: ruff check (Python)..."
-        cd collectors
-        if ! uv run ruff check *.py tests/ --output-format=concise 2>&1; then
-            has_error=1
-        fi
-        cd - > /dev/null
-    fi
-fi
 
 echo "pre-commit: cargo fmt --check..."
 if ! cargo fmt --check; then
@@ -25,7 +13,6 @@ fi
 
 if [ $has_error -ne 0 ]; then
     echo ""
-    echo "Run: cd collectors && uv run ruff check *.py tests/ --fix"
     echo "     cargo fmt"
     exit 1
 fi

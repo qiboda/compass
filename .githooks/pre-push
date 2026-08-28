@@ -5,8 +5,6 @@
 # 2. cargo clippy (must be warning-free)
 # 3. cargo doc (must be warning-free)
 # 4. "ref #N" in commit messages must point to open issues
-# 5. Python lint + tests (if collectors/pyproject.toml exists)
-#
 # CI gating for PRs is enforced by branch protection on master
 # (9 required status checks, strict) — see .dsh/kb/dev/process.md.
 # This hook intentionally does NOT check master CI status: that check
@@ -45,27 +43,6 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1; then
     echo "  Add /// doc comments to all public items and re-run."
     echo ""
     has_error=1
-fi
-
-# --- Quality gate: Python lint + test ---
-if [ -d "collectors" ] && [ -f "collectors/pyproject.toml" ]; then
-    echo "pre-push: Python ruff check..."
-    if ! (cd collectors && uv run ruff check *.py tests/ 2>&1); then
-        echo ""
-        echo "ERROR: Python lint found issues."
-        echo "  Run: cd collectors && uv run ruff check *.py tests/ --fix"
-        echo ""
-        has_error=1
-    fi
-
-    echo "pre-push: Python pytest..."
-    if ! (cd collectors && uv run pytest tests/ -q 2>&1); then
-        echo ""
-        echo "ERROR: Python tests failed."
-        echo "  Run: cd collectors && uv run pytest tests/ -v"
-        echo ""
-        has_error=1
-    fi
 fi
 
 # --- Issue reference validation ---

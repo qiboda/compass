@@ -38,9 +38,7 @@ pub fn name_en_mapping_path() -> PathBuf {
     if let Ok(v) = env::var("COMPASS_NAME_EN_MAPPING") {
         PathBuf::from(v)
     } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("collectors/name_en_mapping.csv")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/name_en_mapping.csv")
     }
 }
 
@@ -75,6 +73,17 @@ pub fn ensure_dolt_repo(dir: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_en_mapping_path_resolves_to_crate_data() {
+        let path = name_en_mapping_path();
+        assert!(
+            path.ends_with("data/name_en_mapping.csv"),
+            "unexpected path: {}",
+            path.display()
+        );
+        assert!(path.exists(), "mapping CSV must exist: {}", path.display());
+    }
 
     #[test]
     fn csv_dir_creates_and_resolves() {

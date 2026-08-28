@@ -6,7 +6,7 @@
 #   0. sync:        sync-investment-data.sh          (investment_data Dolt ← upstream)
 #   1. market data: compass-data import              (investment_data Dolt → Parquet)
 #   1b. verify:     check-stock-daily gaps           (missing trading day ⇒ hard fail)
-#   2. collect:     collectors main.py sync          (all compass_data sources → Dolt, auto-heal gaps)
+#   2. collect:     compass-collectors sync         (all compass_data sources → Dolt, auto-heal gaps)
 #   3. Dolt commit: collector tables                 (limited add, push; skipped when clean)
 #   4. import:      import-compass 11 tables         (9 incremental/anchored + stock_basic/index_basic full)
 #   5. backfill:    sepa backfill-dates              (compute missing derived SEPA dates)
@@ -14,7 +14,7 @@
 #   7. Dolt commit: compute tables                   (limited add, push; skipped when clean)
 #   8. print TOP50: reuse step 6 output, never recompute
 #
-# Idempotency: collectors/main.py sync skips already-fetched dates (data_updates.
+# Idempotency: compass-collectors sync skips already-fetched dates (data_updates.
 # last_report_date); the sepa CLI write-back is DELETE+append per trade_date; the
 # Dolt commits are skipped when none of the allowlisted tables changed. The whole
 # script can be re-run any day without double-counting or data loss.
@@ -22,7 +22,7 @@
 # Usage:
 #   scripts/update-database.sh
 #
-# Requires: dolt + uv + cargo on PATH, DoltHub credentials (dolt creds ls),
+# Requires: dolt + cargo on PATH, DoltHub credentials (dolt creds ls),
 #           local Dolt repos at the default paths below.
 # Env overrides (used by scripts/tests/test-update-database.sh):
 #   SEPA_INVESTMENT_DATA_DIR, SEPA_COMPASS_DATA_DIR, PARQUET_DIR
@@ -37,7 +37,7 @@ PARQUET_DIR="${PARQUET_DIR:-/data/compass-data/parquet_data}"
 # Test hook: point at a fake sync script in the shell unit tests.
 SYNC_INVESTMENT_SCRIPT="${SYNC_INVESTMENT_SCRIPT:-scripts/sync-investment-data.sh}"
 
-# Pass the resolved absolute Dolt paths to child scripts/collectors so a
+# Pass the resolved absolute Dolt paths to child scripts/compass-collectors so a
 # worktree without the gitignored repo-root symlink still works.
 export COMPASS_INVESTMENT_DATA_DIR="${COMPASS_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DIR}"
 export SEPA_INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DIR}"
@@ -108,11 +108,6 @@ if ! command -v dolt &>/dev/null; then
     exit 1
 fi
 
-if ! command -v uv &>/dev/null; then
-    red "error: uv not found on PATH (required by collectors)"
-    exit 1
-fi
-
 if ! command -v cargo &>/dev/null; then
     red "error: cargo not found on PATH"
     exit 1
@@ -160,13 +155,13 @@ if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- check-stock-daily \
 fi
 
 # --- 2. Collect: all compass_data sources → Dolt ---
-# collectors/main.py sync is the single full-refresh entry: it fetches and imports
+# compass-collectors sync is the single full-refresh entry: it fetches and imports
 # stock_basic, all four financial tables, the SEPA time-series tables, and
 # index_daily (index_basic is written as a side effect of index_daily import).
 # Keeping one generation/import entry point means the shell no longer maintains a
 # separate per-source fetch/import list.
-run_step 2 "collect all compass_data sources (main.py sync)" "$PROJECT_ROOT/collectors" \
-    uv run python main.py sync
+run_step 2 "collect all compass_data sources (compass-collectors sync)" "$PROJECT_ROOT" \
+    cargo run --bin compass-collectors -- sync
 
 # --- 3. Dolt commit: collector tables ---
 info "Step 3: Dolt commit collector tables"
