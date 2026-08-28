@@ -394,3 +394,27 @@
 - 已在 `.dsh/evidence/b3-migrate-collectors-to-rust.md` 落盘 B3 dual-run 证据与已知缺口。
 - 建议后续将 dual-run 模板统一为“isolated DATA_DIR + argv 传参 + Dolt optional import”并形成脚本模板（proposed）。
 - 建议创建/推进独立 requirement/adversarial 测试委派任务和 Dolt 级 dual-run issue（proposed）。
+
+## 2026-08-29 — ref #318, #319, #320, #321 B4 financial collectors Rust 迁移
+
+**What was done**: 将 fin_indicators、balance_sheet、income、cash_flow 四个财务采集器移植到 `crates/compass-collectors`；新增共享 `financial` fetch/upsert 模块与各自的 DDL/COLS 常量、CLI 命令和 `dual_run_financial.sh`；2026 Q1 四个 dual-run 均通过（5908/7041/7175/7039 行，且最终脚本做全列值比较）。Python/update-database.sh 未动。
+
+**User corrections** (if any): 无。
+
+**What went wrong**:
+1. 初版把 fin_indicators（RPT_LICO_FN_CPD）直接复用 F10 共享 non-incremental 路径，导致错误地用 Dolt `last_report_date` 过滤、CSV 不 append/dedupe、state.json 不写；同时 shared incremental 对 CPD 使用 `REPORT_DATE`，而 API 列是 `REPORTDATE`。review 抓出后改为 fin_indicators 自有 run 实现。
+2. 初版 `dual_run_financial.sh` 只比较 row count + identity key，数值变化检测不到；review 后升级为全列 canonical 值比较。
+3. 生成器写出 Rust 文件后残留 `{{`/`}}`（模板 `.replace` 未替换），且给 `FinancialConfig` 新增字段时用脚本插入位置错误，把配置文件头搞乱；经 fmt/check 后手工修复。
+4. Python 调用路径在脚本中写成 `collectors/fetch_*.py` 而子 shell 已 `cd collectors`，第一次运行报路径错误；改为 basename。
+5. 仍保留已知缺口：Dolt 级 dual-run 未做、独立 RED/要求测试未委派（gate 3.5/4 开放）、financial 各模块无独立 Rust 测试（仅 shared 3 个）。
+
+**Lessons learned**:
+1. 共享 fetch 抽象必须保留模块级特殊列名/锚点语义（`REPORTDATE` vs `REPORT_DATE`），不能让“看起来相似”的 F10 三表掩盖 CPD 的差异。
+2. 自动生成 Rust 常量/包装器后要立即 fmt+check，并检查生成的函数体没有被模板转义文本污染。
+3. 迁移类 dual-run 应比较全列值（数值规范化），不能只比 key/row count。
+4. 大 PR 的 review 应优先检查“共享路径是否真的适用于所有调用者”，不是只看编译通过。
+
+**Process improvements**:
+- fin_indicators 已改为自有 fetch/state 实现，避免共享 CPD 语义错误。
+- 建议后续将 dual-run 模板统一为“全列值比较 + Dolt import 可选”并成为脚本模板（proposed）。
+- 建议为 B4 各模块补至少 DDL/COLS 一致性单测，并继续推进独立 RED/要求测试（proposed）。
