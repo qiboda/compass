@@ -2,25 +2,30 @@
 # Dual-run comparison for the block_trade pilot: fetch the same date with the
 # Python collector and the Rust collector, then compare row count, date
 # coverage and key numeric fields (floating-point text representation is
-# normalized before comparison).
+# normalized before comparison). Date args are passed as argv to Python.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$REPO_ROOT"
 START="${1:-2026-08-27}"
 END="${2:-$START}"
 RUST_DIR="$(mktemp -d)"
 PY_DIR="$(mktemp -d)"
-trap 'rm -rf "$RUST_DIR" "$PY_DIR"' EXIT
+DATA_DIR="$(mktemp -d)"
+trap 'rm -rf "$RUST_DIR" "$PY_DIR" "$DATA_DIR"' EXIT
 
 echo "== Rust =="
-COMPASS_CSV_DIR="$RUST_DIR" cargo run -p compass-collectors -- block-trade --start "$START" --end "$END"
+COMPASS_CSV_DIR="$RUST_DIR" COMPASS_DATA_DIR="$DATA_DIR" cargo run -p compass-collectors -- block-trade --start "$START" --end "$END"
 
 echo "== Python =="
-(cd "$REPO_ROOT/collectors" && COMPASS_CSV_DIR="$PY_DIR" uv run python -c "
+(cd "$REPO_ROOT/collectors" && COMPASS_CSV_DIR="$PY_DIR" COMPASS_DATA_DIR="$DATA_DIR" uv run python - "$START" "$END" <<'PY'
 import asyncio
+import sys
 from fetch_block_trade import run
-asyncio.run(run(start='$START', end='$END'))
-")
+
+asyncio.run(run(start=sys.argv[1], end=sys.argv[2]))
+PY
+)
 
 python3 - "$START" "$END" "$RUST_DIR" "$PY_DIR" <<'PY'
 import csv
@@ -30,9 +35,10 @@ from pathlib import Path
 start, end, rust_dir, py_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
 
 def load(path):
+    if not path.exists():
+        return []
     with open(path, encoding='utf-8-sig') as f:
-        rows = list(csv.DictReader(f))
-    return rows
+        return list(csv.DictReader(f))
 
 def num(v):
     try:
