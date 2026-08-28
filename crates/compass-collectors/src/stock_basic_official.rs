@@ -744,7 +744,9 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
 
     let before_total: u64 = if dolt_table_exists("stock_basic").await? {
         let out = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").await?;
-        last_csv_cell(&out).parse().unwrap_or(0)
+        last_csv_cell(&out).parse().map_err(|_| {
+            CollectError::InvalidInput("stock_basic import: cannot read stock_basic count".into())
+        })?
     } else {
         0
     };
@@ -808,7 +810,11 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
         checked_sql(&sql, "insert stock_basic").await?;
 
         let out = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").await?;
-        let total: u64 = last_csv_cell(&out).parse().unwrap_or(0);
+        let total: u64 = last_csv_cell(&out).parse().map_err(|_| {
+            CollectError::InvalidInput(
+                "stock_basic import: cannot read final stock_basic count".into(),
+            )
+        })?;
         if total == 0 {
             return Err(CollectError::InvalidInput(
                 "stock_basic import: final row count is empty".into(),
@@ -823,7 +829,11 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
             let total: u64 =
                 last_csv_cell(&dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").await?)
                     .parse()
-                    .unwrap_or(0);
+                    .map_err(|_| {
+                        CollectError::InvalidInput(
+                            "stock_basic import: cannot read final stock_basic count".into(),
+                        )
+                    })?;
             if renamed {
                 let _ = dolt_sql("DROP TABLE IF EXISTS _sb_backup").await;
             }
@@ -850,7 +860,8 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
             }
             let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_sb").await;
             let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_name_en").await;
-            let _ = dolt_sql("DROP TABLE IF EXISTS _sb_backup").await;
+            // On the restore path, keep `_sb_backup` if the RENAME failed:
+            // it may be the only remaining copy of the previous stock_basic.
             Err(e)
         }
     }

@@ -318,10 +318,17 @@ async fn run_dolt_investment(args: &[&str]) -> Result<()> {
     let dir_str = dir
         .to_str()
         .ok_or_else(|| CollectError::InvalidInput("non-UTF8 investment path".into()))?;
-    let output = Command::new("dolt")
-        .args(["--data-dir", dir_str])
-        .args(args)
-        .output()?;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        tokio::process::Command::new("dolt")
+            .args(["--data-dir", dir_str])
+            .args(args)
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        CollectError::InvalidInput(format!("dolt {} timed out after 300s", args.join(" ")))
+    })??;
     if output.status.success() {
         Ok(())
     } else {
@@ -361,8 +368,10 @@ pub async fn sync_investment(restart: bool) -> Result<()> {
             .join("scripts/start-dolt-server.sh");
         if server_script.exists() {
             eprintln!("[sync-investment] Restarting server...");
-            let _ = Command::new("bash")
+            let _ = Command::new("nohup")
+                .arg("bash")
                 .arg(&server_script)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();

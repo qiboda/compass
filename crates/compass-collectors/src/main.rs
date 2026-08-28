@@ -92,11 +92,30 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 match args[i].as_str() {
                     "--years" => {
                         let raw = args.get(i + 1).ok_or("--years requires a value")?;
-                        years = Some(
-                            raw.split(',')
-                                .filter_map(|s| s.trim().parse::<i32>().ok())
-                                .collect(),
-                        );
+                        if raw.is_empty() {
+                            years = None;
+                        } else {
+                            let mut parsed = Vec::new();
+                            for part in raw.split(',') {
+                                let part = part.trim();
+                                if part.is_empty() {
+                                    continue;
+                                }
+                                match part.parse::<i32>() {
+                                    Ok(y) => parsed.push(y),
+                                    Err(_) => {
+                                        return Err(
+                                            format!("invalid year in --years: {part}").into()
+                                        );
+                                    }
+                                }
+                            }
+                            years = if parsed.is_empty() {
+                                None
+                            } else {
+                                Some(parsed)
+                            };
+                        }
                         i += 2;
                     }
                     "--incremental" => {
@@ -106,17 +125,15 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     other => return Err(format!("unknown fetch flag {other}").into()),
                 }
             }
-            if let Some(ref years) = years
-                && years.is_empty()
-            {
-                return Err("--years contains no valid years".into());
-            }
             let out = orchestrate::fetch(target, years.as_deref(), incremental).await?;
             println!("{}", out.display());
             Ok(())
         }
         "import" => {
             let target = args.get(1).ok_or("import requires a target")?;
+            if args.len() > 2 {
+                return Err(format!("unknown import argument: {}", args[2]).into());
+            }
             orchestrate::import_target(target).await?;
             Ok(())
         }
@@ -131,6 +148,9 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                         i += 1;
                     }
                     other if !other.starts_with('-') => {
+                        if target.is_some() {
+                            return Err("progress accepts at most one target".into());
+                        }
                         target = Some(other.to_string());
                         i += 1;
                     }
@@ -141,6 +161,9 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         "sync" => {
+            if args.len() > 1 {
+                return Err(format!("unknown sync argument: {}", args[1]).into());
+            }
             orchestrate::sync(false).await?;
             Ok(())
         }
@@ -703,6 +726,7 @@ fn print_usage() {
          \x20 sync\n\
          \x20 sync-investment [--restart]\n\
          \x20 progress [target] [--json]\n\
+         \x20 backfill --table T START END [--table ...]\n\
          \x20 block-trade [--start D] [--end D] [--years Y,Y] [--page-size N]\n\
          \x20 dragon [--start D] [--end D] [--page-size N]\n\
          \x20 institution-survey [--start-date D] [--page-size N]\n\
