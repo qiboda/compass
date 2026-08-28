@@ -101,8 +101,9 @@ fn trade_date_from_quotes(diff: &[Value]) -> String {
             latest = latest.max(ts);
         }
     }
-    if latest > 0 {
-        let dt = chrono::DateTime::from_timestamp(latest, 0).expect("valid epoch");
+    if latest > 0
+        && let Some(dt) = chrono::DateTime::from_timestamp(latest, 0)
+    {
         let bj = dt + chrono::Duration::hours(8);
         return bj.date_naive().format("%Y-%m-%d").to_string();
     }
@@ -266,12 +267,8 @@ async fn fetch_snapshot(
         if data_total > 0 {
             total = data_total;
         }
-        let before = all_items.len();
         all_items.extend(items);
         if total > 0 && all_items.len() >= total as usize {
-            break;
-        }
-        if all_items.len() == before {
             break;
         }
         page += 1;
@@ -531,8 +528,57 @@ mod tests {
             serde_json::json!({"f124": 1_700_000_100u64}),
         ];
         let d = trade_date_from_quotes(&diff);
-        assert_eq!(d.len(), 10);
-        assert!(d.as_str() > "1970-01-01");
+        assert_eq!(d, "2023-11-15");
+    }
+
+    #[test]
+    fn trade_date_falls_back_to_today_without_f124() {
+        let d = trade_date_from_quotes(&[serde_json::json!({})]);
+        assert_eq!(d, today());
+    }
+
+    #[test]
+    fn build_records_maps_push2_fields() {
+        let diff = vec![serde_json::json!({
+            "f12": "600519",
+            "f62": "1.5",
+            "f184": "-2",
+            "f66": "3",
+            "f72": "4",
+            "f78": "5",
+            "f84": "6",
+            "f124": 1_700_000_000u64
+        })];
+        let records = build_records(&diff, "2023-11-15");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].symbol, "SH600519");
+        assert_eq!(records[0].main_net_inflow, "1.5");
+        assert_eq!(records[0].small_net, "6");
+    }
+
+    #[test]
+    fn fflow_record_maps_fields_in_order() {
+        let r = fflow_record("SH600519", "2026-07-31,1.0,2.0,3.0,4.0,5.0,6.0").unwrap();
+        assert_eq!(r.trade_date, "2026-07-31");
+        assert_eq!(r.main_net_inflow, "1");
+        assert_eq!(r.small_net, "2");
+        assert_eq!(r.medium_net, "3");
+        assert_eq!(r.large_net, "4");
+        assert_eq!(r.super_large_net, "5");
+        assert_eq!(r.main_net_inflow_rate, "6");
+    }
+
+    #[test]
+    fn fflow_record_short_row_returns_none() {
+        assert!(fflow_record("SH600519", "2026-07-31,1").is_none());
+    }
+
+    #[tokio::test]
+    async fn backfill_rejects_inverted_before_network() {
+        let err = backfill("2026-08-28", "2026-08-27", Some(&[]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CollectError::InvertedRange { .. }));
     }
 
     #[test]

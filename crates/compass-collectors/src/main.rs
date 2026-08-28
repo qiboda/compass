@@ -127,6 +127,40 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", out.display());
             Ok(())
         }
+        "main-flow-backfill" | "main_flow_backfill" => {
+            let mut start = None;
+            let mut end = None;
+            let mut symbols: Option<Vec<String>> = None;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--start" => {
+                        start = Some(args.get(i + 1).ok_or("--start requires a value")?.as_str());
+                        i += 2;
+                    }
+                    "--end" => {
+                        end = Some(args.get(i + 1).ok_or("--end requires a value")?.as_str());
+                        i += 2;
+                    }
+                    "--symbols" => {
+                        let raw = args.get(i + 1).ok_or("--symbols requires a value")?;
+                        symbols = Some(
+                            raw.split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect(),
+                        );
+                        i += 2;
+                    }
+                    other => return Err(format!("unknown flag {other}").into()),
+                }
+            }
+            let start = start.ok_or("--start is required")?;
+            let end = end.ok_or("--end is required")?;
+            let out = main_flow::backfill(start, end, symbols.as_deref()).await?;
+            println!("{}", out.display());
+            Ok(())
+        }
         "stock-basic" | "stock_basic" => {
             let mut output: Option<String> = None;
             let mut page_size = 100usize;
@@ -174,6 +208,7 @@ fn print_usage() {
          \x20 dragon [--start D] [--end D] [--page-size N]\n\
          \x20 institution-survey [--start-date D] [--page-size N]\n\
          \x20 main-flow [--page-size N]\n\
+         \x20 main-flow-backfill --start D --end D [--symbols S,S]\n\
          \x20 stock-basic [--output PATH] [--page-size N] [--max-pages N]"
     );
 }

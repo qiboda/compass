@@ -155,7 +155,9 @@ async fn fetch_page(
             }
         }
     }
-    unreachable!("retry loop always returns or errors")
+    Err(crate::error::CollectError::InvalidInput(
+        "stock_basic fetch loop exhausted without a result".into(),
+    ))
 }
 
 /// Fetch A-share stock basic info from EastMoney into a CSV.

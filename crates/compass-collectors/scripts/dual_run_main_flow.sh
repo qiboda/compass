@@ -8,14 +8,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO_ROOT"
 RUST_DIR="$(mktemp -d)"
+DATA_DIR="$(mktemp -d)"
 PY_DIR="$(mktemp -d)"
-trap 'rm -rf "$RUST_DIR" "$PY_DIR"' EXIT
+trap 'rm -rf "$RUST_DIR" "$PY_DIR" "$DATA_DIR"' EXIT
 
 echo "== Rust =="
-COMPASS_CSV_DIR="$RUST_DIR" cargo run -p compass-collectors -- main-flow
+COMPASS_CSV_DIR="$RUST_DIR" COMPASS_DATA_DIR="$DATA_DIR" cargo run -p compass-collectors -- main-flow
 
 echo "== Python =="
-(cd "$REPO_ROOT/collectors" && COMPASS_CSV_DIR="$PY_DIR" uv run python -c "
+(cd "$REPO_ROOT/collectors" && COMPASS_CSV_DIR="$PY_DIR" COMPASS_DATA_DIR="$DATA_DIR" uv run python -c "
 import asyncio
 from fetch_main_flow import run
 asyncio.run(run())

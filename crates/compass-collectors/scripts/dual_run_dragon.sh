@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Dual-run comparison for dragon_list: fetch the same date range with the
 # Python collector and the Rust collector, then compare row count, seat_type
-# distribution and aggregated amount fields.
+# distribution and aggregated amount fields. Date args are passed as argv to
+# the Python helper, never interpolated into code.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -9,18 +10,22 @@ cd "$REPO_ROOT"
 START="${1:-2026-08-27}"
 END="${2:-$START}"
 RUST_DIR="$(mktemp -d)"
+DATA_DIR="$(mktemp -d)"
 PY_DIR="$(mktemp -d)"
-trap 'rm -rf "$RUST_DIR" "$PY_DIR"' EXIT
+trap 'rm -rf "$RUST_DIR" "$PY_DIR" "$DATA_DIR"' EXIT
 
 echo "== Rust =="
-COMPASS_CSV_DIR="$RUST_DIR" cargo run -p compass-collectors -- dragon --start "$START" --end "$END"
+COMPASS_CSV_DIR="$RUST_DIR" COMPASS_DATA_DIR="$DATA_DIR" cargo run -p compass-collectors -- dragon --start "$START" --end "$END"
 
 echo "== Python =="
-(cd "$REPO_ROOT/collectors" && COMPASS_CSV_DIR="$PY_DIR" uv run python -c "
+(cd "$REPO_ROOT/collectors" && COMPASS_CSV_DIR="$PY_DIR" COMPASS_DATA_DIR="$DATA_DIR" uv run python - "$START" "$END" <<'PY'
 import asyncio
+import sys
 from fetch_dragon import run
-asyncio.run(run(start_date='$START', end_date='$END'))
-")
+
+asyncio.run(run(start_date=sys.argv[1], end_date=sys.argv[2]))
+PY
+)
 
 python3 - "$RUST_DIR" "$PY_DIR" <<'PY'
 import csv

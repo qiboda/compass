@@ -10,14 +10,15 @@ cd "$REPO_ROOT"
 PAGE_SIZE="${1:-100}"
 MAX_PAGES="${2:-1}"
 RUST_CSV="$(mktemp --suffix=.csv)"
+DATA_DIR="$(mktemp -d)"
 PY_CSV="$(mktemp --suffix=.csv)"
-trap 'rm -f "$RUST_CSV" "$PY_CSV"' EXIT
+trap 'rm -f "$RUST_CSV" "$PY_CSV"; rm -rf "$DATA_DIR"' EXIT
 
 echo "== Rust =="
 cargo run -p compass-collectors -- stock-basic --output "$RUST_CSV" --page-size "$PAGE_SIZE" --max-pages "$MAX_PAGES"
 
 echo "== Python =="
-(cd "$REPO_ROOT/collectors" && uv run python fetch_stock_basic.py --page-size "$PAGE_SIZE" --max-pages "$MAX_PAGES" --output "$PY_CSV")
+(cd "$REPO_ROOT/collectors" && COMPASS_DATA_DIR="$DATA_DIR" uv run python fetch_stock_basic.py --page-size "$PAGE_SIZE" --max-pages "$MAX_PAGES" --output "$PY_CSV")
 
 python3 - "$RUST_CSV" "$PY_CSV" <<'PY'
 import csv

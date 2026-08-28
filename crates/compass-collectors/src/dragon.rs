@@ -109,7 +109,6 @@ fn merge_seats(records: &[Record]) -> Vec<DragonRecord> {
         }
     }
 
-    let mut order: Vec<(String, String, String)> = Vec::new();
     let mut index: HashMap<(String, String, String), usize> = HashMap::new();
     let mut rows: Vec<DragonRecord> = Vec::new();
 
@@ -128,7 +127,6 @@ fn merge_seats(records: &[Record]) -> Vec<DragonRecord> {
         } else {
             let idx = rows.len();
             index.insert(key.clone(), idx);
-            order.push(key);
             rows.push(DragonRecord {
                 secucode,
                 security_code,
@@ -148,9 +146,6 @@ fn merge_seats(records: &[Record]) -> Vec<DragonRecord> {
         row.institution_flag = row.institution_flag.max(inst);
     }
 
-    // The order field is redundant with rows, but kept to make the
-    // deliberate insertion order explicit and auditable.
-    let _ = order;
     rows
 }
 
