@@ -11,6 +11,7 @@ pub mod dolt;
 pub mod eastmoney;
 pub mod error;
 pub mod http;
+pub mod incremental;
 pub mod progress;
 pub mod proxy;
 

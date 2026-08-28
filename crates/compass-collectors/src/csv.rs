@@ -23,21 +23,22 @@ pub fn write_csv<T: Serialize>(path: &Path, records: &[T]) -> Result<()> {
     Ok(())
 }
 
-/// Write a slice of dynamic maps to CSV, using the first map's key order.
-///
-/// Map values are stringified; missing keys become empty strings.
-pub fn write_csv_maps(path: &Path, records: &[HashMap<String, String>]) -> Result<()> {
+/// Write a slice of ordered string records to CSV, using the first record's
+/// key order. Missing keys become empty strings; extra keys are ignored.
+pub fn write_csv_ordered(path: &Path, records: &[Vec<(String, String)>]) -> Result<()> {
     let Some(first) = records.first() else {
         return Ok(());
     };
-    let headers: Vec<String> = first.keys().cloned().collect();
+    let headers: Vec<String> = first.iter().map(|(k, _)| k.clone()).collect();
     let mut writer = csv::WriterBuilder::new().from_path(path)?;
     writer.write_record(&headers)?;
     for record in records {
-        let row: Vec<String> = headers
-            .iter()
-            .map(|h| record.get(h).cloned().unwrap_or_default())
-            .collect();
+        let mut row = vec![String::new(); headers.len()];
+        for (k, v) in record {
+            if let Some(idx) = headers.iter().position(|h| h == k) {
+                row[idx] = v.clone();
+            }
+        }
         writer.write_record(&row)?;
     }
     writer.flush()?;

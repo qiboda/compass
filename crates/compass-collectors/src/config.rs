@@ -3,6 +3,10 @@ use std::path::PathBuf;
 
 use crate::error::{CollectError, Result};
 
+/// Serialises tests that mutate process-global environment variables.
+#[cfg(test)]
+pub(crate) static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const DEFAULT_DOLT_DIR: &str = "/data/compass-data/compass_data";
 const DEFAULT_INVESTMENT_DIR: &str = "/data/compass-data/investment_data";
 const DEFAULT_CSV_DIR: &str = "/data/compass-data/csv";
@@ -74,6 +78,7 @@ mod tests {
 
     #[test]
     fn csv_dir_creates_and_resolves() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var("COMPASS_CSV_DIR", dir.path());

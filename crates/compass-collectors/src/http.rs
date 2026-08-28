@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use wreq::Client;
+use wreq::{Client, Proxy};
 use wreq_util::Emulation;
 
 use crate::error::{CollectError, Result};
@@ -39,11 +39,21 @@ impl HttpClient {
         &self.client
     }
 
-    /// Perform a GET request and return the parsed JSON body.
+    /// Perform a GET request and return the parsed JSON body (direct).
     pub async fn get_json(
         &self,
         url: &str,
         params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value> {
+        self.get_json_with_proxy(url, params, None).await
+    }
+
+    /// Perform a GET request through an optional HTTP proxy and return JSON.
+    pub async fn get_json_with_proxy(
+        &self,
+        url: &str,
+        params: &HashMap<String, String>,
+        proxy: Option<&str>,
     ) -> Result<serde_json::Value> {
         let mut request = self.client.get(url);
         for (k, v) in &self.default_headers {
@@ -51,6 +61,12 @@ impl HttpClient {
         }
         if !params.is_empty() {
             request = request.query(&params);
+        }
+        if let Some(proxy_url) = proxy {
+            let p = Proxy::http(proxy_url).map_err(|e| {
+                CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+            })?;
+            request = request.proxy(p);
         }
         let response = request.send().await?;
         if !response.status().is_success() {

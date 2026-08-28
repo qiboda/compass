@@ -2,13 +2,19 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::error::Result;
-use crate::http::{EM_BASE, EM_MAX_RETRIES, HttpClient, Throttle};
-use crate::proxy::{ProxyPool, make_proxy_pool};
+use crate::error::{CollectError, Result};
+use crate::http::{EM_BASE, HttpClient, Throttle};
+use crate::proxy::{DEFAULT_PROXY_MAX_ATTEMPTS, ProxyPool, make_proxy_pool};
 
-/// Flatten a JSON object into `String` values (None becomes empty string).
-pub fn flatten_record(item: &Value) -> HashMap<String, String> {
-    let mut out = HashMap::new();
+/// Ordered string record: a flattened API row as key/value pairs.
+pub type Record = Vec<(String, String)>;
+
+/// Flatten a JSON object into ordered string pairs (None becomes empty string).
+///
+/// The order follows the API object order (serde_json preserve_order is
+/// enabled), matching Python's insertion-order dict for CSV equivalence.
+pub fn flatten_record(item: &Value) -> Record {
+    let mut out = Vec::new();
     if let Some(obj) = item.as_object() {
         for (k, v) in obj {
             let value = match v {
@@ -18,35 +24,61 @@ pub fn flatten_record(item: &Value) -> HashMap<String, String> {
                 Value::Bool(b) => b.to_string(),
                 other => other.to_string(),
             };
-            out.insert(k.clone(), value);
+            out.push((k.clone(), value));
         }
     }
     out
+}
+
+/// Look up a field in an ordered record.
+pub fn record_get<'a>(record: &'a Record, key: &str) -> Option<&'a str> {
+    record
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
 }
 
 async fn request_json(
     client: &HttpClient,
     throttle: &mut Throttle,
     params: &HashMap<String, String>,
-    _pool: &mut Option<ProxyPool>,
+    pool: &mut Option<ProxyPool>,
 ) -> Result<Value> {
     let mut last_err = None;
-    for attempt in 0..EM_MAX_RETRIES {
+    for attempt in 0..=DEFAULT_PROXY_MAX_ATTEMPTS {
+        let proxy: Option<String> = if attempt < DEFAULT_PROXY_MAX_ATTEMPTS {
+            if let Some(pool) = pool.as_mut() {
+                pool.get_proxy().await
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         throttle.acquire().await;
-        match client.get_json(EM_BASE, params).await {
+        match client
+            .get_json_with_proxy(EM_BASE, params, proxy.as_deref())
+            .await
+        {
             Ok(data) => return Ok(data),
             Err(e) => {
-                last_err = Some(e);
-                if attempt + 1 < EM_MAX_RETRIES {
-                    let wait = ((1u64 << attempt.min(5)) * 1000).min(30_000);
-                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                if let Some(proxy_url) = proxy {
+                    if let Some(pool) = pool.as_ref() {
+                        pool.delete_proxy(&proxy_url).await;
+                    }
+                    continue;
                 }
+                last_err = Some(e);
+                break;
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        crate::error::CollectError::InvalidInput("request failed without error".into())
-    }))
+    match last_err {
+        Some(e) => Err(e),
+        None => Err(CollectError::InvalidInput(
+            "request failed without a recorded error".into(),
+        )),
+    }
 }
 
 /// Fetch all pages for a single EastMoney report period.
@@ -57,7 +89,7 @@ pub async fn fetch_paginated(
     filter_column: &str,
     report_date: &str,
     page_size: usize,
-) -> Result<Vec<HashMap<String, String>>> {
+) -> Result<Vec<Record>> {
     let mut pool = make_proxy_pool();
     let mut all = Vec::new();
     let mut page = 1;
@@ -95,7 +127,7 @@ pub async fn fetch_by_update_date(
     report_name: &str,
     anchor: &str,
     page_size: usize,
-) -> Result<Vec<HashMap<String, String>>> {
+) -> Result<Vec<Record>> {
     let mut pool = make_proxy_pool();
     let mut all = Vec::new();
     let mut page = 1;
@@ -158,9 +190,10 @@ mod tests {
     #[test]
     fn flatten_handles_null_and_numbers() {
         let v = serde_json::json!({"a": null, "b": 1, "c": "x"});
-        let map = flatten_record(&v);
-        assert_eq!(map["a"], "");
-        assert_eq!(map["b"], "1");
-        assert_eq!(map["c"], "x");
+        let record = flatten_record(&v);
+        assert_eq!(record.len(), 3);
+        assert_eq!(record_get(&record, "a"), Some(""));
+        assert_eq!(record_get(&record, "b"), Some("1"));
+        assert_eq!(record_get(&record, "c"), Some("x"));
     }
 }
