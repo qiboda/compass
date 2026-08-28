@@ -449,3 +449,30 @@
 - B1→B5 连续多批“独立 RED/adversarial/requirement 测试未在实现前完成”仍是同一未闭环模式（ref #311-#324）。
 - 每批 dual-run 都在增强（B3 加 DATA_DIR/argv 隔离、B4 加全列值、B5 加 bounded probe/BOM），但 Dolt 级导入 round-trip 仍未纳入任何脚本。
 - 共享网络/客户端行为差异（wreq 默认头 vs Python requests）首次在 B5 出现，后续其他交易所/官方源迁移应沿用“最小头 raw request”检查步骤。
+
+## 2026-08-29 — ref #325 B6 orchestration CLI Rust 迁移
+
+**What was done**: 将 `collectors/main.py` 的编排层移植为 `crates/compass-collectors::orchestrate` 与 `compass-collectors` 统一 CLI（fetch/import/sync/progress/sync-investment/backfill/auto-heal），并新增 `stock_basic_official::import_to_dolt`（replace-by-rename + name-en mapping join）；同步 architecture.md 与 user/cli.md。56 个 Rust 单测通过、clippy clean，CLI 冒烟验证 progress/参数拒绝。Python 与 update-database.sh 未动；B7 才切换。
+
+**User corrections** (if any): 无（延续“后续 push/create PR 不用再问”的自主授权）。
+
+**What went wrong**:
+1. 首轮 review 抓出 `stock_basic_official::import_to_dolt` 错误路径无条件 drop `_sb_backup`，若 restore RENAME 失败会丢失唯一备份（数据丢失级 P1）；已改为错误路径保留备份。
+2. 首轮 review 还抓出多处 CLI 偏差（`--years` 静默丢非法 token、import/sync 忽略多余参数、sync-investment 无 nohup/无超时），已逐项修复。
+3. 第二轮 review 抓出超时只返回错误但不杀子进程（`kill_on_drop` 未设），dolt 命令可能成为孤儿并在超时后继续执行；已加 `.kill_on_drop(true)`。
+4. 仍保留全局已知缺口：独立 RED/adversarial/requirement 子代理测试未补、Dolt 级 dual-run 未做。
+
+**Lessons learned**:
+1. 移植 Python 的 try/except/finally 错误路径时，必须逐条对照清理动作；“成功路径 drop 备份”不等于“错误路径也应 drop 备份”。
+2. 给异步子进程加 timeout 时必须同时设置 `kill_on_drop(true)`，否则超时后子进程继续运行，失败信号/锁竞争都是假象。
+3. 迁移 CLI 时不能只看 happy path；应在提交前对照 Python argparse 的参数接受/拒绝行为（非法 token、多余参数、空参数）。
+
+**Process improvements**:
+- `stock_basic_official::import_to_dolt` 错误路径保留 `_sb_backup`（代码）。
+- `run_dolt_investment` 加 300s timeout + `kill_on_drop(true)`（代码）。
+- `main.rs` fetch/import/sync/progress 参数拒绝行为对齐 Python（代码）。
+- 建议继续推进独立 RED/adversarial/requirement 测试与 Dolt 级 dual-run（proposed）。
+
+### Trends (last 10)
+- B1→B6 独立 RED/adversarial/requirement 测试仍未闭环；每次反思都列为 open，但尚未落实为正式委派/issue（ref #311-#325）。
+- B2→B6 review 已连续多轮在“Python 语义边界”（失败清理、参数行为、子进程/后台进程、错误路径清理）抓出 P0/P1；下一次迁移前应主动对照 Python 语义清单而不是等 review。
