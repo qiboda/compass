@@ -202,7 +202,9 @@ pub async fn run(output: Option<&str>, page_size: usize, max_pages: usize) -> Re
     }
 
     if records.is_empty() {
-        return Ok(output_path);
+        return Err(crate::error::CollectError::InvalidInput(
+            "stock_basic: no data returned from EastMoney; refusing to report success without a CSV".into(),
+        ));
     }
     write_csv_ordered(&output_path, &records)?;
     Ok(output_path)
