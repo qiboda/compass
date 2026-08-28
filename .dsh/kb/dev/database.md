@@ -43,7 +43,7 @@
 `crates/compass-data/src/sepa.rs:73-79`（table_name PK + last_updated + source +
 row_count + last_report_date）。消费方：
 
-- **collectors 增量锚点**（`collectors/common.py:171-185`）：大多数采集器以
+- **采集器增量锚点**（`crates/compass-collectors/src/dolt.rs`）：大多数采集器以
   `last_report_date` 为增量起点，只抓 `>= 最新已抓报告期` 的窗口；**财务三表
   （`fin_balance_sheet` / `fin_income` / `fin_cash_flow`，issue #299）与
   `fin_indicators` 的增量路径**改用 `UPDATE_DATE` 锚点——解析规则为
@@ -53,7 +53,7 @@ row_count + last_report_date）。消费方：
   import 写入，供新鲜度校验使用。
 - **update-database.sh 增量锚点**（`scripts/update-database.sh` step 2/4）：step 0 先同步
   `investment_data` 上游（`scripts/sync-investment-data.sh`）；step 2 由
-  `collectors/main.py sync` 统一刷新全部 11 张 `compass_data` 表，并在开头自动
+  `compass-collectors sync` 统一刷新全部 11 张 `compass_data` 表，并在开头自动
   检测/回补日频源表缺口（`ts_trade_day_calendar` 对比 Dolt 现有交易日）；
   step 4 对**逐表读取**各表自身的 `last_report_date`（含 `fin_*` 财务表与
   `index_daily`）；缺失/NULL 锚点的表走全量导入，不再用全局 MAX 锚点；
@@ -63,11 +63,11 @@ row_count + last_report_date）。消费方：
 - **import-compass 新鲜度校验（ref #136）**：导入后读 `last_report_date`，过期
   仅 warn 不退出（财务表 120 天 / 行情表 7 天 / stock_basic 不检查）
 
-`last_report_date` 语义（collectors 写库时按表类填写）：`fin_*` 财务表
+`last_report_date` 语义（采集器写库时按表类填写）：`fin_*` 财务表
 （fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）= `MAX(report_date)`；
 行情表 capital_main_flow/dragon_list/block_trade/index_daily = `MAX(trade_date)`、
 institution_survey = `MAX(survey_date)`；index_basic = `CURDATE()`；
-stock_basic = NULL（写库只填 4 列，`collectors/main.py:79-85`）。
+stock_basic = NULL（写库只填 4 列，见 `crates/compass-collectors/src/stock_basic_official.rs`）。
 
 ## investment_data 同步（pull → push → import）
 
@@ -129,7 +129,7 @@ dolt push origin main
 dolt status                            # 确认工作区干净、与 origin 同步
 ```
 
-**程序写回路径同样受约束**：任何 Rust/Python 代码向 `compass_data` 写表
+**程序写回路径同样受约束**：任何代码向 `compass_data` 写表
 后，流程必须在同一 session 内执行 `dolt commit` + `dolt push`（手动命令或
 内置到 CLI 的收尾步骤），不得只写数据不提交。
 

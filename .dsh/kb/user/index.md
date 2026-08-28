@@ -22,9 +22,9 @@ Compass 将所有行情数据存储在**本地机器上**。数据导入后，�
 | 数据源 | 内容 | 适用场景 |
 |---|---|---|
 | **Dolt** (`investment_data`) | 完整的 A 股日线历史数据（1990 年至今，1800 万+ 行） | 通过 `compass-data import` 批量导入 |
-| **东方财富**（在线） | 实时和历史数据，由 Python 采集器获取 | 获取 Dolt 中尚未存在的数据，再导入 |
+| **东方财富**（在线） | 实时和历史数据，由 Rust 采集器获取 | 获取 Dolt 中尚未存在的数据，再导入 |
 
-Dolt 是**主要**数据源 — 完整、离线、快速。东方财富数据由 Python 采集器（`collectors/`）获取，先写入 Dolt `compass_data`，再通过 import 转为 Parquet。GUI 本身**仅限本地** — 它从不直接调用东方财富接口。
+Dolt 是**主要**数据源 — 完整、离线、快速。东方财富数据由 Rust 采集器（`crates/compass-collectors`，二进制 `compass-collectors`）获取，先写入 Dolt `compass_data`，再通过 import 转为 Parquet。GUI 本身**仅限本地** — 它从不直接调用东方财富接口。
 
 ## 快速开始
 

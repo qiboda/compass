@@ -11,7 +11,7 @@ Compass 是一个**本地优先的 A 股股票图表应用**。与依赖远程�
 | 面孔 | 二进制 | 用途 |
 |---|---|---|
 | **图表应用** | `compass` | 交互式 K 线图：股票搜索、时间周期选择、十字准线、缩放、平移。通过 egui 以原生桌面窗口运行。仅从本地 Parquet 文件读取数据。 |
-| **数据管线** | `compass-data` | 离线数据管理——从 Dolt 导入、导出为其他格式、备份。EastMoney 数据通过 Python collector 脚本获取；官方指数在东财失败/empty 时回退腾讯源（issue #278）。 |
+| **数据管线** | `compass-data` | 离线数据管理——从 Dolt 导入、导出为其他格式、备份。EastMoney 数据通过 Rust 采集器 `compass-collectors` 获取；官方指数在东财失败/empty 时回退腾讯源（issue #278）。 |
 
 两者共享同一个库 crate（`compass-core`），其中定义了数据模型、provider trait
 以及所有 I/O 逻辑。
@@ -401,31 +401,33 @@ parquet_data/ ────────backup──────────► Ba
 联结：`compass_data.stock_basic JOIN investment_data.final_a_stock_eod_price`。
 使用示例见 `.dsh/kb/dev/database.md`。
 
-### collectors：Python 数据管线
+### collectors：Rust 数据管线
 
 ```
-EastMoney API ──collectors──► CSV ──import──► compass_data (Dolt)
+EastMoney API ──compass-collectors──► CSV ──import──► compass_data (Dolt)
 ```
 
-`collectors/` 目录包含 Python 脚本（uv + curl_cffi），用于从 EastMoney 公开
-API 获取数据并导入 Dolt：
+`crates/compass-collectors` 是采集层唯一所在，Python `collectors/` 已在 epic #310
+完成迁移并退役。它使用 `wreq`（Chrome TLS 指纹 HTTP 客户端）从 EastMoney/交易所
+官网获取数据并导入 Dolt：
 
-| 脚本 | 用途 | 数据 |
+| 模块 | 用途 | 数据 |
 |---|---|---|
-| `main.py` | 统一 CLI：fetch/import/progress/sync/sync-investment | — |
-| `fetch_stock_basic.py` | 公司基本信息 | 12,388 只股票，13 个字段 |
-| `fetch_fin_indicators.py` | 财务指标 | 126K 行，37 个字段，2020-2026 |
-| `fetch_balance_sheet.py` | 资产负债表 | 319 个字段，按季度，RPT_F10_FINANCE_GBALANCE |
-| `fetch_income.py` | 利润表 | 203 个字段，按季度，RPT_F10_FINANCE_GINCOME |
-| `fetch_cash_flow.py` | 现金流量表 | 254 个字段，按季度，RPT_F10_FINANCE_GCASHFLOW |
+| `orchestrate.rs` | 统一 CLI 编排：fetch/import/progress/sync/sync-investment/backfill/auto-heal | — |
+| `stock_basic_official.rs` | 公司基本信息 | 12,388 只股票，12+ 字段 |
+| `fin_indicators.rs` | 财务指标 | 126K 行，37 个字段，2020-2026 |
+| `balance_sheet.rs` | 资产负债表 | 319 个字段，按季度，RPT_F10_FINANCE_GBALANCE |
+| `income.rs` | 利润表 | 203 个字段，按季度，RPT_F10_FINANCE_GINCOME |
+| `cash_flow.rs` | 现金流量表 | 254 个字段，按季度，RPT_F10_FINANCE_GCASHFLOW |
+| `dragon.rs` / `block_trade.rs` / `institution_survey.rs` | SEPA 日频/事件表 | 龙虎榜/大宗交易/机构调研 |
+| `main_flow.rs` / `index_daily.rs` / `freeproxy.rs` / `proxy.rs` / `keepalive.rs` | SEPA/代理 | 主力资金流、指数/板块、代理池 |
 
-工具链：`uv`（Python 依赖管理器）+ `ruff`（lint/格式化）+
-`pytest`（16 个测试）+ `mypy`（类型检查）。CI 通过 GitHub Actions 运行，
-pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
+工具链：Rust workspace（cargo fmt/clippy/test/doc）为唯一强制门禁；CI 已不含
+Python 任务，pre-commit/pre-push hooks 只跑 Rust 门禁。
 
 关键设计决策：
-- **curl_cffi** 而非 httpx/aiohttp：EastMoney 检查 TLS 指纹（JA3/JA4）；
-  curl_cffi 模拟 Chrome 以绕过检测
+- **wreq** 而非 reqwest：EastMoney 检查 TLS 指纹（JA3/JA4）；wreq 模拟 Chrome 142
+  以绕过检测（rquest 原项目的现行后续名）
 - **CSV 作为中间格式**：eastmoney → CSV → Dolt，而非直接写入
 - **增量模式**：状态文件（`{REPORT_NAME}.state.json`）记录 `last_update_date` 与
   `last_report_date`；财务指标与财务三表（balance_sheet/income/cash_flow）的
@@ -436,29 +438,24 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 - **无 anchor 首跑**：财务三表 `--incremental` 在无 anchor 时固定
   `2020-01-01` 走 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举（issue #299）
 
-### collectors：Rust 迁移（epic #310）
+### collectors 迁移完成（epic #310）
 
-目标是把 `collectors/` 的 Python 采集层逐步迁移到 Rust，最终删除 Python 层并让
-`scripts/update-database.sh` 直接调用 Rust 二进制。新 crate 为
-`crates/compass-collectors`（独立于 `compass-data`），HTTP/TLS 使用 `wreq`
+Python `collectors/` 已全量迁移到 `crates/compass-collectors`（独立于
+`compass-data`），并在 B7 完成切换：`scripts/update-database.sh` 的 step 2
+现在调用 `compass-collectors sync`，Python 采集层、`collectors/` 目录、
+Python tests、uv/ruff 相关 CI 与 hooks 均已退役。HTTP/TLS 使用 `wreq`
 （rquest 项目的后续名；`rquest` crates.io 已 yank、仓库改名 `0x676e67/wreq`，
 同一作者/同一指纹方案，不是降级到 reqwest），Chrome 142 指纹由 `wreq-util`
-提供。迁移按批次推进：B1 基础设施 → B2 pilot（block_trade）→ B3
+提供。迁移按 B1 基础设施 → B2 pilot（block_trade）→ B3
 （dragon_list、institution_survey、main_flow、stock_basic EastMoney）→
-B4 财务报表（fin_indicators、balance_sheet、income、cash_flow）→
-B5 复杂/特殊 → B6 编排 CLI → B7 切换/退役 Python。
-每批一个 PR。Python 采集器与 `update-database.sh`
-保持不变，直到 dual-run 等价。B3 的 `main_flow` 同时迁移了
-`backfill`（fflow/daykline 逐股历史回补）路径；B4 的财务三表通过
-`crates/compass-collectors::financial` 共享 fetch/upsert 逻辑，仅 DDL/列清单各自保留。
-B6 新增 `crates/compass-collectors::orchestrate`（等价 `main.py` 的
-fetch/import/sync/progress/backfill/auto-heal/sync-investment 编排）及
-`compass-collectors` 统一 CLI；`scripts/update-database.sh` 仍在 B7 才切换，
-当前生产路径仍由 Python `main.py sync` 驱动。
+B4 财务报表 → B5 复杂/特殊 → B6 编排 CLI → B7 切换/退役推进，每批一个 PR，
+并通过 dual-run 对比等价后才切换。B6 的 `crates/compass-collectors::orchestrate`
+提供与旧 `main.py` 等价的 fetch/import/sync/progress/backfill/auto-heal/
+sync-investment 编排；`scripts/update-database.sh` 为生产入口。
 
 ### 自动回补缺失数据（issue #308）
 
-数据管线允许不每天运行：`collectors/main.py sync` 在采集前用
+数据管线允许不每天运行：`compass-collectors sync` 在采集前用
 `investment_data.ts_trade_day_calendar`（SSE `is_open=1`）与各日频表 Dolt
 现有日期做缺口扫描，缺失时自动回补——`capital_main_flow` 走 EastMoney
 `fflow/daykline` 逐股历史 API，`index_daily`/`dragon_list`/`block_trade`
@@ -671,6 +668,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | MIG-2（#310）：HTTP/TLS 客户端 | rquest / reqwest-impersonate / wreq | `wreq`（rquest 项目的后续名，仓库 `0x676e67/wreq` + `wreq-util`，Chrome142 指纹） | 用户确认采用；rquest crates.io 已 yank 且仓库改名，wreq 是同一作者同一 TLS/HTTP2 指纹方案的现行版，支持 Chrome142，不降级 reqwest | reqwest 无 TLS 指纹伪装；reqwest-impersonate 是备份且用户未选 |
 | MIG-3（#310）：PR 结构 | 一个 epic 一个 PR / 每批一个 PR | 每个批次一个 PR | 用户确认覆盖仓库默认约定；批次间有数据和 CLI 渐进依赖，分 PR 便于 review/回退 | 一个 PR 过大，跨 7 批 review 困难 |
 | MIG-4（#310）：切换门槛 | 直接删除 Python / dual-run 等价后切换 | 并行开发 + dual-run 对比（CSV/Dolt 行数、日期覆盖、关键字段）全部通过后才切换 `update-database.sh` | 数据管线不能因迁移中断；等价值可复现且不依赖“看起来像” | 直接切换风险高，无回退证据 |
+| MIG-5（#310）：Python 退役时机 | 提前删除 / B7 同批切换+|删除 | B7 完成全量 dual-run 后，同批先切换 `update-database.sh` 再删除 `collectors/`（分步提交） | 用户锁定：保留 Python 并存直到等价，删除与切换同批分步便于回退；B1-B6 各批均有 dual-run evidence | 提前删无回退；分开两条 PR 会增加双入口维护期 |
 
 > 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：

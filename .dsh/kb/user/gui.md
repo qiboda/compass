@@ -219,7 +219,7 @@ Phosphor 图标字形、简短消息，并在预设时长后自动消失。
 
 GUI 是**仅限本地**的：它从不调用东方财富或任何在线 API。所有数据来自本地 Parquet
 主数据库。如果某只股票不在数据库中，GUI 显示 "no data" 消息 — 需先用数据管线
-（`compass-data import` 或 Python 采集器）导入数据。
+（`compass-data import` 或 Rust 采集器 `compass-collectors`）导入数据。
 
 ## 股票代码
 

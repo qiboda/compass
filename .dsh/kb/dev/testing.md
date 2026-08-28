@@ -157,7 +157,7 @@ let range = db.get_stored_range("SZ000001").await?;
 
 ### 脚本自测（scripts/tests/，ref #151）
 
-- `test-sepa-daily.sh`：`bash -n` + **mock cargo/uv/dolt**（PATH 前置假命令，
+- `test-update-database.sh`：`bash -n` + **mock cargo/dolt**（PATH 前置假命令，
   日志记录调用参数）断言 7 步流水线调用顺序、Dolt `add` 限定表、失败非零退出、
   preflight 分支；数据目录用 `SEPA_COMPASS_DATA_DIR` 等 env 覆盖指向临时目录
 - `justfile-test.sh` / `justfile-adversarial-test.sh`（ref #265）：justfile 回归测试
@@ -302,8 +302,6 @@ compass-strategy / compass-types / compass-ui）95%，GUI 主程序 compass
 cargo llvm-cov nextest --json --summary-only --output-path target/llvm-cov/coverage.json
 bash scripts/check-coverage.sh target/llvm-cov/coverage.json
 
-# Python
-cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=95
 ```
 
 - Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
@@ -312,8 +310,8 @@ cd collectors && uv run pytest tests/ --cov=. --cov-fail-under=95
   compass-types / compass-ui → 95，compass → 90，workspace 总 → 93）；
   任一低于各自阈值或未测到文件即退出码 1。
   单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
-- Python 用 `pytest-cov`，`--cov=.` **全量计入**所有 `collectors/*.py`
-  （`[tool.coverage] omit = ["tests/*"]`），未测文件按 0% 计；`--cov-fail-under=95`。
+- Python 采集层及其覆盖率门禁已随 epic #310 退役；`scripts/check-coverage.sh`
+  不再包含 Python 目标。
 - coverage job 用 `cargo llvm-cov nextest`——**一步完成 nextest 跑测试 + 覆盖率采集**
   （自 2026-08-08，ref #181 修复 CI 覆盖率漂移后；此前为 `cargo nextest run` + 裸
   `cargo llvm-cov` 分离两步，llvm-cov 内部用 cargo test 语义造成跑两遍 + 与本地
@@ -402,10 +400,11 @@ convert screenshot.png -format %c -colors 5 histogram:info:
 - 断言对象是**直方图/像素统计**（区域主色、颜色计数），不是人眼判图
 - 视觉模型支持图像输入时，截图可作辅助证据；像素采样等客观证据仍作为最终验证手段
 
-### Python 网络 mock（stub AsyncSession）
+### Rust 采集器测试（epic #310）
 
-EastMoney collector 测试用 `tests/conftest.py` 的 `make_stub_session` fixture（手写 stub，不用 respx —— curl-cffi 不被 respx/responses 支持）：
+`crates/compass-collectors` 的单元测试集中覆盖纯逻辑：CSV 序列化与 BOM、
+日期生成/增量锚点、proxy scheme 归一化、financial 共享 fetch/upsert 的参数
+组合、CLI 参数校验等。B1–B6 期间的真实双跑/网络级验证以 `dual_run_*.sh`
+与 `.dsh/evidence/` 落盘；B7 后该批脚本随 Python 退役一并移除，生产正确性由
+`scripts/update-database.sh` 冒烟与 Rust 单元/集成测试保证。
 
-- `async get(url, params, headers)` 返回 canned JSON / 注入 429 / 异常。
-- 实现 `async __aenter__/__aexit__`（`main()` 用 `async with AsyncSession(...)`）。
-- 所有 fetch 函数 `session` 均为参数，注入即通，无需真实网络。
