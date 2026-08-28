@@ -48,6 +48,9 @@ def key(row):
         num(row.get("DEAL_PRICE")),
         num(row.get("DEAL_VOLUME")),
         num(row.get("DEAL_AMT")),
+        row.get("BUYER_NAME"),
+        row.get("SELLER_NAME"),
+        num(row.get("PREMIUM_RATIO")),
     )
 
 r = load(rust_dir / "RPT_DATA_BLOCKTRADE.csv")
