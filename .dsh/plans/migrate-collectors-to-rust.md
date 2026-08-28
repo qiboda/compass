@@ -192,5 +192,5 @@ Dual-run 方法：
 - [x] B3 简单/日常采集器（dragon/institution_survey/main_flow/stock_basic）：本地实现 + 单元测试 + dual-run 通过，PR #329
 - [x] B4 财务报表（fin_indicators/balance_sheet/income/cash_flow）：本地实现 + 单测 + 2026Q1 dual-run 全部通过，PR #330
 - [x] B5 复杂/特殊（index_daily/stock_basic_official/proxy 工具）：本地实现 + 单测 + bounded dual-run/官方全量通过，PR #331
-- [ ] B6 编排 CLI
+- [x] B6 编排 CLI：本地实现 + 单测 + CLI 冒烟 + review 两轮通过，PR #332
 - [ ] B7 切换/退役
