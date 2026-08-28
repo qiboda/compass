@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use compass_collectors::{
     balance_sheet, block_trade, cash_flow, check_proxy_pool, dragon, fin_indicators, freeproxy,
-    income, index_daily, institution_survey, keepalive, main_flow, stock_basic,
+    income, index_daily, institution_survey, keepalive, main_flow, orchestrate, stock_basic,
     stock_basic_official,
 };
 
@@ -83,6 +83,103 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
     match command.as_str() {
+        "fetch" => {
+            let target = args.get(1).ok_or("fetch requires a target")?;
+            let mut years: Option<Vec<i32>> = None;
+            let mut incremental = false;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--years" => {
+                        let raw = args.get(i + 1).ok_or("--years requires a value")?;
+                        years = Some(
+                            raw.split(',')
+                                .filter_map(|s| s.trim().parse::<i32>().ok())
+                                .collect(),
+                        );
+                        i += 2;
+                    }
+                    "--incremental" => {
+                        incremental = true;
+                        i += 1;
+                    }
+                    other => return Err(format!("unknown fetch flag {other}").into()),
+                }
+            }
+            if let Some(ref years) = years
+                && years.is_empty()
+            {
+                return Err("--years contains no valid years".into());
+            }
+            let out = orchestrate::fetch(target, years.as_deref(), incremental).await?;
+            println!("{}", out.display());
+            Ok(())
+        }
+        "import" => {
+            let target = args.get(1).ok_or("import requires a target")?;
+            orchestrate::import_target(target).await?;
+            Ok(())
+        }
+        "progress" => {
+            let mut target: Option<String> = None;
+            let mut as_json = false;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--json" => {
+                        as_json = true;
+                        i += 1;
+                    }
+                    other if !other.starts_with('-') => {
+                        target = Some(other.to_string());
+                        i += 1;
+                    }
+                    other => return Err(format!("unknown progress flag {other}").into()),
+                }
+            }
+            orchestrate::progress(target.as_deref(), as_json).await?;
+            Ok(())
+        }
+        "sync" => {
+            orchestrate::sync(false).await?;
+            Ok(())
+        }
+        "sync-investment" | "sync_investment" => {
+            let mut restart = false;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--restart" => {
+                        restart = true;
+                        i += 1;
+                    }
+                    other => return Err(format!("unknown sync-investment flag {other}").into()),
+                }
+            }
+            orchestrate::sync_investment(restart).await?;
+            Ok(())
+        }
+        "backfill" => {
+            let mut ranges: Vec<(String, (String, String))> = Vec::new();
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--table" => {
+                        let table = args.get(i + 1).ok_or("--table requires a value")?;
+                        let start = args.get(i + 2).ok_or("--start requires a value")?;
+                        let end = args.get(i + 3).ok_or("--end requires a value")?;
+                        ranges.push((table.to_string(), (start.to_string(), end.to_string())));
+                        i += 4;
+                    }
+                    other => return Err(format!("unknown backfill flag {other}").into()),
+                }
+            }
+            if ranges.is_empty() {
+                return Err("backfill requires at least one --table T START END".into());
+            }
+            orchestrate::backfill(&ranges).await?;
+            Ok(())
+        }
         "block-trade" | "block_trade" => {
             let mut start = None;
             let mut end = None;
@@ -601,6 +698,11 @@ fn print_usage() {
     eprintln!(
         "usage: compass-collectors <command> [options]\n\
          commands:\n\
+         \x20 fetch <target> [--years Y,Y] [--incremental]\n\
+         \x20 import <target>\n\
+         \x20 sync\n\
+         \x20 sync-investment [--restart]\n\
+         \x20 progress [target] [--json]\n\
          \x20 block-trade [--start D] [--end D] [--years Y,Y] [--page-size N]\n\
          \x20 dragon [--start D] [--end D] [--page-size N]\n\
          \x20 institution-survey [--start-date D] [--page-size N]\n\

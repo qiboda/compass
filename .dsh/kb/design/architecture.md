@@ -451,6 +451,10 @@ B5 复杂/特殊 → B6 编排 CLI → B7 切换/退役 Python。
 保持不变，直到 dual-run 等价。B3 的 `main_flow` 同时迁移了
 `backfill`（fflow/daykline 逐股历史回补）路径；B4 的财务三表通过
 `crates/compass-collectors::financial` 共享 fetch/upsert 逻辑，仅 DDL/列清单各自保留。
+B6 新增 `crates/compass-collectors::orchestrate`（等价 `main.py` 的
+fetch/import/sync/progress/backfill/auto-heal/sync-investment 编排）及
+`compass-collectors` 统一 CLI；`scripts/update-database.sh` 仍在 B7 才切换，
+当前生产路径仍由 Python `main.py sync` 驱动。
 
 ### 自动回补缺失数据（issue #308）
 

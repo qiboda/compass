@@ -14,7 +14,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::config::csv_dir;
-use crate::error::Result;
+use crate::dolt::{dolt_sql, dolt_sql_csv, dolt_table_import, load_name_en_mapping};
+use crate::error::{CollectError, Result};
 use crate::http::HttpClient;
 use crate::proxy::{ProxyPool, make_proxy_pool};
 
@@ -657,6 +658,202 @@ pub async fn run(output: Option<&str>, update_date: Option<&str>) -> Result<Path
     records_to_csv(&merged, &output_path)?;
     eprintln!("完成 — {} 条 → {}", merged.len(), output_path.display());
     Ok(output_path)
+}
+
+const STOCK_BASIC_DDL: &str = "CREATE TABLE IF NOT EXISTS stock_basic (
+    symbol varchar(20) NOT NULL PRIMARY KEY COMMENT 'Dolt格式',
+    ts_code varchar(20) COMMENT 'ts_code格式',
+    code varchar(10) COMMENT '6位代码',
+    name varchar(100) COMMENT '股票名称',
+    list_date varchar(20) COMMENT '上市日期',
+    delist_date date,
+    board varchar(50),
+    full_name varchar(200),
+    total_share double,
+    industry varchar(50) COMMENT '行业',
+    region varchar(20) COMMENT '地区板块',
+    update_date varchar(20) COMMENT '更新日期',
+    industry_en varchar(100) COMMENT '行业英文名'
+)";
+
+fn last_csv_cell(output: &str) -> String {
+    output
+        .trim()
+        .lines()
+        .last()
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+async fn dolt_table_exists(table: &str) -> Result<bool> {
+    let out = dolt_sql_csv(&format!(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='{table}'"
+    ))
+    .await?;
+    Ok(last_csv_cell(&out) == "1")
+}
+
+async fn checked_sql(sql: &str, desc: &str) -> Result<()> {
+    let output = dolt_sql(sql).await;
+    match output {
+        Ok(_) => Ok(()),
+        Err(e) => Err(CollectError::Dolt {
+            stderr: format!(
+                "{desc}: {}",
+                match e {
+                    CollectError::Dolt { stderr } => stderr,
+                    other => other.to_string(),
+                }
+            ),
+        }),
+    }
+}
+
+/// Import the official stock-basic CSV into Dolt.
+///
+/// Mirrors `main.py::_import_stock_basic`: replace-by-rename with a temporary
+/// `_sb_backup`, guarded by staging/row-count sanity checks, and optionally
+/// join the name-en mapping by exact or Roman-numeral-suffix-stripped
+/// industry key. The previous table is restored on any failure.
+pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
+    let path = match csv_path {
+        Some(p) => p.to_path_buf(),
+        None => csv_dir()?.join("stock_basic_official.csv"),
+    };
+    if !path.exists() {
+        return Err(CollectError::InvalidInput(format!(
+            "{} not found. Run fetch first.",
+            path.display()
+        )));
+    }
+
+    dolt_sql("DROP TABLE IF EXISTS _tmp_sb").await?;
+    dolt_table_import("_tmp_sb", &path, None).await?;
+
+    let tmp_out = dolt_sql_csv("SELECT COUNT(*) FROM _tmp_sb").await?;
+    let tmp_total: u64 = last_csv_cell(&tmp_out).parse().map_err(|_| {
+        CollectError::InvalidInput("stock_basic import: cannot read _tmp_sb count".into())
+    })?;
+    if tmp_total == 0 {
+        let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_sb").await;
+        return Err(CollectError::InvalidInput(
+            "stock_basic import: _tmp_sb is empty; refusing to overwrite stock_basic".into(),
+        ));
+    }
+
+    let before_total: u64 = if dolt_table_exists("stock_basic").await? {
+        let out = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").await?;
+        last_csv_cell(&out).parse().unwrap_or(0)
+    } else {
+        0
+    };
+    if before_total > 0 && tmp_total < before_total / 2 {
+        let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_sb").await;
+        return Err(CollectError::InvalidInput(format!(
+            "stock_basic import: candidate is too small ({tmp_total} < {})",
+            before_total / 2
+        )));
+    }
+
+    let mapping = load_name_en_mapping().await?;
+    let mut renamed = false;
+    let result: Result<()> = async {
+        if before_total > 0 {
+            checked_sql(
+                "DROP TABLE IF EXISTS _sb_backup",
+                "drop old stock_basic backup",
+            )
+            .await?;
+            checked_sql(
+                "RENAME TABLE stock_basic TO _sb_backup",
+                "rename stock_basic to backup",
+            )
+            .await?;
+            renamed = true;
+            checked_sql(
+                "CREATE TABLE stock_basic LIKE _sb_backup",
+                "recreate stock_basic schema",
+            )
+            .await?;
+        } else {
+            checked_sql(STOCK_BASIC_DDL, "create stock_basic schema").await?;
+        }
+
+        let (join, insert_en_cols, select_en_cols) = if mapping {
+            (
+                "LEFT JOIN _tmp_name_en m \
+                   ON m.section = 'industry' \
+                  AND (m.`key` = TRIM(t.industry) \
+                       OR (TRIM(t.industry) REGEXP '[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]$' \
+                           AND m.`key` <> TRIM(t.industry) \
+                           AND m.`key` = LEFT(TRIM(t.industry), \
+                                              CHAR_LENGTH(TRIM(t.industry)) - 1)))",
+                ", industry_en",
+                ", m.value",
+            )
+        } else {
+            ("", "", "")
+        };
+        let sql = format!(
+            "INSERT INTO stock_basic (symbol, ts_code, code, name, list_date, \
+             delist_date, board, full_name, total_share, industry, region, \
+             update_date{insert_en_cols}) \
+             SELECT t.symbol, t.ts_code, t.code, TRIM(t.name), t.list_date, \
+             t.delist_date, TRIM(t.board), TRIM(t.full_name), t.total_share, \
+             TRIM(t.industry), TRIM(t.region), t.update_date{select_en_cols} \
+             FROM _tmp_sb t \
+             {join}"
+        );
+        checked_sql(&sql, "insert stock_basic").await?;
+
+        let out = dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").await?;
+        let total: u64 = last_csv_cell(&out).parse().unwrap_or(0);
+        if total == 0 {
+            return Err(CollectError::InvalidInput(
+                "stock_basic import: final row count is empty".into(),
+            ));
+        }
+        Ok(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            let total: u64 =
+                last_csv_cell(&dolt_sql_csv("SELECT COUNT(*) FROM stock_basic").await?)
+                    .parse()
+                    .unwrap_or(0);
+            if renamed {
+                let _ = dolt_sql("DROP TABLE IF EXISTS _sb_backup").await;
+            }
+            let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_sb").await;
+            let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_name_en").await;
+            dolt_sql(&format!(
+                "INSERT INTO data_updates (table_name, last_updated, source, row_count) \
+                 VALUES ('stock_basic', CURDATE(), 'SSE/SZSE/BSE official', {total}) \
+                 ON DUPLICATE KEY UPDATE last_updated=CURDATE(), source=VALUES(source), \
+                 row_count=VALUES(row_count)"
+            ))
+            .await?;
+            eprintln!("  Done: {total} rows");
+            Ok(total)
+        }
+        Err(e) => {
+            if renamed {
+                let _ = dolt_sql("DROP TABLE IF EXISTS stock_basic").await;
+                let _ = checked_sql(
+                    "RENAME TABLE _sb_backup TO stock_basic",
+                    "restore stock_basic backup",
+                )
+                .await;
+            }
+            let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_sb").await;
+            let _ = dolt_sql("DROP TABLE IF EXISTS _tmp_name_en").await;
+            let _ = dolt_sql("DROP TABLE IF EXISTS _sb_backup").await;
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]

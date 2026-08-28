@@ -229,6 +229,23 @@ uv run python main.py progress block_trade --json
 可复查上次运行结果。append 型采集器（income/balance_sheet/cash_flow/fin_indicators）
 与 stock_basic 不产生进度文件（`progress` 不接受这些 target）。
 
+**Rust 迁移 CLI（epic #310 B6，尚未切换更新脚本）**：`crates/compass-collectors`
+提供与 Python 等价的统一入口，供后续 `scripts/update-database.sh` 切换：
+
+```sh
+cargo run -p compass-collectors -- fetch <target> [--years Y,Y] [--incremental]
+cargo run -p compass-collectors -- import <target>
+cargo run -p compass-collectors -- sync
+cargo run -p compass-collectors -- sync-investment [--restart]
+cargo run -p compass-collectors -- progress [target] [--json]
+```
+
+`fetch/import` 的 target 集合与 Python `main.py` 一致（含
+`stock_basic`/`fin_indicators`/`balance_sheet`/`income`/`cash_flow`/`dragon`/
+`block_trade`/`institution_survey`/`main_flow`/`index_daily`）；`sync` 保持
+auto-heal → 各表按序 fetch+import → data_updates 的完整顺序。B7 切换前
+仍使用上方 Python 命令。
+
 关键概念：
 - **curl_cffi** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt

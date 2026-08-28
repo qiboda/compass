@@ -25,6 +25,7 @@ pub mod index_daily;
 pub mod institution_survey;
 pub mod keepalive;
 pub mod main_flow;
+pub mod orchestrate;
 pub mod progress;
 pub mod proxy;
 pub mod stock_basic;
