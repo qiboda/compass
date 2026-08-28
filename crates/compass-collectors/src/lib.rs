@@ -4,6 +4,7 @@
 //! write/import, trading-calendar helpers, proxy-pool client and progress
 //! tracking, as the infrastructure for A-share data collectors.
 
+pub mod block_trade;
 pub mod calendar;
 pub mod config;
 pub mod csv;
