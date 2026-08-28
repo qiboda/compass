@@ -5,7 +5,7 @@
 //! sources to the 12-column `stock_basic` schema and writes one CSV.
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::config::csv_dir;
 use crate::error::Result;
 use crate::http::HttpClient;
+use crate::proxy::{ProxyPool, make_proxy_pool};
 
 pub const COLUMNS: [&str; 12] = [
     "symbol",
@@ -363,9 +364,11 @@ pub fn merge_exchanges(record_lists: &[Vec<OfficialRecord>]) -> Vec<OfficialReco
 
 /// Write the merged records to CSV with the exact 12-column order.
 pub fn records_to_csv(records: &[OfficialRecord], path: &Path) -> Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all("\u{feff}".as_bytes())?;
     let mut writer = csv::WriterBuilder::new()
         .has_headers(false)
-        .from_path(path)?;
+        .from_writer(file);
     let headers: Vec<&str> = COLUMNS.to_vec();
     writer.write_record(&headers)?;
     for r in records {
@@ -388,22 +391,16 @@ pub fn records_to_csv(records: &[OfficialRecord], path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn bse_headers() -> HashMap<String, String> {
-    let mut headers = HashMap::new();
-    headers.insert("User-Agent".to_string(), USER_AGENT.to_string());
-    headers.insert(
-        "Content-Type".to_string(),
-        "application/x-www-form-urlencoded".to_string(),
-    );
-    headers.insert(
-        "Referer".to_string(),
-        "https://www.bse.cn/nq/listedcompany.html".to_string(),
-    );
-    headers.insert("X-Requested-With".to_string(), "XMLHttpRequest".to_string());
-    headers
+async fn pool_proxy(pool: &mut Option<ProxyPool>) -> Option<String> {
+    if let Some(pool) = pool.as_mut() {
+        pool.get_proxy().await
+    } else {
+        None
+    }
 }
 
 async fn fetch_sse(client: &HttpClient) -> Result<Value> {
+    let mut pool = make_proxy_pool();
     let mut params = HashMap::new();
     params.insert(
         "sqlId".to_string(),
@@ -414,12 +411,18 @@ async fn fetch_sse(client: &HttpClient) -> Result<Value> {
     params.insert("isPagination".to_string(), "true".to_string());
     params.insert("pageHelp.pageSize".to_string(), "3000".to_string());
     params.insert("pageHelp.pageNo".to_string(), "1".to_string());
-    let request = client
+    let mut request = client
         .client()
         .get(SSE_URL)
         .query(&params)
         .header("User-Agent", USER_AGENT)
         .header("Referer", "https://www.sse.com.cn/");
+    if let Some(proxy_url) = pool_proxy(&mut pool).await {
+        let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+            crate::error::CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+        })?;
+        request = request.proxy(p);
+    }
     let response = request.send().await?;
     if !response.status().is_success() {
         return Err(crate::error::CollectError::HttpStatus(
@@ -431,17 +434,24 @@ async fn fetch_sse(client: &HttpClient) -> Result<Value> {
 }
 
 async fn fetch_szse_xlsx(client: &HttpClient, catalogid: &str, tabkey: &str) -> Result<String> {
+    let mut pool = make_proxy_pool();
     let mut params = HashMap::new();
     params.insert("SHOWTYPE".to_string(), "xlsx".to_string());
     params.insert("CATALOGID".to_string(), catalogid.to_string());
     params.insert("TABKEY".to_string(), tabkey.to_string());
     params.insert("random".to_string(), "0.1".to_string());
-    let request = client
+    let mut request = client
         .client()
         .get(SZSE_XLSX_URL)
         .query(&params)
         .header("User-Agent", USER_AGENT)
         .header("Referer", "https://www.szse.cn/");
+    if let Some(proxy_url) = pool_proxy(&mut pool).await {
+        let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+            crate::error::CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+        })?;
+        request = request.proxy(p);
+    }
     let response = request.send().await?;
     if !response.status().is_success() {
         return Err(crate::error::CollectError::HttpStatus(
@@ -458,10 +468,18 @@ async fn fetch_szse_xlsx(client: &HttpClient, catalogid: &str, tabkey: &str) -> 
 }
 
 async fn fetch_bse(client: &HttpClient) -> Result<Vec<Value>> {
-    let empty = HashMap::new();
-    let _ = client
-        .get_text_with_headers_and_proxy(BSE_LISTED_URL, &empty, &bse_headers(), None)
-        .await;
+    let mut pool = make_proxy_pool();
+    let mut warmup = client
+        .client()
+        .get(BSE_LISTED_URL)
+        .header("User-Agent", USER_AGENT);
+    if let Some(proxy_url) = pool_proxy(&mut pool).await {
+        let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+            crate::error::CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+        })?;
+        warmup = warmup.proxy(p);
+    }
+    let _ = warmup.send().await;
 
     let mut all_rows = Vec::new();
     let mut page = 0usize;
@@ -473,9 +491,29 @@ async fn fetch_bse(client: &HttpClient) -> Result<Vec<Value>> {
         params.insert("xxzqdm".to_string(), String::new());
         params.insert("sortfield".to_string(), "xxzqdm".to_string());
         params.insert("sorttype".to_string(), "asc".to_string());
-        let body = client
-            .post_form_text_with_headers_and_proxy(BSE_API_URL, &params, &bse_headers(), None)
-            .await?;
+        let mut request = client
+            .client()
+            .post(BSE_API_URL)
+            .form(&params)
+            .header("User-Agent", USER_AGENT)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Referer", "https://www.bse.cn/nq/listedcompany.html")
+            .header("X-Requested-With", "XMLHttpRequest");
+        if let Some(proxy_url) = pool_proxy(&mut pool).await {
+            let p = wreq::Proxy::all(&proxy_url).map_err(|e| {
+                crate::error::CollectError::InvalidInput(format!(
+                    "invalid proxy {proxy_url:?}: {e}"
+                ))
+            })?;
+            request = request.proxy(p);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(crate::error::CollectError::HttpStatus(
+                response.status().as_u16(),
+            ));
+        }
+        let body = response.text().await?;
         if !body.starts_with("null(") || !body.ends_with(")") {
             break;
         }

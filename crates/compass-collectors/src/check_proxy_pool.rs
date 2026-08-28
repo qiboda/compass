@@ -190,21 +190,9 @@ pub fn judge(
 }
 
 /// Run both THS probe targets and return a JSON summary payload.
-pub async fn run() -> Result<Value> {
-    let list_result = run_trial(
-        THS_LIST_URL,
-        DEFAULT_COUNT,
-        DEFAULT_API_URL,
-        DEFAULT_TIMEOUT,
-    )
-    .await?;
-    let kline_result = run_trial(
-        &current_kline_url(),
-        DEFAULT_COUNT,
-        DEFAULT_API_URL,
-        DEFAULT_TIMEOUT,
-    )
-    .await?;
+pub async fn run_with(api_url: &str, count: usize, timeout: f64) -> Result<Value> {
+    let list_result = run_trial(THS_LIST_URL, count, api_url, timeout).await?;
+    let kline_result = run_trial(&current_kline_url(), count, api_url, timeout).await?;
 
     let combined_total = list_result.total + kline_result.total;
     let combined_success = list_result.success + kline_result.success;
@@ -252,6 +240,11 @@ pub async fn run() -> Result<Value> {
             },
         ],
     }))
+}
+
+/// Run both THS probe targets with the default CLI settings.
+pub async fn run() -> Result<Value> {
+    run_with(DEFAULT_API_URL, DEFAULT_COUNT, DEFAULT_TIMEOUT).await
 }
 
 #[cfg(test)]

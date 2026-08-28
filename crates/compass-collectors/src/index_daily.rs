@@ -192,10 +192,14 @@ async fn max_trade_date(symbol: &str) -> Result<Option<String>> {
         return Ok(None);
     }
     let escaped = symbol.replace('\'', "''");
-    let out = crate::dolt::dolt_sql_csv(&format!(
+    let out = match crate::dolt::dolt_sql_csv(&format!(
         "SELECT DATE_FORMAT(MAX(trade_date), '%Y-%m-%d') FROM {DOLT_TABLE} WHERE symbol = '{escaped}'"
     ))
-    .await?;
+    .await
+    {
+        Ok(o) => o,
+        Err(_) => return Ok(None),
+    };
     let lines: Vec<&str> = out.trim().lines().collect();
     if lines.len() < 2 {
         return Ok(None);

@@ -539,6 +539,9 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     other => return Err(format!("unknown flag {other}").into()),
                 }
             }
+            if !once && interval == 0 {
+                return Err("fatal: --interval must be > 0 unless --once is used".into());
+            }
             let snapshot_path = std::path::PathBuf::from(snapshot);
             loop {
                 let (json_written, realtime_written) =
@@ -554,7 +557,33 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         "check-proxy-pool" | "check_proxy_pool" => {
-            let payload = check_proxy_pool::run().await?;
+            let mut api_url = check_proxy_pool::DEFAULT_API_URL.to_string();
+            let mut count = check_proxy_pool::DEFAULT_COUNT;
+            let mut timeout = check_proxy_pool::DEFAULT_TIMEOUT;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--api-url" => {
+                        api_url = args
+                            .get(i + 1)
+                            .ok_or("--api-url requires a value")?
+                            .to_string();
+                        i += 2;
+                    }
+                    "--count" => {
+                        let raw = args.get(i + 1).ok_or("--count requires a value")?;
+                        count = raw.parse()?;
+                        i += 2;
+                    }
+                    "--timeout" => {
+                        let raw = args.get(i + 1).ok_or("--timeout requires a value")?;
+                        timeout = raw.parse()?;
+                        i += 2;
+                    }
+                    other => return Err(format!("unknown flag {other}").into()),
+                }
+            }
+            let payload = check_proxy_pool::run_with(&api_url, count, timeout).await?;
             println!("{}", serde_json::to_string_pretty(&payload)?);
             Ok(())
         }
