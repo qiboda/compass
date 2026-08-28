@@ -117,7 +117,12 @@ fn write_state_file(state_path: &Path, state: &serde_json::Value) -> Result<()> 
     Ok(())
 }
 
-async fn run_full(years: Option<&[i32]>, periods: &str, page_size: usize) -> Result<PathBuf> {
+async fn run_full(
+    years: Option<&[i32]>,
+    periods: &str,
+    page_size: usize,
+    write_last_update: bool,
+) -> Result<PathBuf> {
     let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}.csv"));
     let years_owned = years
         .map(|v| v.to_vec())
@@ -129,6 +134,7 @@ async fn run_full(years: Option<&[i32]>, periods: &str, page_size: usize) -> Res
     let mut throttle = Throttle::new(EM_MIN_INTERVAL);
     let mut all_records: Vec<Record> = Vec::new();
     let mut max_report_date = String::new();
+    let mut max_update_date = String::new();
 
     for report_date in &all_dates {
         eprintln!("[{report_date}] ...");
@@ -147,6 +153,11 @@ async fn run_full(years: Option<&[i32]>, periods: &str, page_size: usize) -> Res
                     if let Some(v) = record_get(r, "REPORTDATE") {
                         max_report_date = max_report_date.max(v.to_string());
                     }
+                    if let Some(v) = record_get(r, "UPDATE_DATE").and_then(normalize_update_date)
+                        && v > max_update_date
+                    {
+                        max_update_date = v;
+                    }
                 }
                 all_records.extend(records);
                 eprintln!("{} records", all_records.len());
@@ -164,11 +175,33 @@ async fn run_full(years: Option<&[i32]>, periods: &str, page_size: usize) -> Res
     if all_records.is_empty() {
         return Ok(output_path);
     }
-    let state = serde_json::json!({
+    let mut state = serde_json::json!({
         "last_report_date": max_report_date,
         "total_rows": all_records.len(),
         "last_run": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
     });
+    if write_last_update {
+        let today = chrono::Local::now()
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+        let max_update = if max_update_date.is_empty() {
+            if state_path.exists()
+                && let Ok(text) = std::fs::read_to_string(&state_path)
+                && let Ok(prev) = serde_json::from_str::<serde_json::Value>(&text)
+                && let Some(v) = prev.get("last_update_date").and_then(|v| v.as_str())
+            {
+                v.to_string()
+            } else {
+                String::new()
+            }
+        } else if max_update_date > today {
+            today
+        } else {
+            max_update_date
+        };
+        state["last_update_date"] = serde_json::json!(max_update);
+    }
     write_state_file(&state_path, &state)?;
     Ok(output_path)
 }
@@ -184,7 +217,7 @@ async fn run_incremental(
     let anchor = update_date_anchor(REPORT_NAME, &state_path, Some(DOLT_TABLE)).await?;
     if anchor.is_empty() {
         eprintln!("No prior data found, fetching full history.");
-        return run_full(years, periods, page_size).await;
+        return run_full(years, periods, page_size, true).await;
     }
 
     eprintln!("Incremental: UPDATE_DATE>='{anchor}'");
@@ -255,7 +288,7 @@ pub async fn run(
     if incremental {
         run_incremental(page_size, years, periods).await
     } else {
-        run_full(years, periods, page_size).await
+        run_full(years, periods, page_size, false).await
     }
 }
 
