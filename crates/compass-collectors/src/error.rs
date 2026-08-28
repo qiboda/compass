@@ -18,6 +18,12 @@ pub enum CollectError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("ZIP error: {0}")]
+    Zip(#[from] zip::result::ZipError),
+
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+
     #[error("Dolt command failed: {stderr}")]
     Dolt { stderr: String },
 

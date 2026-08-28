@@ -107,6 +107,100 @@ impl HttpClient {
         Ok(response.json().await?)
     }
 
+    /// Perform a GET request through an optional HTTP proxy with extra headers
+    /// and return the response body as text.
+    pub async fn get_text_with_headers_and_proxy(
+        &self,
+        url: &str,
+        params: &HashMap<String, String>,
+        headers: &HashMap<String, String>,
+        proxy: Option<&str>,
+    ) -> Result<String> {
+        let mut request = self.client.get(url);
+        for (k, v) in &self.default_headers {
+            request = request.header(k, v);
+        }
+        for (k, v) in headers {
+            request = request.header(k, v);
+        }
+        if !params.is_empty() {
+            request = request.query(&params);
+        }
+        if let Some(proxy_url) = proxy {
+            let p = Proxy::all(proxy_url).map_err(|e| {
+                CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+            })?;
+            request = request.proxy(p);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(CollectError::HttpStatus(response.status().as_u16()));
+        }
+        Ok(response.text().await?)
+    }
+
+    /// Perform a GET request through an optional HTTP proxy with extra headers
+    /// and return the raw response bytes.
+    pub async fn get_bytes_with_headers_and_proxy(
+        &self,
+        url: &str,
+        params: &HashMap<String, String>,
+        headers: &HashMap<String, String>,
+        proxy: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        let mut request = self.client.get(url);
+        for (k, v) in &self.default_headers {
+            request = request.header(k, v);
+        }
+        for (k, v) in headers {
+            request = request.header(k, v);
+        }
+        if !params.is_empty() {
+            request = request.query(&params);
+        }
+        if let Some(proxy_url) = proxy {
+            let p = Proxy::all(proxy_url).map_err(|e| {
+                CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+            })?;
+            request = request.proxy(p);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(CollectError::HttpStatus(response.status().as_u16()));
+        }
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Perform a POST form request through an optional HTTP proxy with extra
+    /// headers and return the response body as text.
+    pub async fn post_form_text_with_headers_and_proxy(
+        &self,
+        url: &str,
+        params: &HashMap<String, String>,
+        headers: &HashMap<String, String>,
+        proxy: Option<&str>,
+    ) -> Result<String> {
+        let mut request = self.client.post(url).form(params);
+        for (k, v) in &self.default_headers {
+            request = request.header(k, v);
+        }
+        for (k, v) in headers {
+            request = request.header(k, v);
+        }
+        if let Some(proxy_url) = proxy {
+            let p = Proxy::all(proxy_url).map_err(|e| {
+                CollectError::InvalidInput(format!("invalid proxy {proxy_url:?}: {e}"))
+            })?;
+            request = request.proxy(p);
+        }
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            return Err(CollectError::HttpStatus(response.status().as_u16()));
+        }
+        Ok(response.text().await?)
+    }
+
     /// Perform a POST request and return the parsed JSON body.
     pub async fn post_json(
         &self,
