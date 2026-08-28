@@ -84,9 +84,10 @@ async fn request_json(
         if let Some(e) = last_err {
             if retry + 1 < EM_MAX_RETRIES {
                 let wait = if matches!(e, CollectError::HttpStatus(429)) {
-                    std::time::Duration::from_secs(15)
+                    std::time::Duration::from_secs(15 + (rand::random::<f64>() * 5.0) as u64)
                 } else {
-                    std::time::Duration::from_millis(((1u64 << retry.min(5)) * 1000).min(30_000))
+                    let base = ((1u64 << retry.min(5)) * 1000).min(30_000);
+                    std::time::Duration::from_millis(base + (rand::random::<f64>() * 3000.0) as u64)
                 };
                 tokio::time::sleep(wait).await;
                 continue;
