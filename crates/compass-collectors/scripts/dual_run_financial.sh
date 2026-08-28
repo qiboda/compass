@@ -70,9 +70,19 @@ def key(row):
         row.get("REPORTDATE") or row.get("REPORT_DATE"),
     )
 
+def canon(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return (v or "").strip()
+
+def canon_row(row):
+    return tuple(canon(row[k]) for k in sorted(row))
+
 r = sorted(load(rust_dir), key=key)
 p = sorted(load(py_dir), key=key)
 assert len(r) == len(p), f"row count mismatch: rust={len(r)} python={len(p)}"
 assert all(key(a) == key(b) for a, b in zip(r, p)), "financial key rows differ"
-print(f"dual-run OK: {len(r)} {report} rows, keys match")
+assert all(canon_row(a) == canon_row(b) for a, b in zip(r, p)), "financial values differ"
+print(f"dual-run OK: {len(r)} {report} rows, keys and values match")
 PY

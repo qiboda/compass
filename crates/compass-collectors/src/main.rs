@@ -60,6 +60,14 @@ fn parse_financial_args(args: &[String]) -> Result<FinancialCliArgs, Box<dyn std
             other => return Err(format!("unknown flag {other}").into()),
         }
     }
+    if let Some(ref years) = years
+        && years.is_empty()
+    {
+        return Err("--years contains no valid years".into());
+    }
+    if page_size == 0 {
+        return Err("--page-size must be greater than zero".into());
+    }
     Ok(FinancialCliArgs {
         years,
         periods,

@@ -8,10 +8,15 @@
 
 use std::path::{Path, PathBuf};
 
+use chrono::Datelike;
+
 use crate::config::csv_dir;
+use crate::csv::{build_dates, dedupe_csv, write_csv_ordered};
 use crate::dolt::import_replace_table;
+use crate::eastmoney::{Record, fetch_by_update_date, fetch_paginated, record_get};
 use crate::error::Result;
-use crate::financial::{FinancialConfig, run as run_financial};
+use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
+use crate::incremental::{normalize_update_date, update_date_anchor};
 
 pub const REPORT_NAME: &str = "RPT_LICO_FN_CPD";
 pub const FILTER_COLUMN: &str = "REPORTDATE";
@@ -100,21 +105,145 @@ const TMP_DDL: &str = r#"CREATE TABLE _tmp_fin (
     PAYYEAR VARCHAR(100)
 )"#;
 
-// The financial::run path uses this config only for the fetch side; the
-// import below is custom and does not use `cols`/`tmp_ddl` from the config.
-const CFG: FinancialConfig = FinancialConfig {
-    report_name: REPORT_NAME,
-    filter_column: FILTER_COLUMN,
-    dolt_table: DOLT_TABLE,
-    start_year: START_YEAR,
-    initial_anchor: INITIAL_UPDATE_ANCHOR,
-    cols: "",
-    ddl: DDL,
-    tmp_ddl: TMP_DDL,
-    tmp_name: "_tmp_fin",
-    trim_text_cols: &[],
-    non_incremental_uses_last_report_date: false,
-};
+fn current_year() -> i32 {
+    chrono::Local::now().date_naive().year()
+}
+
+fn write_state_file(state_path: &Path, state: &serde_json::Value) -> Result<()> {
+    if let Some(parent) = state_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(state_path, serde_json::to_string_pretty(state)?)?;
+    Ok(())
+}
+
+async fn run_full(years: Option<&[i32]>, periods: &str, page_size: usize) -> Result<PathBuf> {
+    let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}.csv"));
+    let years_owned = years
+        .map(|v| v.to_vec())
+        .unwrap_or_else(|| (START_YEAR..=current_year()).collect());
+    let period_list: Vec<&str> = periods.split(',').map(str::trim).collect();
+    let all_dates = build_dates(&years_owned, &period_list);
+
+    let client = HttpClient::new()?;
+    let mut throttle = Throttle::new(EM_MIN_INTERVAL);
+    let mut all_records: Vec<Record> = Vec::new();
+    let mut max_report_date = String::new();
+
+    for report_date in &all_dates {
+        eprintln!("[{report_date}] ...");
+        match fetch_paginated(
+            &client,
+            &mut throttle,
+            REPORT_NAME,
+            FILTER_COLUMN,
+            report_date,
+            page_size,
+        )
+        .await
+        {
+            Ok(records) => {
+                for r in &records {
+                    if let Some(v) = record_get(r, "REPORTDATE") {
+                        max_report_date = max_report_date.max(v.to_string());
+                    }
+                }
+                all_records.extend(records);
+                eprintln!("{} records", all_records.len());
+            }
+            Err(e) => {
+                eprintln!("FAILED: {e}");
+            }
+        }
+    }
+
+    write_csv_ordered(&output_path, &all_records)?;
+    dedupe_csv(&output_path, "REPORTDATE")?;
+
+    let state_path = csv_dir()?.join(format!("{REPORT_NAME}.state.json"));
+    if all_records.is_empty() {
+        return Ok(output_path);
+    }
+    let state = serde_json::json!({
+        "last_report_date": max_report_date,
+        "total_rows": all_records.len(),
+        "last_run": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+    });
+    write_state_file(&state_path, &state)?;
+    Ok(output_path)
+}
+
+async fn run_incremental(
+    page_size: usize,
+    years: Option<&[i32]>,
+    periods: &str,
+) -> Result<PathBuf> {
+    let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}.csv"));
+    let state_path = csv_dir()?.join(format!("{REPORT_NAME}.state.json"));
+
+    let anchor = update_date_anchor(REPORT_NAME, &state_path, Some(DOLT_TABLE)).await?;
+    if anchor.is_empty() {
+        eprintln!("No prior data found, fetching full history.");
+        return run_full(years, periods, page_size).await;
+    }
+
+    eprintln!("Incremental: UPDATE_DATE>='{anchor}'");
+    let client = HttpClient::new()?;
+    let mut throttle = Throttle::new(EM_MIN_INTERVAL);
+    let records =
+        fetch_by_update_date(&client, &mut throttle, REPORT_NAME, &anchor, page_size).await?;
+    let total = records.len();
+
+    if total > 0 {
+        write_csv_ordered(&output_path, &records)?;
+        dedupe_csv(&output_path, "REPORTDATE")?;
+    }
+
+    let mut max_report_date = String::new();
+    let mut max_update_date = String::new();
+    for r in &records {
+        if let Some(v) = record_get(r, "REPORTDATE")
+            && !v.is_empty()
+        {
+            max_report_date = max_report_date.max(v.to_string());
+        }
+        if let Some(v) = record_get(r, "UPDATE_DATE").and_then(normalize_update_date)
+            && v > max_update_date
+        {
+            max_update_date = v;
+        }
+    }
+    let today = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    let max_update_date = if max_update_date.is_empty() {
+        if state_path.exists()
+            && let Ok(text) = std::fs::read_to_string(&state_path)
+            && let Ok(prev) = serde_json::from_str::<serde_json::Value>(&text)
+            && let Some(v) = prev.get("last_update_date").and_then(|v| v.as_str())
+        {
+            v.to_string()
+        } else {
+            String::new()
+        }
+    } else if max_update_date > today {
+        today
+    } else {
+        max_update_date
+    };
+
+    if total > 0 {
+        let state = serde_json::json!({
+            "last_report_date": max_report_date,
+            "total_rows": total,
+            "last_run": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "last_update_date": max_update_date,
+        });
+        write_state_file(&state_path, &state)?;
+    }
+    Ok(output_path)
+}
 
 /// Fetch fin_indicators into a CSV (incremental or period-enumerated).
 pub async fn run(
@@ -123,7 +252,11 @@ pub async fn run(
     page_size: usize,
     incremental: bool,
 ) -> Result<PathBuf> {
-    run_financial(&CFG, years, periods, page_size, incremental).await
+    if incremental {
+        run_incremental(page_size, years, periods).await
+    } else {
+        run_full(years, periods, page_size).await
+    }
 }
 
 /// Import RPT_LICO_FN_CPD.csv into Dolt `fin_indicators` (upsert).
