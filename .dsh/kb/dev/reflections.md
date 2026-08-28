@@ -370,3 +370,27 @@
 **Process improvements**:
 - 已提交 `crates/compass-collectors/scripts/dual_run_block_trade.sh` 作为 B2 pilot 的可复现等价性验证入口。
 - 建议后续批次每个采集器保留同样 dual-run 脚本与关键字段对比（proposed）。
+
+## 2026-08-28 — ref #314, #315, #316, #317 B3 daily collectors Rust 迁移
+
+**What was done**: 将 dragon_list、institution_survey、main_flow（snapshot + fflow backfill）和 stock_basic（EastMoney CSV）移植到 `crates/compass-collectors`，接入 `compass-collectors` CLI，新增四个 dual-run 脚本与 B3 evidence；Python/update-database.sh 未改动。dragon/institution/main_flow/stock_basic 单日或单页 dual-run 均通过（121/4007/5554/100 行一致）。
+
+**User corrections** (if any): 无。
+
+**What went wrong**:
+1. 本批没有在实现前完成独立 RED/adversarial/requirement 子代理测试；门禁 3.5/4 仍为 open（B1/B2 首次 DEFERRED 后未重新委派）。这是最明显的流程残留。
+2. 初版 dual-run 脚本只隔离 `COMPASS_CSV_DIR`，未隔离 `COMPASS_DATA_DIR`，会读生产 Dolt 水位；并且 dragon/institution 脚本把用户日期直接插值进 `python -c`，构成 shell 注入风险。安全/QA review 抓出后修复，并顺手修了 B2 的 block_trade 脚本同类问题。
+3. main_flow 首轮 dual-run 超时，我一度以为 wreq 请求挂起；实际是 push2 每页上限 100 行，默认 page_size=1000 也要约 56 页，加上 Python 侧约需 4 分钟。用 curl+debug 页计数定位后确认不是死锁。
+4. `stock_basic` 初版在无数据时 `Ok(output_path)` 但不创建文件，属于静默成功；review 后改为显式错误。
+5. `main_flow` 数字序列化与 Python 原始 CSV 有差异（Rust `"1"` vs Python `"1.0"`），dual-run 用 float 归一化掩盖了该差异；尚未修复。
+
+**Lessons learned**:
+1. 迁移采集器的 dual-run 脚本应从第一天就隔离 `COMPASS_DATA_DIR` 并把用户参数作为 argv 传给 Python，避免读到生产水位和 shell 注入；已固化到本批脚本。
+2. 网络采集器迁移的“卡死”要先看 API 实际分页/限频特征，用 curl/页计数证据定位，不要凭表象猜。
+3. 每批提交前应确保独立测试（RED/验收）已委派；若 DEFERRED，要在首个可编译接口出现后补委派，不能把“实现者自测”当作门禁完成。
+4. CSV 级 dual-run 不能掩盖浮点文本差异；Dolt 级导入对比仍是 B3 验收缺口，应在后续批次或 B7 前补齐。
+
+**Process improvements**:
+- 已在 `.dsh/evidence/b3-migrate-collectors-to-rust.md` 落盘 B3 dual-run 证据与已知缺口。
+- 建议后续将 dual-run 模板统一为“isolated DATA_DIR + argv 传参 + Dolt optional import”并形成脚本模板（proposed）。
+- 建议创建/推进独立 requirement/adversarial 测试委派任务和 Dolt 级 dual-run issue（proposed）。
