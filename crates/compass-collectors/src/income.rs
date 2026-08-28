@@ -446,6 +446,7 @@ const CFG: FinancialConfig = FinancialConfig {
         "REPORT_TYPE",
         "SECURITY_NAME_ABBR",
     ],
+    non_incremental_uses_last_report_date: true,
 };
 
 /// Fetch income data into a CSV (incremental or period-enumerated).

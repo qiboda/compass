@@ -113,6 +113,7 @@ const CFG: FinancialConfig = FinancialConfig {
     tmp_ddl: TMP_DDL,
     tmp_name: "_tmp_fin",
     trim_text_cols: &[],
+    non_incremental_uses_last_report_date: false,
 };
 
 /// Fetch fin_indicators into a CSV (incremental or period-enumerated).

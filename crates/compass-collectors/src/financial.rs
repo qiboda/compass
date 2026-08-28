@@ -22,6 +22,7 @@ pub struct FinancialConfig {
     pub tmp_ddl: &'static str,
     pub tmp_name: &'static str,
     pub trim_text_cols: &'static [&'static str],
+    pub non_incremental_uses_last_report_date: bool,
 }
 
 fn symbol_expr() -> &'static str {
@@ -72,18 +73,22 @@ async fn run_non_incremental(
         .unwrap_or_else(|| current_years(cfg));
     let all_dates = dates_for_years(&years_owned, periods);
 
-    let since = crate::dolt::last_report_date(cfg.dolt_table).await?;
-    let all_dates = if let Some(since) = since {
-        eprintln!("Last report date in Dolt: {since}, fetching only newer periods");
-        let filtered: Vec<String> = all_dates
-            .into_iter()
-            .filter(|d| d.as_str() >= since.as_str())
-            .collect();
-        if filtered.is_empty() {
-            eprintln!("No new report periods to fetch.");
-            return Ok(output_path);
+    let all_dates = if cfg.non_incremental_uses_last_report_date {
+        let since = crate::dolt::last_report_date(cfg.dolt_table).await?;
+        if let Some(since) = since {
+            eprintln!("Last report date in Dolt: {since}, fetching only newer periods");
+            let filtered: Vec<String> = all_dates
+                .into_iter()
+                .filter(|d| d.as_str() >= since.as_str())
+                .collect();
+            if filtered.is_empty() {
+                eprintln!("No new report periods to fetch.");
+                return Ok(output_path);
+            }
+            filtered
+        } else {
+            all_dates
         }
-        filtered
     } else {
         all_dates
     };
@@ -211,6 +216,7 @@ mod tests {
             tmp_ddl: "",
             tmp_name: "_tmp_test",
             trim_text_cols: &["TEXT_B"],
+            non_incremental_uses_last_report_date: true,
         }
     }
 
