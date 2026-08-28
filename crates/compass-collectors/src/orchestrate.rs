@@ -321,6 +321,7 @@ async fn run_dolt_investment(args: &[&str]) -> Result<()> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(300),
         tokio::process::Command::new("dolt")
+            .kill_on_drop(true)
             .args(["--data-dir", dir_str])
             .args(args)
             .output(),
