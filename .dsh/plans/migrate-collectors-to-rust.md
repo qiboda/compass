@@ -190,7 +190,7 @@ Dual-run 方法：
 - [x] B1 基础设施：PR #327
 - [x] B2 pilot block_trade：PR #328
 - [x] B3 简单/日常采集器（dragon/institution_survey/main_flow/stock_basic）：本地实现 + 单元测试 + dual-run 通过，PR #329
-- [x] B4 财务报表（fin_indicators/balance_sheet/income/cash_flow）：本地实现 + 单测 + 2026Q1 dual-run 全部通过，待 PR
+- [x] B4 财务报表（fin_indicators/balance_sheet/income/cash_flow）：本地实现 + 单测 + 2026Q1 dual-run 全部通过，PR #330
 - [ ] B5 复杂/特殊
 - [ ] B6 编排 CLI
 - [ ] B7 切换/退役
