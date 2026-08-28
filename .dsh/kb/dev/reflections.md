@@ -418,3 +418,34 @@
 - fin_indicators 已改为自有 fetch/state 实现，避免共享 CPD 语义错误。
 - 建议后续将 dual-run 模板统一为“全列值比较 + Dolt import 可选”并成为脚本模板（proposed）。
 - 建议为 B4 各模块补至少 DDL/COLS 一致性单测，并继续推进独立 RED/要求测试（proposed）。
+
+## 2026-08-29 — ref #322, #323, #324 B5 complex/special collectors Rust 迁移
+
+**What was done**: 将 index_daily（EastMoney + THS 行业 + Tencent 回退路径）、stock_basic_official（SSE/SZSE/BSE 官方源）和 proxy 池工具（freeproxy/keepalive/check_proxy_pool）移植到 `crates/compass-collectors`；新增 CLI 命令、双 run 脚本和 B5 evidence。stock_basic_official 全量 5905 行 12 列一致；index_daily 官方 probe 8714 kline 一致、THS 行业列表 90 个一致；Rust 单测 53 个通过，clippy clean。Python/update-database.sh 未动。
+
+**User corrections** (if any): 无（本批仅收到“后续 push/create PR 不用再问，自行处理”的继续授权）。
+
+**What went wrong**:
+1. wreq 默认浏览器头访问上交所 SSE API 时服务端返回 error wrapper（`({"jsonCallBack":"null","success":"false"...})`）；切换到仅带 UA/Referer 的 raw request 后正常。深交所类似 SendRequest 错误也因改用 raw request 解决。
+2. 首版 `index_daily::max_trade_date` 对不存在的表直接 `?`，首次运行会整批 abort；review 发现后改为 Dolt 查询失败时返回 `None`（对齐 Python 的降级全量行为）。
+3. 尝试给 stock_basic_official 引入共享 proxy pool 的 `with_retry_pool` 时遇到 Rust lifetime 问题，返工改为每个 fetch 自建 `make_proxy_pool()`，避免闭包借用逃逸。
+4. 初版 check-proxy-pool CLI 丢失 Python 的 `--api-url/--count/--timeout`，keepalive 未校验 `--interval 0`；review 后补齐。
+5. CSV 输出初版无 UTF-8 BOM，与 Python `utf-8-sig` 约定不一致；已改为 Rust 侧写 BOM（`write_csv`/`write_csv_ordered`/official `records_to_csv`）。
+6. 已知缺口：完整 index_daily 90 行业 × 多年份未跑（用 bounded probe 代替）；freeproxy realtime 源在 Rust 中明确不支持；live Redis/proxy_pool 未端到端验证；独立 RED/adversarial/requirement 子代理测试仍未补。
+
+**Lessons learned**:
+1. 交易所官方端点在新 TLS/HTTP 客户端下容易被“太多浏览器头”触发反爬或错误响应；遇到时应先对比 Python `requests` 的最小头组合，而不是直接认定客户端不可用。
+2. 迁移采集器在 Dolt 表尚未创建时必须降级为全量（Python `max_trade_date` 的 try/except 语义），不能把“查不到表”当致命错误。
+3. 重网络采集器的等价性验证可以用 bounded probe（单官方指数 + THS 列表）覆盖共享 fetch/parse 路径，完整量级留作后续/最终 wave。
+4. 新 CLI 命令在实现时就要对照 Python argparse 暴露的参数集合，避免 review 阶段补参数。
+
+**Process improvements**:
+- `index_daily::max_trade_date` 已改为 Dolt 错误降级为 `None`（代码）。
+- CSV 输出层已统一写 UTF-8 BOM，与 Python 惯例一致（代码）。
+- check-proxy-pool CLI 已支持 `--api-url/--count/--timeout`；keepalive 已校验 `--interval`（代码）。
+- 建议后续继续推进独立 RED/adversarial/requirement 测试委派、Dolt 级 dual-run、完整 index_daily 长跑与 proxy Redis 端到端（proposed）。
+
+### Trends (last 10)
+- B1→B5 连续多批“独立 RED/adversarial/requirement 测试未在实现前完成”仍是同一未闭环模式（ref #311-#324）。
+- 每批 dual-run 都在增强（B3 加 DATA_DIR/argv 隔离、B4 加全列值、B5 加 bounded probe/BOM），但 Dolt 级导入 round-trip 仍未纳入任何脚本。
+- 共享网络/客户端行为差异（wreq 默认头 vs Python requests）首次在 B5 出现，后续其他交易所/官方源迁移应沿用“最小头 raw request”检查步骤。
