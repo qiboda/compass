@@ -8,10 +8,10 @@
 
 | Collector | Report | Rust rows | Python rows | Result |
 |---|---|---|---|---|
-| fin_indicators | RPT_LICO_FN_CPD | 5908 | 5908 | OK, keys match |
-| balance_sheet | RPT_F10_FINANCE_GBALANCE | 7041 | 7041 | OK, keys match |
-| income | RPT_F10_FINANCE_GINCOME | 7175 | 7175 | OK, keys match |
-| cash_flow | RPT_F10_FINANCE_GCASHFLOW | 7039 | 7039 | OK, keys match |
+| fin_indicators | RPT_LICO_FN_CPD | 5908 | 5908 | OK, keys and values match |
+| balance_sheet | RPT_F10_FINANCE_GBALANCE | 7041 | 7041 | OK, keys and values match |
+| income | RPT_F10_FINANCE_GINCOME | 7175 | 7175 | OK, keys and values match |
+| cash_flow | RPT_F10_FINANCE_GCASHFLOW | 7039 | 7039 | OK, keys and values match |
 
 All runs used isolated `COMPASS_CSV_DIR` + `COMPASS_DATA_DIR` + `COMPASS_PROXY_DISABLE=1`.
 
@@ -23,5 +23,5 @@ report-date period building.
 
 ## Remaining known gaps
 
-- B4 dual-run is CSV-level only (same as B3); Dolt import/upsert round-trip not yet part of the scripts.
+- B4 dual-run is CSV-level only (same as B3); the final script compares full canonical values, but Dolt import/upsert round-trip is not yet part of the scripts.
 - Independent RED/adversarial/requirement subagent tests remain pending (plan gate 3.5/4).
