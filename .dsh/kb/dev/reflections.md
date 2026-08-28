@@ -348,3 +348,25 @@
 **Process improvements**:
 - 计划 `.dsh/plans/migrate-collectors-to-rust.md` 已同步为 `wreq`；架构文档新增 MIG-1..4 决策记录。
 - 建议后续将 `request_json` 的代理/重试行为抽成可注入 stub，补 429/坏代理/HTTPS 代理回归测试（proposed）。
+
+## 2026-08-28 — ref #313 B2 pilot block_trade Rust 采集器
+
+**What was done**: 将 `fetch_block_trade.py` 移植为 `crates/compass-collectors::block_trade`（RPT_DATA_BLOCKTRADE 按日拉取、CSV、Dolt merge 导入、增量水位、显式 range），新增最小 `compass-collectors` CLI 与已提交 dual-run 脚本，单日 2026-08-27 实测 Rust/Python 172 行一致。
+
+**User corrections** (if any): 无。
+
+**What went wrong**:
+1. 初版未迁移 Python 测试、无 committed dual-run，提交后 review 判 P0；后续补失败清理/progress.fail 与 dual-run 脚本。
+2. 初版失败时残留 stale CSV 且 progress 不 fail（与 Python 语义相反），review 抓出后修复。
+3. 初版生产代码含 unwrap；改为 expect。
+4. dual-run 脚本第一次运行因 Python 变量名笔误失败（`k` vs `key`），修复后通过。
+5. `ENV_MUTEX` 用 std::sync::Mutex 且跨 await 持锁触发 clippy await_holding_lock；改 tokio::sync::Mutex 后通过。
+
+**Lessons learned**:
+1. 迁移采集器时必须把 Python 的失败清理/progress 失败语义一起移植，并在提交前用真实 dual-run 验证。
+2. 可复现的 dual-run 对比应作为 committed 脚本/测试，不能只留在临时命令/口头声明。
+3. 测试中的全局 env 互斥应使用 async mutex，避免异步测试跨 await 持锁。
+
+**Process improvements**:
+- 已提交 `crates/compass-collectors/scripts/dual_run_block_trade.sh` 作为 B2 pilot 的可复现等价性验证入口。
+- 建议后续批次每个采集器保留同样 dual-run 脚本与关键字段对比（proposed）。
