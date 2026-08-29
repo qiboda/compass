@@ -193,7 +193,7 @@ Dual-run 方法：
 - [x] B4 财务报表（fin_indicators/balance_sheet/income/cash_flow）：本地实现 + 单测 + 2026Q1 dual-run 全部通过，PR #330
 - [x] B5 复杂/特殊（index_daily/stock_basic_official/proxy 工具）：本地实现 + 单测 + bounded dual-run/官方全量通过，PR #331
 - [x] B6 编排 CLI：本地实现 + 单测 + CLI 冒烟 + review 两轮通过，PR #332
-- [x] B7 切换/退役（PR 待创建）
+- [x] B7 切换/退役：PR #333
 
 > B7 偏差记录（2026-08-29）：freeproxy `--source realtime` 未移植（用户接受 JSON-only）；
 > 全量 update-database.sh 冒烟因外部 push2his 故障 + 1990+ SEPA 历史缺口改为有界验证。
