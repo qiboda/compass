@@ -148,7 +148,8 @@
   的 CI 失败应放行修复 PR（或提供 `--allow-ci-failure` 白名单机制），
   否则修复 flaky 的 PR 永远无法正常推送（ref #168 #169）
 - **根治（ref #172）**: 该 master-CI 检查已从 `.githooks/pre-push` **整体删除**，
-  CI 门槛移交 master branch protection（9 个 required status checks, strict）
+  CI 门槛移交 master branch protection（2 个 required status checks, strict：
+  `Rust (fmt + build + clippy + docs + nextest + coverage)` 与 `Bench (compile)`）
   在 merge 侧强制。`--no-verify` 绕行与 `--allow-ci-failure` 机制均不再需要
   ——修复失败 CI 的 PR 可直接正常 push，PR CI 全绿后才能 merge。
 
@@ -473,6 +474,8 @@
 
 ### [CI] Python Test 失败：/data 权限（GitHub runner 无 /data 写权限）
 
+> **历史（Python 采集层已退役，epic #310；Python Test CI job 已删除）**。
+
 - **症状**: PR CI 的 Python Test job 失败——`tests/test_common.py::TestCsvDir::test_env_unset_returns_default`
   `PermissionError: [Errno 13] Permission denied: '/data'` + `FileNotFoundError: /data/compass-data/csv`；1 failed, 326 passed
 - **根因**: `csv_dir()` 默认返回 `/data/compass-data/csv`（master commit 8d7bca4 引入统一 CSV 目录），
@@ -486,6 +489,8 @@
 - **验证**: 本地测试通过；CI 需环境修复后重跑
 
 ### [Git/环境] pre-push hook pytest 报 `pydantic_core._pydantic_core` ModuleNotFoundError
+
+> **历史（Python 采集层已退役，epic #310；pre-push hook 的 pytest 段已删除）**。
 
 - **症状**: `git push` 时 pre-push hook 的 `cd collectors && uv run pytest` 失败，traceback 显示导入
   `/home/skwy/.hermes/hermes-agent/venv/lib/python3.11/site-packages/langsmith/schemas.py` 后
@@ -513,6 +518,9 @@
   `bash scripts/check-coverage.sh` 8 项全 OK（2026-08-12，ref #250 首次遇到）。
 
 ### [数据] index_daily 导入必败：CSV 缺 update_date 列（采集器契约断裂）
+
+> **历史（Python 采集层，epic #310 已退役；Rust `index_daily` 采集器
+> （`crates/compass-collectors/src/index_daily.rs`）无此问题）**。
 
 - **症状**: `python main.py import index_daily` 报 `column "update_date" could not be found in any table in scope`，
   index_daily 表建好后永远 0 行；index_basic 正常（1000 行）。2026-08-15 首次真实采集（1000 板块，3.5h）暴露。

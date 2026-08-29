@@ -55,6 +55,9 @@
 **Process improvements**:
 - 已提交 `crates/compass-collectors/scripts/dual_run_block_trade.sh` 作为 B2 pilot 的可复现等价性验证入口。
 - 建议后续批次每个采集器保留同样 dual-run 脚本与关键字段对比（proposed）。
+- **历史注记（B7，epic #310）**：全部 8 个 `dual_run_*.sh` 已随 B7 切换
+  （Python 采集层退役）一并移除，`crates/compass-collectors/scripts/` 现为空；
+  等价性由 `.dsh/evidence/b7-*.md` 的 dual-run 记录承接，本条目仅存历史参考。
 
 ## 2026-08-28 — ref #314, #315, #316, #317 B3 daily collectors Rust 迁移
 
@@ -225,3 +228,31 @@
 ### Trends (last 10)
 - 测试子代理产出的 shell 测试初版仍存在 helper/mock 细节缺陷（多行 stdout 捕获、`${VAR:-...}` 花括号解析），主 agent 落地时必须复核并做真实 GREEN 验证，不能直接采信 RED 报告。
 - 首次引入“诊断型 always-on 输出”功能：必须同时考虑测试隔离、持久化文件复用、失败语义不阻断，避免 review 后大范围返工；此类横切关注点应在计划中提前写死。
+
+## 2026-08-29 — ref #336 项目书与实现一致性全面修正
+
+**What was done**: 按用户的"全部修正"指令，把项目书（AGENTS.md + .dsh/kb/）与实现的全部不一致一次性修齐：A1 实现 export csv/parquet-dir（直读 parquet 前复权 + amount 保留）、A2 collectors 读 config.toml [dolt]、A3 删 baostock 死代码、A4 missing_docs 5 crate 启用补齐、A5 CLI help 核对；C 文档同步 15+ 文件；两轮五角度审查后 P0/P1 清零、P2 全部修复。单一大 PR（9 commits）。
+
+**User corrections**: 无。用户仅：授权自主推进（取消首次问询、"按 handoff 自主推进"）、确认三个决策点（realtime 不实现/ts_code 保留+文档化/missing_docs 全启用）、"push"、"合并pr，并关闭worktree"。
+
+**What went wrong**:
+1. `cargo test --workspace` 全量跑用 `grep | head` 管道包裹，stdout 被缓冲无法观察进度；又并行跑 `cargo test -p compass-core` 与其竞争 target 锁，误判"卡死"后 kill，改分 crate 串行跑（全部通过）——全 workspace 测试 + 管道缓冲 + 并行 cargo 是摩擦源。
+2. architecture.md backup 描述**改错了**：原文档写"Python zipfile 压缩"（正确），我在文档同步时误改为"系统 zip"，审查抓出后回滚。教训：文档化前先核实实现（scripts/upload-parquet.sh 实际内嵌 python3 -c zipfile），原描述与实现一致时不该改。
+3. review 修复中 `edit` 误删函数头：插入新测试时 old_string 含原函数头但 new_string 未恢复，`run_export_parquet_dir_no_silent_overwrite_of_existing_output` 头部被损，后续 read 发现并恢复。教训：edit 替换包含函数声明时，new_string 必须完整保留。
+4. progress 写入方我先后断言错误：先写"四表"（含 fin_indicators），审查抓出 fin_indicators 无 Progress；修正时又写"8 个采集器"，二轮核实为 6 模块/8 文件名（RPT_* 名）。教训：文档化前 grep 实测（fin_indicators.rs 全文无 Progress 引用）。
+5. 提交 C 文档时 `git add` 报 "beyond a symbolic link" 才发现 `.dsh/kb/github` 是 symlink → 全局 `/home/skwy/.dsh/kb/github`，labels/ci-fix/fix/impl.md 修正落在仓库外。教训：worktree 文档改动前先 `ls -la` 确认目录不是 symlink。
+
+**Lessons learned**:
+1. 全 workspace 测试不要用 `grep|head` 管道包裹（输出缓冲、无法观察），直接 `cargo test --workspace` 或分 crate 串行；不要并行跑 cargo 命令与既有 cargo job 抢 target 锁。
+2. 文档同步"修订"时先核实原描述是否已正确——原文档与实现一致（如 Python zipfile）不该改；只改真正不一致的。
+3. edit 替换含函数/测试头声明时，new_string 必须完整保留声明（含 `#[tokio::test]` + fn 签名 + doc 注释）。
+4. 文档化模块行为（如 progress 写入方）前用 grep/行级证据实测，不要凭模块名推断（"财务四表"≠全部有进度文件）。
+5. 提交前 `git status` 对 symlink 目录敏感：`git ls-files -s` 显示 120000 即 symlink，其目标在仓库外，改动不随 PR。
+
+**Process improvements**:
+- 无（一次性教训：5 条均为执行细节，已在 lessons 记录；无新增 hook/脚本类可固化项）。
+- 注：flow 整体合规（worktree 分支内完成/9 commit 独立 ref #336/两轮审查/真实冒烟）。
+
+### Trends (last 10)
+- 文档同步类 PR 的"改错已正确内容"风险（本条目 backup zipfile 文档回归）与 #335/#336 系列文档改动需要更严格"先核实后改"——本次已通过审查抓出，下一步文档同步时对"修改已有描述"先确认原描述与实现一致性。
+- "凭模块名推断行为"反复出现（本条目 progress 写入方 ×2 修正；#336 早期审计也多次靠 grep 核实）——文档化库内部行为前 grep 实测应成为习惯。

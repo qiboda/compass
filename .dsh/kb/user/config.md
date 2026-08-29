@@ -71,6 +71,12 @@ investment_data_dir = "/data/compass-data/investment_data"
 # 默认值："/data/compass-data/compass_data"
 compass_data_dir = "/data/compass-data/compass_data"
 
+# 注：本节的 `investment_data_dir`/`compass_data_dir` 同时被两个二进制读取：
+# - compass-data：`load_config` 解析整个文件（clap 默认值来源）
+# - compass-collectors：`config.rs::load_file_config` 解析 `[dolt]` 节
+#   （采集器 Dolt 仓库定位；文件缺失/坏文件 warn 并回退内置默认值）。
+# 采集器侧环境变量优先于本文件：COMPASS_DATA_DIR / COMPASS_INVESTMENT_DATA_DIR。
+
 [app]
 # 应用启动时显示的股票代码（带交易所前缀）。
 # 默认值："SZ000001"

@@ -8,10 +8,15 @@ use std::path::{Path, PathBuf};
 use crate::error::Result;
 use crate::financial::{FinancialConfig, import_to_dolt as import_financial, run as run_financial};
 
+/// EastMoney F10 balance-sheet report name.
 pub const REPORT_NAME: &str = "RPT_F10_FINANCE_GBALANCE";
+/// Filter column used for incremental paging.
 pub const FILTER_COLUMN: &str = "REPORT_DATE";
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "fin_balance_sheet";
+/// First year to fetch.
 pub const START_YEAR: i32 = 2020;
+/// Anchor for the initial update (inclusive).
 pub const INITIAL_UPDATE_ANCHOR: &str = "2020-01-01";
 
 const DDL: &str = r###"CREATE TABLE IF NOT EXISTS fin_balance_sheet (

@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::config::{dolt_dir, investment_data_dir};
 use crate::error::{CollectError, Result};
 
+/// Temporary table name used for the name-en mapping import.
 pub const NAME_EN_MAPPING_TMP: &str = "_tmp_name_en";
 
 async fn run_dolt(args: &[&str]) -> Result<std::process::Output> {

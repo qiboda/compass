@@ -13,19 +13,31 @@ use serde_json::Value;
 use crate::error::{CollectError, Result};
 use crate::http::HttpClient;
 
+/// Default URL of the local proxy_pool HTTP API.
 pub const DEFAULT_API_URL: &str = "http://127.0.0.1:5010";
+/// Default number of proxies to sample per trial.
 pub const DEFAULT_COUNT: usize = 15;
+/// Default per-request timeout in seconds.
 pub const DEFAULT_TIMEOUT: f64 = 10.0;
+/// THS industry-list endpoint used as the first probe target.
 pub const THS_LIST_URL: &str = "https://q.10jqka.com.cn/thshy/";
+/// THS industry-kline endpoint template (year is substituted at runtime).
 pub const THS_KLINE_URL_TEMPLATE: &str = "https://d.10jqka.com.cn/v4/line/bk_881101/01/{year}.js";
 
+/// Aggregated outcome of probing one target through a set of proxies.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrialResult {
+    /// Probe target URL.
     pub target: String,
+    /// Number of proxies attempted.
     pub total: u64,
+    /// Number of successful probes.
     pub success: u64,
+    /// Per-proxy failure messages.
     pub failures: Vec<String>,
+    /// Success rate in 0..=1.
     pub success_rate: f64,
+    /// Average per-probe elapsed time in seconds.
     pub avg_elapsed: f64,
 }
 
@@ -38,6 +50,7 @@ fn proxy_pool_all_url(api_url: &str) -> String {
     format!("{}/all/", api_url.trim_end_matches('/'))
 }
 
+/// Fetch up to `count` proxy addresses from the proxy_pool `/all/` API.
 pub async fn get_proxies(api_url: &str, count: usize) -> Vec<String> {
     let Ok(client) = HttpClient::new() else {
         return Vec::new();
@@ -75,6 +88,7 @@ pub async fn get_proxies(api_url: &str, count: usize) -> Vec<String> {
         .collect()
 }
 
+/// Probe one URL through a proxy; returns (ok, elapsed_secs, error_message).
 pub async fn fetch_with_proxy(url: &str, proxy: &str, timeout: f64) -> (bool, f64, Option<String>) {
     let start = Instant::now();
     let client = match HttpClient::new() {
@@ -103,6 +117,8 @@ pub async fn fetch_with_proxy(url: &str, proxy: &str, timeout: f64) -> (bool, f6
     }
 }
 
+/// Probe a target URL through `count` proxies from the local pool,
+/// aggregating an overall [`TrialResult`].
 pub async fn run_trial(
     url: &str,
     count: usize,
@@ -156,6 +172,7 @@ pub async fn run_trial(
     })
 }
 
+/// Judge a trial against success-rate and elapsed-time thresholds.
 pub fn judge(
     result: &TrialResult,
     success_threshold: f64,

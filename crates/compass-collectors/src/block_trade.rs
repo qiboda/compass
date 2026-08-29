@@ -10,9 +10,13 @@ use crate::error::Result;
 use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
 use crate::progress::Progress;
 
+/// EastMoney block-trade report name.
 pub const REPORT_NAME: &str = "RPT_DATA_BLOCKTRADE";
+/// Filter column used for incremental paging.
 pub const FILTER_COLUMN: &str = "TRADE_DATE";
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "block_trade";
+/// First year to fetch.
 pub const START_YEAR: i32 = 2024;
 
 const DDL: &str = r#"CREATE TABLE IF NOT EXISTS block_trade (

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Stock screening engine.
 //!
 //! `run_screener` evaluates a [`Filter`] AST against whole-market daily bars

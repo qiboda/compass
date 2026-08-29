@@ -8,9 +8,13 @@ use crate::error::Result;
 use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
 use crate::progress::Progress;
 
+/// EastMoney institution-survey report name.
 pub const REPORT_NAME: &str = "RPT_ORG_SURVEYNEW";
+/// Filter column used for incremental paging.
 pub const FILTER_COLUMN: &str = "NOTICE_DATE";
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "institution_survey";
+/// First notice date to fetch.
 pub const START_DATE: &str = "2025-08-01";
 
 const DDL: &str = r#"CREATE TABLE IF NOT EXISTS institution_survey (

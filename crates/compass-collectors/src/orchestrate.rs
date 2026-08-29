@@ -19,8 +19,11 @@ use crate::{
     institution_survey, main_flow, progress, stock_basic_official,
 };
 
+/// Default financial report periods (comma-separated).
 pub const DEFAULT_PERIODS: &str = "Q1,Q2,Q3,FY";
+/// Default page size for paginated EastMoney fetches.
 pub const DEFAULT_PAGE_SIZE: usize = 100;
+/// Daily auto-heal tables: (dolt table, date column) pairs.
 pub const DAILY_AUTO_HEAL_TABLES: &[(&str, &str)] = &[
     ("capital_main_flow", "trade_date"),
     ("index_daily", "trade_date"),

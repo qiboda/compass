@@ -1333,6 +1333,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "toml 0.8.23",
  "tracing",
  "url",
  "wreq",

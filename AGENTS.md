@@ -129,8 +129,16 @@ push/合并后才写：届时 issue 可能已关闭（commit-msg hook 拒绝已�
 | `skwy-adversarial-test` | `skill` 工具 + `subagent_skwy_adversarial_test` | 对抗性测试工程师（门禁 3.5 步，刁钻但真实有效的对抗性测试） |
 | `skwy-reflect` | `skill` 工具 | 写事后反思（含 User corrections + 趋势分析） |
 | `skwy-worktree` | `skill` 工具 | 管理 PR 开发的 git worktrees（创建/删除/启动区域） |
+| `skwy-autonomous` | `skill` 工具 | 自主运行协议 — 需求来自对用户行为的观察与理解（非需求池），常驻值守场景 |
+| `skwy-autopilot` | `skill` 工具 | 自主运行模式协议 — 把「向用户确认」卡点切换为「执行+汇报」，模式分级与授权边界 |
 | `product` / `product-brainstorm` | `skill` 工具 | Sprint 候选分析（只读，milestone 提议） |
 | `subagent-compile` | `skill` 工具 | 委派 subagent 时的编译权限分级——subagent 允许 `cargo check`，禁止重型编译（test/clippy/build） |
+| `grill-me` | `skill` 工具 | 门禁第 0 步 — 需求访谈至 shared understanding（每次用户消息强制加载，见上） |
+| `meta-tools` | `skill` 工具 | 添加/修改/移除 agent 自身持久工具（meta-tools 目录脚本） |
+| `subagent-fleet` | `skill` 工具 | Subagent 委派编排指南 — 21 个工具阵容、触发场景映射、组合模式 |
+
+> 相关全局技能（非穷举）：以上为项目工作流直接涉及的核心技能；其余全局技能
+> 见 `/home/skwy/.dsh/skills/`（DSH session 自动注入技能 catalog）。
 
 全局技能位于 `/home/skwy/.dsh/skills/<name>/SKILL.md`（DSH session 自动注入技能
 catalog）；项目本地技能位于 `.dsh/skills/`。无需注册。
@@ -378,6 +386,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | `.dsh/kb/design/symbols.md` | A 股市场分段、符号约定、交换所推断、timeframe 映射 |
 | `.dsh/kb/design/ui.md` | UI 设计权威文档 — 设计系统、布局结构、交互规范（最终版；`.dsh/designs/` 仅归档） |
 | `.dsh/kb/design/ui-widgets.md` | UI 组件使用规范权威文档 — 24 个组件 × 8 字段模板（用途/适用场景/变体/API/示例/反模式/相关组件/测试锚点）、三层组织、状态所有权、偏差跟踪 |
+| `.dsh/kb/design/gui-i18n.md` | GUI 国际化设计 — zh/en 键树、rust-i18n、编译期 key 常量、index/industry 名称映射链路 |
 | `.dsh/kb/design/workflow-skills.md` | skwy- 技能组设计决策（issue #210）— 全局技能迁移范围、门禁 3.5 步、脚本自包含等 |
 | `.dsh/kb/dev/testing.md` | rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark/Tracy |
 | `.dsh/kb/dev/process.md` | 开发流程、命令、配置、调试、重置 |
@@ -420,7 +429,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 
 ## Setup
 
-- **Rust edition 2024** — 需要 Rust ≥1.85。当前工具链：1.97.1。
+- **Rust edition 2024** — 需要 Rust ≥1.85。当前工具链：1.98.0（CI 用 stable toolchain，无 rust-toolchain.toml 锁定）。
 - **mold 链接器** — Linux 构建使用 mold（`.cargo/config.toml`，`-fuse-ld=/usr/bin/mold`）。Ubuntu: `sudo apt install mold clang`。缺失时编译失败。
 - **GUI app** — 需要显示服务器（X11/Wayland）。`scripts/run.sh` 一键启动（或 `cargo run --bin compass`）。
 - 日志写入 `logs/compass.log`（每日轮转）。
@@ -496,7 +505,7 @@ dolt status                            # 确认工作区干净、与 origin 同�
 
 见 `.dsh/kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
-**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 **93%**（该总门槛覆盖除 compass-collectors 外的核心 crate；compass-collectors 单独设 **20%** 门槛，其网络/Dolt 子进程密集、正确性另由 `update-database.sh` 冒烟验证），per-crate 阈值按可测试性设定——纯逻辑/serde 可测的 compass-core / compass-data / compass-i18n / compass-strategy / compass-types / compass-ui **95%**，GUI 主程序 compass（事件循环/线程/交互难测）**90%**（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 内嵌阈值表校验）。GUI 用 egui_kittest 无头集成测试；Python 采集层及其覆盖率门禁已随 epic #310 退役。详见 `.dsh/kb/dev/testing.md` 覆盖率章节。
+**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 **93%**（该总门槛覆盖除 compass-collectors 外的核心 crate；compass-collectors 单独设 **20%** 门槛，其网络/Dolt 子进程密集、正确性另由 `update-database.sh` 冒烟验证），per-crate 阈值按可测试性设定——纯逻辑/serde 可测的 compass-core / compass-data / compass-i18n / compass-strategy / compass-types / compass-ui **95%**，GUI 主程序 compass（事件循环/线程/交互难测）**90%**（`cargo llvm-cov nextest --json --summary-only` + `scripts/check-coverage.sh` 内嵌阈值表校验）。GUI 用 egui_kittest 无头集成测试；Python 采集层及其覆盖率门禁已随 epic #310 退役。详见 `.dsh/kb/dev/testing.md` 覆盖率章节。
 
 ## API reference
 

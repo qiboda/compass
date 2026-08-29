@@ -48,8 +48,21 @@ DuckDB 的 `symbol` 列，以及主键。输入层只接受带前缀的符号—
 - 交换所一目了然：两位字母前缀立即可见（含 `BK` 板块前缀，见下文显式前缀）
 - 格式更简洁：同一文件中所有标的由 `symbol` 列标识（指数/板块独立文件，见 epic #255）
 
-`to_ts_code()` 辅助函数（`000001.SZ` 旧格式）已随 D9 从代码库移除——
-不再有任何生产路径消费 ts_code 格式。
+`to_ts_code()` 辅助函数（`000001.SZ` 旧格式）已从 **compass-core** 移除（D9，
+issue #181 Task 1——删除无生产调用的 `to_exchange`/`to_ts_code` core 版）。
+**仍存在的生产路径**（issue #181 Task 6 (d) 保留决策）：
+- `crates/compass-collectors/src/stock_basic.rs::to_ts_code`——向 Dolt `stock_basic`
+  表的 `ts_code` 列写入 `000001.SZ` 格式（该列由官网采集数据填充，供外部工具/上游
+  兼容；`stock_basic_official.rs` 亦有同名辅助函数，`infer_exchange` 同理）
+- `crates/compass-core/src/data/symbol.rs::infer_exchange_prefix`（裸 6 位启发式）——
+  保留用于 **D10 config 自动迁移**（旧裸码配置补前缀：compass GUI `main.rs:461`
+  的 D10 迁移路径）与 `exchange_of_symbol` 的裸码兜底（`symbol.rs:59-66` 委托，
+  生产调用者：`screener_eval.rs:79-81`、`sepa/scoring.rs:950-954`——BJ 判断、
+  GUI 其他消费点）
+
+> 结论：`ts_code` 作为 compass **内部规范符号**已废弃（内部一律 Dolt-native
+> 前缀格式），但 `ts_code` **字符串格式本身**仍被 collectors 用于写 Dolt
+> `ts_code` 列（外部数据兼容）——二者不冲突，内部消费路径零 ts_code。
 
 ## 交换所推断：启发式规则（已废弃，D9）
 
@@ -266,3 +279,4 @@ GUI 输入框接受自由文本（裸码/前缀/名称均可搜索，D11），�
 | validate_symbol 注入防线（epic #255） | 放宽校验接受任意 BK / 加 BK 分支但形状严格 | `validate_symbol` 加 `BK` + 恰好 4 位 ASCII 数字分支，SH/SZ/BJ 校验原样保留 | BK 是数据层新合法命名空间，但股票段行为零变化；形状严格（3/5 位、非数字、`BKAB12` 拒绝）保持与 SH/SZ/BJ 同强度的注入防护（符号拼入 SQL WHERE） | 放宽校验重开注入面；过度严格则拒绝真实东财 BK 代码 |
 | 指数符号复用 SH/SZ（epic #255） | 官方指数用 SH/SZ+6 位 / 独立前缀 | 官方指数复用 `SH`/`SZ` + 6 位（`SH000001`/`SZ399001`） | 与股票同格式，代码段（沪 000xxx/深 399xxx）与股票天然不重叠，无歧义；数据层用 `index_type` 列区分，GUI 无需第二套前缀 | 独立前缀（如 `IDX`）需重新映射代码、扩大符号体系 |
 | 指数独立入库 vs 剔除（epic #255） | 取消剔除让指数回股票文件 / 剔除保留 + 指数独立入库 | 股票管线剔除**保留**，指数经白名单独立采集入库 `index_daily` | 剔除保护选股/评分不被指数污染（ref #201 价值保留）；独立入库使 GUI 可查指数/板块且路由确定性成立；两管线互不干扰 | 取消剔除重新引入 ref #201 修复的污染；只剔不采则 GUI 无指数数据可用 |
+| ts_code 保留范围（issue #336 修正 #181 Task 6 复盘） | 全删 vs 仅删 core 版 | **删 core 版、保留 collectors 版**：collectors `to_ts_code` 写 Dolt `stock_basic.ts_code` 列（官网数据兼容外部工具）；`infer_exchange_prefix` 裸码启发式保留供 D10 config 迁移/老数据兼容（生产调用者：main.rs normalize_config_symbol、screener_eval.rs:79、sepa/scoring.rs:945-947、compass main.rs 多处） | #181 Task 1 只删了无生产调用的 core 版；Task 6 (d) 明确完整复刻启发式用于 D10 迁移——启发式非死代码 | 全删会破坏 Dolt ts_code 列写入与 D10 迁移路径 |

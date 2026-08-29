@@ -72,10 +72,13 @@ DockArea 布局均保持原样）。
 |---|---|
 | 原子（16） | `badge` `button` `card` `checkbox` `divider` `dropdown` `empty_state` `icon_button` `input` `label` `price_text` `section_title` `segmented` `status_dot` `tag` `tooltip` |
 | 复合（8） | `data_table` `modal` `multi_select` `searchable_dropdown` `sidebar` `status_bar` `toast` `toolbar` |
-| 业务（4，在 compass crate） | `citizens/chart.rs`（ChartCitizen）`citizens/logger.rs`（LoggerPanel）`citizens/screener.rs`（ScreenerPanel）`citizens/sepa.rs`（SepaPanel） |
+| 业务（5，在 compass crate） | `citizens/chart.rs`（ChartCitizen）`citizens/logger.rs`（LoggerPanel）`citizens/screener.rs`（ScreenerPanel）`citizens/sepa.rs`（SepaPanel）`citizens/market.rs`（MarketPanel，epic #255） |
 
-> 业务层 4 个 citizen 不是 compass-ui 组件库成员，但作为「业务组件」层纳入
-> 本文（详见 §组件使用规范·业务组件 与 §层级组织原则）。
+> 业务层 5 个 citizen 不是 compass-ui 组件库成员，但作为「业务组件」层纳入
+> 本文（详见 §组件使用规范·业务组件 与 §层级组织原则）。MarketPanel
+> （大盘概览）复用现有 24 组件（Card/DataTable/Segmented/PriceText）。
+> `citizens/market.rs` 于 2026-08-21 加入（epic #255），早期版本缺本节
+> 条目已补正（issue #336）。
 
 ---
 
@@ -757,7 +760,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 
 **测试锚点**：`widgets/toolbar.rs` `mod tests`（L69）——`group_count_increments_per_group` / `show_renders_all_groups`。
 
-### 业务组件（4，在 compass crate）
+### 业务组件（5，在 compass crate）
 
 > 业务层是**面板**而非可复用组件：它们组合 compass-ui 组件 + SharedState/Signal
 > 数据流（citizen 模式），留在 `crates/compass/src/citizens/`（gui-upgrade.md
@@ -786,6 +789,12 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 - 组合：`Card`（市场温度计：图标 + score 色阶色 + 仓位 `Tag`(Custom+score 色) + 5 指标 chip 自绘）+ `Segmented`（TOP 50/TOP 30，本地截断不回写）+ `Button`（刷新，Primary + loading + ARROW_CLOCKWISE，纯手动触发）+ `DataTable`（12 列，Score/Rank/Price 单元格）+ `EmptyState`（无评分数据）+ `Tag`（排名 #N、题材）。
 - 使用模式：报告型心智模型（每日预计算排名，打开即读）；行点击联动详情面板（`set_selected` 高亮）与图表。
 
+#### MarketPanel（`citizens/market.rs`，epic #255）
+
+- 组合：`Card`（核心指数 Card：名称 caption + mono 点位 + 涨跌幅 `PriceText`，hover 高亮）+ `Segmented`（行业板块|官方指数，默认行业板块段）+ `Button`（刷新，Primary + loading + ARROW_CLOCKWISE，纯手动触发）+ `DataTable`（名称/代码/最新/涨跌幅/成交额，默认涨跌幅降序）+ `EmptyState`（暂无指数数据）。
+- 使用模式：报告型心智模型（打开即读快照，`index_daily.parquet` + `index_basic.parquet` 直读）；行点击/Card 点击 `dispatch_symbol_fetch` 联动图表（**不切 tab**）；分段切换仅过滤本地内存副本（`index_type` 匹配），不回写 shared_state、不重新 fetch。
+- 数据流：第四条 citizen→Signal→AsyncDispatcher 通道（`RunIndexSnapshotRequest`/`RunIndexSnapshotResponse`），结果写入 `shared_state.index_snapshot`。
+
 ---
 
 ## 层级组织原则
@@ -796,7 +805,7 @@ Toolbar::new(&tokens).show(ui, |tb, ui| {
 |---|---|---|---|
 | **原子** | 单一职责；不组合其他 compass 组件；直接消费 `ThemeTokens` | 16 个（见清单） | compass-ui |
 | **复合** | 组合 ≥1 个原子形成交互单元；仍零业务依赖 | 8 个（DataTable/Modal/MultiSelect/SearchableDropdown/Sidebar/StatusBar/Toast/Toolbar） | compass-ui |
-| **业务** | 组合复合/原子 + 业务数据状态（SharedState/Signal） | 4 个 citizen 面板 | compass（bin） |
+| **业务** | 组合复合/原子 + 业务数据状态（SharedState/Signal） | 5 个 citizen 面板 | compass（bin） |
 
 分类沿袭 gui-upgrade.md §5 + 决策 D11（基础/复合/业务三级，理由：atoms 无业务
 依赖、molecules 组合复用、organisms 留 bin 与 citizen 模式契合；排除平铺——

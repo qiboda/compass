@@ -22,7 +22,9 @@ use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
 use crate::progress::Progress;
 use crate::proxy::{ProxyPool, make_proxy_pool};
 
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "index_daily";
+/// Source label recorded in `data_updates` for this table.
 pub const SOURCE: &str = "EastMoney push2his kline + Tencent fallback + THS industry kline";
 
 const PUSH2HIS: &str = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
