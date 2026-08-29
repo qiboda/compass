@@ -1,5 +1,4 @@
 mod backtest;
-mod baostock;
 mod export;
 mod sepa;
 use compass_data::import_compass;

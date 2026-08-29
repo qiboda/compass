@@ -248,19 +248,6 @@ pub struct InstitutionSurveyRow {
     pub update_date: Option<chrono::NaiveDate>,
 }
 
-/// Adjustment factor record from Baostock (per-day multiplier for price adjustment).
-///
-/// `adj_factor` is the cumulative adjustment factor for a given date. To compute
-/// forward-adjusted (前复权) or backward-adjusted (后复权) prices, multiply the
-/// unadjusted price by `adj_factor` and divide by the latest factor.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct AdjFactor {
-    /// Trade date in "YYYYMMDD" format (e.g. "20250722").
-    pub trade_date: String,
-    /// Cumulative adjustment factor. 1.0 = no adjustment.
-    pub adj_factor: f64,
-}
-
 // ---------------------------------------------------------------------------
 // App command (UI → worker thread)
 // ---------------------------------------------------------------------------
