@@ -9,6 +9,8 @@
   - add9c91 docs(collectors): update KB for Rust collector retirement
   - ac8d117 fix(collectors): address B7 review findings
   - fc4e327 fix(collectors): add missing SQL separator in fin_indicators upsert
+  - 426a6fd docs(collectors): add B7 evidence, plan progress and reflection
+  - d7a2b09 docs(collectors): record B7 PR #333 in plan
 - User decisions confirmed during B7:
   1. Accept JSON-only freeproxy/keepalive; document `--source realtime` as a known Python-only feature not ported (sub-issue #324 scope deviation recorded).
   2. Full live `update-database.sh` smoke was requested, then after discovering a 1990+ `sepa backfill-dates` historical compute backlog the user chose **bounded backfill**: stop the 10h+ full run and validate with `sepa backfill-dates --start 2026-07-31` + temperature + score.
