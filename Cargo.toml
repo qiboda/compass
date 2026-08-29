@@ -40,7 +40,11 @@ indicatif = "0.17"
 csv = "1"
 regex = "1"
 url = "2"
-wreq = { version = "0.16", features = ["json", "query", "gzip", "brotli", "zstd", "cookies"] }
+encoding_rs = "0.8"
+ipnet = "2"
+redis = "0.32"
+zip = { version = "6", default-features = false, features = ["deflate"] }
+wreq = { version = "0.16", features = ["json", "query", "gzip", "brotli", "zstd", "cookies", "form"] }
 wreq-util = "0.2"
 
 

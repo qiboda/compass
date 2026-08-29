@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 use serde::Serialize;
@@ -13,9 +14,11 @@ pub fn write_csv<T: Serialize>(path: &Path, records: &[T]) -> Result<()> {
     if records.is_empty() {
         return Ok(());
     }
+    let mut file = std::fs::File::create(path)?;
+    file.write_all("\u{feff}".as_bytes())?;
     let mut writer = csv::WriterBuilder::new()
         .has_headers(true)
-        .from_path(path)?;
+        .from_writer(file);
     for r in records {
         writer.serialize(r)?;
     }
@@ -30,7 +33,9 @@ pub fn write_csv_ordered(path: &Path, records: &[Vec<(String, String)>]) -> Resu
         return Ok(());
     };
     let headers: Vec<String> = first.iter().map(|(k, _)| k.clone()).collect();
-    let mut writer = csv::WriterBuilder::new().from_path(path)?;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all("\u{feff}".as_bytes())?;
+    let mut writer = csv::WriterBuilder::new().from_writer(file);
     writer.write_record(&headers)?;
     for record in records {
         let mut row = vec![String::new(); headers.len()];
@@ -85,7 +90,9 @@ pub fn dedupe_csv(path: &Path, date_col: &str) -> Result<()> {
         return Ok(());
     }
 
-    let mut writer = csv::WriterBuilder::new().from_path(path)?;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all("\u{feff}".as_bytes())?;
+    let mut writer = csv::WriterBuilder::new().from_writer(file);
     writer.write_record(&headers)?;
     for key in order {
         if let Some(row) = seen.get(&key) {

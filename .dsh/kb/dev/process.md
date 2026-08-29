@@ -109,18 +109,17 @@ push 前按顺序执行：
 2. **cargo clippy -- -D warnings**
 3. **cargo doc --no-deps**（必须无警告）
 4. **Issue 引用**：`ref #N` 必须**独立成行**且指向 open issues（行内 `ref #N` 视为叙述性提及，不参与校验，ref #211）
-5. **Python 检查**（若存在 `collectors/pyproject.toml`）：`uv run ruff check *.py tests/` + `uv run pytest tests/ -q`
 
 > **CI 门槛在 merge 侧，不在 push 侧（ref #172）**：master 的 branch protection
-> 强制 4 个 required status checks（Rust (fmt + build + clippy + docs + nextest +
-> coverage)/Bench (compile)/Python Lint/Python Test，strict=true，ref #194 合并
-> 6→2 job 后同步）——
+> 强制 2 个 required status checks（Rust (fmt + build + clippy + docs + nextest +
+> coverage)/Bench (compile)，strict=true，ref #194 合并后同步；Python Lint/Test
+> 已随 epic #310 退役并从 branch protection 移除）——
 > PR 的 CI 未全绿 merge 按钮直接禁用。pre-push hook **不再检查 master CI 状态**
 > （曾导致死锁：master CI 失败时，修复它的 PR 无法 push）。branch protection
 > 只限制 merge，不拦 master 直推（docs/lint/typo/反思类直推照常，未启用
 > enforce_admins）。
 
-> **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥93% + per-crate 阈值——纯逻辑/serde crate 95%、GUI 主程序 compass 90%；Python ≥95%），太慢不适合 pre-push 本地检查。见 `.dsh/kb/dev/testing.md` 覆盖率章节。
+> **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥93%（排除 compass-collectors）+ per-crate 阈值——纯逻辑/serde crate 95%、GUI 主程序 compass 90%、compass-collectors 20%；Python 已随 epic #310 退役），太慢不适合 pre-push 本地检查。见 `.dsh/kb/dev/testing.md` 覆盖率章节。
 
 手动 pre-push checklist（与 hook 相同）：`git fetch origin <base>` + rebase 落后 commits + `cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
@@ -472,16 +471,16 @@ curl "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=0.000001&klt=1
 curl "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281"
 ```
 
-### collectors（Python 数据管线）
+### collectors（Rust 数据管线）
 
-从东方财富 API 抓取数据到 CSV，然后导入 `compass_data` Dolt。
-命令与工作流见 `.dsh/kb/user/cli.md` § Python collectors 与 `.dsh/kb/design/architecture.md` § collectors。
+从东方财富/交易所官网 API 抓取数据到 CSV，然后导入 `compass_data` Dolt。
+命令与工作流见 `.dsh/kb/user/cli.md` § Rust 采集器 与 `.dsh/kb/design/architecture.md` § collectors。
 
 核心概念：
-- **curl_cffi** 实现 TLS 伪造（东方财富反爬虫）
+- **wreq** 实现 TLS 伪造（东方财富反爬虫，Chrome 142 指纹）
 - **CSV 作为中介**连接 API 与 Dolt
 - **`.state.json`** 文件跟踪上次抓取状态以支持增量更新
-- **`--resume`** 标志用于继续中断的抓取
+- **Throttle/有界重试**（`crates/compass-collectors/src/http.rs`）防止触发限流
 
 ### 代理池试用与 HTTPS 验证修正（proxy_pool，issue #287 / #290）
 
@@ -491,28 +490,25 @@ THS 板块接口（10jqka）的代理验证工具：
 - 镜像：proxy_pool 服务使用本地构建（`build: .`），基于 `jhao104/proxy_pool:2.4.2` 并应用
   `scripts/proxy_pool/validator.patch`——修正 `httpsTimeOutValidator` 的 https 代理 scheme
   为 `http://`，使 HTTP-only 代理能走标准 CONNECT 验证 HTTPS（issue #290）。
-- 验证脚本：`collectors/check_proxy_pool.py` 从 proxy_pool API 取代理，用 `curl_cffi`（`chrome142` 指纹）打 THS 行业列表页 + 一个板块 kline，各 15 次共 30 次，输出成功率/平均耗时并判定（成功率 ≥50% 且平均耗时 <5s）。
-- 运行：`docker compose -f scripts/proxy_pool/docker-compose.yml up -d --build` 后执行 `uv run --project collectors python collectors/check_proxy_pool.py`。
+- 验证命令：`cargo run -p compass-collectors -- check-proxy-pool` 从 proxy_pool API 取代理，用 wreq（`chrome142` 指纹）打 THS 行业列表页 + 一个板块 kline，各 15 次共 30 次，输出成功率/平均耗时并判定（成功率 ≥50% 且平均耗时 <5s）。
+- 运行：`docker compose -f scripts/proxy_pool/docker-compose.yml up -d --build` 后执行该命令。
 
 #### freeproxy 代理源集成（#290）
 
 用 [CharlesPikachu/freeproxy](https://github.com/CharlesPikachu/freeproxy) 作为
 proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
 
-- 灌库脚本：`collectors/fetch_freeproxy.py`
-  - `--source json`（默认）：下载 freeproxy 每日更新的 `proxies.json` 快照。
-  - `--source realtime`：调用 `pyfreeproxy` 实时抓取多个免费源。
+- 灌库命令：`cargo run -p compass-collectors -- freeproxy --source json`（默认）：下载 freeproxy 每日更新的 `proxies.json` 快照；`realtime` 源尚未迁移到 Rust（Python 已退役），当前不支持；Rust 仅支持 JSON 快照源。
   - 默认写入 proxy_pool Redis 的 `use_proxy` 表；proxy_pool 调度器会自动校验
     http/https（含 #290 的 HTTPS 验证补丁）。
 - 示例：
   ```bash
-  uv run --project collectors python collectors/fetch_freeproxy.py --source json --limit 500
-  uv run --project collectors python collectors/fetch_freeproxy.py --source realtime --limit 500
+  cargo run -p compass-collectors -- freeproxy --source json --limit 500
   ```
 - 运维节奏：建议每 6 小时跑一次灌库，保持池子新鲜；监控
   `curl http://127.0.0.1:5010/count/` 的 `https` 数量，并定期跑
-  `collectors/check_proxy_pool.py` 验证 THS 成功率（≥50% 为达标）。
-- 安全注意：`--source realtime` 会向不可信的第三方源发起外连，应在沙箱/隔离
+  `cargo run -p compass-collectors -- check-proxy-pool` 验证 THS 成功率（≥50% 为达标）。
+- 安全注意：freeproxy 在线源/实时源会向不可信的第三方源发起外连，应在沙箱/隔离
   网络运行；Redis 默认只应在本机/容器网络内访问，若需跨机请加密码/ACL/TLS。
 - 完整运维 Runbook 见 `.dsh/evidence/proxy-pool-https-validator.md` 与本节命令。
 
@@ -523,25 +519,23 @@ fin_indicators/block_trade/dragon/institution_survey）、push2（main_flow）�
 push2his+THS+腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）全部
 默认走代理；池空/API 不可达 → 醒目警告 + `proxy_pool_state.json` + 直连不失败。
 
-- 代理客户端：`collectors/proxy_pool_client.py`（get/delete/count + 降级 state）。
-- 请求包装：`collectors/common.py` 的 `proxy_get` / `proxy_post` / `proxy_get_sync` /
-  `proxy_post_sync`；坏代理（请求异常）`delete` 出池 + 换下一个，有界重试后直连兜底。
+- 代理客户端：`crates/compass-collectors/src/proxy.rs`（get/delete/count + 降级 state）。
+- 请求包装：`crates/compass-collectors/src/http.rs` 的 `get_json_with_proxy` / `get_text` 等；坏代理（请求异常）`delete` 出池 + 换下一个，有界重试后直连兜底。
 - 禁用：`COMPASS_PROXY_DISABLE=1`；API 基址：`COMPASS_PROXY_API_URL`。
 - 降级状态：`csv_dir()/proxy_pool_state.json`（时间戳/池计数/是否降级/原因）。
 
 **keepalive 常驻喂源**（替代手工每 6 小时跑 fetch_freeproxy）：
 
 ```bash
-cd /data/codes/compass/.worktrees/collectors-proxy/collectors   # 生产在仓库 collectors/
-uv run python proxy_keepalive.py --once                          # 单轮验证
-nohup uv run python proxy_keepalive.py --interval 600 \
+cargo run -p compass-collectors -- keepalive --once                       # 单轮验证
+nohup cargo run -p compass-collectors -- keepalive --interval 600 \
   >> /data/compass-data/csv/proxy_keepalive.log 2>&1 &
 ```
 
 - 每周期：freeproxy `json` 快照（成功写 `/tmp/freeproxy.json`）→ realtime 双源灌
   proxy_pool Redis；json 下载失败（GitHub raw 429/超时）自动用快照兜底。
 - compose 已把 `proxy_redis` 端口 `127.0.0.1:6379` 映射到宿主机（issue #296），
-  keepalive / fetch_freeproxy 默认 redis-url 无需再传容器 IP。
+  keepalive / freeproxy 默认 redis-url 无需再传容器 IP。
 - 任一步失败只日志不崩溃；监控日志关键字 `[keepalive] cycle done` 与
   `curl http://127.0.0.1:5010/count/`。
 

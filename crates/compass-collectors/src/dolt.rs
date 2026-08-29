@@ -264,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn last_report_date_missing_repo_returns_none() {
-        let _guard = crate::config::ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::ENV_MUTEX.lock().await;
         let dir = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var("COMPASS_DATA_DIR", dir.path());

@@ -2,7 +2,7 @@
 
 A-share 股票图表桌面应用（egui）。数据管线以本地 Dolt `investment_data` 为**主数据源**
 （18M+ 行，6000+ 标的）。GUI 只读本地 Parquet 文件（DuckDB 查询），**无在线回退**。
-Python collectors 抓取数据写入 Dolt（财务数据来自 EastMoney；stock_basic 来自三大交易所官网）。
+Rust 采集器（`crates/compass-collectors`）抓取数据写入 Dolt（财务数据来自 EastMoney；stock_basic 来自三大交易所官网）。
 
 **项目书** = 本项目所有规则与知识文件的统称，包括 `AGENTS.md` 和 `.dsh/kb/` 目录下所有文件。
 
@@ -84,8 +84,7 @@ Grill-me 是第 0 步；gate 是第 1-5c 步。不要因为 grill-me 已达成�
 这 5 个问题不是可选的。它们是最低标准。跳过任何一个就是违反工作流。
 
 **Test-first 不可妥协**：任何 bugfix 或 feature 变更必须从能复现问题的失败测试开始
-（RED），再做让它通过的修复（GREEN）。适用于 Python（`collectors/tests/`）、
-Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败测试是反模式 ——
+（RED），再做让它通过的修复（GREEN）。适用于 Rust（`#[cfg(test)]`）以及本仓库所有语言。先写修复再写失败测试是反模式 ——
 见 `.dsh/kb/dev/reflections-archive.md` 历史摩擦记录章节（test-first 教训）。
 
 ### HARD BLOCK
@@ -481,7 +480,7 @@ dolt push origin main
 dolt status                            # 确认工作区干净、与 origin 同步
 ```
 
-**程序写回路径同样受约束**：任何 Rust/Python 代码向 `compass_data` 写表
+**程序写回路径同样受约束**：任何代码向 `compass_data` 写表
 后，流程必须在同一 session 内执行 `dolt commit` + `dolt push`（手动命令
 或内置到 CLI 的收尾步骤），不得只写数据不提交。`dolt status` 非干净
 （working tree 有变更）即视为流程违规，在 reflections 中记录。
@@ -497,7 +496,7 @@ dolt status                            # 确认工作区干净、与 origin 同�
 
 见 `.dsh/kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
-**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 **93%**，per-crate 阈值按可测试性设定——纯逻辑/serde 可测的 compass-core / compass-data / compass-i18n / compass-strategy / compass-types / compass-ui **95%**，GUI 主程序 compass（事件循环/线程/交互难测）**90%**（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 内嵌阈值表校验）；Python collectors `--cov=.` 全量计入 ≥95%（`--cov-fail-under=95`）。GUI 用 egui_kittest 无头集成测试，Python 用 stub AsyncSession 模拟网络。详见 `.dsh/kb/dev/testing.md` 覆盖率章节。
+**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 **93%**（该总门槛覆盖除 compass-collectors 外的核心 crate；compass-collectors 单独设 **20%** 门槛，其网络/Dolt 子进程密集、正确性另由 `update-database.sh` 冒烟验证），per-crate 阈值按可测试性设定——纯逻辑/serde 可测的 compass-core / compass-data / compass-i18n / compass-strategy / compass-types / compass-ui **95%**，GUI 主程序 compass（事件循环/线程/交互难测）**90%**（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 内嵌阈值表校验）。GUI 用 egui_kittest 无头集成测试；Python 采集层及其覆盖率门禁已随 epic #310 退役。详见 `.dsh/kb/dev/testing.md` 覆盖率章节。
 
 ## API reference
 

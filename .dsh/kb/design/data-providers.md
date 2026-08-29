@@ -134,7 +134,7 @@ parquet_data/
 ### 指数/板块表（epic #255）
 
 指数与板块行情**独立于股票**建表/落盘——尊重 ref #201「股票数据剔除指数」决策，
-不污染选股/评分。两张 Dolt 表建在 `compass_data` 库（`collectors/fetch_index_daily.py`
+不污染选股/评分。两张 Dolt 表建在 `compass_data` 库（`crates/compass-collectors/src/index_daily.rs`
 创建），经 `import-compass --table index_daily|index_basic` 导出 Parquet：
 
 **index_daily**（指数/板块日线，`index_type` 区分三类标的）：
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS index_basic (
 ```
 
 - **`index_type` 取值**：`official`（交易所官方指数）/ `industry`（行业板块）。
-  官方指数为**硬编码白名单**（约 30 只主流指数，`fetch_index_daily.py::OFFICIAL_INDICES`，
+  官方指数为**硬编码白名单**（约 30 只主流指数，`index_daily.rs::OFFICIAL_INDICES`，
   akshare index_zh_em 同款做法：SH000001 上证指数 / SZ399001 深证成指 / SZ399006 创业板指 /
   SH000300 沪深300 / SH000905 中证500 / SH000852 中证1000 等）；行业板块为**同花顺
   90 个申万一级行业**（issue #283 D1：列表实时抓 `q.10jqka.com.cn/thshy/` GBK 页面
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS index_basic (
     `DuckDbProvider` 既有 7 列查询 / 前复权缩放（factor=1.0 恒等）/ 1w·1M 聚合零改动复用）。
   - `index_basic.parquet`：`symbol, name, name_en, index_type`。
   - **`name_en` / `stock_basic.industry_en`（epic #266）**：collectors 静态映射表
-    `collectors/name_en_mapping.csv`（`section,key,value`：index 按 symbol /
+    `crates/compass-collectors/data/name_en_mapping.csv`（`section,key,value`：index 按 symbol /
     industry 按行业中文；concept 段已随 #283 删除）import 时 LEFT JOIN 写入；
     未收录 → NULL → GUI 回退中文。读取侧（`ParquetReader`）对旧 parquet（无新列）
     优雅降级 `None`（`is_missing_column` binder 错误匹配后重试无列查询）。
@@ -411,7 +411,7 @@ index_daily）的 merge 分区列必须与生产 Dolt 表全主键一致；`bloc
 并无条件追加 `symbol NOT IN (6 个指数代码)` 过滤（即使 `--symbols` 显式指定指数也剔除）；
 symbol 枚举查询（symbols.txt）同步过滤。Dolt 源表 `final_a_stock_eod_price` 保持原样（手/千元）。
 
-**采集器字符串 TRIM（issue #235）**：collectors 写 Dolt 的 INSERT SELECT 中对用户可见
+**采集器字符串 TRIM（issue #235）**：Rust 采集器写 Dolt 的 INSERT SELECT 中对用户可见
 文本列统一包 `TRIM(col) AS col`（覆盖 stock_basic / fin_indicators / 财务三表 /
 institution_survey / block_trade；与 concept_member 先例 `TRIM(BOARD_NAME)` 一致）。
 语义要点：
@@ -421,29 +421,30 @@ institution_survey / block_trade；与 concept_member 先例 `TRIM(BOARD_NAME)` 
 - **财务三表列清单逐表独立**——LISTING_STATE 仅存在于 balance_sheet；
 - institution_survey 的分组键为 `HEX(TRIM(RECEIVE_OBJECT))`（gk 同步 TRIM 才能合并
   'A'/'A ' 组）；
-- 回归测试：`collectors/tests/test_trim_imports.py`（RED→GREEN，含 U+3000
-  characterization 锁定盲区）。
+- 回归测试：Rust 采集器迁移测试（含 U+3000 characterization 锁定盲区）。
 
-## Python 采集器代理层（issue #294）
+## Rust 采集器代理层（issue #294）
 
-collectors 对东财/THS/交易所官网的 HTTPS 抓取默认走本地 proxy_pool 代理层，
-解决 VPS 固定 IP 上 push2his/THS 的限流断连（curl 56）。
+Rust 采集器（`crates/compass-collectors`）对东财/THS/交易所官网的 HTTPS 抓取默认
+走本地 proxy_pool 代理层，解决 VPS 固定 IP 上 push2his/THS 的限流断连（curl 56）。
 
 ### 架构
 
-- `collectors/proxy_pool_client.py`：`ProxyPool` 客户端——`get_proxy`
+- `crates/compass-collectors/src/proxy.rs`：`ProxyPool` 客户端——`get_proxy`
   （`GET /get/?type=https`）、`delete_proxy`（`GET /delete/`）、`pool_count`
   （`GET /count/`）、`record_state`（原子写 `proxy_pool_state.json`）。
-- `collectors/common.py`：`make_proxy_pool()` + 请求包装 `proxy_get` / `proxy_post`
-  （async）与 `proxy_get_sync` / `proxy_post_sync`（同步 `requests.Session`），
-  以及 `fetch_paginated(..., *, pool=None)`。
+- `crates/compass-collectors/src/http.rs`：`make_proxy_pool()` + wreq 请求包装
+  `get_json_with_proxy` / `get_text` / `get_bytes` / `post_form`，以及
+  `fetch_paginated(..., pool=...)`。
 - 接入面：东财 datacenter（balance_sheet / cash_flow / income / fin_indicators /
   block_trade / dragon / institution_survey）、push2（main_flow）、push2his + THS +
   腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）。
-- `collectors/proxy_keepalive.py`：后台常驻喂源循环（freeproxy json + realtime 双源，
-  本地 `/tmp/freeproxy.json` 快照兜底）。
+- `crates/compass-collectors/src/freeproxy.rs`：freeproxy JSON 快照灌库；
+  `crates/compass-collectors/src/keepalive.rs`：后台常驻喂源循环（freeproxy json +
+  realtime 双源，本地 `/tmp/freeproxy.json` 快照兜底）；
+  `crates/compass-collectors/src/check_proxy_pool.rs`：代理质量验证工具。
 - compose 部署（`scripts/proxy_pool/docker-compose.yml`）把 `proxy_redis` 的 6379
-  以 `127.0.0.1:6379:6379` loopback 暴露到宿主机，保证 keepalive / fetch_freeproxy
+  以 `127.0.0.1:6379:6379` loopback 暴露到宿主机，保证 keepalive / freeproxy
   默认 `redis://@127.0.0.1:6379/0` 可直接灌池（issue #296）。
 
 ### 行为契约
@@ -571,3 +572,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 | append-table merge 分区键（issue #298） | 用各自 parquet 侧分区列（可能窄于 Dolt PK）/ **与生产 Dolt 全主键一致** | `block_trade` 从 `(symbol, trade_date, price)` 扩为 `(symbol, trade_date, price, volume, amount, buyer, seller)`；其余 append 表已一致；merge fallback 改为真正全量导出（不带 `--since`） | 增量 merge 按分区键去重，分区键窄于 Dolt PK 会把同窄 key 的多条真实行折叠成一行，导致 `row count mismatch` 或静默丢历史（#298 实测 block_trade 19724→8872）；fallback 用 since 过滤数据覆盖全文件同样丢历史 | 弃用 merge 改为全量重导可避开 bug 但失去增量性能；只修 block_trade 不修 fallback 无法关闭 #298 的 fallback 丢历史根因 |
 | update-database.sh 升级为完整 compass_data 每日刷新（issue #306） | 保持 SEPA-only 5 源 / **扩展为完整 compass_data 11 表单入口** | `scripts/update-database.sh` step 2 改用 `collectors/main.py sync`（单入口 fetch+import 全部表），`COLLECTOR_TABLES` 扩展为 11 张表；step 4 对 11 表执行 import-compass，`stock_basic`/`index_basic` 全量覆盖，其余 9 表按各自 `data_updates.last_report_date` 锚点增量 | collectors/main.py sync 已是全量刷新入口且内部维护各源 fetch/import；每日脚本不再重复维护逐源清单；财务四表与 stock_basic 此前未进每日管线导致 Parquet 数据过期；`import_compass` 已支持全部 11 表无需 Rust 改动 | 新建 update-all.sh 造成两套每日入口；改写 Rust import 路径超出本 issue 范围 |
 | 自动回补缺失数据（issue #308） | 仅靠每天手动跑 / **sync + backfill-dates 自动检测并回补** | `collectors/main.py sync` 开头按 `ts_trade_day_calendar` 扫描日频源表缺口并回补（capital_main_flow 走 EastMoney `fflow/daykline` 历史 API、index_daily/dragon/block_trade 显式范围回补）；`scripts/update-database.sh` 在 import-compass 后调用 `sepa backfill-dates`，对缺失交易日补算全部 SEPA 派生表；step 0 同步 investment_data、step 1b `check-stock-daily` 硬校验 Parquet 缺口；严格失败（任一重试失败即整体 abort） | 用户不保证每天运行，漏跑日会产生中间/尾部缺口；日频表仅存最新快照或增量窗口时无法自愈；决策锁定：合并进每日管线、不另加 cron、不保留旧脚本名、不 export DuckDB | 新建独立 backfill cron/脚本造成两套入口；容忍部分成功会留下不可见缺口；从在线源逐日回补 stock_daily 超出本 issue（investment_data 同步+硬校验兜底） |
+
+> 注：#306/#308 决策中的 `collectors/main.py sync` 已随 epic #310 迁移为
+> `compass-collectors sync`；`keepalive 实现`/`代理注入粒度` 等历史决策中的 Python
+> 模块已由 `crates/compass-collectors` 的 Rust 模块替代（见 architecture.md MIG-1..MIG-5）。

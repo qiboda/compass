@@ -42,6 +42,10 @@ jobs:
           dolt version
       - uses: taiki-e/install-action@nextest
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Clean heavy target artifacts before coverage
+        run: |
+          rm -rf target/debug target/doc
+          df -h .
       - name: Run tests and collect coverage (nextest semantics)
         run: |
           mkdir -p target/llvm-cov
@@ -69,24 +73,3 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold clang
       - run: cargo bench --no-run
 
-  python-lint:
-    name: Python Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9.0.0
-      - run: cd collectors && uv sync && uv run ruff check *.py tests/
-
-  python-test:
-    name: Python Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9.0.0
-      - name: Install Dolt
-        run: |
-          curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/dolt-linux-amd64.tar.gz -o /tmp/dolt.tar.gz
-          tar -xzf /tmp/dolt.tar.gz -C /tmp
-          sudo mv /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
-          dolt version
-      - run: cd collectors && uv sync && uv run pytest tests/ --cov=. --cov-fail-under=95 --cov-report=term-missing

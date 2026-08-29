@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # Enforce line-coverage thresholds from a `cargo llvm-cov --json` report.
 #
-# Checks the workspace total and each workspace crate (compass-core /
-# compass-data / compass-i18n / compass / compass-strategy / compass-types /
-# compass-ui) against per-target minimum line-coverage percentages. Exits 1 if
-# any target is below its threshold or has no measured files.
+# Checks the workspace total (core crates) and each workspace crate
+# (compass-core / compass-data / compass-i18n / compass / compass-strategy /
+# compass-types / compass-ui / compass-collectors) against per-target minimum
+# line-coverage percentages. Exits 1 if any target is below its threshold or
+# has no measured files.
 #
 # Thresholds (2026-08-12, ref #250, testability-based): compass-core,
 # compass-data, compass-i18n, compass-strategy, compass-types and compass-ui
 # are enforced at 95%; compass (GUI, event-loop/thread/interaction hard to
-# test) at 90%; the workspace total at 93%.
+# test) at 90%; compass-collectors is network/Dolt-subprocess-heavy (added
+# 2026-08-29, epic #310) and is gated separately at 20% so the workspace gate
+# cannot silently ignore it while its production correctness is also verified
+# by update-database.sh live smoke; the workspace total excludes
+# compass-collectors and stays at 93% for the existing core crates.
 #
 # Usage:
 #   scripts/check-coverage.sh [cov.json]
@@ -29,6 +34,7 @@ declare -A THRESHOLDS=(
     [compass-strategy]=95
     [compass-types]=95
     [compass-ui]=95
+    [compass-collectors]=20
 )
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -72,8 +78,9 @@ check() {
     esac
 }
 
-# Workspace total: every file in the report.
-check "workspace" "."
+# Workspace total: every file except network-heavy compass-collectors (that
+# crate is gated separately below).
+check "workspace" "select((.filename | contains(\"/crates/compass-collectors/\")) | not)"
 
 # Per-crate: files under crates/<name>/ (report uses absolute paths).
 check "compass-core" "select(.filename | contains(\"/crates/compass-core/\"))"
@@ -83,5 +90,6 @@ check "compass" "select(.filename | contains(\"/crates/compass/\"))"
 check "compass-strategy" "select(.filename | contains(\"/crates/compass-strategy/\"))"
 check "compass-types" "select(.filename | contains(\"/crates/compass-types/\"))"
 check "compass-ui" "select(.filename | contains(\"/crates/compass-ui/\"))"
+check "compass-collectors" "select(.filename | contains(\"/crates/compass-collectors/\"))"
 
 exit "$fail"

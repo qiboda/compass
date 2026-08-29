@@ -13,16 +13,8 @@ parquet_data/
 # Manual worktree storage
 .worktrees/
 
-# Python collectors
-collectors/.venv/
-collectors/__pycache__/
-collectors/*.csv
-# name_en_mapping.csv is a version-tracked static mapping table (epic #266) —
-# unlike fetched CSV artifacts it ships with the repo.
-!collectors/name_en_mapping.csv
-collectors/*.state.json
+# Generic Python/cache artifacts (Python collectors removed in epic #310)
 __pycache__/
-collectors/.coverage
 /.coverage
 
 # Saved output files (backtest results, exports) — not tracked

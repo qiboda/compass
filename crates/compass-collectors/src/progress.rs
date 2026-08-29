@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn progress_roundtrip() {
-        let _guard = crate::config::ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::ENV_MUTEX.blocking_lock();
         let dir = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var("COMPASS_CSV_DIR", dir.path());

@@ -1,13 +1,13 @@
 #!/bin/bash
 # Tests for scripts/update-database.sh (issue #306).
 # Mirrors the pre-push-ref-regex-test.sh precedent: a `bash -n` syntax gate plus
-# behavioral assertions against mocked cargo/uv/dolt in a temp dir — no real
+# behavioral assertions against mocked cargo/dolt in a temp dir — no real
 # network access, no real Dolt mutation, no data repos touched.
 # Run: scripts/tests/test-update-database.sh
 #
 # This suite carries the adversarial RED contract for issue #306:
 #   - COLLECTOR_TABLES = all 11 compass_data tables, in declared order
-#   - step 2 = exactly one `uv run python main.py sync`
+#   - step 2 = exactly one `cargo run --bin compass-collectors -- sync`
 #   - step 4 = exactly 11 import-compass calls
 #   - stock_basic and index_basic always full (never --since)
 #   - financial four tables use per-table last_report_date anchors
@@ -33,7 +33,7 @@ else
     exit 1
 fi
 
-# --- Harness: build a temp dir with mocked cargo/uv/dolt ---
+# --- Harness: build a temp dir with mocked cargo/dolt ---
 # The mocks log every invocation to $FAKE_LOG; dolt status pops one block per
 # call from $FAKE_STATUS_SEQ (blocks separated by "===" lines).
 setup_fakes() {
@@ -111,21 +111,7 @@ fi
 exit 0
 EOF
 
-    cat > "$t/bin/uv" <<'EOF'
-#!/bin/bash
-# Mock uv: logs argv; optionally fails on the Nth uv invocation.
-echo "uv $*" >> "${FAKE_LOG:?fake log unset}"
-if [ -n "${FAKE_UV_FAIL_CALL:-}" ]; then
-    n=$(grep -c '^uv ' "$FAKE_LOG" || true)
-    if [ "$n" -eq "$FAKE_UV_FAIL_CALL" ]; then
-        echo "mock uv: failing invocation $n ($*)" >&2
-        exit 1
-    fi
-fi
-exit 0
-EOF
-
-    chmod +x "$t/bin/dolt" "$t/bin/cargo" "$t/bin/uv"
+    chmod +x "$t/bin/dolt" "$t/bin/cargo"
 
     # Fake investment-data sync: run_script points update-database.sh at this
     # file via SYNC_INVESTMENT_SCRIPT so no real upstream Dolt fetch happens.
@@ -218,14 +204,14 @@ run_script "$T1"
 assert_true "exit 0 on happy path" 'test "$(cat "$T1/exit.code")" = 0'
 assert_true "step 1: import market data" \
     'grep -qx "cargo run --bin compass-data -- import" "$T1/calls.log"'
-assert_true "step 2: exactly one main.py sync (single collector entry point)" \
-    'test "$(grep -c "^uv run python main.py sync" "$T1/calls.log")" -eq 1'
+assert_true "step 2: exactly one compass-collectors sync (single collector entry point)" \
+    'test "$(grep -c "^cargo run --bin compass-collectors -- sync" "$T1/calls.log")" -eq 1'
 assert_true "step 2: no per-source fetch remains" \
-    '! grep -q "uv run python main.py fetch " "$T1/calls.log"'
+    '! grep -q "cargo run --bin compass-collectors -- fetch " "$T1/calls.log"'
 assert_true "step 2: no per-source import remains" \
-    '! grep -q "uv run python main.py import " "$T1/calls.log"'
+    '! grep -q "cargo run --bin compass-collectors -- import " "$T1/calls.log"'
 assert_order "step 2: sync runs before step 4 first import-compass" "$T1/calls.log" \
-    "uv run python main.py sync" "import-compass --table stock_basic"
+    "cargo run --bin compass-collectors -- sync" "import-compass --table stock_basic"
 assert_true "step 0: sync-investment-data runs before import" \
     'grep -q "^sync-investment" "$T1/calls.log"'
 assert_order "step 0: investment sync before market import" "$T1/calls.log" \
@@ -234,8 +220,8 @@ assert_true "step 1b: stock_daily gap check runs after import" \
     'grep -q "cargo run --bin compass-data -- check-stock-daily" "$T1/calls.log"'
 assert_order "step 1b: gap check after import before sync" "$T1/calls.log" \
     "cargo run --bin compass-data -- import" "check-stock-daily"
-assert_order "step 1b: gap check before main.py sync" "$T1/calls.log" \
-    "check-stock-daily" "uv run python main.py sync"
+assert_order "step 1b: gap check before compass-collectors sync" "$T1/calls.log" \
+    "check-stock-daily" "cargo run --bin compass-collectors -- sync"
 
 assert_true "step 4: 11 table exports (stock_basic + index_basic full + 9 anchored)" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T1/calls.log" &&
@@ -424,9 +410,9 @@ EOF
 run_script "$T7"
 assert_true "exit 0 on new happy path" 'test "$(cat "$T7/exit.code")" = 0'
 assert_true "step 2: exactly one sync, no fetch/import source loop" \
-    'test "$(grep -c "^uv run python main.py sync" "$T7/calls.log")" -eq 1 &&
-     test "$(grep -c "^uv run python main.py fetch " "$T7/calls.log")" -eq 0 &&
-     test "$(grep -c "^uv run python main.py import " "$T7/calls.log")" -eq 0'
+    'test "$(grep -c "^cargo run --bin compass-collectors -- sync" "$T7/calls.log")" -eq 1 &&
+     test "$(grep -c "^cargo run --bin compass-collectors -- fetch " "$T7/calls.log")" -eq 0 &&
+     test "$(grep -c "^cargo run --bin compass-collectors -- import " "$T7/calls.log")" -eq 0'
 assert_true "step 4: exactly 11 import-compass calls" \
     'test "$(grep -c "cargo run --bin compass-data -- import-compass --table " "$T7/calls.log")" -eq 11'
 assert_true "step 4: stock_basic full overwrite first" \
@@ -440,7 +426,7 @@ assert_true "COLLECTOR_TABLES declares all 11 compass_data tables in order" \
 # 8. Error path: sync (step 2) fails → non-zero exit, no step 4/5/6/7
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 8. step 2 main.py sync failure aborts before step 4/5 ---"
+echo "--- 8. step 2 compass-collectors sync failure aborts before step 4/5 ---"
 T8="$TMP_ROOT/t8"
 mkdir -p "$T8"
 setup_fakes "$T8"
@@ -452,10 +438,10 @@ On branch main
 nothing to commit, working tree clean
 ===
 EOF
-run_script "$T8" FAKE_UV_FAIL_CALL=1
+run_script "$T8" FAKE_CARGO_FAIL_CALL=3
 assert_true "non-zero exit on sync failure" 'test "$(cat "$T8/exit.code")" != 0'
 assert_true "sync call was attempted" \
-    'grep -qx "uv run python main.py sync" "$T8/calls.log"'
+    'grep -qx "cargo run --bin compass-collectors -- sync" "$T8/calls.log"'
 assert_true "error names step 2" 'grep -q "step 2 failed" "$T8/err.log"'
 assert_false "no step 4/5 after sync failure" \
     'grep -q "import-compass" "$T8/calls.log" || grep -q "sepa temperature" "$T8/calls.log"'
@@ -720,11 +706,11 @@ assert_true "stock_basic and index_basic full even when others have distinct anc
      ! grep -q "import-compass --table index_basic --since" "$T12D/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 13. Adversarial: sync is the sole step-2 command — a failure at the first uv
+# 13. Adversarial: sync is the sole step-2 command — a failure at the third cargo
 #     call (the sync) must stop the whole pipeline before import-compass
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 13. sync failure (first uv call) aborts before any import-compass ---"
+echo "--- 13. sync failure (third cargo call = Rust sync) aborts before any import-compass ---"
 T13="$TMP_ROOT/t13"
 mkdir -p "$T13"
 setup_fakes "$T13"
@@ -736,15 +722,17 @@ On branch main
 nothing to commit, working tree clean
 ===
 EOF
-run_script "$T13" FAKE_UV_FAIL_CALL=1
+run_script "$T13" FAKE_CARGO_FAIL_CALL=3
 assert_true "non-zero exit on sync failure" 'test "$(cat "$T13/exit.code")" != 0'
-assert_true "the first uv invocation is main.py sync, not a fetch/import" \
-    'test "$(grep "^uv " "$T13/calls.log" | head -n1 | grep -c "^uv run python main.py sync$")" -eq 1'
+assert_true "the failed cargo invocation is the Rust sync, not a fetch/import" \
+    'grep -qx "cargo run --bin compass-collectors -- sync" "$T13/calls.log" &&
+     ! grep -q "compass-collectors -- fetch" "$T13/calls.log" &&
+     ! grep -q "compass-collectors -- import" "$T13/calls.log"'
 assert_true "error names step 2" 'grep -q "step 2 failed" "$T13/err.log"'
 assert_false "no step 4/5 after sync failure" \
     'grep -q "import-compass" "$T13/calls.log" || grep -q "sepa temperature" "$T13/calls.log"'
 assert_true "exactly one sync attempt (no retry)" \
-    'test "$(grep -c "^uv run python main.py sync" "$T13/calls.log")" -eq 1'
+    'test "$(grep -c "^cargo run --bin compass-collectors -- sync" "$T13/calls.log")" -eq 1'
 
 # ---------------------------------------------------------------------------
 # 14. Adversarial: dolt collector commit must cover the full 11-table allowlist
@@ -838,7 +826,7 @@ assert_false "script header no longer says (5 incremental" \
 # them, so this RED is real and will GREEN after the documented sync.
 assert_true "script header mentions all-11 / complete compass_data refresh" \
     'grep -E "(complete compass_data|all 11 compass_data|11 compass_data tables|11 tables|11 张表|11 个表|全部 11|完整.*compass_data|full compass_data)" "$SEPA_SCRIPT"'
-assert_true "script header reflects the single main.py sync entry point" \
+assert_true "script header reflects the single compass-collectors sync entry point" \
     'grep -E "(main\.py sync|single.*sync|one.*sync|collect.*sync)" "$SEPA_SCRIPT"'
 assert_true "script header still mentions the 11 table import step" \
     'grep -E "(11 table|11 tables|11 张|11 个|all 11|全部 11)" "$SEPA_SCRIPT"'
