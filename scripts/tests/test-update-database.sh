@@ -262,16 +262,16 @@ assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
 assert_order "step 4: index_basic full overwrite follows index_daily" "$T1/calls.log" \
     "import-compass --table index_daily" "import-compass --table index_basic"
 
-assert_true "step 5: temperature before score" \
+assert_true "step 6: temperature before score" \
     'grep -qx "cargo run --bin compass-data -- sepa temperature" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- sepa score --top 50" "$T1/calls.log"'
-assert_order "step 5: temperature runs before score" "$T1/calls.log" \
+assert_order "step 6: temperature runs before score" "$T1/calls.log" \
     "sepa temperature" "sepa score --top 50"
-assert_true "step 4b: sepa backfill-dates runs" \
+assert_true "step 5: sepa backfill-dates runs" \
     'grep -qx "cargo run --bin compass-data -- sepa backfill-dates" "$T1/calls.log"'
-assert_order "step 4b: backfill after last import-compass" "$T1/calls.log" \
+assert_order "step 5: backfill after last import-compass" "$T1/calls.log" \
     "import-compass --table index_basic" "sepa backfill-dates"
-assert_order "step 4b: backfill before temperature" "$T1/calls.log" \
+assert_order "step 5: backfill before temperature" "$T1/calls.log" \
     "sepa backfill-dates" "sepa temperature"
 assert_true "no dolt commit/push when nothing changed" \
     '! grep -qE "^dolt (add|commit|push) " "$T1/calls.log"'
@@ -307,7 +307,7 @@ assert_true "collector commit message with ref" \
     'grep -qx "dolt --data-dir $T2/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T2/calls.log"'
 assert_true "push origin main" \
     'grep -qx "dolt --data-dir $T2/repos/compass_data push origin main" "$T2/calls.log"'
-assert_true "no compute commit on clean step 6" \
+assert_true "no compute commit on clean step 7" \
     '! grep -q "sepa scores" "$T2/calls.log"'
 
 # ---------------------------------------------------------------------------
@@ -478,7 +478,7 @@ assert_false "no dolt add ." 'grep -q "dolt .* add \." "$T9/calls.log"'
 assert_true "collector commit + push happen" \
     'grep -qx "dolt --data-dir $T9/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T9/calls.log" &&
      grep -qx "dolt --data-dir $T9/repos/compass_data push origin main" "$T9/calls.log"'
-assert_true "no compute commit on clean step 6" \
+assert_true "no compute commit on clean step 7" \
     '! grep -q "sepa scores" "$T9/calls.log"'
 
 # ---------------------------------------------------------------------------
@@ -774,7 +774,7 @@ assert_false "no dolt add ." 'grep -q "dolt .* add \." "$T14/calls.log"'
 assert_true "collector commit + push happen" \
     'grep -qx "dolt --data-dir $T14/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T14/calls.log" &&
      grep -qx "dolt --data-dir $T14/repos/compass_data push origin main" "$T14/calls.log"'
-assert_true "no compute commit on clean step 6" \
+assert_true "no compute commit on clean step 7" \
     '! grep -q "sepa scores" "$T14/calls.log"'
 
 # ---------------------------------------------------------------------------

@@ -313,6 +313,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 1d. Unwritable explicit COMPASS_TIMING_FILE already containing stale events
+#     must NOT produce a misleading per-run report
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 1d. unwritable explicit COMPASS_TIMING_FILE with stale content => no misleading report ---"
+T1D="$TMP_ROOT/t1d"
+mkdir -p "$T1D"
+setup_fakes "$T1D"
+cat > "$T1D/status.seq" <<'EOF'
+On branch main
+nothing to commit, working tree clean
+===
+On branch main
+nothing to commit, working tree clean
+===
+EOF
+: > "$T1D/timing.jsonl"
+printf '%s\n' '{"kind":"step","step":99,"name":"stale","status":"success","duration_ms":999}' \
+    > "$T1D/timing.jsonl"
+chmod 444 "$T1D/timing.jsonl"
+if ! echo probe >> "$T1D/timing.jsonl" 2>/dev/null; then
+    run_script "$T1D" \
+        COMPASS_TIMING_FILE="$T1D/timing.jsonl" \
+        SYNC_TIMING_DIR="$T1D/timings"
+    chmod 644 "$T1D/timing.jsonl" || true
+    assert_true "1d: main flow still exits 0" 'test "$(cat "$T1D/exit.code")" = 0'
+    assert_true "1d: stderr has a timing warning" \
+        'grep -qiE "warning" "$T1D/err.log" && grep -qiE "timing|timings|timing file|sync-timing" "$T1D/err.log"'
+    assert_false "1d: no final JSON generated from stale events" \
+        'find "$T1D/timings" -maxdepth 1 -name "*.json" -print -quit 2>/dev/null | grep -q .'
+    assert_true "1d: pipeline still reaches Done" 'grep -q "Done." "$T1D/out.log"'
+else
+    chmod 644 "$T1D/timing.jsonl" || true
+    echo "SKIP: 1d readonly fixture not effective under current user"
+fi
+
+# ---------------------------------------------------------------------------
 # 2. Bad JSONL from the Rust child must not break the main flow
 # ---------------------------------------------------------------------------
 echo ""
@@ -432,8 +469,8 @@ run_script "$T6" \
     COMPASS_TIMING_FILE="$T6/timing.jsonl" \
     SYNC_TIMING_DIR="$T6/timings" \
     FAKE_COLLECTOR_EVENT="$EVENT"
-if [ -f "$T6/timings"/*.json ]; then
-    final_json=$(find "$T6/timings" -maxdepth 1 -name '*.json' | head -n1)
+final_json=$(find "$T6/timings" -maxdepth 1 -name '*.json' 2>/dev/null | head -n1)
+if [ -n "$final_json" ]; then
     assert_true "6: final JSON parses with jq" 'jq -e . "$final_json" >/dev/null 2>&1'
     assert_true "6: special-char source survives in final JSON" \
         'jq -e ".collectors[] | select(.source == \"stock_basic \\\"quoted\\\" \$HOME \`cmd\`; A&B\")" "$final_json" >/dev/null 2>&1'

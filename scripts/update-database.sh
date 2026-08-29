@@ -24,6 +24,8 @@
 #
 # Requires: dolt + cargo on PATH, DoltHub credentials (dolt creds ls),
 #           local Dolt repos at the default paths below.
+#           jq is recommended for timing reports; if missing, timing is
+#           skipped with warnings and never blocks the pipeline.
 # Env overrides (used by scripts/tests/test-update-database.sh):
 #   SEPA_INVESTMENT_DATA_DIR, SEPA_COMPASS_DATA_DIR, PARQUET_DIR
 # Timing overrides (issue #334):
@@ -74,6 +76,7 @@ fi
 export COMPASS_TIMING_FILE="$TIMING_JSONL"
 RUN_STARTED_AT=""
 RUN_STARTED_NS=""
+TIMING_READY=0
 
 timing_warn() {
     echo "warning: timing: $*" >&2
@@ -88,8 +91,11 @@ init_timing() {
     # Always start with an empty event file for this run.  An explicit
     # COMPASS_TIMING_FILE is still per-run, so stale events from a previous run
     # must not leak into the current JSON report.
-    if ! : > "$TIMING_JSONL" 2>/dev/null; then
-        timing_warn "cannot create timing event file $TIMING_JSONL"
+    if : > "$TIMING_JSONL" 2>/dev/null; then
+        TIMING_READY=1
+    else
+        TIMING_READY=0
+        timing_warn "cannot create/truncate timing event file $TIMING_JSONL"
     fi
     RUN_STARTED_AT="$(date -Iseconds)"
     RUN_STARTED_NS="$(date +%s%N 2>/dev/null || date +%s)"
@@ -124,6 +130,10 @@ finalize_timing() {
     total_ms=0
     if [ -n "$started_ns" ] && [ -n "$finished_ns" ] && [ "$finished_ns" -ge "$started_ns" ] 2>/dev/null; then
         total_ms=$(( (finished_ns - started_ns) / 1000000 ))
+    fi
+    if [ "${TIMING_READY:-0}" -ne 1 ]; then
+        timing_warn "timing event file was not initialized; skipping final JSON"
+        return 0
     fi
     if [ ! -f "$TIMING_JSONL" ] || [ ! -s "$TIMING_JSONL" ]; then
         if [ ! -f "$TIMING_JSONL" ]; then
