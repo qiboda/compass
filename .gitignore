@@ -15,7 +15,7 @@ parquet_data/
 
 # Generic Python/cache artifacts (Python collectors removed in epic #310)
 __pycache__/
-.coverage
+/.coverage
 
 # Saved output files (backtest results, exports) — not tracked
 saved/

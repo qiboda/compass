@@ -217,7 +217,7 @@ cargo run -p compass-collectors -- sync                       # 获取 + 导入�
 cargo run -p compass-collectors -- sync-investment --restart
 ```
 
-**抓取进度查询（`progress` 子命令，issue #267）**：6 个一次性写 CSV 的 SEPA 采集器
+**抓取进度查询（`progress` 子命令，issue #267）**：5 个一次性写 CSV 的 SEPA 采集器
 （main_flow/dragon/block_trade/institution_survey/index_daily）
 抓取期间实时写 `csv_dir()/<name>.progress.json`（tmp+os.replace 原子写，可安全跨进程读取）。
 另一终端可随时查询，CSV 仍保持一次性写入语义：

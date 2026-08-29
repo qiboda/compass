@@ -13,7 +13,7 @@
 
 - **数据层**：`index_basic.name_en` + `stock_basic.industry_en` 列；全链路
   Dolt → parquet → DuckDB → GUI（B1/B2）
-- **映射表**：`collectors/name_en_mapping.csv`（`section,key,value` 三节：
+- **映射表**：`crates/compass-collectors/data/name_en_mapping.csv`（`section,key,value` 三节：
   index 按 symbol / industry 按行业中文 / concept 按概念中文），随仓库提交；
   import 时 LEFT JOIN 写入（`COMPASS_NAME_EN_MAPPING` 环境变量可注入路径）；
   未收录 → NULL → 回退中文，按需增量
@@ -50,7 +50,7 @@
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |
 |---|---|---|---|---|
 | 数据名翻译机制 | i18n 静态键 / **数据层英文列** | 数据层英文列（name_en/industry_en） | 数据动态增长（6000+ 标的），静态键不可维护；列随数据全链路流动，GUI 只读 | 静态键需穷举全部数据名且随新增数据失效 |
-| 映射表载体 | 数据库表 / **collectors 静态 CSV** | `name_en_mapping.csv` 随仓库提交 | import 时 JOIN 写入，数据可追溯、版本可审；未收录 NULL 回退，按需增量 | 数据库表需额外同步链路；静态 CSV 随仓库 diff 可审查 |
+| 映射表载体 | 数据库表 / **仓库静态 CSV** | `crates/compass-collectors/data/name_en_mapping.csv` 随仓库提交 | import 时 JOIN 写入，数据可追溯、版本可审；未收录 NULL 回退，按需增量 | 数据库表需额外同步链路；静态 CSV 随仓库 diff 可审查 |
 | 股票名 | 纳入 / **不纳入（D0-B）** | 不纳入 | 无可靠英文名源；显示回退中文；搜索两路 | 收集 6000+ 英文名成本高且易错 |
 | SEPA 主题名机制 | concept_member 加列 / **GUI 层概念名映射（D1-A）** | GUI 层映射（index_basic.name_en 的 concept 行构建） | 不动 concept_member schema；概念名直译数据复用 index_basic | 加列扩 schema 面，超出已锁决策 |
 | 指数 fallback | i18n key / **whitelist 三元组** | `(symbol, zh, en)` 三元组 | fallback 是数据不是框架文本；三元组与快照同源 | i18n key 混用数据与框架文本 |

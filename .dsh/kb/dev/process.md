@@ -498,7 +498,7 @@ THS 板块接口（10jqka）的代理验证工具：
 用 [CharlesPikachu/freeproxy](https://github.com/CharlesPikachu/freeproxy) 作为
 proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
 
-- 灌库命令：`cargo run -p compass-collectors -- freeproxy --source json`（默认）：下载 freeproxy 每日更新的 `proxies.json` 快照；`realtime` 源尚未迁移到 Rust，仍由 Python 旧脚本退役前记录，当前不支持。
+- 灌库命令：`cargo run -p compass-collectors -- freeproxy --source json`（默认）：下载 freeproxy 每日更新的 `proxies.json` 快照；`realtime` 源尚未迁移到 Rust（Python 已退役），当前不支持；Rust 仅支持 JSON 快照源。
   - 默认写入 proxy_pool Redis 的 `use_proxy` 表；proxy_pool 调度器会自动校验
     http/https（含 #290 的 HTTPS 验证补丁）。
 - 示例：

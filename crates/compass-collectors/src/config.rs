@@ -76,6 +76,10 @@ mod tests {
 
     #[test]
     fn name_en_mapping_path_resolves_to_crate_data() {
+        let _guard = ENV_MUTEX.blocking_lock();
+        unsafe {
+            std::env::remove_var("COMPASS_NAME_EN_MAPPING");
+        }
         let path = name_en_mapping_path();
         assert!(
             path.ends_with("data/name_en_mapping.csv"),

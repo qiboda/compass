@@ -668,7 +668,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | MIG-2（#310）：HTTP/TLS 客户端 | rquest / reqwest-impersonate / wreq | `wreq`（rquest 项目的后续名，仓库 `0x676e67/wreq` + `wreq-util`，Chrome142 指纹） | 用户确认采用；rquest crates.io 已 yank 且仓库改名，wreq 是同一作者同一 TLS/HTTP2 指纹方案的现行版，支持 Chrome142，不降级 reqwest | reqwest 无 TLS 指纹伪装；reqwest-impersonate 是备份且用户未选 |
 | MIG-3（#310）：PR 结构 | 一个 epic 一个 PR / 每批一个 PR | 每个批次一个 PR | 用户确认覆盖仓库默认约定；批次间有数据和 CLI 渐进依赖，分 PR 便于 review/回退 | 一个 PR 过大，跨 7 批 review 困难 |
 | MIG-4（#310）：切换门槛 | 直接删除 Python / dual-run 等价后切换 | 并行开发 + dual-run 对比（CSV/Dolt 行数、日期覆盖、关键字段）全部通过后才切换 `update-database.sh` | 数据管线不能因迁移中断；等价值可复现且不依赖“看起来像” | 直接切换风险高，无回退证据 |
-| MIG-5（#310）：Python 退役时机 | 提前删除 / B7 同批切换+|删除 | B7 完成全量 dual-run 后，同批先切换 `update-database.sh` 再删除 `collectors/`（分步提交） | 用户锁定：保留 Python 并存直到等价，删除与切换同批分步便于回退；B1-B6 各批均有 dual-run evidence | 提前删无回退；分开两条 PR 会增加双入口维护期 |
+| MIG-5（#310）：Python 退役时机 | 提前删除 / B7 同批切换+|删除 | B7 完成全量 dual-run 后，同批完成切换 `update-database.sh` 与删除 `collectors/`（一个 PR，可含多个逻辑提交） | 用户锁定：保留 Python 并存直到等价，删除与切换同批分步便于回退；B1-B6 各批均有 dual-run evidence | 提前删无回退；分开两条 PR 会增加双入口维护期 |
 
 > 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
