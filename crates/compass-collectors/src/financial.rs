@@ -12,16 +12,27 @@ use crate::progress::Progress;
 
 /// Static configuration for one F10 financial-statement collector.
 pub struct FinancialConfig {
+    /// EastMoney report name used in fetch requests.
     pub report_name: &'static str,
+    /// Filter column used for incremental paging.
     pub filter_column: &'static str,
+    /// Dolt target table name.
     pub dolt_table: &'static str,
+    /// First year to fetch.
     pub start_year: i32,
+    /// Anchor for the initial update (inclusive).
     pub initial_anchor: &'static str,
+    /// API column list (comma-separated, in output order).
     pub cols: &'static str,
+    /// DDL of the Dolt target table.
     pub ddl: &'static str,
+    /// DDL of the temporary staging table.
     pub tmp_ddl: &'static str,
+    /// Name of the temporary staging table.
     pub tmp_name: &'static str,
+    /// Columns trimmed with SQL `TRIM` during import.
     pub trim_text_cols: &'static [&'static str],
+    /// Whether the non-incremental path uses the last report date in Dolt.
     pub non_incremental_uses_last_report_date: bool,
 }
 

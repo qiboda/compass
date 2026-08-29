@@ -6,20 +6,27 @@ use wreq_util::Emulation;
 
 use crate::error::{CollectError, Result};
 
+/// EastMoney datacenter API base URL (v1 data endpoint).
 pub const EM_BASE: &str = "https://datacenter-web.eastmoney.com/api/data/v1/get";
+/// Chrome 142 desktop User-Agent string used for EastMoney requests.
 pub const EM_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+/// Minimum interval between EastMoney requests.
 pub const EM_MIN_INTERVAL: Duration = Duration::from_secs(2);
+/// Random jitter range (as a fraction) added to the minimum interval.
 pub const EM_JITTER: (f64, f64) = (0.1, 0.3);
+/// Maximum retry count for transient EastMoney request failures.
 pub const EM_MAX_RETRIES: usize = 4;
 
 /// HTTP/TLS client based on `wreq` (successor of rquest), emulating Chrome 142.
 #[derive(Clone)]
 pub struct HttpClient {
     client: Client,
+    /// Default headers sent with every EastMoney request.
     pub default_headers: HashMap<String, String>,
 }
 
 impl HttpClient {
+    /// Build a client with the default header set and Chrome 142 TLS emulation.
     pub fn new() -> Result<Self> {
         let client = Client::builder().emulation(Emulation::Chrome142).build()?;
         Ok(Self {
@@ -28,6 +35,7 @@ impl HttpClient {
         })
     }
 
+    /// Wrap an existing `wreq` client with the default EastMoney headers.
     pub fn with_client(client: Client) -> Self {
         Self {
             client,
@@ -35,6 +43,7 @@ impl HttpClient {
         }
     }
 
+    /// Return the underlying `wreq` client.
     pub fn client(&self) -> &Client {
         &self.client
     }
@@ -252,6 +261,7 @@ pub struct Throttle {
 }
 
 impl Throttle {
+    /// Create a throttle enforcing the given minimum interval between calls.
     pub fn new(min_interval: Duration) -> Self {
         Self {
             min_interval,
@@ -259,6 +269,8 @@ impl Throttle {
         }
     }
 
+    /// Sleep until the min interval has elapsed since the previous call,
+    /// adding a random jitter, then record the wake-up instant.
     pub async fn acquire(&mut self) {
         let now = Instant::now();
         let wait = if let Some(last) = self.last {

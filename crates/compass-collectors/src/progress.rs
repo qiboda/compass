@@ -5,19 +5,32 @@ use serde::{Deserialize, Serialize};
 use crate::config::csv_dir;
 use crate::error::Result;
 
+/// Serialized snapshot of a collector run's progress.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProgressState {
+    /// Collector name (also used as the progress-file base name).
     pub name: String,
+    /// Run status: `running`, `completed` or `failed`.
     pub status: String,
+    /// ISO timestamp when the run started.
     pub started_at: String,
+    /// ISO timestamp of the last state update.
     pub updated_at: String,
+    /// Total number of items to process, when known.
     pub total_items: Option<u64>,
+    /// Number of items completed so far.
     pub completed_items: u64,
+    /// Number of rows fetched so far.
     pub fetched_rows: u64,
+    /// Current item being processed (e.g. a report date).
     pub current_item: Option<String>,
+    /// Completion percentage (0..=100), when `total_items` is known.
     pub percent: Option<f64>,
+    /// Human-readable progress message.
     pub message: String,
+    /// Path of the output CSV being written.
     pub output_csv: Option<String>,
+    /// Error message when the run failed.
     pub error: Option<String>,
 }
 
@@ -71,6 +84,7 @@ pub struct Progress {
 }
 
 impl Progress {
+    /// Start a new progress run, writing the initial state to disk.
     pub fn new(
         name: impl Into<String>,
         total_items: Option<u64>,
@@ -97,6 +111,9 @@ impl Progress {
         Ok(progress)
     }
 
+    /// Update progress counters/message and persist the state.
+    ///
+    /// `None` arguments leave the corresponding field unchanged.
     pub fn update(
         &mut self,
         completed: Option<u64>,
@@ -123,6 +140,7 @@ impl Progress {
         self.write()
     }
 
+    /// Mark the run as completed and persist the final state.
     pub fn finish(&mut self, fetched_rows: Option<u64>, message: &str) -> Result<()> {
         self.status = "completed".to_string();
         if let Some(v) = fetched_rows {
@@ -136,6 +154,7 @@ impl Progress {
         self.write()
     }
 
+    /// Mark the run as failed, recording the error, and persist the state.
     pub fn fail(&mut self, error: &str, message: &str) -> Result<()> {
         self.status = "failed".to_string();
         self.error = Some(error.to_string());

@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::error::Result;
 use crate::freeproxy;
 
+/// Default local snapshot path for the freeproxy JSON payload.
 pub const DEFAULT_SNAPSHOT: &str = "/tmp/freeproxy.json";
 
 fn write_snapshot(path: &Path, payload: &Value) -> Result<()> {
@@ -24,6 +25,8 @@ fn write_snapshot(path: &Path, payload: &Value) -> Result<()> {
     Ok(())
 }
 
+/// One JSON-source cycle: fetch, snapshot, parse and seed Redis; returns
+/// the number of records written (0 when the source is unavailable).
 pub async fn run_json_cycle(
     json_url: &str,
     snapshot: &Path,
@@ -64,12 +67,14 @@ pub async fn run_json_cycle(
     freeproxy::write_to_redis(redis_url, table, &records)
 }
 
+/// Realtime (pyfreeproxy) cycle; always reports unsupported and writes 0.
 pub async fn run_realtime_cycle(redis_url: &str, table: &str, limit: usize) -> Result<usize> {
     let _ = (redis_url, table, limit);
     eprintln!("[keepalive] realtime source is not yet available in Rust; skipping");
     Ok(0)
 }
 
+/// One full keepalive cycle; returns (json_written, realtime_written).
 pub async fn run_cycle(
     json_url: &str,
     snapshot: &Path,

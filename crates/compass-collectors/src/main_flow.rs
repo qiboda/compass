@@ -12,8 +12,11 @@ use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
 use crate::progress::Progress;
 use crate::proxy::{DEFAULT_PROXY_MAX_ATTEMPTS, ProxyPool, make_proxy_pool};
 
+/// EastMoney main-capital-flow report name.
 pub const REPORT_NAME: &str = "RPT_MAIN_MONEY_FLOW";
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "capital_main_flow";
+/// Source label recorded in `data_updates` for this table.
 pub const SOURCE: &str = "EastMoney push2 clist f62";
 
 const PUSH2_DELAY: &str = "https://push2delay.eastmoney.com/api/qt/clist/get";

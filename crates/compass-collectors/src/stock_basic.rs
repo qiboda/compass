@@ -9,9 +9,13 @@ use crate::eastmoney::Record;
 use crate::error::Result;
 use crate::http::{EM_MAX_RETRIES, EM_MIN_INTERVAL, HttpClient, Throttle};
 
+/// EastMoney push2 clist API URL for the A-share stock list.
 pub const EM_LIST_URL: &str = "https://push2delay.eastmoney.com/api/qt/clist/get";
+/// Market-set filter (`fs`) selecting SH/SZ/BJ A-share boards.
 pub const EM_FS: &str = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81";
+/// API field list requested for each stock.
 pub const EM_FIELDS: &str = "f12,f13,f14,f26,f100,f101,f102,f103,f127,f128,f134,f189,f124,f221";
+/// Upper bound on the number of pages fetched.
 pub const MAX_PAGES: usize = 100;
 
 fn em_headers() -> HashMap<String, String> {
@@ -39,6 +43,7 @@ fn em_headers() -> HashMap<String, String> {
     headers
 }
 
+/// Infer the exchange code (`SH`/`SZ`/`BJ`) from a 6-digit stock code.
 pub fn infer_exchange(code: &str) -> &'static str {
     if code.starts_with('6') {
         "SH"
@@ -49,10 +54,12 @@ pub fn infer_exchange(code: &str) -> &'static str {
     }
 }
 
+/// Convert a 6-digit code to Tushare style `CODE.EXCHANGE` (e.g. `600519.SH`).
 pub fn to_ts_code(code: &str) -> String {
     format!("{code}.{}", infer_exchange(code))
 }
 
+/// Convert a 6-digit code to `EXCHANGE CODE` symbol (e.g. `SH600519`).
 pub fn to_symbol(code: &str) -> String {
     format!("{}{}", infer_exchange(code), code)
 }

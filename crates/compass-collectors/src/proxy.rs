@@ -6,7 +6,9 @@ use crate::config::{default_proxy_state_path, proxy_enabled};
 use crate::error::Result;
 use crate::http::HttpClient;
 
+/// Default URL of the local proxy_pool HTTP API.
 pub const DEFAULT_API_URL: &str = "http://127.0.0.1:5010";
+/// Maximum fetch attempts through a proxy before giving up.
 pub const DEFAULT_PROXY_MAX_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Serialize)]
@@ -26,6 +28,8 @@ pub struct ProxyPool {
 }
 
 impl ProxyPool {
+    /// Build a pool client from explicit overrides, `COMPASS_PROXY_API_URL`
+    /// env, or the default API URL; state path falls back to the default.
     pub fn new(api_url: Option<String>, state_path: Option<PathBuf>) -> Result<Self> {
         let api_url = api_url
             .or_else(|| std::env::var("COMPASS_PROXY_API_URL").ok())
@@ -67,6 +71,7 @@ impl ProxyPool {
         }
     }
 
+    /// Ask the pool API to delete a bad proxy (failures are logged, not fatal).
     pub async fn delete_proxy(&self, proxy: &str) {
         let url = format!("{}/delete/", self.api_url);
         let mut params = std::collections::HashMap::new();
@@ -78,6 +83,7 @@ impl ProxyPool {
         }
     }
 
+    /// Query the current proxy-pool size; 0 on API failure.
     pub async fn pool_count(&self) -> u64 {
         let url = format!("{}/count/", self.api_url);
         let empty = std::collections::HashMap::new();
@@ -99,6 +105,7 @@ impl ProxyPool {
         0
     }
 
+    /// Persist a JSON state snapshot (count/degraded/reason) for diagnostics.
     pub async fn record_state(&self, pool_count: u64, degraded: bool, reason: &str) -> Result<()> {
         let state = ProxyState {
             timestamp: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -126,11 +133,13 @@ impl ProxyPool {
         }
     }
 
+    /// Build the `http://` URL spec for a bare `IP:PORT` proxy string.
     pub fn proxy_spec(proxy: &str) -> String {
         format!("http://{proxy}")
     }
 }
 
+/// Build a [`ProxyPool`] when the proxy layer is enabled, else `None`.
 pub fn make_proxy_pool() -> Option<ProxyPool> {
     if !proxy_enabled() {
         return None;

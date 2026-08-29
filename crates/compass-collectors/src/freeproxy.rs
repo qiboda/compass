@@ -14,24 +14,39 @@ use serde_json::Value;
 use crate::error::{CollectError, Result};
 use crate::http::HttpClient;
 
+/// Default URL of the freeproxy JSON snapshot source.
 pub const DEFAULT_JSON_URL: &str =
     "https://raw.githubusercontent.com/CharlesPikachu/freeproxy/master/proxies.json";
+/// Default Redis URL for the proxy_pool.
 pub const DEFAULT_REDIS_URL: &str = "redis://@127.0.0.1:6379/0";
+/// Default Redis hash table for proxy records.
 pub const DEFAULT_TABLE: &str = "use_proxy";
+/// Default maximum number of proxy records written per cycle.
 pub const DEFAULT_LIMIT: usize = 300;
+/// Realtime source names supported by Python `pyfreeproxy` (not yet in Rust).
 pub const DEFAULT_REALTIME_SOURCES: [&str; 2] =
     ["ProxiflyProxiedSession", "TrustyTechProxiedSession"];
 
+/// One normalized proxy record stored in the proxy_pool Redis hash.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProxyRecord {
+    /// The proxy address in `IP:PORT` form.
     pub proxy: String,
+    /// Whether the proxy supports HTTPS.
     pub https: bool,
+    /// Consecutive failure count.
     pub fail_count: u64,
+    /// Region/country of the proxy.
     pub region: String,
+    /// Anonymity level (e.g. `elite`, `anonymous`).
     pub anonymous: String,
+    /// Source that provided the record (e.g. `freeproxy`).
     pub source: String,
+    /// Number of checks performed.
     pub check_count: u64,
+    /// Result of the last check.
     pub last_status: bool,
+    /// Timestamp of the last check.
     pub last_time: String,
 }
 
@@ -167,6 +182,7 @@ fn normalize_json_item(item: &Value) -> Result<ProxyRecord> {
     })
 }
 
+/// Normalize a `proto://IP:PORT` string from pyfreeproxy into a record.
 pub fn normalize_proxy_info(proxy: &str, region: &str, anonymous: &str) -> Result<ProxyRecord> {
     let raw = proxy
         .strip_prefix("http://")
@@ -190,6 +206,7 @@ pub fn normalize_proxy_info(proxy: &str, region: &str, anonymous: &str) -> Resul
     })
 }
 
+/// Parse the JSON payload's `data` array, score/sort, and cap to `limit`.
 pub fn records_from_json_data(payload: &Value, limit: usize) -> Vec<ProxyRecord> {
     let data = payload.get("data").and_then(Value::as_array);
     let Some(data) = data else {
@@ -214,6 +231,7 @@ pub fn records_from_json_data(payload: &Value, limit: usize) -> Vec<ProxyRecord>
     records
 }
 
+/// Download the raw JSON payload from the given URL.
 pub async fn fetch_json_payload(url: &str) -> Result<Value> {
     let client = HttpClient::new()?;
     let empty = HashMap::new();
@@ -222,11 +240,13 @@ pub async fn fetch_json_payload(url: &str) -> Result<Value> {
         .await
 }
 
+/// Fetch and normalize up to `limit` proxy records from a JSON source.
 pub async fn fetch_json_proxies(url: &str, limit: usize) -> Result<Vec<ProxyRecord>> {
     let payload = fetch_json_payload(url).await?;
     Ok(records_from_json_data(&payload, limit))
 }
 
+/// Write records into the proxy_pool Redis hash; returns the count written.
 pub fn write_to_redis(redis_url: &str, table: &str, records: &[ProxyRecord]) -> Result<usize> {
     let client = redis::Client::open(redis_url)?;
     let mut con = client.get_connection()?;

@@ -18,10 +18,15 @@ use crate::error::Result;
 use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
 use crate::incremental::{normalize_update_date, update_date_anchor};
 
+/// EastMoney financial-indicators report name.
 pub const REPORT_NAME: &str = "RPT_LICO_FN_CPD";
+/// Filter column used for incremental paging.
 pub const FILTER_COLUMN: &str = "REPORTDATE";
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "fin_indicators";
+/// First year to fetch.
 pub const START_YEAR: i32 = 2020;
+/// Anchor for the initial update (inclusive).
 pub const INITIAL_UPDATE_ANCHOR: &str = "2020-01-01";
 
 const DDL: &str = r#"CREATE TABLE IF NOT EXISTS fin_indicators (

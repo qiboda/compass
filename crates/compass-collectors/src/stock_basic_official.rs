@@ -19,6 +19,7 @@ use crate::error::{CollectError, Result};
 use crate::http::HttpClient;
 use crate::proxy::{ProxyPool, make_proxy_pool};
 
+/// Output column order of the normalized `stock_basic` CSV schema.
 pub const COLUMNS: [&str; 12] = [
     "symbol",
     "ts_code",
@@ -54,19 +55,32 @@ static NUMBER_CELL_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid number cell regex")
 });
 
+/// One normalized stock-basic row from the official exchange sources.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct OfficialRecord {
+    /// `EXCHANGE CODE` symbol (e.g. `SH600519`).
     pub symbol: String,
+    /// Tushare style `CODE.EXCHANGE` (e.g. `600519.SH`).
     pub ts_code: String,
+    /// 6-digit exchange code.
     pub code: String,
+    /// Security short name.
     pub name: String,
+    /// Listing date (YYYY-MM-DD), empty when not listed.
     pub list_date: String,
+    /// Delisting date (YYYY-MM-DD), empty when still listed.
     pub delist_date: String,
+    /// Board name (e.g. 主板, 创业板).
     pub board: String,
+    /// Registered full company name.
     pub full_name: String,
+    /// Total share count as a decimal string.
     pub total_share: String,
+    /// CSRC industry classification.
     pub industry: String,
+    /// Registered region.
     pub region: String,
+    /// Update date of the record (YYYY-MM-DD).
     pub update_date: String,
 }
 
@@ -112,6 +126,7 @@ fn json_scalar_to_string(v: Option<&Value>) -> String {
     }
 }
 
+/// Infer the exchange code (`SH`/`SZ`/`BJ`) from a 6-digit stock code.
 pub fn infer_exchange(code: &str) -> &'static str {
     if code.starts_with('6') {
         "SH"

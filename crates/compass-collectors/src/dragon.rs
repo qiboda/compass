@@ -11,11 +11,17 @@ use crate::error::Result;
 use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
 use crate::progress::Progress;
 
+/// EastMoney daily-billboard report name.
 pub const REPORT_NAME: &str = "RPT_DAILYBILLBOARD_DETAILSNEW";
+/// EastMoney buy-seat daily-detail report name.
 pub const BUY_REPORT_NAME: &str = "RPT_BILLBOARD_DAILYDETAILSBUY";
+/// EastMoney sell-seat daily-detail report name.
 pub const SELL_REPORT_NAME: &str = "RPT_BILLBOARD_DAILYDETAILSSELL";
+/// Filter column used for incremental paging.
 pub const FILTER_COLUMN: &str = "TRADE_DATE";
+/// Dolt target table name.
 pub const DOLT_TABLE: &str = "dragon_list";
+/// First trade date to fetch.
 pub const START_DATE: &str = "2020-01-01";
 
 const DDL: &str = r#"CREATE TABLE IF NOT EXISTS dragon_list (
