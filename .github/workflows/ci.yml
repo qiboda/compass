@@ -42,6 +42,10 @@ jobs:
           dolt version
       - uses: taiki-e/install-action@nextest
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Clean heavy target artifacts before coverage
+        run: |
+          rm -rf target/debug target/doc
+          df -h .
       - name: Run tests and collect coverage (nextest semantics)
         run: |
           mkdir -p target/llvm-cov
