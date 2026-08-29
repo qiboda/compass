@@ -110,7 +110,7 @@ cargo run --bin compass-data -- check-stock-daily [OPTIONS]
 - SSE 交易日历为空（calendar 查询失败或 0 行）
 - 存在缺失日期（输出缺失数量与首批 10 个日期）
 
-无缺口时静默通过（exit 0），`scripts/update-database.sh` step 3 用它做
+无缺口时静默通过（exit 0），`scripts/update-database.sh` step 1b 用它做
 import 后的硬校验（缺口即中止流水线）。
 
 ---
@@ -297,10 +297,13 @@ cargo run -p compass-collectors -- sync-investment --restart
 ```
 
 **抓取进度查询（`progress` 子命令，issue #267）**：一次写 CSV 的采集器在抓取期间
-实时写 `csv_dir()/<name>.progress.json`（tmp+os.replace 原子写，可安全跨进程读取）——
-包括 5 个 SEPA 采集器（main_flow/dragon/block_trade/institution_survey/index_daily）
-与财务模块（financial.rs 共享路径，fin_indicators/balance_sheet/income/cash_flow）。
-另一终端可随时查询；CSV 仍保持一次性写入语义：
+实时写 `csv_dir()/<name>.progress.json`（tmp+os.replace 原子写，可安全跨进程读取）。
+写入方 6 个模块、产出 8 个进度文件：SEPA 五采集器（main_flow/block_trade/
+dragon/institution_survey/index_daily——用快名）+ 财务三表（balance_sheet/income/
+cash_flow 经 financial.rs 共享路径——进度文件名为 API 报告名
+`RPT_F10_FINANCE_*.progress.json`）。**fin_indicators 不产生进度文件**（自有
+fetch 循环，无 Progress 写入）；`progress <target>` 的 target 用对应文件名
+（SEPA 快名 / RPT_* 报告名）。CSV 保持一次性写入语义：
 
 ```sh
 cargo run -p compass-collectors -- progress                  # 全部采集器进度（人类可读）
@@ -379,9 +382,11 @@ block_trade 的 buyer/seller）。仅去 ASCII 空格（U+0020），全角空格
 **保持池温（keepalive）**：`compass-collectors keepalive` 子命令后台常驻循环，每周期
 从 freeproxy `json` 源灌 proxy_pool Redis（`use_proxy` hash），
 GitHub raw 429/超时自动用本地 `/tmp/freeproxy.json` 快照兜底。
-`realtime` 源（依赖 Python `pyfreeproxy` 库）**Rust 未实现**——`--source realtime`
-报 `not supported in Rust yet; use --source json`，实际仅 JSON 快照+单源路径循环
-（B7 已接受的偏差，见 `.dsh/kb/dev/reflections.md`）：
+**keepalive 仅 json 单源**——realtime 源（依赖 Python `pyfreeproxy` 库）为 stub
+（`run_realtime_cycle` 打印 "realtime source is not yet available in Rust; skipping"），
+`--source realtime` 是 **freeproxy** 子命令的 flag（报
+"freeproxy: --source realtime is not supported in Rust yet; use --source json"），
+keepalive 无 `--source` 参数（B7 已接受的偏差，见 `.dsh/kb/dev/reflections.md`）：
 
 ```sh
 cargo run -p compass-collectors -- keepalive --once           # 单轮（测试/冒烟）

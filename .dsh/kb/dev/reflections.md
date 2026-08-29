@@ -55,6 +55,9 @@
 **Process improvements**:
 - 已提交 `crates/compass-collectors/scripts/dual_run_block_trade.sh` 作为 B2 pilot 的可复现等价性验证入口。
 - 建议后续批次每个采集器保留同样 dual-run 脚本与关键字段对比（proposed）。
+- **历史注记（B7，epic #310）**：全部 8 个 `dual_run_*.sh` 已随 B7 切换
+  （Python 采集层退役）一并移除，`crates/compass-collectors/scripts/` 现为空；
+  等价性由 `.dsh/evidence/b7-*.md` 的 dual-run 记录承接，本条目仅存历史参考。
 
 ## 2026-08-28 — ref #314, #315, #316, #317 B3 daily collectors Rust 迁移
 

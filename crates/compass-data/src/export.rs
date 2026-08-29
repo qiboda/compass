@@ -15,6 +15,31 @@ fn escape_sql_path(path: &str) -> String {
     path.replace('\'', "''")
 }
 
+/// Reject an export whose output would overwrite the input data directory:
+/// writing a csv / parquet-dir into `input` itself would first delete the
+/// source `stock_daily.parquet` (overwrite=true) and then fail the read,
+/// destroying the primary dataset. A `None`-free canonical comparison keeps
+/// it cheap; the only hard requirement is that the user cannot silently shoot
+/// their own main database with a typo'd `--output`.
+fn reject_output_inside_input(input: &Path, output: &Path) -> bool {
+    if !input.exists() || !output.exists() {
+        return false;
+    }
+    let in_canon = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+    let out_canon = output
+        .canonicalize()
+        .unwrap_or_else(|_| output.to_path_buf());
+    let same = out_canon.starts_with(&in_canon);
+    if same {
+        warn!(
+            "refusing to export into the input directory itself (input={}, output={})",
+            input.display(),
+            output.display()
+        );
+    }
+    same
+}
+
 /// Forward-adjustment factor SQL: `adjclose/close` when close > 0 and adjclose
 /// is finite and > 0, else 1.0 — identical to `indicators::adjust_ohlc` so the
 /// csv/parquet-dir exports never drift from the chart reading path.
@@ -27,6 +52,10 @@ const ADJ_FACTOR_SQL: &str = "CASE WHEN close > 0 AND adjclose IS NOT NULL AND \
 /// even if a stray row exists in the source parquet.
 const SYMBOL_SHAPE_SQL: &str = "(regexp_matches(symbol, '^(SH|SZ|BJ)[0-9]{6}$') \
      OR regexp_matches(symbol, '^BK[0-9]{4,6}$'))";
+
+/// Index parquet files mirrored by [`export_parquet_dir`] /
+/// [`export_index_parquet_files`] into an output directory or DuckDB.
+const INDEX_FILES: &[&str] = &["index_daily.parquet", "index_basic.parquet"];
 
 /// Export Parquet data to another format.
 pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwrite: bool) {
@@ -123,6 +152,9 @@ fn export_csv(input: &Path, output: &Path, overwrite: bool) {
         );
         return;
     }
+    if reject_output_inside_input(input, output) {
+        return;
+    }
     if let Some(parent) = output.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
@@ -195,14 +227,19 @@ fn write_csv_header_only(output: &Path) {
 /// verbatim. Only canonical exchange-prefixed symbols are exported
 /// (`SYMBOL_SHAPE_SQL`) and the symbols.txt set equals the exported parquet
 /// symbol set. Missing index parquets are skipped, empty index parquets do
-/// not block the export, and `overwrite` replaces stale files atomically
-/// (without it an existing output directory is left untouched).
+/// not block the export, and `overwrite` replaces stale files (all four
+/// outputs — daily + symbols + index mirrors — are removed first so a
+/// re-export with a different input never leaves stale index files behind;
+/// without it an existing output directory is left untouched).
 fn export_parquet_dir(input: &Path, output: &Path, overwrite: bool) {
     if output.exists() && !overwrite {
         warn!(
             "parquet-dir output {} already exists, skipping (use --overwrite to replace)",
             output.display()
         );
+        return;
+    }
+    if reject_output_inside_input(input, output) {
         return;
     }
     if let Err(e) = std::fs::create_dir_all(output) {
@@ -219,8 +256,14 @@ fn export_parquet_dir(input: &Path, output: &Path, overwrite: bool) {
 
     if daily_path.exists() {
         if overwrite {
+            // Remove all previous outputs (daily + symbols + index mirrors)
+            // so a re-export with a different input never leaves stale
+            // index files behind — the output must mirror the input.
             let _ = std::fs::remove_file(&dst_daily);
             let _ = std::fs::remove_file(&dst_symbols);
+            for f in INDEX_FILES {
+                let _ = std::fs::remove_file(output.join(f));
+            }
         }
         let conn = match duckdb::Connection::open_in_memory() {
             Ok(c) => c,
@@ -263,6 +306,12 @@ fn export_parquet_dir(input: &Path, output: &Path, overwrite: bool) {
             "stock_daily.parquet not present in {}, skipping stock export",
             input.display()
         );
+        if overwrite {
+            // The input no longer supplies a daily file — drop the stale
+            // outputs so a re-export mirror never serves last round's data.
+            let _ = std::fs::remove_file(&dst_daily);
+            let _ = std::fs::remove_file(&dst_symbols);
+        }
     }
 
     export_index_parquet_files(input, output);
@@ -296,7 +345,6 @@ fn write_symbols_txt(conn: &duckdb::Connection, dst_daily: &Path, dst_symbols: &
 /// Mirror `index_daily.parquet` / `index_basic.parquet` from the input
 /// directory into the output directory (skip missing / empty parquets).
 fn export_index_parquet_files(input: &Path, output: &Path) {
-    const INDEX_FILES: &[&str] = &["index_daily.parquet", "index_basic.parquet"];
     for file_name in INDEX_FILES {
         let src = input.join(file_name);
         let dst = output.join(file_name);
@@ -358,7 +406,7 @@ async fn export_index_tables(db: &DuckDbProvider, input: &Path, overwrite: bool)
         }
         let count_sql = format!(
             "SELECT COUNT(*) FROM read_parquet('{}')",
-            parquet_path.display()
+            escape_sql_path(&parquet_path.to_string_lossy())
         );
         let has_rows = match db.table_has_rows(&count_sql).await {
             Ok(rows) => rows,
@@ -380,7 +428,7 @@ async fn export_index_tables(db: &DuckDbProvider, input: &Path, overwrite: bool)
         }
         let copy_sql = format!(
             "CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{}')",
-            parquet_path.display()
+            escape_sql_path(&parquet_path.to_string_lossy())
         );
         match db.execute_batch(&copy_sql).await {
             Ok(()) => info!("{table}: exported → duckdb"),
@@ -408,7 +456,7 @@ pub async fn export_all_tables(db: &DuckDbProvider, dir: &Path) -> Result<(), Da
     for (table, order_clause) in TABLES {
         let file_name = format!("{table}.parquet");
         let file_path = dir.join(&file_name);
-        let file_path_str = file_path.display().to_string();
+        let file_path_str = escape_sql_path(&file_path.to_string_lossy());
 
         let count_sql = format!("SELECT COUNT(*) FROM {table}");
         let has_rows = db.table_has_rows(&count_sql).await.unwrap_or(false);
@@ -564,7 +612,7 @@ mod tests {
 
         run_export(
             tmp.path().to_path_buf(),
-            "csv".to_string(),
+            "xml".to_string(),
             duckdb_path,
             true,
         )
@@ -1131,8 +1179,108 @@ mod tests {
         }
     }
 
-    /// #336 A1 csv: a nonexistent input directory must not panic — ParquetReader
-    /// yields an empty symbol list and the export degrades gracefully.
+    /// #336 A1 csv: a bare code row inside `stock_daily.parquet` must be
+    /// filtered out — the CSV export never copies non-canonical symbols even
+    /// when they physically exist in the source file (the real attack surface:
+    /// the WHERE shape filter is the only gate, NOT symbols.txt).
+    #[tokio::test]
+    async fn run_export_csv_filters_bare_code_rows_in_parquet() {
+        let input_tmp = tempfile::tempdir().expect("input tempdir");
+        write_stock_daily_fixture(
+            input_tmp.path(),
+            &[
+                (
+                    "SZ000001",
+                    "2024-01-02",
+                    10.0,
+                    11.0,
+                    9.0,
+                    10.0,
+                    8.0,
+                    1000.0,
+                    15000.0,
+                ),
+                (
+                    "000001",
+                    "2024-01-02",
+                    5.0,
+                    6.0,
+                    4.0,
+                    5.0,
+                    5.0,
+                    200.0,
+                    3000.0,
+                ),
+                (
+                    "SH600519",
+                    "2024-01-03",
+                    20.0,
+                    21.0,
+                    19.0,
+                    20.0,
+                    20.0,
+                    500.0,
+                    8000.0,
+                ),
+            ],
+        );
+
+        let out_tmp = tempfile::tempdir().expect("output tempdir");
+        let out = out_tmp.path().join("filtered.csv");
+        run_export(
+            input_tmp.path().to_path_buf(),
+            "csv".to_string(),
+            out.clone(),
+            true,
+        )
+        .await;
+
+        let content = std::fs::read_to_string(&out).expect("read csv");
+        let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines[0], CSV_HEADER);
+        assert_eq!(
+            lines.len(),
+            3,
+            "header + SZ000001 + SH600519 (bare 000001 must be dropped), got {content}"
+        );
+        assert!(lines.iter().any(|l| l.starts_with("SZ000001,")));
+        assert!(lines.iter().any(|l| l.starts_with("SH600519,")));
+        assert!(
+            !content.lines().any(|l| l.starts_with("000001,")),
+            "bare code row must not appear in the csv: {content}"
+        );
+    }
+
+    /// #336 A1 csv: a parquet that exists but contains no data rows must still
+    /// produce a header-only output file (empty result set is not an error —
+    /// callers rely on the output file existing).
+    #[tokio::test]
+    async fn run_export_csv_empty_parquet_still_writes_header() {
+        let input_tmp = tempfile::tempdir().expect("input tempdir");
+        write_stock_daily_fixture(input_tmp.path(), &[]);
+
+        let out_tmp = tempfile::tempdir().expect("output tempdir");
+        let out = out_tmp.path().join("empty.csv");
+        run_export(
+            input_tmp.path().to_path_buf(),
+            "csv".to_string(),
+            out.clone(),
+            true,
+        )
+        .await;
+
+        assert!(out.exists(), "csv must exist even for an empty parquet");
+        let content = std::fs::read_to_string(&out).expect("read csv");
+        assert_eq!(
+            content.trim(),
+            CSV_HEADER,
+            "empty parquet must yield header-only csv, got {content}"
+        );
+    }
+
+    /// #336 A1 csv: a nonexistent input directory must not panic — the export
+    /// degrades gracefully (header-only output so callers can rely on the file
+    /// existing) without panicking.
     #[tokio::test]
     async fn run_export_csv_missing_input_dir_does_not_panic() {
         let out_tmp = tempfile::tempdir().expect("output tempdir");
@@ -1141,12 +1289,23 @@ mod tests {
         run_export(
             out_tmp.path().join("no-such-input").to_path_buf(),
             "csv".to_string(),
-            out,
+            out.clone(),
             true,
         )
         .await;
-        // Contract: warn/early-return, never panic. No further assertion —
-        // an implementation that panics fails this test.
+        // Contract: no panic and a header-only file IS produced (implementation
+        // writes write_csv_header_only for a missing source, mirroring the
+        // empty-symbol-set contract).
+        assert!(
+            out.exists(),
+            "header-only csv must exist after a missing input dir"
+        );
+        let content = std::fs::read_to_string(&out).expect("read csv");
+        assert_eq!(
+            content.trim(),
+            CSV_HEADER,
+            "missing input must yield header-only csv, got {content}"
+        );
     }
 
     /// #336 A1 csv: `overwrite=false` with an existing output file must not

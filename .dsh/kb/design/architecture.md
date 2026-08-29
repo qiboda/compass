@@ -37,7 +37,7 @@ compass (GUI binary)
   │   └── market.rs  ─ MarketPanel: 大盘概览（核心指数 Card + 板块/指数表）
   │
   ├── compass-i18n (library — GUI 国际化，rust-i18n + 编译期 KEY_* 常量，零业务依赖)
-  │     └── lib.rs        ─ i18n_dict! 字典 + 163 KEY_* 常量 + ALL_KEYS 一致性校验
+  │     └── lib.rs        ─ i18n_dict! 字典 + 164 KEY_* 常量 + ALL_KEYS 一致性校验
   │
   ├── compass-ui (library — 通用 GUI 组件库，零业务依赖)
   │     ├── tokens/      ─ design token 六类（color/spacing/typography/radius/shadow/motion）
@@ -65,7 +65,7 @@ compass (GUI binary)
   │     ├── lib.rs              ─ run_screener 选股引擎（元数据 + 技术面条件，收 &Filter）
   │     ├── screener_eval.rs    ─ Filter AST 递归求值器（Batch 3）
   │     ├── screener_series.rs  ─ 序列函数（up_days / count_in_window / volume_surge）
-  │     └── sepa/               ─ SEPA 五模块评分引擎（趋势/题材/资金/形态/风险，score.rs 等）
+  │     └── sepa/               ─ SEPA 五模块评分引擎（趋势/题材/资金/形态/风险；aggregation/indicators/scoring/temperature/backtest）
   │
   ├── compass-data (CLI binary)
   │     └── import / import-compass / export / backup / check-stock-daily / sepa subcommands
@@ -528,7 +528,7 @@ shell 把步骤事件与采集器事件合并成单个本地 JSON
 - `--overwrite` 替换已有数据；默认（false）输出已存在则 warn 跳过
 
 ### backup：Parquet → 百度云
-- `scripts/upload-parquet.sh` 用系统 `zip` 压缩 `parquet_data/`
+- `scripts/upload-parquet.sh` 内嵌 `python3 -c` zipfile 压缩 `parquet_data/`（无系统 `zip` 依赖）
 - 通过 `baidupcs` CLI（`BaiduPCS-Go`）上传到百度云
 - 带时间戳的文件名：`parquet_data-YYYYMMDD-HHMMSS.zip`
 - 目标文件夹：百度云上的 `/compass/`
@@ -710,10 +710,12 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
 
 > 注：C5 原记录含 `concept_member`——该采集器已随 issue #283（概念板块移除）
-> 删除。现状 progress 文件写入方为 8 个采集器（financial.rs 共享路径覆盖
-> fin_indicators/balance_sheet/income/cash_flow 四表 + main_flow/block_trade/
-> index_daily/institution_survey/dragon 五表）；`progress` 运行时扫描
-> `csv_dir()` 下全部 `*.progress.json`，无 target 清单硬编码。
+> 删除。现状 progress 文件写入方为 **6 个模块、8 个文件名**：SEPA 五采集器
+> （main_flow/block_trade/dragon/institution_survey/index_daily，快名）+ 财务三表
+> （balance_sheet/income/cash_flow 经 financial.rs 共享路径，文件名 = API 报告名
+> `RPT_F10_FINANCE_*.progress.json`）；**fin_indicators 自有 fetch 循环，不产生
+> 进度文件**。`progress` 运行时扫描 `csv_dir()` 下全部 `*.progress.json`，
+> 无 target 清单硬编码。
 | MIG-1（#310）：采集层代码归属 | 迁移进 compass-data / 新建独立 crate | `crates/compass-collectors` | 采集是独立领域（HTTP/代理/CSV/Dolt 写回），与 compass-data 的 Dolt→Parquet 导出职责不同；独立 crate 便于批次迁移、测试隔离、最终替代 Python 采集层 | 塞进 compass-data 会耦合两种 Dolt 写/读路径，迁移完成前 Python/Rust 并行也会互相干扰 |
 | MIG-2（#310）：HTTP/TLS 客户端 | rquest / reqwest-impersonate / wreq | `wreq`（rquest 项目的后续名，仓库 `0x676e67/wreq` + `wreq-util`，Chrome142 指纹） | 用户确认采用；rquest crates.io 已 yank 且仓库改名，wreq 是同一作者同一 TLS/HTTP2 指纹方案的现行版，支持 Chrome142，不降级 reqwest | reqwest 无 TLS 指纹伪装；reqwest-impersonate 是备份且用户未选 |
 | MIG-3（#310）：PR 结构 | 一个 epic 一个 PR / 每批一个 PR | 每个批次一个 PR | 用户确认覆盖仓库默认约定；批次间有数据和 CLI 渐进依赖，分 PR 便于 review/回退 | 一个 PR 过大，跨 7 批 review 困难 |

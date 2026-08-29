@@ -104,11 +104,15 @@ per-step verify → commit → review → push）。以下是 skill 未覆盖的
 
 push 前按顺序执行：
 
-0. **Rebase base 分支**：`git fetch origin <base>` → `git log HEAD..origin/<base>` 非空时 `git rebase origin/<base>`，解决冲突后再继续。分支必须基于最新 base 才能 push（避免携带过期 base 的提交）。
 1. **cargo fmt --check**
 2. **cargo clippy -- -D warnings**
 3. **cargo doc --no-deps**（必须无警告）
 4. **Issue 引用**：`ref #N` 必须**独立成行**且指向 open issues（行内 `ref #N` 视为叙述性提及，不参与校验，ref #211）
+
+> **Rebase 是 push 前人工流程（非 hook 项）**：`.githooks/pre-push` 本身只含上述
+> 4 项检查，**不含 rebase 逻辑**。rebase 由人工/agent 在 push 前先行执行——
+> `git fetch origin <base>` → `git log HEAD..origin/<base>` 非空时
+> `git rebase origin/<base>` 解决冲突，再 push（避免携带过期 base 的提交）。
 
 > **CI 门槛在 merge 侧，不在 push 侧（ref #172）**：master 的 branch protection
 > 强制 2 个 required status checks（Rust (fmt + build + clippy + docs + nextest +
@@ -121,7 +125,7 @@ push 前按顺序执行：
 
 > **覆盖率门禁**在 CI 执行（coverage job 强制 Rust workspace ≥93%（排除 compass-collectors）+ per-crate 阈值——纯逻辑/serde crate 95%、GUI 主程序 compass 90%、compass-collectors 20%；Python 已随 epic #310 退役），太慢不适合 pre-push 本地检查。见 `.dsh/kb/dev/testing.md` 覆盖率章节。
 
-手动 pre-push checklist（与 hook 相同）：`git fetch origin <base>` + rebase 落后 commits + `cargo fmt --check` + `cargo clippy -- -D warnings`
+手动 pre-push checklist（与 hook 相同 + 人工 rebase）：先 `git fetch origin <base>` + rebase 落后 commits（若落后），再 `cargo fmt --check` + `cargo clippy -- -D warnings`
 + `cargo doc --no-deps` + `ref #N` 指向 open issues，全部通过才能 push。
 
 ### 文档注释纪律

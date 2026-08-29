@@ -53,12 +53,12 @@ issue #181 Task 1——删除无生产调用的 `to_exchange`/`to_ts_code` core 
 **仍存在的生产路径**（issue #181 Task 6 (d) 保留决策）：
 - `crates/compass-collectors/src/stock_basic.rs::to_ts_code`——向 Dolt `stock_basic`
   表的 `ts_code` 列写入 `000001.SZ` 格式（该列由官网采集数据填充，供外部工具/上游
-  兼容；`stock_basic_official.rs` 亦有同名辅助函数）
-- `crates/compass-core/src/symbol.rs::infer_exchange_prefix`（裸 6 位启发式）——
-  保留用于 **D10 config 自动迁移**（旧裸码配置补前缀）与老数据兼容路径；
-  另有生产调用者：`compass-data` main.rs `normalize_config_symbol`（D10 迁移）、
-  `screener_eval.rs:79`、`sepa/scoring.rs:945-947`（BJ 判断）、`compass` GUI
-  main.rs 多处（682/1170/1196/1220）
+  兼容；`stock_basic_official.rs` 亦有同名辅助函数，`infer_exchange` 同理）
+- `crates/compass-core/src/data/symbol.rs::infer_exchange_prefix`（裸 6 位启发式）——
+  保留用于 **D10 config 自动迁移**（旧裸码配置补前缀：compass GUI `main.rs:461`
+  的 D10 迁移路径）与 `exchange_of_symbol` 的裸码兜底（`symbol.rs:59-66` 委托，
+  生产调用者：`screener_eval.rs:79-81`、`sepa/scoring.rs:950-954`——BJ 判断、
+  GUI 其他消费点）
 
 > 结论：`ts_code` 作为 compass **内部规范符号**已废弃（内部一律 Dolt-native
 > 前缀格式），但 `ts_code` **字符串格式本身**仍被 collectors 用于写 Dolt

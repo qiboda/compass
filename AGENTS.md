@@ -505,7 +505,7 @@ dolt status                            # 确认工作区干净、与 origin 同�
 
 见 `.dsh/kb/dev/testing.md` — rstest + tokio::test 模式、内存 DuckDB、Dolt 测试库、benchmark、Tracy 分析。
 
-**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 **93%**（该总门槛覆盖除 compass-collectors 外的核心 crate；compass-collectors 单独设 **20%** 门槛，其网络/Dolt 子进程密集、正确性另由 `update-database.sh` 冒烟验证），per-crate 阈值按可测试性设定——纯逻辑/serde 可测的 compass-core / compass-data / compass-i18n / compass-strategy / compass-types / compass-ui **95%**，GUI 主程序 compass（事件循环/线程/交互难测）**90%**（`cargo llvm-cov --json` + `scripts/check-coverage.sh` 内嵌阈值表校验）。GUI 用 egui_kittest 无头集成测试；Python 采集层及其覆盖率门禁已随 epic #310 退役。详见 `.dsh/kb/dev/testing.md` 覆盖率章节。
+**覆盖率门槛（CI 强制，低于阈值 CI 失败）**：Rust workspace 总 **93%**（该总门槛覆盖除 compass-collectors 外的核心 crate；compass-collectors 单独设 **20%** 门槛，其网络/Dolt 子进程密集、正确性另由 `update-database.sh` 冒烟验证），per-crate 阈值按可测试性设定——纯逻辑/serde 可测的 compass-core / compass-data / compass-i18n / compass-strategy / compass-types / compass-ui **95%**，GUI 主程序 compass（事件循环/线程/交互难测）**90%**（`cargo llvm-cov nextest --json --summary-only` + `scripts/check-coverage.sh` 内嵌阈值表校验）。GUI 用 egui_kittest 无头集成测试；Python 采集层及其覆盖率门禁已随 epic #310 退役。详见 `.dsh/kb/dev/testing.md` 覆盖率章节。
 
 ## API reference
 
