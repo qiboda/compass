@@ -364,6 +364,27 @@ cargo run --bin compass-data -- sepa backfill-dates --start 2026-08-13 --end 202
 补算缺失派生表 → `sepa temperature` + `sepa score --top 50` → Dolt commit →
 TOP50。
 
+### 同步用时统计（issue #334）
+
+每次运行 `scripts/update-database.sh` 会额外记录全链路计时：
+
+- shell 步骤级（step 0~8）与总运行时长；
+- `compass-collectors sync` 内每个采集器来源的 fetch/import 阶段耗时；
+- 控制台打印人类可读摘要；
+- 最终生成一个本地 JSON 文件（用于后续优化对比），不写入 Dolt、不输出 CSV。
+
+```sh
+# 默认输出目录
+logs/sync-timings/YYYY-MM-DD-<run_id>.json
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `SYNC_TIMING_DIR` | `$PROJECT_ROOT/logs/sync-timings` | 最终 JSON 输出目录；测试/临时运行可覆盖 |
+| `COMPASS_TIMING_FILE` | 临时 JSONL 文件 | Rust 采集器上报 timing 事件的路径；shell 也向同一文件追加步骤事件，最终合并后生成单个 JSON |
+
+计时是附加能力：写入/合并失败只输出 warning，**不会阻断数据更新主流程**；失败步骤也会以 `status:"failed"` 记录。
+
 ### `sepa backtest` — 历史批量回测
 
 逐日重算回测窗口内全市场 SEPA 评分（点内计算，不偷看未来），模拟"每日收盘后按评分取 TOP-N 等权持仓、持有 N 个交易日后换仓"策略，输出绩效指标（累计/年化收益、胜率、盈亏比、最大回撤、换仓次数），并与市值前 300 等权代理基准对比。权益曲线写回 Dolt `backtest_result` 表，也可导出 CSV。

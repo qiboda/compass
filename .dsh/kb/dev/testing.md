@@ -160,6 +160,11 @@ let range = db.get_stored_range("SZ000001").await?;
 - `test-update-database.sh`：`bash -n` + **mock cargo/dolt**（PATH 前置假命令，
   日志记录调用参数）断言 7 步流水线调用顺序、Dolt `add` 限定表、失败非零退出、
   preflight 分支；数据目录用 `SEPA_COMPASS_DATA_DIR` 等 env 覆盖指向临时目录
+- `test-timing-requirements.sh` / `test-timing-adversarial.sh`（issue #334）：
+  在 mock 环境下验证同步计时 JSON 生成/schema/collector 事件合并、计时失败仅
+  warning 不阻断主流程、失败步骤 `status:"failed"`、run_id 唯一性与特殊字符 JSON
+  安全性；运行 `bash scripts/tests/test-timing-requirements.sh` 与
+  `bash scripts/tests/test-timing-adversarial.sh`
 - `justfile-test.sh` / `justfile-adversarial-test.sh`（ref #265）：justfile 回归测试
   ——需求验收（22 断言：9 recipe 存在性、逐字命令映射、默认 recipe、check 门禁
   顺序、`--fmt --check`）+ 对抗（18 项：命令静默弱化、默认漂移、recipe 集合恰

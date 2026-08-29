@@ -43,7 +43,8 @@ echo "--- 2. whole-repo old-name references (excluding .git/worktree internals) 
 if grep -rIl "sepa_daily\.sh" "$PROJECT_ROOT" \
         --exclude-dir=.git --exclude-dir=target --exclude-dir=tests \
         --exclude-dir=plans --exclude-dir=designs --exclude-dir=evidence \
-        --exclude=handoff.md --exclude=test-update-database-adversarial.sh \
+        --exclude=handoff.md --exclude=reflections-archive.md \
+        --exclude=test-update-database-adversarial.sh \
         2>/dev/null | grep -q .; then
     fail "repo still references old scripts/sepa_daily.sh"
 else

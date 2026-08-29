@@ -6,12 +6,14 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
 use chrono::{Duration, Local};
 
 use crate::config::{csv_dir, dolt_dir, dolt_exists, investment_data_dir};
 use crate::dolt::{dolt_sql, dolt_sql_csv, set_last_report_date};
 use crate::error::{CollectError, Result};
+use crate::timing::{TimingEvent, TimingWriter};
 use crate::{
     balance_sheet, block_trade, cash_flow, dragon, fin_indicators, income, index_daily,
     institution_survey, main_flow, progress, stock_basic_official,
@@ -44,6 +46,30 @@ fn require_nonzero(rows: u64, label: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+/// Run a sync phase, record its wall time to the optional timing writer, and
+/// return the original result. Timing failures are warnings only.
+macro_rules! timed {
+    ($writer:expr, $source:expr, $phase:expr, $body:expr) => {{
+        let __start = Instant::now();
+        let __result = $body;
+        let __status = if __result.is_ok() {
+            "success"
+        } else {
+            "failed"
+        };
+        if let Some(__w) = $writer.as_ref() {
+            let __event = TimingEvent::collector($source, $phase, __status, __start.elapsed());
+            if let Err(__e) = __w.record(&__event) {
+                eprintln!(
+                    "[sync] warning: timing write failed ({} {}): {__e}",
+                    $source, $phase
+                );
+            }
+        }
+        __result
+    }};
 }
 
 /// Fetch one collector into a CSV (dispatch equivalent of `main.py`).
@@ -385,6 +411,8 @@ pub async fn sync_investment(restart: bool) -> Result<()> {
 /// Full sync: auto-heal, fetch every collector, import every CSV, update
 /// `data_updates` row counts. Mirrors `main.py::do_sync`.
 pub async fn sync(_restart: bool) -> Result<()> {
+    let timing = TimingWriter::from_env();
+
     let auto_heal_enabled = std::env::var("COMPASS_AUTO_HEAL")
         .map(|v| v != "0")
         .unwrap_or(true);
@@ -395,62 +423,159 @@ pub async fn sync(_restart: bool) -> Result<()> {
     }
 
     eprintln!("[sync] Fetching stock_basic...");
-    stock_basic_official::run(None, None).await?;
-    require_nonzero(
-        stock_basic_official::import_to_dolt(None).await?,
+    let _ = timed!(
+        &timing,
         "stock_basic",
+        "fetch",
+        stock_basic_official::run(None, None).await
     )?;
+    let rows = timed!(
+        &timing,
+        "stock_basic",
+        "import",
+        stock_basic_official::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "stock_basic")?;
 
     eprintln!("\n[sync] Fetching fin_indicators (incremental)...");
-    let path = fin_indicators::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await?;
-    eprintln!("  -> {}", path.display());
-    require_nonzero(
-        fin_indicators::import_to_dolt(None).await?,
+    let path = timed!(
+        &timing,
         "fin_indicators",
+        "fetch",
+        fin_indicators::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await
     )?;
+    eprintln!("  -> {}", path.display());
+    let rows = timed!(
+        &timing,
+        "fin_indicators",
+        "import",
+        fin_indicators::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "fin_indicators")?;
 
     eprintln!("\n[sync] Fetching balance_sheet (incremental)...");
-    let path = balance_sheet::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await?;
-    eprintln!("  -> {}", path.display());
-    require_nonzero(
-        balance_sheet::import_to_dolt(None).await?,
-        "fin_balance_sheet",
+    let path = timed!(
+        &timing,
+        "balance_sheet",
+        "fetch",
+        balance_sheet::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await
     )?;
+    eprintln!("  -> {}", path.display());
+    let rows = timed!(
+        &timing,
+        "balance_sheet",
+        "import",
+        balance_sheet::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "fin_balance_sheet")?;
 
     eprintln!("\n[sync] Fetching income (incremental)...");
-    let path = income::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await?;
+    let path = timed!(
+        &timing,
+        "income",
+        "fetch",
+        income::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await
+    )?;
     eprintln!("  -> {}", path.display());
-    require_nonzero(income::import_to_dolt(None).await?, "fin_income")?;
+    let rows = timed!(
+        &timing,
+        "income",
+        "import",
+        income::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "fin_income")?;
 
     eprintln!("\n[sync] Fetching cash_flow (incremental)...");
-    let path = cash_flow::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await?;
+    let path = timed!(
+        &timing,
+        "cash_flow",
+        "fetch",
+        cash_flow::run(None, DEFAULT_PERIODS, DEFAULT_PAGE_SIZE, true).await
+    )?;
     eprintln!("  -> {}", path.display());
-    require_nonzero(cash_flow::import_to_dolt(None).await?, "fin_cash_flow")?;
+    let rows = timed!(
+        &timing,
+        "cash_flow",
+        "import",
+        cash_flow::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "fin_cash_flow")?;
 
     eprintln!("\n[sync] Fetching dragon_list...");
-    dragon::run(None, None, DEFAULT_PAGE_SIZE).await?;
-    require_nonzero(dragon::import_to_dolt(None).await?, "dragon_list")?;
+    let _ = timed!(
+        &timing,
+        "dragon",
+        "fetch",
+        dragon::run(None, None, DEFAULT_PAGE_SIZE).await
+    )?;
+    let rows = timed!(
+        &timing,
+        "dragon",
+        "import",
+        dragon::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "dragon_list")?;
 
     eprintln!("\n[sync] Fetching block_trade...");
-    block_trade::run(None, None, None, DEFAULT_PAGE_SIZE).await?;
-    require_nonzero(block_trade::import_to_dolt(None).await?, "block_trade")?;
+    let _ = timed!(
+        &timing,
+        "block_trade",
+        "fetch",
+        block_trade::run(None, None, None, DEFAULT_PAGE_SIZE).await
+    )?;
+    let rows = timed!(
+        &timing,
+        "block_trade",
+        "import",
+        block_trade::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "block_trade")?;
 
     eprintln!("\n[sync] Fetching institution_survey...");
-    institution_survey::run(None, DEFAULT_PAGE_SIZE).await?;
-    require_nonzero(
-        institution_survey::import_to_dolt(None).await?,
+    let _ = timed!(
+        &timing,
         "institution_survey",
+        "fetch",
+        institution_survey::run(None, DEFAULT_PAGE_SIZE).await
     )?;
+    let rows = timed!(
+        &timing,
+        "institution_survey",
+        "import",
+        institution_survey::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "institution_survey")?;
 
     eprintln!("\n[sync] Fetching main_flow...");
-    main_flow::run(DEFAULT_PAGE_SIZE * 10).await?;
-    require_nonzero(main_flow::import_to_dolt(None).await?, "capital_main_flow")?;
+    let _ = timed!(
+        &timing,
+        "main_flow",
+        "fetch",
+        main_flow::run(DEFAULT_PAGE_SIZE * 10).await
+    )?;
+    let rows = timed!(
+        &timing,
+        "main_flow",
+        "import",
+        main_flow::import_to_dolt(None).await
+    )?;
+    require_nonzero(rows, "capital_main_flow")?;
 
     eprintln!("\n[sync] Fetching index_daily...");
-    index_daily::run().await?;
-    let basic_rows = index_daily::import_index_basic(None).await?;
+    let _ = timed!(&timing, "index_daily", "fetch", index_daily::run().await)?;
+    let basic_rows = timed!(
+        &timing,
+        "index_basic",
+        "import",
+        index_daily::import_index_basic(None).await
+    )?;
     require_nonzero(basic_rows, "index_basic")?;
-    let daily_rows = index_daily::import_to_dolt(None).await?;
+    let daily_rows = timed!(
+        &timing,
+        "index_daily",
+        "import",
+        index_daily::import_to_dolt(None).await
+    )?;
     require_nonzero(daily_rows, "index_daily")?;
 
     eprintln!("\n[sync] Updating data_updates...");

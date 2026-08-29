@@ -30,5 +30,6 @@ pub mod progress;
 pub mod proxy;
 pub mod stock_basic;
 pub mod stock_basic_official;
+pub mod timing;
 
 pub use error::{CollectError, Result};
