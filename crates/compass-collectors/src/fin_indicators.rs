@@ -327,7 +327,7 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
                 WEIGHTAVG_ROE AS _roe, BPS AS _bps,\
                 MGJYXJJE AS _cfps, XSMLL AS _gm,\
                 YSTZ AS _ryoy, SJLTZ AS _npyoy, YSHZ AS _opyoy, SJLHZ AS _nqoq,\
-                ZXGXL AS _sg, TRIM(ASSIGNDSCRPT) AS _dplan, TRIM(PAYYEAR) AS _pyr\
+                ZXGXL AS _sg, TRIM(ASSIGNDSCRPT) AS _dplan, TRIM(PAYYEAR) AS _pyr \
          FROM _tmp_fin \
          WHERE {symbol} IN (SELECT symbol FROM stock_basic) \
          ON DUPLICATE KEY UPDATE \
