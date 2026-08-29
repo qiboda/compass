@@ -464,6 +464,16 @@ sync-investment 编排；`scripts/update-database.sh` 为生产入口。
 `sepa backfill-dates` 补算缺失的 SEPA 派生表，并在 import 后通过
 `check-stock-daily` 硬校验 `stock_daily.parquet` 的交易日历缺口。
 
+### 同步用时统计（issue #334）
+
+每日管线增加可选计时层：`scripts/update-database.sh` 记录 step 0~8 及总时长；
+`compass-collectors sync` 在设置 `COMPASS_TIMING_FILE` 时向 JSONL 追加每个
+来源的 fetch/import 阶段事件（`crates/compass-collectors/src/timing.rs`）；
+shell 把步骤事件与采集器事件合并成单个本地 JSON
+（`logs/sync-timings/YYYY-MM-DD-<run_id>.json`，可用 `SYNC_TIMING_DIR` 覆盖），
+并打印人类可读摘要。计时是附加能力：写入或合并失败仅输出 warning，不阻断
+数据更新主流程；失败步骤仍以 `status:"failed"` 记录，供后续优化分析。
+
 ### import：Dolt investment_data → Parquet
 - 通过 `dolt sql -r parquet` 查询 Dolt `investment_data` 数据库
 - 从 `final_a_stock_eod_price` 表中提取 6000+ 只股票（18M+ 行）
@@ -669,6 +679,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | MIG-3（#310）：PR 结构 | 一个 epic 一个 PR / 每批一个 PR | 每个批次一个 PR | 用户确认覆盖仓库默认约定；批次间有数据和 CLI 渐进依赖，分 PR 便于 review/回退 | 一个 PR 过大，跨 7 批 review 困难 |
 | MIG-4（#310）：切换门槛 | 直接删除 Python / dual-run 等价后切换 | 并行开发 + dual-run 对比（CSV/Dolt 行数、日期覆盖、关键字段）全部通过后才切换 `update-database.sh` | 数据管线不能因迁移中断；等价值可复现且不依赖“看起来像” | 直接切换风险高，无回退证据 |
 | MIG-5（#310）：Python 退役时机 | 提前删除 / B7 同批切换+|删除 | B7 完成全量 dual-run 后，同批完成切换 `update-database.sh` 与删除 `collectors/`（一个 PR，可含多个逻辑提交） | 用户锁定：保留 Python 并存直到等价，删除与切换同批分步便于回退；B1-B6 各批均有 dual-run evidence | 提前删无回退；分开两条 PR 会增加双入口维护期 |
+| TIMING-1（#334）：同步计时存储形态 | 写入 Dolt / 输出 CSV / 本地 JSON | 每次运行一个本地 JSON（`logs/sync-timings/YYYY-MM-DD-<run_id>.json`），Rust 通过 `COMPASS_TIMING_FILE` 上报 JSONL 中间事件，shell 统一合并 | 便于后续优化对比、不污染数据仓库；JSONL 支持 Rust 子进程增量上报、shell 汇总；JSON 能表达 run/steps/collectors/summary 分层结构 | 写入 Dolt 混淆数据与诊断；CSV 丢失嵌套结构且不便按运行聚合 |
 
 > 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：

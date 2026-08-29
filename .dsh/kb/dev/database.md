@@ -69,6 +69,12 @@ row_count + last_report_date）。消费方：
 institution_survey = `MAX(survey_date)`；index_basic = `CURDATE()`；
 stock_basic = NULL（写库只填 4 列，见 `crates/compass-collectors/src/stock_basic_official.rs`）。
 
+**运行统计（issue #334）**：`scripts/update-database.sh` 每次运行在
+`logs/sync-timings/` 下生成一个 JSON 计时文件（`SYNC_TIMING_DIR` 可覆盖），
+记录 run 元信息、step 0~8 耗时和 `compass-collectors sync` 各来源 fetch/import
+耗时；测试/临时运行可设置 `COMPASS_TIMING_FILE` 指定 Rust 上报文件。计时失败仅
+warning，不写入/不修改任何 Dolt 表。
+
 ## investment_data 同步（pull → push → import）
 
 investment_data 是第三方只读库，**每次使用前都应同步**：从 chenditc 上游
