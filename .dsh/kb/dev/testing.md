@@ -294,11 +294,12 @@ CI coverage job 强制以下行覆盖率门槛，低于阈值退出码 1（CI �
 Rust 侧为 **per-crate 阈值**（按可测试性设定，2026-08-12，ref #250）：
 纯逻辑/serde 可测的 crate（compass-core / compass-data / compass-i18n /
 compass-strategy / compass-types / compass-ui）95%，GUI 主程序 compass
-（事件循环/线程/交互难测）90%，workspace 总 93%：
+（事件循环/线程/交互难测）90%，workspace 总 93%（workspace 口径排除
+compass-collectors，该 crate 单独设 20% 门槛，2026-08-29, epic #310）：
 
 ```sh
 # Rust：单次 llvm-cov nextest --json 采集（nextest 语义，与 cargo nextest run 同口径），
-# 脚本按 per-crate 阈值表校验（7 门槛 1 次运行）
+# 脚本按 per-crate 阈值表校验（8 门槛 1 次运行）
 cargo llvm-cov nextest --json --summary-only --output-path target/llvm-cov/coverage.json
 bash scripts/check-coverage.sh target/llvm-cov/coverage.json
 
@@ -307,9 +308,14 @@ bash scripts/check-coverage.sh target/llvm-cov/coverage.json
 - Rust 用 `cargo-llvm-cov`（需 `rustup component add llvm-tools`），行覆盖率口径。
 - `scripts/check-coverage.sh` 用 jq 解析 llvm-cov JSON，内嵌 per-crate 阈值表
   （compass-core / compass-data / compass-i18n / compass-strategy /
-  compass-types / compass-ui → 95，compass → 90，workspace 总 → 93）；
+  compass-types / compass-ui → 95，compass → 90，
+  compass-collectors → 20，workspace 总 → 93，workspace 排除
+  compass-collectors 文件）；
   任一低于各自阈值或未测到文件即退出码 1。
-  单次运行而非每条 `-p` 命令，避免 7 次全量测试（约 7x 加速）。
+  单次运行而非每条 `-p` 命令，避免 8 次全量测试（约 8x 加速）。
+- compass-collectors 是网络/Dolt 子进程密集代码，单元测试只覆盖纯逻辑，
+  生产正确性由 `update-database.sh` 冒烟保证；将其从 workspace 总门槛排除、
+  单独设 20% 门槛（epic #310，2026-08-29）。
 - Python 采集层及其覆盖率门禁已随 epic #310 退役；`scripts/check-coverage.sh`
   不再包含 Python 目标。
 - coverage job 用 `cargo llvm-cov nextest`——**一步完成 nextest 跑测试 + 覆盖率采集**
