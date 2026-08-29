@@ -135,3 +135,11 @@ Rust 采集器事件：
 - [ ] 计时失败仅 warning，不阻断数据管线，且错误可见。
 - [ ] 上述文档同步完成；相关 design 决策记录补齐。
 - [ ] 测试（Rust + shell 常规 + adversarial）全部通过；真实数据冒烟完成。
+
+## 实现偏离记录（审查后更新）
+
+- **测试位置**：计划原本写“更新 `scripts/tests/test-update-database.sh` 断言 timing”，实际改为新增独立
+  `scripts/tests/test-timing-requirements.sh` 与 `scripts/tests/test-timing-adversarial.sh`，
+  避免把 timing 断言混入既有 17 节每日流水线测试；验收覆盖不变。
+- **Step 编号**：实际按脚本头部注释采用 0~8（含 `1b`，backfill=5、compute=6、
+  compute Dolt commit=7、print=8），不再沿用 handoff 中的 `4b/5/6/7` 错位编号。

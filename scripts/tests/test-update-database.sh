@@ -141,6 +141,7 @@ run_script() {
         SEPA_COMPASS_DATA_DIR="$t/repos/compass_data" \
         SYNC_INVESTMENT_SCRIPT="$t/sync-fake.sh" \
         TMPDIR="$t" \
+        SYNC_TIMING_DIR="$t/timings" \
         "${envs[@]}" \
         bash "$SEPA_SCRIPT" > "$t/out.log" 2> "$t/err.log"
     local code=$?

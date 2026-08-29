@@ -26,6 +26,9 @@
 #           local Dolt repos at the default paths below.
 # Env overrides (used by scripts/tests/test-update-database.sh):
 #   SEPA_INVESTMENT_DATA_DIR, SEPA_COMPASS_DATA_DIR, PARQUET_DIR
+# Timing overrides (issue #334):
+#   SYNC_TIMING_DIR (default $PROJECT_ROOT/logs/sync-timings),
+#   COMPASS_TIMING_FILE (per-run JSONL event file)
 
 set -euo pipefail
 
@@ -82,10 +85,11 @@ init_timing() {
             timing_warn "cannot create timing output directory $TIMING_DIR"
         fi
     fi
-    if [ "$TIMING_FILE_EXPLICIT" -eq 0 ] && [ ! -e "$TIMING_JSONL" ]; then
-        if ! : > "$TIMING_JSONL" 2>/dev/null; then
-            timing_warn "cannot create timing event file $TIMING_JSONL"
-        fi
+    # Always start with an empty event file for this run.  An explicit
+    # COMPASS_TIMING_FILE is still per-run, so stale events from a previous run
+    # must not leak into the current JSON report.
+    if ! : > "$TIMING_JSONL" 2>/dev/null; then
+        timing_warn "cannot create timing event file $TIMING_JSONL"
     fi
     RUN_STARTED_AT="$(date -Iseconds)"
     RUN_STARTED_NS="$(date +%s%N 2>/dev/null || date +%s)"
@@ -127,20 +131,45 @@ finalize_timing() {
         fi
         return 0
     fi
-    local tmp="$FINAL_TIMING.tmp"
+    local tmp="$FINAL_TIMING.tmp" clean_tmp="$TIMING_JSONL.clean"
+    # Filter invalid JSONL lines so one malformed child event cannot destroy the
+    # whole per-run report.  Valid step/collector events still survive.
+    if ! jq -Rc 'fromjson? // empty' "$TIMING_JSONL" > "$clean_tmp" 2>/dev/null; then
+        rm -f "$tmp" "$clean_tmp" 2>/dev/null || true
+        if [ "$TIMING_FILE_EXPLICIT" -eq 0 ]; then
+            rm -f "$TIMING_JSONL" 2>/dev/null || true
+        fi
+        timing_warn "failed to read/filter timing events from $TIMING_JSONL"
+        return 0
+    fi
+    local raw_count clean_count
+    raw_count="$(wc -l < "$TIMING_JSONL" 2>/dev/null || echo 0)"
+    clean_count="$(wc -l < "$clean_tmp" 2>/dev/null || echo 0)"
+    if [ "$clean_count" -lt "$raw_count" ]; then
+        timing_warn "dropped malformed timing event(s)"
+    fi
+    if [ "$clean_count" -eq 0 ]; then
+        timing_warn "no valid timing events to merge"
+        rm -f "$tmp" "$clean_tmp" 2>/dev/null || true
+        if [ "$TIMING_FILE_EXPLICIT" -eq 0 ]; then
+            rm -f "$TIMING_JSONL" 2>/dev/null || true
+        fi
+        return 0
+    fi
     if ! jq -s \
             --arg id "$RUN_ID" --arg date "$RUN_DATE" \
             --arg started_at "$started_at" --arg finished_at "$finished_at" \
             --argjson total_ms "$total_ms" --arg status "$status" \
             '{schema_version:1, run:{id:$id,date:$date,started_at:$started_at,finished_at:$finished_at,total_ms:$total_ms,status:$status}, steps:[.[] | select(.kind=="step")], collectors:[.[] | select(.kind=="collector")], summary:{steps_total_ms:([.[] | select(.kind=="step") | .duration_ms] | add // 0), fetch_total_ms:([.[] | select(.kind=="collector" and .phase=="fetch") | .duration_ms] | add // 0), import_total_ms:([.[] | select(.kind=="collector" and .phase=="import") | .duration_ms] | add // 0)}}' \
-            "$TIMING_JSONL" > "$tmp" 2>/dev/null; then
-        rm -f "$tmp" 2>/dev/null || true
+            "$clean_tmp" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp" "$clean_tmp" 2>/dev/null || true
         if [ "$TIMING_FILE_EXPLICIT" -eq 0 ]; then
             rm -f "$TIMING_JSONL" 2>/dev/null || true
         fi
         timing_warn "failed to merge timing events into $FINAL_TIMING"
         return 0
     fi
+    rm -f "$clean_tmp" 2>/dev/null || true
     if ! mv "$tmp" "$FINAL_TIMING" 2>/dev/null; then
         rm -f "$tmp" 2>/dev/null || true
         if [ "$TIMING_FILE_EXPLICIT" -eq 0 ]; then
@@ -324,54 +353,54 @@ for table in "${COLLECTOR_TABLES[@]}"; do
             cargo run --bin compass-data -- import-compass --table "$table"
     fi
 done
-# --- 4b. Backfill missing derived SEPA compute dates ---
+# --- 5. Backfill missing derived SEPA compute dates ---
 # sepa backfill-dates scans the Parquet trading calendar against the Dolt
 # compute tables and computes every missing date (technical_factor /
 # industry_factor / capital_factor / final_score / market_temperature).
 # It is idempotent and strict: any failure aborts the whole run.
-run_step 4b "backfill missing SEPA dates" "$PROJECT_ROOT" \
+run_step 5 "backfill missing SEPA dates" "$PROJECT_ROOT" \
     cargo run --bin compass-data -- sepa backfill-dates
 
-# --- 5. Compute: market temperature + TOP50, write back to Dolt ---
+# --- 6. Compute: market temperature + TOP50, write back to Dolt ---
 # The CLI write-back is DELETE-by-trade_date + append, so re-running the same day
-# is idempotent. The score table is teed to a log so step 7 can reuse it without
+# is idempotent. The score table is teed to a log so step 8 can reuse it without
 # recomputing.
-STEP5_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
-info "Step 5: compute — market temperature + TOP50 scores"
+STEP6_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
+info "Step 6: compute — market temperature + TOP50 scores"
 SCORE_LOG="${TMPDIR:-/tmp}/sepa_top50_$(date +%Y%m%d).txt"
 if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- sepa temperature); then
-    record_step_event 5 "compute — market temperature + TOP50 scores" "failed" "$STEP5_START_NS"
-    red "step 5 failed: sepa temperature"
+    record_step_event 6 "compute — market temperature + TOP50 scores" "failed" "$STEP6_START_NS"
+    red "step 6 failed: sepa temperature"
     exit 1
 fi
 if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- sepa score --top 50 2>&1 | tee "$SCORE_LOG"); then
-    record_step_event 5 "compute — market temperature + TOP50 scores" "failed" "$STEP5_START_NS"
-    red "step 5 failed: sepa score --top 50"
+    record_step_event 6 "compute — market temperature + TOP50 scores" "failed" "$STEP6_START_NS"
+    red "step 6 failed: sepa score --top 50"
     exit 1
 fi
-record_step_event 5 "compute — market temperature + TOP50 scores" "success" "$STEP5_START_NS"
+record_step_event 6 "compute — market temperature + TOP50 scores" "success" "$STEP6_START_NS"
 
-# --- 6. Dolt commit: compute tables ---
+# --- 7. Dolt commit: compute tables ---
 # Mandatory second commit — otherwise the compute-table changes stay in the
 # working tree and never reach the remote (epic #139 decision 2/9).
-STEP6_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
-info "Step 6: Dolt commit compute tables"
-if ! ( dolt_commit_changed "$COMPASS_DATA_DIR" 6 "compute" "feat: sepa scores ref #139" \
+STEP7_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
+info "Step 7: Dolt commit compute tables"
+if ! ( dolt_commit_changed "$COMPASS_DATA_DIR" 7 "compute" "feat: sepa scores ref #139" \
     "${COMPUTE_TABLES[@]}" ); then
-    record_step_event 6 "Dolt commit compute tables" "failed" "$STEP6_START_NS"
+    record_step_event 7 "Dolt commit compute tables" "failed" "$STEP7_START_NS"
     exit 1
 fi
-record_step_event 6 "Dolt commit compute tables" "success" "$STEP6_START_NS"
+record_step_event 7 "Dolt commit compute tables" "success" "$STEP7_START_NS"
 
-# --- 7. Print TOP50 (reuse step 5 output — never recompute) ---
-STEP7_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
-info "Step 7: TOP50 list"
+# --- 8. Print TOP50 (reuse step 6 output — never recompute) ---
+STEP8_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
+info "Step 8: TOP50 list"
 if [ -s "$SCORE_LOG" ]; then
-    green "TOP50 printed by 'sepa score --top 50' in step 5; saved copy: $SCORE_LOG"
+    green "TOP50 printed by 'sepa score --top 50' in step 6; saved copy: $SCORE_LOG"
 else
-    green "TOP50 printed by 'sepa score --top 50' in step 5 above."
+    green "TOP50 printed by 'sepa score --top 50' in step 6 above."
 fi
-record_step_event 7 "print TOP50" "success" "$STEP7_START_NS"
+record_step_event 8 "print TOP50" "success" "$STEP8_START_NS"
 
 echo ""
 green "Done. Next: cargo run --bin compass (GUI) to view the SEPA panel."

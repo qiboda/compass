@@ -1,21 +1,20 @@
 #!/bin/bash
 # Adversarial RED tests for issue #334: sync database timing statistics.
 #
-# Scope: shell-layer only. The Rust `TimingWriter`/`TimingEvent` module is not
-# implemented yet, so no Rust test files are created here (reserved list at the
-# bottom of this comment for the main agent).
+# Scope: shell-layer only. The Rust `TimingWriter`/`TimingEvent` module is
+# implemented and covered by its own Rust unit tests in this PR; this shell
+# suite stays focused on the update-database.sh integration behavior.
 #
 # Attack dimensions (against the plan's declared commitments):
 #   1. Timing must never block the main flow: bad COMPASS_TIMING_FILE /
 #      unwritable SYNC_TIMING_DIR must still exit 0 + emit a stderr warning.
-#   2. Bad JSONL from the Rust child must not break the main flow: merge
-#      failure is only a warning; the main exit code stays unchanged.
+#   2. Bad JSONL from the Rust child must not break the main flow: the report
+#      must still be produced from valid events; malformed lines only warn.
 #   3. Failed steps are recorded without swallowing errors: a failing cargo
 #      invocation must produce a `status:"failed"` step event in the JSONL,
 #      the script still exits non-zero, and "step N failed" stays visible.
-#   4. No timing intent => unchanged behavior: no COMPASS_TIMING_FILE /
-#      SYNC_TIMING_DIR must not change success/failure semantics or emit
-#      unexpected timing errors.
+#   4. Timing is always-on by default but must not change success/failure
+#      semantics or emit unexpected timing errors; temp JSONL is cleaned up.
 #   5. File path / run_id uniqueness: two runs in the same second (different
 #      PIDs) must produce two distinct final JSON files, never overwrite.
 #   6. Shell pollution/injection: step name/status/source containing quotes,
@@ -104,11 +103,12 @@ EOF
     cat > "$t/bin/cargo" <<'EOF'
 #!/bin/bash
 # Mock cargo: logs argv; optionally fails on the Nth cargo invocation.
-# When the (future) shell exports COMPASS_TIMING_FILE to this child, append a
-# fake collector JSONL event.  Write failures are silent: they simulate an
-# unreliable Rust timing sink and must not be confused with the shell warning.
+# Only compass-collectors sync performs real Rust timing reporting; mock that
+# command by appending a fake collector JSONL event when COMPASS_TIMING_FILE is
+# set.  Write failures are silent: they simulate an unreliable Rust timing sink
+# and must not be confused with the shell warning.
 echo "cargo $*" >> "${FAKE_LOG:?fake log unset}"
-if [ -n "${COMPASS_TIMING_FILE:-}" ]; then
+if [ -n "${COMPASS_TIMING_FILE:-}" ] && [[ "$*" == *"compass-collectors"*"-- sync"* ]]; then
     DEFAULT_COLLECTOR_EVENT='{"kind":"collector","source":"stock_basic","phase":"fetch","status":"success","duration_ms":42}'
     event="${FAKE_COLLECTOR_EVENT:-$DEFAULT_COLLECTOR_EVENT}"
     printf '%s\n' "$event" >> "$COMPASS_TIMING_FILE" 2>/dev/null || true
@@ -206,10 +206,11 @@ EOF
 # ---------------------------------------------------------------------------
 # Control: no timing intent preserves original success behavior.
 # This is both a sanity check that the harness itself works and the
-# "no timing intent" regression guard (dimension 4).
+# "timing is always-on but must not disturb the main flow" regression guard
+# (dimension 4): no unexpected timing warnings, no leftover temp JSONL.
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- control / 4. no timing intent: unchanged success behavior ---"
+echo "--- control / 4. timing default: unchanged success behavior + temp cleanup ---"
 T4="$TMP_ROOT/t4"
 mkdir -p "$T4"
 setup_fakes "$T4"
@@ -221,13 +222,15 @@ On branch main
 nothing to commit, working tree clean
 ===
 EOF
-run_script "$T4"
-assert_true "no timing env: exit 0 on happy path" 'test "$(cat "$T4/exit.code")" = 0'
-assert_true "no timing env: no unexpected timing warning on stderr" \
+run_script "$T4" SYNC_TIMING_DIR="$T4/timings"
+assert_true "default timing: exit 0 on happy path" 'test "$(cat "$T4/exit.code")" = 0'
+assert_true "default timing: no unexpected timing warning on stderr" \
     '! grep -qiE "timing|timings|timing file|sync-timing" "$T4/err.log"'
-assert_true "no timing env: no timing JSONL/final JSON created" \
-    '! find "$T4" -name "*.jsonl" -o -name "*.json" | grep -q .'
-assert_true "no timing env: pipeline still reaches Done" 'grep -q "Done." "$T4/out.log"'
+assert_true "default timing: final JSON generated under SYNC_TIMING_DIR" \
+    'test -n "$(find "$T4/timings" -maxdepth 1 -name "*.json" -print -quit 2>/dev/null)"'
+assert_true "default timing: no leftover temp JSONL in run dir" \
+    '! find "$T4" -maxdepth 2 -name "*.jsonl" -print -quit 2>/dev/null | grep -q .'
+assert_true "default timing: pipeline still reaches Done" 'grep -q "Done." "$T4/out.log"'
 
 # ---------------------------------------------------------------------------
 # 1a. Timing must not block: COMPASS_TIMING_FILE parent directory missing

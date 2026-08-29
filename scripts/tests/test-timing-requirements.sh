@@ -235,8 +235,7 @@ On branch main
 nothing to commit, working tree clean
 ===
 EOF
-RUN_SCRIPT="$T1B"
-run_script "$RUN_SCRIPT" SYNC_TIMING_DIR="$T1B/timings"
+run_script "$T1B" SYNC_TIMING_DIR="$T1B/timings"
 OVERRIDE_JSON=$(assert_json_exists "env-override timing JSON under $T1B/timings" "$T1B/timings")
 if [ -n "$OVERRIDE_JSON" ]; then
     assert_true "env-override JSON path under SYNC_TIMING_DIR" \
