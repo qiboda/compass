@@ -137,7 +137,7 @@ parquet_data/
 不污染选股/评分。两张 Dolt 表建在 `compass_data` 库（`crates/compass-collectors/src/index_daily.rs`
 创建），经 `import-compass --table index_daily|index_basic` 导出 Parquet：
 
-**index_daily**（指数/板块日线，`index_type` 区分三类标的）：
+**index_daily**（指数/板块日线，`index_type` 区分两类标的：`official`/`industry`）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS index_daily (
@@ -334,7 +334,13 @@ ORDER BY symbol, tradedate ASC
 ```
 
 返回 `Vec<CrossSectionBar>`（`symbol`、`trade_date: NaiveDate`、`open`/`high`/`low`/`adjclose`/`close`/`volume`/`amount`）—
-这是代码库中**首个把 `adjclose` 带出读取层**的路径（`fetch_bars` 的 fallback 查询虽 SELECT 了 adjclose 但映射时丢弃）。
+这是代码库中**唯一把 `adjclose` 带出读取层**的路径。`fetch_bars` 的 fallback 查询虽
+SELECT 了 `adjclose`（`parquet.rs::fetch_bars_blocking`），但映射时只写入
+`egui_charts::model::Bar`——该类型**没有 `adjclose` 与 `amount` 字段**，缩放后即丢弃；
+`fetch_bars` 路径的消费方（图表 / duckdb export 的 `DailyRecord`）只能拿到前复权后的
+OHLCV（duckdb export 的 `amount` 手动赋 0.0）。`fetch_cross_section` 因此是取原始
+`adjclose`/`amount` 的读取路径（compass-data export csv/parquet-dir 也绕开
+`fetch_bars` 直读 parquet 行，见 `crates/compass-data/src/export.rs`）。
 SEPA 扩展（epic #139）加入 `open`/`high`/`low`/`amount`：形态（VCP）与 ATR 需要 OHLC，成交额因子需要 `amount`。
 列顺序与 `stock_daily.parquet` 实际 9 列布局一致：symbol, tradedate, open, high, low, close, adjclose, volume, amount。
 
@@ -440,8 +446,10 @@ Rust 采集器（`crates/compass-collectors`）对东财/THS/交易所官网的 
   block_trade / dragon / institution_survey）、push2（main_flow）、push2his + THS +
   腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）。
 - `crates/compass-collectors/src/freeproxy.rs`：freeproxy JSON 快照灌库；
-  `crates/compass-collectors/src/keepalive.rs`：后台常驻喂源循环（freeproxy json +
-  realtime 双源，本地 `/tmp/freeproxy.json` 快照兜底）；
+  `crates/compass-collectors/src/keepalive.rs`：后台常驻喂源循环（**仅 freeproxy
+  json 单源** + 本地 `/tmp/freeproxy.json` 快照兜底——realtime 源依赖 Python
+  `pyfreeproxy` 库，Rust 未实现，`run_realtime_cycle` 是 stub 跳过，B7 已接受
+  json-only 偏差；`--source realtime` 报 "not supported in Rust yet"）；
   `crates/compass-collectors/src/check_proxy_pool.rs`：代理质量验证工具。
 - compose 部署（`scripts/proxy_pool/docker-compose.yml`）把 `proxy_redis` 的 6379
   以 `127.0.0.1:6379:6379` loopback 暴露到宿主机，保证 keepalive / freeproxy

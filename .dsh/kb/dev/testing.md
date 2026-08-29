@@ -20,7 +20,15 @@ cargo test --test integration_test      # integration tests only
 
 - **单元测试**：`#[cfg(test)] mod tests` 位于每个源文件底部。
   测试可以访问私有函数和结构体。
-- **集成测试**：`tests/` 目录。仅测试 `compass-core`（library crate）的公开 API。
+- **集成测试**：`tests/` 目录，按 crate 组织（`cargo test --test <name>`）：
+  - `compass-core`：`integration_test`、`requirement_index_duckdb`、`index_duckdb_fallback`、`index_symbol_bk`、`llm`
+  - `compass-data`：`requirement_index_import`、`index_import_compass`、`data_quality_adversarial`、`requirement_name_en_data`、`name_en_data_layer_adversarial`
+  - `compass-strategy`：`screener`、`screener_engine`、`screener_eval_adversarial`、`sepa`、`sepa_real_smoke`
+  - `compass`（GUI）：`requirement_index_market`、`adversarial_219_fork_formats`、`adversarial_245_screener_builder`
+  - `compass-types`：`validate_filter`、`adversarial_serde`、`adversarial_247_filter_serde`
+  - `compass-ui`：`index_searchable_bk`、`button_230_theme_width`、`adversarial_widget_deviations`
+  - `compass-collectors`：无独立 tests/ 目录（单元测试 + `scripts/update-database.sh` 冒烟）
+  - `compass-i18n`：无独立 tests/ 目录（单元测试，编译期 KEY_* 常量 + 字典一致性）
 
 ## 编写测试
 
@@ -217,6 +225,7 @@ cargo bench --no-run              # CI: compile only, don't execute
 | `compass-core` | `parquet_bench` | ParquetReader 冷/热读取，100/1000/5000 行，真实 SZ000001 |
 | `compass-core` | `duckdb_bench` | DuckDbProvider 缓存命中/未命中，保存吞吐量（10–5000 行） |
 | `compass-data` | `dolt_bench` | Dolt sql -r parquet 单文件导出、符号枚举 |
+| `compass-strategy` | `screener_eval` | Screener Filter AST 评估器（issue #246）：合成横截面 + `run_screener` |
 
 ### 数据需求
 

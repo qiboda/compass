@@ -23,14 +23,21 @@ compass (GUI binary)
   │
   ├── main.rs        ─ CompassApp (eframe::App), entry point, wiring
   ├── state.rs       ─ SharedState with Dynamic<T> reactive fields
-  ├── messages.rs    ─ AppMessage, FetchRequest/FetchResponse, RunScreenerRequest/Response
-  ├── tabs.rs        ─ Tab/TabKind/TabViewer (egui_dock bridge)
-  ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring (2 channels)
+  ├── messages.rs    ─ AppMessage, FetchRequest/FetchResponse, RunScreenerRequest/Response,
+  │                     RunSepaRequest/Response, RunIndexSnapshotRequest/Response, RunLlmRequest
+  ├── tabs.rs        ─ Tab/TabKind/TabViewer (egui_dock bridge, 5 TabKind)
+  ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring (5 channels:
+  │                     fetch/screener/sepa/index-snapshot/llm)
   ├── dispatcher.rs  ─ register_citizens, lifecycle draining, message routing
   ├── citizens/
   │   ├── chart.rs   ─ ChartCitizen: OHLCV candlestick chart (空态 EmptyState)
   │   ├── logger.rs  ─ LoggerPanel: scrollable log viewer + 导出按钮
-  │   └── screener.rs ─ ScreenerPanel: condition form (Card 分区) + DataTable
+  │   ├── screener.rs ─ ScreenerPanel: Metabase 条件卡片组 + DataTable
+  │   ├── sepa.rs    ─ SepaPanel: 东方SEPA 评分（温度计 + TOP 排名 + 详情）
+  │   └── market.rs  ─ MarketPanel: 大盘概览（核心指数 Card + 板块/指数表）
+  │
+  ├── compass-i18n (library — GUI 国际化，rust-i18n + 编译期 KEY_* 常量，零业务依赖)
+  │     └── lib.rs        ─ i18n_dict! 字典 + 163 KEY_* 常量 + ALL_KEYS 一致性校验
   │
   ├── compass-ui (library — 通用 GUI 组件库，零业务依赖)
   │     ├── tokens/      ─ design token 六类（color/spacing/typography/radius/shadow/motion）
@@ -56,10 +63,15 @@ compass (GUI binary)
   │
   ├── compass-strategy (library)
   │     ├── lib.rs              ─ run_screener 选股引擎（元数据 + 技术面条件，收 &Filter）
-  │     └── screener_series.rs  ─ 序列函数（up_days / count_in_window / volume_surge）
+  │     ├── screener_eval.rs    ─ Filter AST 递归求值器（Batch 3）
+  │     ├── screener_series.rs  ─ 序列函数（up_days / count_in_window / volume_surge）
+  │     └── sepa/               ─ SEPA 五模块评分引擎（趋势/题材/资金/形态/风险，score.rs 等）
   │
-  └── compass-data (CLI binary)
-        └── import / import-compass / export / backup subcommands
+  ├── compass-data (CLI binary)
+  │     └── import / import-compass / export / backup / check-stock-daily / sepa subcommands
+  │
+  └── compass-collectors (CLI binary — 采集层，网络/Dolt 子进程密集)
+        └── fetch / import / sync / sync-investment / progress / backfill / ... 24 子命令
 ```
 
 `compass-core` 不包含任何 UI 代码。它提供用于获取、存储和查询股票数据的 trait
@@ -67,7 +79,11 @@ compass (GUI binary)
 
 依赖方向：`compass → compass-ui`（UI 组件库，compass-ui 零业务依赖）、
 `compass → compass-strategy → compass-core`，`compass-strategy → compass-types`，
-`compass → compass-types`；`compass-core` 不依赖 `compass-types`（无循环）。
+`compass → compass-types`；`compass-ui → compass-i18n`（字典 + KEY 常量），
+`compass → compass-i18n`；`compass-core` 不依赖 `compass-types`（无循环）。
+`compass-collectors` 是**独立 crate**——不依赖 compass-core（无 Dolt 模型共享），
+仅自身 serde 结构对齐 `config.toml` 的 `[dolt]` 节（字段名与
+`compass-core::model::DoltConfig` 一致，避免引入 crate 依赖）。
 
 GUI 二进制（`compass`）使用 **egui-mobius citizen 模式**——一种响应式架构，其中
 UI 面板被建模为 `Citizen` 结构体，通过 outbox 进行事件派发；共享状态通过
@@ -180,17 +196,24 @@ egui 会崩溃。
 
 ### Layer 1: Citizen 与 DockArea
 
-UI 被拆分为两个 `Citizen` 面板，放置在 `egui_dock::DockArea` 内部，上方渲染
+UI 被拆分为五个 `Citizen` 面板，放置在 `egui_dock::DockArea` 内部，上方渲染
 工具栏：
 
 | Citizen | 文件 | 角色 |
 |---|---|---|
 | **ChartCitizen** | `citizens/chart.rs` | 通过 `egui-charts` 渲染 OHLCV K 线图。从共享状态响应式读取 `bars`，在数据变化时重新渲染。 |
 | **LoggerPanel** | `citizens/logger.rs` | 可滚动日志视图。从共享状态读取日志条目。 |
-| **ScreenerPanel** | `citizens/screener.rs` | 条件选股器：条件输入表单 + 结果表格（排序、计数、点击行切换图表）。通过第二条 Signal/Slot 通道把 `RunScreenerRequest` 发给后端，`run_screener` 在 tokio 上执行。 |
+| **ScreenerPanel** | `citizens/screener.rs` | 条件选股器：Metabase 条件卡片组 + 结果表格（排序、计数、点击行切换图表）。通过第二条 Signal/Slot 通道把 `RunScreenerRequest` 发给后端，`run_screener` 在 tokio 上执行。 |
+| **SepaPanel** | `citizens/sepa.rs` | 东方SEPA 评分：市场温度计 + TOP50 排名表 + 详情面板，行点击联动图表。第三条通道（`RunSepaRequest/Response`）。 |
+| **MarketPanel** | `citizens/market.rs` | 大盘概览：核心指数 Card + 板块/指数排序表（epic #255）。第四条通道（`RunIndexSnapshotRequest/Response`）。 |
+
+> 第五通道 `RunLlmRequest/Response`（D4/#247）由 ScreenerPanel 的 AI 自然语言
+> 生成入口使用（`llm_signal`）。共 5 条 Signal/Slot 通道（fetch/screener/sepa/
+> index-snapshot/llm），见 `backend.rs` wire 与 `TabViewer` 字段。
 
 面板排列在 `egui_dock::DockArea` 内，为用户提供可重排、可调整大小的选项卡式
-界面。顶部工具栏提供股票搜索、交易所选择和 Fetch 按钮。
+界面；初始布局见 `main.rs:152-174`（顶部 Chart/Market/Sepa 三 tab + Logger +
+Screener 下方 split）。顶部工具栏提供股票搜索、交易所选择和 Fetch 按钮。
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -199,13 +222,11 @@ UI 被拆分为两个 `Citizen` 面板，放置在 `egui_dock::DockArea` 内部�
 ├──────────────────────────────────────────────┤
 │  egui_dock::DockArea                         │
 │  ┌──────────────────────────────────────────┐│
-│  │  Chart (candlestick)                     ││
-│  │  ┌───┬───┬───┬───┬───┬───┐              ││
-│  │  │   │   │   │   │   │   │              ││
-│  │  │   │   │   │   │   │   │              ││
-│  │  └───┴───┴───┴───┴───┴───┘              ││
+│  │  [图表] [大盘] [东方SEPA] (top leaf)       ││
 │  ├──────────────────────────────────────────┤│
-│  │  Logger (scrollable)                     ││
+│  │  [日志]                                   ││
+│  ├──────────────────────────────────────────┤│
+│  │  [选股器]                                 ││
 │  └──────────────────────────────────────────┘│
 └──────────────────────────────────────────────┘
 ```
@@ -479,8 +500,12 @@ shell 把步骤事件与采集器事件合并成单个本地 JSON
 - 从 `final_a_stock_eod_price` 表中提取 6000+ 只股票（18M+ 行）
 - 写入单个 `parquet_data/stock_daily.parquet` 文件，包含 `symbol` 列
 - 直接写入完整数据集（无合并模式，无 `--overwrite` 标志）
-- `--since` 支持增量导入较新数据
+- `--since` 是**过滤子集 + 覆盖**，不是增量追加（`--symbols`/`--limit`/
+  `--start-date`/`--end-date` 同义——任何过滤参数都只是 WHERE 过滤查询后
+  整体覆盖 `stock_daily.parquet`，旧数据不保留）；需要增量/merge 语义请用
+  `import-compass`（见 `.dsh/kb/dev/toolchain.md` import--since 卡）
 - 同时写入 `stock_daily.symbols.txt`
+- 写盘后自动数据质量校验（行数对比 + 日期范围对比，ref #136），不一致即 exit 1
 
 ### import-compass：Dolt compass_data → Parquet
 - 将我们自己的表（`stock_basic`、`fin_indicators`、`fin_balance_sheet`、
@@ -493,11 +518,17 @@ shell 把步骤事件与采集器事件合并成单个本地 JSON
 
 ### export：Parquet → 其他格式
 - 读取 parquet_data/ 目录
-- 导出为 DuckDB、CSV 或 parquet-dir 格式
-- `--overwrite` 替换已有数据
+- 导出为 DuckDB、CSV 或 parquet-dir 格式（`--format`）：
+  - `duckdb`：GUI 读库路径，经 `fetch_bars` 读取（前复权价已烘焙）
+  - `csv`：单文件 CSV——**直读原始 parquet 行**（`Bar` 无 `amount` 字段），
+    与图表路径相同的前复权因子，`amount` 保留；只导出规范带前缀符号
+  - `parquet-dir`：生成与主库同布局的新 parquet 目录
+    （`stock_daily.parquet` + `symbols.txt` + 镜像 index parquets），可再次被
+    `ParquetReader::new` 读取；价格前复权、`amount`/`volume` 透传
+- `--overwrite` 替换已有数据；默认（false）输出已存在则 warn 跳过
 
 ### backup：Parquet → 百度云
-- 使用 Python zipfile 压缩 `parquet_data/`（无系统 `zip` 依赖）
+- `scripts/upload-parquet.sh` 用系统 `zip` 压缩 `parquet_data/`
 - 通过 `baidupcs` CLI（`BaiduPCS-Go`）上传到百度云
 - 带时间戳的文件名：`parquet_data-YYYYMMDD-HHMMSS.zip`
 - 目标文件夹：百度云上的 `/compass/`
@@ -527,8 +558,11 @@ Compass uses two database formats for different purposes:
 
 - **列式存储**：DuckDB 查询仅读取需要的列（例如 `SELECT close` 只读取 close
   列）。对于跨数千条 K 线的分析查询，比行式格式快得多。
-- **按股票分区**：每只股票一个文件。添加新股票就是新建一个文件——无需重建表。
-  删除就是 `rm`。
+- **按股票分区**：**单文件布局**——`stock_daily.parquet`（含 `symbol` 列，
+  全部股票一个文件）+ 伴生 `stock_daily.symbols.txt` 索引（每行一个 symbol）。
+  `ParquetReader::list_symbols` 优先读 symbols.txt，缺省回退
+  `SELECT DISTINCT symbol`。早期 per-symbol 文件布局（`stock_daily/<symbol>.parquet`）
+  已于 ref #298 前废弃（见 `.dsh/kb/dev/database.md`）。
 - **可直接查询**：DuckDB 的 `read_parquet()` 函数允许直接用 SQL 查询 Parquet
   文件，无需将其加载到表中。
 - **可移植**：Parquet 是开放标准。可以用 Python（pandas、polars）、R 或任何
@@ -648,7 +682,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | 数据访问策略：GUI 读取数据的来源 | 在线 API 直接请求 / 本地文件缓存 / 纯本地无回退 | 纯本地 Parquet 文件，无在线回退 | 本地读取零延迟、无网络依赖、无 API 限流；数据管线（import/collector）离线运行，GUI 只查询已落盘数据 | 在线 API 增加延迟和失败点；缓存策略需处理过期和同步问题，增加复杂度 |
 | 异步架构：UI 线程与 I/O 分离方案 | 手动 std::thread + mpsc / 框架托管的 citizen 模式 | egui-mobius citizen 模式：Citizen trait + Dynamic\<T\> + Signal/Slot + AsyncDispatcher | 消除手动线程布线、Arc\<Mutex\> 竞争和版本计数器；Citizen 通过 outbox 解耦，AsyncDispatcher 自管 tokio runtime | 手动线程方案代码量大、易出错；Dynamic\<T\> 提供字段级独立读写，无跨字段锁竞争 |
 | 规范存储格式：Parquet 单文件 vs 其他方案 | 每标的单独文件 / 单文件含 symbol 列 / DuckDB 做主存储 | 单个 `stock_daily.parquet`，symbol 列分区查询 | 列式存储、谓词下推、开放标准、工具链兼容（Python/R/DuckDB）；单文件管理简单，无需处理数千个文件 | 单文件追加困难（写入需重写整个文件），增量导入由 `import-compass` 的 merge 语义承担（`import` 总是全量直写，`--since` 仅过滤子集 + 覆盖全文件，非增量）；每标的单独文件增加文件管理开销 |
-| 测试覆盖率门槛：CI 强制 80% vs 无门槛 | 无门槛（continue-on-error）/ 总覆盖率 80% / 总 + 每 crate 各 80% + Python 全量 80% | 总 ≥80% 且每 crate（core/data/compass）各 ≥80%，Python `--cov=.` 全量 ≥80% | 防止核心库高覆盖率拉平 GUI/CLI 短板；GUI 以 egui_kittest 无头集成测试达成；Python 未测文件按 0% 计，杜绝假达标 | 仅总覆盖率可被高覆盖模块掩盖；单门槛无法约束 Python 侧 |
+| 测试覆盖率门槛 | 无门槛（continue-on-error）/ 总 80% / 总 80% + per-crate 80% | ~~总 ≥80% 且每 crate ≥80%，Python `--cov=.` ≥80%~~ **已被 ref #250（2026-08-12）取代**：per-crate 按可测试性——纯逻辑/serde crate（core/data/i18n/strategy/types/ui）95%、GUI 主程序 compass 90%、workspace 总 93%（排除 compass-collectors）、compass-collectors 单独 20%（网络/Dolt 子进程密集，epic #310）；Python 采集层及其覆盖率门禁已随 epic #310 退役 | 防止核心库高覆盖率拉平 GUI/CLI 短板；per-crate 阈值匹配真实可测试性 | 仅总覆盖率可被高覆盖模块掩盖；单门槛无法约束低可测 crate |
 | C1（#244）：`Cmp.value` 的类型 | `f64` / `FactorRef` / 新增独立 `CmpFactor` 变体 | `FactorRef { Const(f64), Factor(SeriesFactor) }` | 因子间比较（`Close>Sma(20)`、`Sma(5)>Sma(20)`、`Close>NDayHigh(days)`）用普通 `f64` 不可表达；`FactorRef` 统一比较两侧，对 `Cmp` 变体侵入最小，serde JSON 形态单一 | 独立 `CmpFactor` 变体分裂比较形态，反向转换与求值都要处理两个变体；纯 `f64` 无法表达 MA/突破等既有条件 |
 | C2（#244）：BullishAlign 的 AST 映射 | handoff 表原文 `Close>Sma(20) && Sma(20)>Sma(60)` / 引擎语义 `Sma(5)>Sma(20) && Sma(20)>Sma(60)` | 引擎语义（ma5>ma20 && ma20>ma60，strategy lib.rs:233-238） | 与 `screen_symbol` 引擎实现一致，行为保持（编译不改变筛选结果） | handoff 表原文与引擎不符，按它编译会改变筛选语义 |
 | C3（#244）：序列函数范围 | 3 个（UpDays/Count/VolumeSurge）/ 6 个（+Sma/ChangePct/NDayHigh） | 3 个 | 其余 3 个已有私有 helper（strategy lib.rs:221-259）可复用，避免 Batch 3 前的死代码；偏差已在 PR/issue 说明 | 6 个独立函数在 Batch 1 无调用方，纯冗余 |
@@ -674,6 +708,12 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
 | C4（#267）：抓取进度存储形态 | JSON 进度文件 / SQLite / 日志行 | `csv_dir()/<name>.progress.json` 原子写（tmp+os.replace） | 轻量零依赖、跨进程可读、与 CSV 同目录便于排查；CSV 保持一次性写入语义 | SQLite 过重；日志行无结构化查询 |
 | C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
+
+> 注：C5 原记录含 `concept_member`——该采集器已随 issue #283（概念板块移除）
+> 删除。现状 progress 文件写入方为 8 个采集器（financial.rs 共享路径覆盖
+> fin_indicators/balance_sheet/income/cash_flow 四表 + main_flow/block_trade/
+> index_daily/institution_survey/dragon 五表）；`progress` 运行时扫描
+> `csv_dir()` 下全部 `*.progress.json`，无 target 清单硬编码。
 | MIG-1（#310）：采集层代码归属 | 迁移进 compass-data / 新建独立 crate | `crates/compass-collectors` | 采集是独立领域（HTTP/代理/CSV/Dolt 写回），与 compass-data 的 Dolt→Parquet 导出职责不同；独立 crate 便于批次迁移、测试隔离、最终替代 Python 采集层 | 塞进 compass-data 会耦合两种 Dolt 写/读路径，迁移完成前 Python/Rust 并行也会互相干扰 |
 | MIG-2（#310）：HTTP/TLS 客户端 | rquest / reqwest-impersonate / wreq | `wreq`（rquest 项目的后续名，仓库 `0x676e67/wreq` + `wreq-util`，Chrome142 指纹） | 用户确认采用；rquest crates.io 已 yank 且仓库改名，wreq 是同一作者同一 TLS/HTTP2 指纹方案的现行版，支持 Chrome142，不降级 reqwest | reqwest 无 TLS 指纹伪装；reqwest-impersonate 是备份且用户未选 |
 | MIG-3（#310）：PR 结构 | 一个 epic 一个 PR / 每批一个 PR | 每个批次一个 PR | 用户确认覆盖仓库默认约定；批次间有数据和 CLI 渐进依赖，分 PR 便于 review/回退 | 一个 PR 过大，跨 7 批 review 困难 |

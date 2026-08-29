@@ -14,7 +14,7 @@ compass 项目积累了 8 个 opencode 技能（工作流门禁、文档同步�
 
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |
 |---|---|---|---|---|
-| 技能组形态 | 单一技能 vs 多技能统一前缀 | 多技能统一 `skwy-` 前缀，放 `~/.config/opencode/skills/` | 技能职责清晰、可按需加载；前缀命名空间避免与项目本地技能冲突 | 单一技能体量过大、跨领域职责耦合 |
+| 技能组形态 | 单一技能 vs 多技能统一前缀 | 多技能统一 `skwy-` 前缀，放 `/home/skwy/.dsh/skills/` | 技能职责清晰、可按需加载；前缀命名空间避免与项目本地技能冲突 | 单一技能体量过大、跨领域职责耦合 |
 | 全局技能范围 | 全量迁移 vs 部分迁移 | 7 个技能：skwy-workflow / skwy-github-workflow / skwy-git-workflow / skwy-requirement-test / skwy-adversarial-test / skwy-reflect / skwy-worktree | 覆盖完整开发工作流（门禁、issue、git、测试×2、反思与 worktree 管理）；产品技能 product 留本地 | 全量迁移会把 compass 特有内容带入全局 |
 | rustdoc 技能 | 迁移 vs 废弃 | **废弃不迁** | 已有 `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` 编译期强制（pre-push hook 覆盖），技能冗余 | 保留则维护双份机制、职责重叠 |
 | docs 技能 | 独立技能 vs 整合进 workflow | **整合进 skwy-workflow** 的「文档同步」章节 | 文档同步是门禁流程的一环，与 workflow 强耦合；映射表改为「项目在自身 AGENTS.md/kb/ 定义」 | 独立技能需单独触发，易与门禁脱节 |
@@ -22,7 +22,7 @@ compass 项目积累了 8 个 opencode 技能（工作流门禁、文档同步�
 | 门禁新增步骤 | 无 vs 第 3.5 步 Adversarial Tests | **门禁新增第 3.5 步** | plan 批准后自动委派 skwy-adversarial-test 写对抗性测试（RED），实现必须让 3.5+4 全绿——在实现前拦截缺陷 | 手动触发易被跳过，丧失对抗性测试的常态化价值 |
 | 脚本位置 | 留在仓库 vs 随技能自包含 | **随技能自包含**（skwy-worktree/scripts/open-worktrees.sh，绝对路径引用） | 新项目可仅依赖全局技能组运行 worktree 工作流；脚本零硬编码路径（git-common-dir 解析），可移植 | 留在仓库则新项目无脚本可用 |
 | 现有 test agent | 保留原名 vs 改名 | **改名 skwy-requirement-test**（面向需求验收测试），随迁移放全局 | 与 skwy-adversarial-test 形成需求/攻击对应，命名表达定位 | 保留 test 名无法与对抗性区分 |
-| 泛化原则 | 保留 compass 细节 vs 项目自引用 | **通用约定 + 项目自引用**：技能正文用 AGENTS.md/kb/.omo 通用约定，compass 特有细节（cargo 命令、Dolt、kb 文件名、A股/egui）改为「项目在自身 AGENTS.md 定义」 | 技能跨项目可复用；项目特有内容由项目自身文档承载 | 硬编码 compass 细节使技能无法复用 |
+| 泛化原则 | 保留 compass 细节 vs 项目自引用 | **通用约定 + 项目自引用**：技能正文用 AGENTS.md/kb/.dsh 通用约定，compass 特有细节（cargo 命令、Dolt、kb 文件名、A股/egui）改为「项目在自身 AGENTS.md 定义」 | 技能跨项目可复用；项目特有内容由项目自身文档承载 | 硬编码 compass 细节使技能无法复用 |
 
 ## 决策记录补充（对抗性测试工程师，2026-08-09 grill）
 
