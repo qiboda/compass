@@ -5,7 +5,7 @@
 #   scripts/upload-parquet.sh                    # zip + upload to /compass/
 #   scripts/upload-parquet.sh --keep-zip         # keep local zip after upload
 #
-# Requires: zip, baidupcs
+# Requires: python3, baidupcs
 
 set -euo pipefail
 

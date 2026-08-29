@@ -308,9 +308,13 @@ fn export_parquet_dir(input: &Path, output: &Path, overwrite: bool) {
         );
         if overwrite {
             // The input no longer supplies a daily file — drop the stale
-            // outputs so a re-export mirror never serves last round's data.
+            // outputs (daily + symbols + index mirrors) so a re-export
+            // mirror never serves last round's data.
             let _ = std::fs::remove_file(&dst_daily);
             let _ = std::fs::remove_file(&dst_symbols);
+            for f in INDEX_FILES {
+                let _ = std::fs::remove_file(output.join(f));
+            }
         }
     }
 
@@ -1970,6 +1974,142 @@ mod tests {
                 .await
                 .is_err(),
             "round-1 symbol must be gone after an overwrite export"
+        );
+    }
+
+    /// #336 review: exporting into the input directory itself must be refused
+    /// — a typo'd `--output` must never delete the primary dataset.
+    #[tokio::test]
+    async fn run_export_rejects_output_inside_input() {
+        let input_tmp = tempfile::tempdir().expect("input tempdir");
+        write_stock_daily_fixture(
+            input_tmp.path(),
+            &[(
+                "SZ000001",
+                "2024-01-02",
+                9.0,
+                11.0,
+                8.0,
+                10.0,
+                8.0,
+                1000.0,
+                15000.0,
+            )],
+        );
+
+        // csv: output == input/stock_daily.parquet (would destroy the source).
+        let bad_csv = input_tmp.path().join("stock_daily.parquet");
+        run_export(
+            input_tmp.path().to_path_buf(),
+            "csv".to_string(),
+            bad_csv.clone(),
+            true,
+        )
+        .await;
+        // The source parquet must survive the refused export.
+        assert!(
+            bad_csv.exists(),
+            "refused csv export must not delete the input parquet"
+        );
+        let reader =
+            ParquetReader::new(input_tmp.path()).expect("input must still open after refusal");
+        let epoch = chrono::DateTime::from_timestamp(0, 0).expect("epoch");
+        assert!(
+            reader
+                .fetch_bars("SZ000001", "1d", epoch, chrono::Utc::now())
+                .await
+                .is_ok(),
+            "input data must remain readable after a refused export"
+        );
+
+        // parquet-dir: output == input directory itself.
+        run_export(
+            input_tmp.path().to_path_buf(),
+            "parquet-dir".to_string(),
+            input_tmp.path().to_path_buf(),
+            true,
+        )
+        .await;
+        assert!(
+            input_tmp.path().join("stock_daily.parquet").exists(),
+            "refused parquet-dir export must not delete the input dataset"
+        );
+    }
+
+    /// #336 review: overwrite must also drop stale index mirrors (round 1 has
+    /// index files, round 2 has none — the old ones must not survive).
+    #[tokio::test]
+    async fn run_export_parquet_dir_overwrite_removes_stale_index_mirrors() {
+        let input_a = tempfile::tempdir().expect("input tempdir");
+        write_stock_daily_fixture(
+            input_a.path(),
+            &[(
+                "SZ000001",
+                "2024-01-02",
+                9.0,
+                11.0,
+                8.0,
+                10.0,
+                8.0,
+                1000.0,
+                15000.0,
+            )],
+        );
+        // Give input_a its own index parquets so round 1 mirrors them.
+        let conn = duckdb::Connection::open_in_memory().expect("open duckdb");
+        conn.execute_batch(
+            "CREATE TABLE idx (symbol VARCHAR, name VARCHAR); \
+             INSERT INTO idx VALUES ('SH000001', '上证指数');",
+        )
+        .expect("create index table");
+        conn.execute_batch(&format!(
+            "COPY idx TO '{}' (FORMAT PARQUET)",
+            input_a.path().join("index_basic.parquet").display()
+        ))
+        .expect("copy index_basic");
+
+        let out_tmp = tempfile::tempdir().expect("output tempdir");
+        let out_dir = out_tmp.path().join("exported");
+
+        run_export(
+            input_a.path().to_path_buf(),
+            "parquet-dir".to_string(),
+            out_dir.clone(),
+            true,
+        )
+        .await;
+        assert!(
+            out_dir.join("index_basic.parquet").exists(),
+            "round 1 must mirror index_basic into the output"
+        );
+
+        // Round 2: a fresh input with NO index files at all.
+        let input_b = tempfile::tempdir().expect("input tempdir");
+        write_stock_daily_fixture(
+            input_b.path(),
+            &[(
+                "SH600000",
+                "2024-02-01",
+                20.0,
+                22.0,
+                19.0,
+                21.0,
+                21.0,
+                2000.0,
+                0.0,
+            )],
+        );
+
+        run_export(
+            input_b.path().to_path_buf(),
+            "parquet-dir".to_string(),
+            out_dir.clone(),
+            true,
+        )
+        .await;
+        assert!(
+            !out_dir.join("index_basic.parquet").exists(),
+            "round 2 (input without index) must not leave the stale index mirror"
         );
     }
 
