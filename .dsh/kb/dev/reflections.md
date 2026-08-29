@@ -324,3 +324,27 @@
 - **独立 review 连续抓出主 agent 测试-真实语义断层**（#306 → #308 main.backfill 未导入、全局范围洪水）：多轮 review 应在合并前保留，且覆盖真实数据语义。
 - **测试真实环境隔离反复成为摩擦源**（#306/#308 依赖本地 Dolt、worktree 符号链接）：环境路径/启用开关应显式注入，不依赖工作区状态。
 - **真实冒烟对数据管线是必要防线**（#308 只读冒烟即暴露全历史回补与 symlink 问题）：完整脚本冒烟仍应作为 F4 收尾项。
+
+## 2026-08-28 — ref #311, #312 B1 Rust collectors 基础设施
+
+**What was done**: 新建 `crates/compass-collectors`（wreq Chrome142 HTTP、节流、EastMoney 分页/增量、代理池、CSV、Dolt 写入、交易日历、progress），更新架构文档与决策记录，B1 通过 crate clippy/test 与两轮 subagent_review。
+
+**User corrections** (if any): 无纠正。用户确认将锁定方案中的 `rquest` 调整为当前项目后续名 `wreq`（rquest crates.io 已 yank、仓库改名），并确认推送 B1 创建 PR。
+
+**What went wrong**:
+1. 初版用 `Proxy::http` 接入代理，对 EastMoney HTTPS 目标实际不生效（review 抓出后才改为 `Proxy::all`）。
+2. 初版缺少 `fetch_incremental`/`update_date_anchor`/`normalize_update_date`，且 `request_json` 无 EM_MAX_RETRIES 外层重试、HTTP 状态会误删代理，均由 review 抓出并修复。
+3. CSV 列顺序依赖 `HashMap` 导致随机序，改用有序记录 + serde_json preserve_order。
+4. 测试通过 `set_var` 改全局 env 且无互斥，并行测试偶发失败；加 ENV_MUTEX 修复。
+5. `gh issue create` 批量脚本超时，14 个后手动补建 #325/#326。
+6. 全 workspace clippy 命中已存在但与本次无关的 `compass` crate 警告（unused map / dead index_basic），未在本 PR 处理。
+
+**Lessons learned**:
+1. 接入 HTTP 代理必须核实代理 matcher 的协议范围（`Proxy::http` 只匹配 HTTP 目标；HTTPS 需 `Proxy::all`/`https`）。
+2. 迁移等价性要保留 Python 的“HTTP 状态不删代理 + 外层重试 + 随机 jitter”语义，不能只按异常类型统一处理。
+3. 进程级 env 测试必须统一互斥，避免并行测试竞争。
+4. 批量创建 GitHub issue 脚本应设各自超时/失败重试，避免一次超时中断后半批。
+
+**Process improvements**:
+- 计划 `.dsh/plans/migrate-collectors-to-rust.md` 已同步为 `wreq`；架构文档新增 MIG-1..4 决策记录。
+- 建议后续将 `request_json` 的代理/重试行为抽成可注入 stub，补 429/坏代理/HTTPS 代理回归测试（proposed）。

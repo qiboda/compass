@@ -436,6 +436,17 @@ pre-commit/pre-push hooks 在每次变更时强制执行 lint + 测试。
 - **无 anchor 首跑**：财务三表 `--incremental` 在无 anchor 时固定
   `2020-01-01` 走 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举（issue #299）
 
+### collectors：Rust 迁移（epic #310）
+
+目标是把 `collectors/` 的 Python 采集层逐步迁移到 Rust，最终删除 Python 层并让
+`scripts/update-database.sh` 直接调用 Rust 二进制。新 crate 为
+`crates/compass-collectors`（独立于 `compass-data`），HTTP/TLS 使用 `wreq`
+（rquest 项目的后续名；`rquest` crates.io 已 yank、仓库改名 `0x676e67/wreq`，
+同一作者/同一指纹方案，不是降级到 reqwest），Chrome 142 指纹由 `wreq-util`
+提供。迁移按批次推进：B1 基础设施 → B2 pilot（block_trade）→ B3–B5 采集器 →
+B6 编排 CLI → B7 切换/退役 Python。每批一个 PR。Python 采集器与 `update-database.sh`
+保持不变，直到 dual-run 等价。
+
 ### 自动回补缺失数据（issue #308）
 
 数据管线允许不每天运行：`collectors/main.py sync` 在采集前用
@@ -605,6 +616,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | 20 | Provider trait | DataProvider + DataWriter + NegativeCache | 基于 trait 的数据后端抽象：DuckDB、Parquet——全部在同一接口后面。可通过 mock 实现进行测试。 |
 | 21 | Parquet 存储 | DuckDB read_parquet + COPY TO | 按股票分区的列式格式。无需加载到表中即可查询。 |
 | 22 | Dolt 导入 | dolt CLI → Parquet（直接） | 18M+ 行的离线批量导入。Dolt `sql -r parquet` 直接写入二进制 Parquet，跳过 CSV 中间步骤。 |
+| 23 | 采集 HTTP/TLS | wreq 0.16 + wreq-util 0.2 | `rquest` 的现行后续项目，BoringSSL + Chrome142 TLS/HTTP2/header 指纹，用于采集器模拟浏览器以绕过 EastMoney/THS WAF；不是 reqwest 降级。 |
 
 ## 延伸阅读
 
@@ -646,6 +658,10 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
 | C4（#267）：抓取进度存储形态 | JSON 进度文件 / SQLite / 日志行 | `csv_dir()/<name>.progress.json` 原子写（tmp+os.replace） | 轻量零依赖、跨进程可读、与 CSV 同目录便于排查；CSV 保持一次性写入语义 | SQLite 过重；日志行无结构化查询 |
 | C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
+| MIG-1（#310）：采集层代码归属 | 迁移进 compass-data / 新建独立 crate | `crates/compass-collectors` | 采集是独立领域（HTTP/代理/CSV/Dolt 写回），与 compass-data 的 Dolt→Parquet 导出职责不同；独立 crate 便于批次迁移、测试隔离、最终替代 Python 采集层 | 塞进 compass-data 会耦合两种 Dolt 写/读路径，迁移完成前 Python/Rust 并行也会互相干扰 |
+| MIG-2（#310）：HTTP/TLS 客户端 | rquest / reqwest-impersonate / wreq | `wreq`（rquest 项目的后续名，仓库 `0x676e67/wreq` + `wreq-util`，Chrome142 指纹） | 用户确认采用；rquest crates.io 已 yank 且仓库改名，wreq 是同一作者同一 TLS/HTTP2 指纹方案的现行版，支持 Chrome142，不降级 reqwest | reqwest 无 TLS 指纹伪装；reqwest-impersonate 是备份且用户未选 |
+| MIG-3（#310）：PR 结构 | 一个 epic 一个 PR / 每批一个 PR | 每个批次一个 PR | 用户确认覆盖仓库默认约定；批次间有数据和 CLI 渐进依赖，分 PR 便于 review/回退 | 一个 PR 过大，跨 7 批 review 困难 |
+| MIG-4（#310）：切换门槛 | 直接删除 Python / dual-run 等价后切换 | 并行开发 + dual-run 对比（CSV/Dolt 行数、日期覆盖、关键字段）全部通过后才切换 `update-database.sh` | 数据管线不能因迁移中断；等价值可复现且不依赖“看起来像” | 直接切换风险高，无回退证据 |
 
 > 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
