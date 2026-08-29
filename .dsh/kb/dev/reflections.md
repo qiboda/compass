@@ -197,3 +197,31 @@
 - B1→B7 独立 RED/adversarial/requirement 子代理测试仍未闭环；每次反思均列为 open，尚未正式委派。
 - B7 是首次真实 `update-database.sh` 端到端冒烟，立即抓出 B4 隐藏的 SQL 拼缝问题；说明“仅 dual-run CSV/单测”不足以覆盖导入 SQL 路径。
 - “迁移类长任务被外部/存量数据范围拖入不可控时长”首次出现（push2his 故障 + 1990 compute 缺口），后续应把范围边界和回退路径在计划中写死。
+
+## 2026-08-29 — ref #334 同步数据库性能用时统计
+
+**What was done**: 为每日数据管线增加全链路计时：`update-database.sh` 记录 step 0~8 与总时长，`compass-collectors sync` 通过 `COMPASS_TIMING_FILE` 上报各采集器 fetch/import 耗时，shell 合并为每 run 一个本地 JSON（`logs/sync-timings/`），计时失败仅 warning 不阻断主流程。
+
+**User corrections**: 无用户纠正；用户仅确认计划批准与 push。
+
+**What went wrong**:
+1. 初版 `record_step_event` 用 `--argjson step` 传 step 编号，遇到非数字的 `1b/4b` 时 jq 失败，导致部分 step 事件漏写；改为 jq 内数字/字符串动态转换。
+2. 测试子代理生成的 `assert_json_exists` 将 PASS/FAIL 也输出到 stdout，命令替换捕获多行路径导致断言误判；修正为 pass/fail 走 stderr。
+3. 对抗测试 mock 的 `${VAR:-{...}}` 参数展开中未转义 `}`，导致即使显式传入单括号 JSON 也会多出一个 `}`；改用独立默认变量修复。
+4. 复核发现初始实现 step 编号与 plan 的 0~8 不一致、既有测试会向真实 `logs/sync-timings/` 写文件、坏 JSONL 会毒化整个报告、显式 `COMPASS_TIMING_FILE` 跨 run 累积；均已在 review 后修复。
+5. 真实 `compass-collectors sync` 冒烟因 2026-08-29 非交易日 `dragon_list` 返回 0 行而中止（既有 nonzero 守卫），非计时问题；已将 Dolt 增量提交推送并记录 evidence。
+
+**Lessons learned**:
+1. 任何步骤编号/标识若可能为非数字，写入 JSON 前必须显式处理类型，避免 `--argjson` 隐式假设。
+2. shell 测试中需要“返回路径供调用方捕获”的 helper，必须把诊断输出与返回值通道分离（stdout 只存返回值，PASS/FAIL 走 stderr）。
+3. `COMPASS_TIMING_FILE` 这类显式可写路径必须按 run 隔离（启动时 truncate），并在初始化失败时跳过报告，避免新 run 头 + 旧 step 体的误导 JSON。
+4. 真实数据冒烟要留意非交易日/空数据下的既有失败路径，记录证据时区分钟/数据空属于环境事实而非功能回归。
+
+**Process improvements**:
+- 既有 `test-update-database.sh` 的 `run_script` 已注入 `SYNC_TIMING_DIR=$t/timings`，避免测试污染真实 logs。
+- 新增 `test-timing-requirements.sh` / `test-timing-adversarial.sh`，固化：step 5/6/7/8 编号、stale-file 不生成误导报告、坏 JSONL 过滤、run-id 唯一、特殊字符 JSON 安全。
+- 计划文件中记录了测试位置与 step 编号的实现偏离（透明化）。
+
+### Trends (last 10)
+- 测试子代理产出的 shell 测试初版仍存在 helper/mock 细节缺陷（多行 stdout 捕获、`${VAR:-...}` 花括号解析），主 agent 落地时必须复核并做真实 GREEN 验证，不能直接采信 RED 报告。
+- 首次引入“诊断型 always-on 输出”功能：必须同时考虑测试隔离、持久化文件复用、失败语义不阻断，避免 review 后大范围返工；此类横切关注点应在计划中提前写死。
