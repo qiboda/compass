@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Shared boundary types for the stock screener.
 //!
 //! These types cross crate boundaries (GUI ↔ strategy ↔ core) and live in

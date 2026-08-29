@@ -20,10 +20,15 @@ const MARKET_FRESHNESS_DAYS: i64 = 7;
 /// Tables in compass_data that can be imported.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CompassTable {
+    /// Stock basic info (symbol/name/industry/board), full replace.
     StockBasic,
+    /// Financial indicators (fin_indicators), incremental merge on report_date.
     FinIndicators,
+    /// Balance sheet metrics (fin_balance_sheet), incremental merge on report_date.
     FinBalanceSheet,
+    /// Income statement metrics (fin_income), incremental merge on report_date.
     FinIncome,
+    /// Cash flow metrics (fin_cash_flow), incremental merge on report_date.
     FinCashFlow,
     /// Capital main flow (主力资金流), incremental merge on (symbol, trade_date).
     MainFlow,

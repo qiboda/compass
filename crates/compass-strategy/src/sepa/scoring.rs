@@ -160,6 +160,12 @@ pub(crate) fn fetch_sepa_window(
     })
 }
 
+/// Run the full SEPA scoring pass for a query and return the ranked results.
+///
+/// Scores trend / theme / capital / pattern / risk factors from the parquet
+/// data behind `reader`, clamping the total to 0..=100. `now` anchors the
+/// look-back window (SEPA_WINDOW_DAYS); consumers call this from the CLI
+/// `sepa score`/`sepa backtest` paths and from the GUI worker.
 pub fn run_sepa(
     query: &SepaQuery,
     reader: &ParquetReader,

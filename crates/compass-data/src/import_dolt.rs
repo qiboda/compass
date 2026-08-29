@@ -1,3 +1,11 @@
+//! Import daily bars from the Dolt `investment_data` repository into Parquet.
+//!
+//! Follows the `dolt sql -r parquet` → `fs::write` pattern: one full export
+//! writes `stock_daily.parquet` (single file with a symbol column) plus its
+//! companion `stock_daily.symbols.txt`. Filters (`--symbols`, `--start-date`,
+//! `--end-date`, `--since`) always overwrite the whole file — never an
+//! incremental append.
+
 use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
@@ -127,6 +135,13 @@ fn validate_date_arg(flag: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Run a full Dolt → Parquet import of `investment_data` daily bars.
+///
+/// Writes/overwrites `stock_daily.parquet` (single file with a symbol column)
+/// plus the companion `stock_daily.symbols.txt`, applying the `limit` /
+/// `symbols_filter` / `start_date` / `end_date` / `since` filters when
+/// requested. This is a full direct write — `--since` only filters the subset
+/// and overwrites the whole file, it is never an incremental append.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     dolt_dir: PathBuf,
