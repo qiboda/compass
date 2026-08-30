@@ -16,6 +16,8 @@ pub const EM_MIN_INTERVAL: Duration = Duration::from_secs(2);
 pub const EM_JITTER: (f64, f64) = (0.1, 0.3);
 /// Maximum retry count for transient EastMoney request failures.
 pub const EM_MAX_RETRIES: usize = 4;
+/// Minimum interval between Sina money-flow requests (per-symbol window).
+pub const SINA_MIN_INTERVAL: Duration = Duration::from_millis(100);
 
 /// HTTP/TLS client based on `wreq` (successor of rquest), emulating Chrome 142.
 #[derive(Clone)]

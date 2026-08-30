@@ -92,7 +92,7 @@ pub async fn fetch(
         "dragon" => dragon::run(None, None, page_size).await,
         "block_trade" => block_trade::run(None, None, None, page_size).await,
         "institution_survey" => institution_survey::run(None, page_size).await,
-        "main_flow" => main_flow::run(DEFAULT_PAGE_SIZE * 10).await,
+        "main_flow" => main_flow::run().await,
         "index_daily" => index_daily::run().await,
         other => Err(CollectError::InvalidInput(format!(
             "unknown fetch target: {other}"
@@ -550,12 +550,7 @@ pub async fn sync(_restart: bool) -> Result<()> {
     require_nonzero(rows, "institution_survey")?;
 
     eprintln!("\n[sync] Fetching main_flow...");
-    let _ = timed!(
-        &timing,
-        "main_flow",
-        "fetch",
-        main_flow::run(DEFAULT_PAGE_SIZE * 10).await
-    )?;
+    let _ = timed!(&timing, "main_flow", "fetch", main_flow::run().await)?;
     let rows = timed!(
         &timing,
         "main_flow",

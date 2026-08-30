@@ -8,30 +8,31 @@ use crate::config::csv_dir;
 use crate::csv::write_csv;
 use crate::dolt::import_replace_table;
 use crate::error::{CollectError, Result};
-use crate::http::{EM_MIN_INTERVAL, HttpClient, Throttle};
+use crate::http::{HttpClient, SINA_MIN_INTERVAL, Throttle};
 use crate::progress::Progress;
-use crate::proxy::{DEFAULT_PROXY_MAX_ATTEMPTS, ProxyPool, make_proxy_pool};
 
-/// EastMoney main-capital-flow report name.
+/// Sina lscjfb main-capital-flow report name.
 pub const REPORT_NAME: &str = "RPT_MAIN_MONEY_FLOW";
 /// Dolt target table name.
 pub const DOLT_TABLE: &str = "capital_main_flow";
 /// Source label recorded in `data_updates` for this table.
-pub const SOURCE: &str = "EastMoney push2 clist f62";
+pub const SOURCE: &str = "Sina MoneyFlow ssl_qsfx_lscjfb";
 
-const PUSH2_DELAY: &str = "https://push2delay.eastmoney.com/api/qt/clist/get";
-const PUSH2_MAIN: &str = "https://push2.eastmoney.com/api/qt/clist/get";
-const PUSH2_URLS: [&str; 2] = [PUSH2_DELAY, PUSH2_MAIN];
+/// Sina per-symbol daily main-capital-flow endpoint (`MoneyFlow.ssl_qsfx_lscjfb`).
+pub const SINA_URL: &str =
+    "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_lscjfb";
+/// Daily incremental window: rows returned per symbol per request.
+pub const SINA_DAILY_NUM: usize = 20;
+/// Historical backfill window: rows returned per symbol per request.
+pub const SINA_BACKFILL_NUM: usize = 1000;
 
-const FFLOW_DAYKLINE_URL: &str = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get";
-
-fn push2_headers() -> HashMap<String, String> {
+fn sina_headers() -> HashMap<String, String> {
     let mut headers = HashMap::new();
     headers.insert("User-Agent".to_string(), crate::http::EM_UA.to_string());
     headers.insert("Accept".to_string(), "*/*".to_string());
     headers.insert(
         "Referer".to_string(),
-        "https://quote.eastmoney.com/".to_string(),
+        "https://finance.sina.com.cn/".to_string(),
     );
     headers
 }
@@ -71,16 +72,6 @@ fn today() -> String {
         .to_string()
 }
 
-fn exchange_prefix(code: &str) -> &'static str {
-    if code.starts_with('6') {
-        "SH"
-    } else if code.starts_with('8') {
-        "BJ"
-    } else {
-        "SZ"
-    }
-}
-
 fn normalize_num(value: Option<&Value>) -> String {
     match value {
         None => String::new(),
@@ -95,192 +86,144 @@ fn normalize_num(value: Option<&Value>) -> String {
     }
 }
 
-fn trade_date_from_quotes(diff: &[Value]) -> String {
-    let mut latest: i64 = 0;
-    for item in diff {
-        if let Some(ts) = item.get("f124").and_then(Value::as_i64)
-            && ts > 0
-        {
-            latest = latest.max(ts);
+fn sina_num(value: Option<&Value>) -> f64 {
+    match value {
+        None | Some(Value::Null) => 0.0,
+        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            if s.is_empty() || s == "-" {
+                0.0
+            } else {
+                s.parse::<f64>().unwrap_or(0.0)
+            }
         }
+        Some(_) => 0.0,
     }
-    if latest > 0
-        && let Some(dt) = chrono::DateTime::from_timestamp(latest, 0)
-    {
-        let bj = dt + chrono::Duration::hours(8);
-        return bj.date_naive().format("%Y-%m-%d").to_string();
-    }
-    today()
 }
 
-fn build_records(diff: &[Value], trade_date: &str) -> Vec<FlowRecord> {
-    let update_date = today();
-    let mut records = Vec::new();
-    for item in diff {
-        let Some(code) = item.get("f12").and_then(Value::as_str) else {
-            continue;
-        };
-        if code.is_empty() {
-            continue;
-        }
-        let symbol = format!("{}{}", exchange_prefix(code), code);
-        records.push(FlowRecord {
-            symbol,
-            trade_date: trade_date.to_string(),
-            main_net_inflow: normalize_num(item.get("f62")),
-            main_net_inflow_rate: normalize_num(item.get("f184")),
-            super_large_net: normalize_num(item.get("f66")),
-            large_net: normalize_num(item.get("f72")),
-            medium_net: normalize_num(item.get("f78")),
-            small_net: normalize_num(item.get("f84")),
-            update_date: update_date.clone(),
-        });
+fn fmt_value(v: f64) -> String {
+    if !v.is_finite() {
+        return String::new();
     }
-    records
+    // Round-trip through normalize_num keeps the shortest f64 representation
+    // ("5", "0.02") and the blank semantics locked by its tests.
+    normalize_num(Some(&Value::String(v.to_string())))
 }
 
-fn snapshot_params(page_number: usize, page_size: usize) -> HashMap<String, String> {
+/// Sina query key: `SH600519` → `sh600519` (prefix is already SH/SZ/BJ).
+fn daima(symbol: &str) -> String {
+    symbol.to_lowercase()
+}
+
+/// Parse one `MoneyFlow.ssl_qsfx_lscjfb` row into a `FlowRecord`.
+/// `opendate` is mandatory (a missing date cannot be an importable row);
+/// all amounts are numeric defaults (0.0) and the rate uses the main-force
+/// share of total turnover: (r0_net+r1_net)/(r0+r1+r2+r3), 0 on a zero sum.
+fn parse_sina_row(symbol: &str, row: &Value) -> Option<FlowRecord> {
+    let trade_date = row.get("opendate")?.as_str()?.trim().to_string();
+    if trade_date.is_empty() {
+        return None;
+    }
+    let r0 = sina_num(row.get("r0"));
+    let r1 = sina_num(row.get("r1"));
+    let r2 = sina_num(row.get("r2"));
+    let r3 = sina_num(row.get("r3"));
+    let r0_net = sina_num(row.get("r0_net"));
+    let r1_net = sina_num(row.get("r1_net"));
+    let r2_net = sina_num(row.get("r2_net"));
+    let r3_net = sina_num(row.get("r3_net"));
+    let main_net_inflow = r0_net + r1_net;
+    let denominator = r0 + r1 + r2 + r3;
+    let rate = if denominator == 0.0 {
+        0.0
+    } else {
+        main_net_inflow / denominator
+    };
+    Some(FlowRecord {
+        symbol: symbol.to_string(),
+        trade_date,
+        main_net_inflow: fmt_value(main_net_inflow),
+        main_net_inflow_rate: fmt_value(rate),
+        super_large_net: fmt_value(r0_net),
+        large_net: fmt_value(r1_net),
+        medium_net: fmt_value(r2_net),
+        small_net: fmt_value(r3_net),
+        update_date: today(),
+    })
+}
+
+/// Keep only rows strictly newer than the last report date (window increment).
+/// `None` anchor (first run) keeps every fetched row.
+fn filter_daily_window(rows: Vec<FlowRecord>, last_report_date: Option<&str>) -> Vec<FlowRecord> {
+    match last_report_date {
+        Some(anchor) => rows
+            .into_iter()
+            .filter(|r| r.trade_date.as_str() > anchor)
+            .collect(),
+        None => rows,
+    }
+}
+
+/// Write a non-empty CSV; or, for zero rows (a no-op window), remove any
+/// stale CSV and return `Ok` so the pipeline treats it as a successful no-op.
+fn finalize_daily_csv(output: &Path, rows: Vec<FlowRecord>) -> Result<PathBuf> {
+    if rows.is_empty() {
+        let _ = std::fs::remove_file(output);
+    } else {
+        write_csv(output, &rows)?;
+    }
+    Ok(output.to_path_buf())
+}
+
+/// `[start, end]` inclusive membership (ISO dates compare lexicographically).
+fn in_backfill_range(day: &str, start: &str, end: &str) -> bool {
+    day >= start && day <= end
+}
+
+/// Fetch the newest per-symbol window from Sina (`num=20`, page 1). A `null`
+/// body (e.g. uncovered BJ tickers) parses as an empty window, never an error.
+async fn fetch_symbol_window(
+    client: &HttpClient,
+    throttle: &mut Throttle,
+    symbol: &str,
+) -> Result<Vec<FlowRecord>> {
     let mut params = HashMap::new();
-    params.insert("fid".to_string(), "f62".to_string());
-    params.insert("po".to_string(), "1".to_string());
-    params.insert("pz".to_string(), page_size.to_string());
-    params.insert("pn".to_string(), page_number.to_string());
-    params.insert("np".to_string(), "1".to_string());
-    params.insert("fltt".to_string(), "2".to_string());
-    params.insert("invt".to_string(), "2".to_string());
-    params.insert(
-        "fs".to_string(),
-        "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23".to_string(),
-    );
-    params.insert(
-        "fields".to_string(),
-        "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205,f124".to_string(),
-    );
-    params
-}
+    params.insert("page".to_string(), "1".to_string());
+    params.insert("num".to_string(), SINA_DAILY_NUM.to_string());
+    params.insert("sort".to_string(), "opendate".to_string());
+    params.insert("asc".to_string(), "0".to_string());
+    params.insert("daima".to_string(), daima(symbol));
 
-async fn fetch_page(
-    client: &HttpClient,
-    throttle: &mut Throttle,
-    pool: &mut Option<ProxyPool>,
-    page_number: usize,
-    page_size: usize,
-) -> Result<(Vec<Value>, u64)> {
-    let params = snapshot_params(page_number, page_size);
-    let headers = push2_headers();
-
-    for base in PUSH2_URLS {
-        for attempt in 0..4 {
-            let mut last_err: Option<CollectError> = None;
-            let mut empty_response = false;
-            for proxy_attempt in 0..=DEFAULT_PROXY_MAX_ATTEMPTS {
-                let proxy: Option<String> = if proxy_attempt < DEFAULT_PROXY_MAX_ATTEMPTS {
-                    if let Some(pool) = pool.as_mut() {
-                        pool.get_proxy().await
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                throttle.acquire().await;
-                match client
-                    .get_json_with_headers_and_proxy(base, &params, &headers, proxy.as_deref())
-                    .await
-                {
-                    Ok(data) => {
-                        let empty = data
-                            .get("data")
-                            .and_then(|d| d.get("diff"))
-                            .map(|d| d.as_array().map(|a| a.is_empty()).unwrap_or(true))
-                            .unwrap_or(true);
-                        if empty {
-                            eprintln!("empty response from {base}");
-                            empty_response = true;
-                            break;
-                        }
-                        let diff = data
-                            .get("data")
-                            .and_then(|d| d.get("diff"))
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default();
-                        let total = data
-                            .get("data")
-                            .and_then(|d| d.get("total"))
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0);
-                        return Ok((diff, total));
-                    }
-                    Err(e) => {
-                        if let Some(proxy_url) = proxy {
-                            if !matches!(e, CollectError::HttpStatus(_)) {
-                                if let Some(pool) = pool.as_ref() {
-                                    pool.delete_proxy(&proxy_url).await;
-                                }
-                                continue;
-                            }
-                            last_err = Some(e);
-                            break;
-                        }
-                        last_err = Some(e);
-                        break;
-                    }
-                }
+    for attempt in 0..3 {
+        throttle.acquire().await;
+        match client
+            .get_json_with_headers_and_proxy(SINA_URL, &params, &sina_headers(), None)
+            .await
+        {
+            Ok(Value::Array(items)) => {
+                return Ok(items
+                    .iter()
+                    .filter_map(|row| parse_sina_row(symbol, row))
+                    .collect());
             }
-            if empty_response {
-                break;
-            }
-            if let Some(e) = last_err {
-                let is_429 = matches!(e, CollectError::HttpStatus(429));
-                if is_429 {
-                    let wait = 15.0 + rand::random::<f64>() * 5.0;
-                    eprintln!("    429, waiting {wait:.0}s...");
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(wait)).await;
+            Ok(_) => return Ok(Vec::new()),
+            Err(e) => {
+                if attempt < 2 {
+                    let wait = std::time::Duration::from_secs(1u64 << attempt);
+                    eprintln!("    retry {}+1 for {symbol} in {wait:?}: {e}", attempt + 1);
+                    tokio::time::sleep(wait).await;
                     continue;
                 }
-                if attempt < 3 {
-                    let wait = ((1u64 << attempt) * 1000).min(30_000) as f64 / 1000.0
-                        + rand::random::<f64>() * 3.0;
-                    eprintln!("    retry {} in {wait:.0}s: {e}", attempt + 1);
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(wait)).await;
-                    continue;
-                }
-                eprintln!("    FAILED {base}: {e}");
+                return Err(e);
             }
         }
     }
-    Ok((Vec::new(), 0))
+    unreachable!("retry loop always returns")
 }
 
-async fn fetch_snapshot(
-    client: &HttpClient,
-    throttle: &mut Throttle,
-    page_size: usize,
-) -> Result<Vec<Value>> {
-    let mut pool = make_proxy_pool();
-    let mut all_items = Vec::new();
-    let mut total = 0u64;
-    let mut page = 1usize;
-    loop {
-        let (items, data_total) = fetch_page(client, throttle, &mut pool, page, page_size).await?;
-        if items.is_empty() {
-            break;
-        }
-        if data_total > 0 {
-            total = data_total;
-        }
-        all_items.extend(items);
-        if total > 0 && all_items.len() >= total as usize {
-            break;
-        }
-        page += 1;
-    }
-    Ok(all_items)
-}
-
-/// Fetch the latest-day full-market main capital flow snapshot into a CSV.
-pub async fn run(page_size: usize) -> Result<PathBuf> {
+/// Fetch the latest main capital flow window per symbol into a CSV.
+pub async fn run() -> Result<PathBuf> {
     let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}.csv"));
     let today = today();
 
@@ -290,38 +233,39 @@ pub async fn run(page_size: usize) -> Result<PathBuf> {
         return Ok(output_path);
     }
 
+    let symbols = backfill_symbols().await?;
     let client = HttpClient::new()?;
-    let mut throttle = Throttle::new(EM_MIN_INTERVAL);
+    let mut throttle = Throttle::new(SINA_MIN_INTERVAL);
     let mut progress = Progress::new("main_flow", None, Some(output_path.clone()), "start")?;
-    let diff = fetch_snapshot(&client, &mut throttle, page_size).await?;
-    if diff.is_empty() {
-        let _ = std::fs::remove_file(&output_path);
-        let _ = progress.fail("No data from push2", "failed");
-        return Err(CollectError::InvalidInput(
-            "No data from push2 (rate-limited or empty) — aborting, no CSV written".into(),
-        ));
-    }
 
-    let trade_date = trade_date_from_quotes(&diff);
+    let mut all_rows = Vec::new();
+    for symbol in &symbols {
+        match fetch_symbol_window(&client, &mut throttle, symbol).await {
+            Ok(rows) => all_rows.extend(rows),
+            Err(e) => eprintln!("[main_flow] {symbol}: window fetch failed, skipping: {e}"),
+        }
+    }
     let _ = progress.update(
-        Some(diff.len() as u64),
-        Some(diff.len() as u64),
-        Some(trade_date.clone()),
-        Some(format!("Snapshot fetched, trade_date={trade_date}")),
+        Some(all_rows.len() as u64),
+        Some(symbols.len() as u64),
+        None,
+        Some(format!(
+            "Fetched {} rows from {} symbols",
+            all_rows.len(),
+            symbols.len()
+        )),
         None,
     );
-    eprintln!("Snapshot: {} items, trade_date={trade_date}", diff.len());
 
-    if last.as_deref() == Some(trade_date.as_str()) {
-        eprintln!("Trade date {trade_date} already imported; skipping");
-        let _ = progress.finish(Some(diff.len() as u64), "already imported");
-        return Ok(output_path);
+    let records = filter_daily_window(all_rows, last.as_deref());
+    if records.is_empty() {
+        eprintln!("[main_flow] No rows newer than {last:?} — treating as no-op ({today})");
+        let _ = progress.finish(Some(0), "no new rows");
+        return finalize_daily_csv(&output_path, records);
     }
-
-    let records = build_records(&diff, &trade_date);
-    write_csv(&output_path, &records)?;
+    eprintln!("[main_flow] {today} window: {} new rows", records.len());
     let _ = progress.finish(Some(records.len() as u64), "Done");
-    Ok(output_path)
+    finalize_daily_csv(&output_path, records)
 }
 
 /// Import the fetched CSV into Dolt `capital_main_flow` (merge mode).
@@ -349,18 +293,7 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
     .await
 }
 
-// ── Historical per-symbol backfill (issue #308) ──────────────────────────
-
-fn fflow_headers() -> HashMap<String, String> {
-    let mut headers = HashMap::new();
-    headers.insert("User-Agent".to_string(), crate::http::EM_UA.to_string());
-    headers.insert("Accept".to_string(), "*/*".to_string());
-    headers.insert(
-        "Referer".to_string(),
-        "https://quote.eastmoney.com/".to_string(),
-    );
-    headers
-}
+// ── Historical per-symbol backfill (issue #308, Sina lscjfb) ─────────────
 
 async fn backfill_symbols() -> Result<Vec<String>> {
     let dir = crate::config::dolt_dir();
@@ -384,39 +317,7 @@ async fn backfill_symbols() -> Result<Vec<String>> {
     Ok(vec!["SH600519".to_string()])
 }
 
-fn symbol_to_secid(symbol: &str) -> Result<String> {
-    if symbol.len() != 8 {
-        return Err(CollectError::InvalidInput(format!(
-            "cannot derive secid from symbol {symbol:?}"
-        )));
-    }
-    let market = &symbol[..2];
-    let code = &symbol[2..];
-    Ok(match market {
-        "SH" => format!("1.{code}"),
-        _ => format!("0.{code}"),
-    })
-}
-
-fn fflow_record(symbol: &str, row: &str) -> Option<FlowRecord> {
-    let parts: Vec<&str> = row.split(',').collect();
-    if parts.len() < 7 {
-        return None;
-    }
-    Some(FlowRecord {
-        symbol: symbol.to_string(),
-        trade_date: parts[0].trim().to_string(),
-        main_net_inflow: normalize_num(Some(&Value::String(parts[1].to_string()))),
-        small_net: normalize_num(Some(&Value::String(parts[2].to_string()))),
-        medium_net: normalize_num(Some(&Value::String(parts[3].to_string()))),
-        large_net: normalize_num(Some(&Value::String(parts[4].to_string()))),
-        super_large_net: normalize_num(Some(&Value::String(parts[5].to_string()))),
-        main_net_inflow_rate: normalize_num(Some(&Value::String(parts[6].to_string()))),
-        update_date: today(),
-    })
-}
-
-/// Fetch missing per-symbol historical main capital flow via fflow API.
+/// Fetch missing per-symbol historical main capital flow via Sina lscjfb.
 pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Result<PathBuf> {
     let start_dt = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d").map_err(|_| {
         CollectError::InvalidDate {
@@ -450,48 +351,37 @@ pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Res
     let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}_backfill.csv"));
     let mut seen: HashMap<(String, String), FlowRecord> = HashMap::new();
     let client = HttpClient::new()?;
-    let headers = fflow_headers();
+    let mut throttle = Throttle::new(SINA_MIN_INTERVAL);
 
     for symbol in &symbol_list {
-        let secid = symbol_to_secid(symbol)?;
         let mut params = HashMap::new();
-        params.insert("secid".to_string(), secid);
-        params.insert("fields1".to_string(), "f1,f2,f3,f7".to_string());
-        params.insert(
-            "fields2".to_string(),
-            "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65".to_string(),
-        );
-        params.insert("klt".to_string(), "101".to_string());
-        params.insert("lmt".to_string(), "0".to_string());
+        params.insert("page".to_string(), "1".to_string());
+        params.insert("num".to_string(), SINA_BACKFILL_NUM.to_string());
+        params.insert("sort".to_string(), "opendate".to_string());
+        params.insert("asc".to_string(), "0".to_string());
+        params.insert("daima".to_string(), daima(symbol));
 
+        throttle.acquire().await;
         let data = client
-            .get_json_with_headers_and_proxy(FFLOW_DAYKLINE_URL, &params, &headers, None)
+            .get_json_with_headers_and_proxy(SINA_URL, &params, &sina_headers(), None)
             .await?;
-        let Some(rows) = data
-            .get("data")
-            .and_then(|d| d.get("klines"))
-            .and_then(Value::as_array)
-        else {
-            continue;
-        };
-        for row in rows {
-            let Some(row) = row.as_str() else {
-                continue;
-            };
-            let Some(record) = fflow_record(symbol, row) else {
-                continue;
-            };
-            let day = record.trade_date.clone();
-            if day.as_str() < start || day.as_str() > end {
-                continue;
+        if let Value::Array(items) = data {
+            for row in items {
+                let Some(record) = parse_sina_row(symbol, &row) else {
+                    continue;
+                };
+                let day = record.trade_date.clone();
+                if !in_backfill_range(&day, start, end) {
+                    continue;
+                }
+                seen.insert((symbol.clone(), day), record);
             }
-            seen.insert((symbol.clone(), day), record);
         }
     }
 
     if seen.is_empty() {
         return Err(CollectError::InvalidInput(format!(
-            "backfill: no fflow data returned for {} symbols in {start}..{end}",
+            "backfill: no sina data returned for {} symbols in {start}..{end}",
             symbol_list.len()
         )));
     }
@@ -511,69 +401,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exchange_prefix_matches_python() {
-        assert_eq!(exchange_prefix("600519"), "SH");
-        assert_eq!(exchange_prefix("000001"), "SZ");
-        assert_eq!(exchange_prefix("830001"), "BJ");
-    }
-
-    #[test]
     fn normalize_num_blank_and_dash() {
         assert_eq!(normalize_num(Some(&Value::String("-".into()))), "");
         assert_eq!(normalize_num(None), "");
         assert_eq!(normalize_num(Some(&serde_json::json!(1.2))), "1.2");
-    }
-
-    #[test]
-    fn trade_date_uses_max_f124_and_falls_back() {
-        let diff = vec![
-            serde_json::json!({"f124": 1_700_000_000u64}),
-            serde_json::json!({"f124": 1_700_000_100u64}),
-        ];
-        let d = trade_date_from_quotes(&diff);
-        assert_eq!(d, "2023-11-15");
-    }
-
-    #[test]
-    fn trade_date_falls_back_to_today_without_f124() {
-        let d = trade_date_from_quotes(&[serde_json::json!({})]);
-        assert_eq!(d, today());
-    }
-
-    #[test]
-    fn build_records_maps_push2_fields() {
-        let diff = vec![serde_json::json!({
-            "f12": "600519",
-            "f62": "1.5",
-            "f184": "-2",
-            "f66": "3",
-            "f72": "4",
-            "f78": "5",
-            "f84": "6",
-            "f124": 1_700_000_000u64
-        })];
-        let records = build_records(&diff, "2023-11-15");
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].symbol, "SH600519");
-        assert_eq!(records[0].main_net_inflow, "1.5");
-        assert_eq!(records[0].small_net, "6");
-    }
-
-    #[test]
-    fn fflow_record_maps_fields_in_order() {
-        let r = fflow_record("SH600519", "2026-07-31,1.0,2.0,3.0,4.0,5.0,6.0").unwrap();
-        assert_eq!(r.trade_date, "2026-07-31");
-        assert_eq!(r.main_net_inflow, "1");
-        assert_eq!(r.small_net, "2");
-        assert_eq!(r.medium_net, "3");
-        assert_eq!(r.large_net, "4");
-        assert_eq!(r.super_large_net, "5");
-        assert_eq!(r.main_net_inflow_rate, "6");
-    }
-
-    #[test]
-    fn fflow_record_short_row_returns_none() {
-        assert!(fflow_record("SH600519", "2026-07-31,1").is_none());
     }
 
     #[tokio::test]
@@ -584,10 +415,223 @@ mod tests {
         assert!(matches!(err, CollectError::InvertedRange { .. }));
     }
 
+    // ── Adversarial: Sina migration contract (#339) ──────────────────────
+    //
+    // RED rationale: the production code before #339 still carries the
+    // EastMoney push2 code path.  The tests below reference only plan-declared
+    // symbols (SOURCE value, SINA_* constants, run() signature) plus the
+    // remaining stable helpers, so they RED as either assertion failures or
+    // compile-time "interface not landed yet" failures, and GREEN once the
+    // documented implementation lands.
+
+    /// data_updates SOURCE label must be switched to the Sina provider
+    /// (plan #339: SOURCE = "Sina MoneyFlow ssl_qsfx_lscjfb").
+    /// RED before #339: the constant still says "EastMoney push2 clist f62".
     #[test]
-    fn symbol_to_secid_mapping() {
-        assert_eq!(symbol_to_secid("SH600519").unwrap(), "1.600519");
-        assert_eq!(symbol_to_secid("SZ000001").unwrap(), "0.000001");
-        assert_eq!(symbol_to_secid("BJ830001").unwrap(), "0.830001");
+    fn source_label_is_sina_lscjfb() {
+        assert_eq!(
+            SOURCE, "Sina MoneyFlow ssl_qsfx_lscjfb",
+            "data_updates SOURCE must record the Sina lscjfb endpoint"
+        );
+    }
+
+    /// Plan-declared request geometry: daily window uses num=20, history
+    /// backfill uses num=1000, both against the exact lscjfb URL.
+    /// RED before #339: SINA_URL / SINA_DAILY_NUM / SINA_BACKFILL_NUM do not
+    /// exist yet (compile error) — the constants are part of the plan contract.
+    #[test]
+    fn sina_request_constants_match_plan() {
+        assert_eq!(
+            SINA_URL,
+            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_lscjfb"
+        );
+        assert_eq!(SINA_DAILY_NUM, 20, "daily incremental window per plan #339");
+        assert_eq!(SINA_BACKFILL_NUM, 1000, "backfill page size per plan #339");
+    }
+
+    /// Compile-time signature guard: `run()` must drop its `page_size`
+    /// parameter (plan #339) and keep returning `Result<PathBuf>`.
+    /// The future is constructed but NEVER polled, so the async body (network /
+    /// Dolt / CSV) cannot execute — this is a pure signature check.
+    #[test]
+    fn run_signature_drops_page_size() {
+        let _typed: std::pin::Pin<Box<dyn std::future::Future<Output = Result<PathBuf>>>> =
+            Box::pin(run());
+    }
+
+    /// normalize_num must treat a blank string exactly like NULL/- (all three
+    /// are "missing number" per the Sina contract), and must never panic on
+    /// non-numeric JSON types. Adversarial: a stub that only handles "-" but
+    /// returns "-" or "" for the empty string would silently poison the CSV.
+    #[test]
+    fn normalize_num_blank_string_and_weird_types_do_not_panic() {
+        assert_eq!(normalize_num(Some(&Value::String(String::new()))), "");
+        assert_eq!(normalize_num(Some(&Value::Bool(true))), "true");
+        // A JSON array element (structure) must not panic; any deterministic
+        // string output is acceptable, but a panic is not.
+        let _ = normalize_num(Some(&serde_json::json!([1, 2, 3])));
+        let _ = normalize_num(Some(&serde_json::json!({"a": 1})));
+    }
+
+    /// backfill with an explicit empty symbol list must fail BEFORE any
+    /// network I/O (plan: "seen.is_empty() → Err" carries over; a silent
+    /// Ok(()) here would let callers believe history was backfilled).
+    /// Adversarial: guards the backfill path against a no-op regression while
+    /// the run() path gets its own weekend no-op semantics in #338.
+    #[tokio::test]
+    async fn backfill_empty_symbols_errors_before_network() {
+        let err = backfill("2026-08-28", "2026-08-28", Some(&[]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, CollectError::InvalidInput(_)),
+            "empty symbol list must be rejected, got {err:?}"
+        );
+    }
+
+    /// Date boundary attack: month 13 is not a valid month component; the
+    /// backfill entry point must reject it with InvalidDate before touching
+    /// the network or the (empty) symbol list.
+    #[tokio::test]
+    async fn backfill_malformed_start_date_rejected_before_network() {
+        let err = backfill("2026-13-45", "2026-08-28", Some(&[]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CollectError::InvalidDate { .. }));
+    }
+
+    // ── Requirement: Sina daily window contract (#339) ────────────────────
+    //
+    // Acceptance contract from plan fix-mainflow-sina-remove-sepa (#339):
+    // daima() lowercase mapping, sina row field mapping/rate/division-by-zero,
+    // num=20 window filtering (trade_date > anchor; anchor == None keeps all),
+    // zero-new-row semantics (stale CSV removed, Ok returned), backfill
+    // [start,end] inclusive filtering.  All functions are NEW — RED is a
+    // compile-time "interface not landed yet" failure before #339.
+
+    #[test]
+    fn daima_lowercases_when_building_sina_query_key() {
+        assert_eq!(daima("SH600519"), "sh600519");
+        assert_eq!(daima("SZ000001"), "sz000001");
+        assert_eq!(daima("BJ830001"), "bj830001");
+        assert_eq!(daima("BJ920000"), "bj920000");
+    }
+
+    #[test]
+    fn parse_sina_row_maps_fields_and_calculates() {
+        let row = serde_json::json!({
+            "opendate": "2026-08-28",
+            "trade": "sh600519",
+            "num": 12345,
+            "r0": "100", "r0_ratio": "1", "r0_net": "2",
+            "r1": "50", "r1_ratio": "1", "r1_net": "3",
+            "r2": "50", "r2_ratio": "1", "r2_net": "4",
+            "r3": "50", "r3_ratio": "1", "r3_net": "5",
+            "netamount": "14", "ratioamount": "0.05"
+        });
+        let r = parse_sina_row("SH600519", &row).expect("valid sina row");
+        assert_eq!(r.symbol, "SH600519");
+        assert_eq!(r.trade_date, "2026-08-28");
+        assert_eq!(r.main_net_inflow, "5", "r0_net 2 + r1_net 3");
+        assert_eq!(r.main_net_inflow_rate, "0.02", "(2+3)/(100+50+50+50)");
+        assert_eq!(r.super_large_net, "2");
+        assert_eq!(r.large_net, "3");
+        assert_eq!(r.medium_net, "4");
+        assert_eq!(r.small_net, "5");
+        assert_eq!(r.update_date, today());
+    }
+
+    #[test]
+    fn parse_sina_row_zero_denominator_yields_zero_rate() {
+        let row = serde_json::json!({
+            "opendate": "2026-08-28",
+            "trade": "sh600519",
+            "num": 1,
+            "r0": "0", "r0_ratio": "0", "r0_net": "1",
+            "r1": "0", "r1_ratio": "0", "r1_net": "2",
+            "r2": "0", "r2_ratio": "0", "r2_net": "3",
+            "r3": "0", "r3_ratio": "0", "r3_net": "4",
+            "netamount": "10", "ratioamount": "0"
+        });
+        let r = parse_sina_row("SH600519", &row).expect("valid sina row");
+        assert_eq!(r.main_net_inflow, "3");
+        assert_eq!(r.main_net_inflow_rate, "0", "3/0 must map to 0");
+    }
+
+    #[test]
+    fn parse_sina_row_missing_opendate_is_skipped() {
+        let row = serde_json::json!({"trade": "sh600519", "r0_net": "1", "r1_net": "2"});
+        assert!(parse_sina_row("SH600519", &row).is_none());
+    }
+
+    fn flow_row(day: &str) -> FlowRecord {
+        FlowRecord {
+            symbol: "SH600519".to_string(),
+            trade_date: day.to_string(),
+            main_net_inflow: String::new(),
+            main_net_inflow_rate: String::new(),
+            super_large_net: String::new(),
+            large_net: String::new(),
+            medium_net: String::new(),
+            small_net: String::new(),
+            update_date: String::new(),
+        }
+    }
+
+    #[test]
+    fn filter_daily_window_keeps_only_rows_newer_than_anchor() {
+        let rows = vec![
+            flow_row("2026-08-26"),
+            flow_row("2026-08-27"),
+            flow_row("2026-08-28"),
+        ];
+        let kept = filter_daily_window(rows, Some("2026-08-27"));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].trade_date, "2026-08-28");
+    }
+
+    #[test]
+    fn filter_daily_window_without_anchor_keeps_all() {
+        let rows = vec![flow_row("2026-01-01"), flow_row("2026-08-28")];
+        let kept = filter_daily_window(rows, None);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn finalize_daily_csv_zero_rows_removes_stale_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("RPT_MAIN_MONEY_FLOW.csv");
+        std::fs::write(&path, "stale").unwrap();
+        let out = finalize_daily_csv(&path, Vec::new()).unwrap();
+        assert_eq!(out, path);
+        assert!(!path.exists(), "0 new rows must remove the stale CSV");
+    }
+
+    #[test]
+    fn finalize_daily_csv_zero_rows_without_file_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("RPT_MAIN_MONEY_FLOW.csv");
+        assert!(finalize_daily_csv(&path, Vec::new()).is_ok());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn finalize_daily_csv_writes_nonempty_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("RPT_MAIN_MONEY_FLOW.csv");
+        let out = finalize_daily_csv(&path, vec![flow_row("2026-08-28")]).unwrap();
+        assert_eq!(out, path);
+        assert!(path.exists());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("2026-08-28"));
+    }
+
+    #[test]
+    fn in_backfill_range_is_inclusive_on_both_ends() {
+        assert!(in_backfill_range("2026-08-27", "2026-08-27", "2026-08-28"));
+        assert!(in_backfill_range("2026-08-28", "2026-08-27", "2026-08-28"));
+        assert!(in_backfill_range("2026-08-27", "2026-08-27", "2026-08-27"));
+        assert!(!in_backfill_range("2026-08-26", "2026-08-27", "2026-08-28"));
+        assert!(!in_backfill_range("2026-08-29", "2026-08-27", "2026-08-28"));
     }
 }
