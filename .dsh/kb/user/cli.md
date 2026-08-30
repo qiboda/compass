@@ -129,7 +129,7 @@ cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 | `--dolt-dir` | 来自配置 `[dolt].compass_data_dir` | Dolt 数据库目录 |
 | `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
 | `--overwrite` | `false` | 替换已有数据而非合并 |
-| `--since` | （无） | 增量导入：仅导入各表日期列 >= since 的数据（YYYY-MM-DD，如 2026-08-21；`import` 命令仍用 YYYYMMDD）。日期列按表不同：财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）为 `report_date`；行情表（capital_main_flow/dragon_list/block_trade/index_daily）为 `trade_date`；institution_survey 为 `survey_date`。index_basic/stock_basic 不支持 `--since`（全量覆盖/镜像） |
+| `--since` | （无） | 增量导入：仅导入各表日期列 >= since 的数据（YYYY-MM-DD，如 2026-08-21；`import` 命令仍用 YYYYMMDD）。日期列按表不同：财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）为 `report_date`；行情表（capital_main_flow/dragon_list/block_trade/index_daily）为 `trade_date`；institution_survey 为 `survey_date`。index_basic/stock_basic 不支持 `--since`（全量覆盖/镜像）。增量 merge 前会校验 Dolt `< since` 历史与既有 parquet 一致性，不一致自动降级为全量导出（ref #343） |
 
 **指数/板块表（epic #255）**：`index_daily` / `index_basic` 存指数与板块数据
 （官方指数 + 行业板块，来源：东财 + THS，Rust 采集器 `index_daily`；
@@ -165,7 +165,7 @@ cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 **数据质量校验（ref #136）**：`import-compass` 写盘后自动校验数据完整性：
 
 - **全量导入**（无 `--since`/`--overwrite`/首次）：源 Dolt COUNT（含过滤条件）vs parquet 行数精确对比，不一致 → 报错退出（exit 1）
-- **增量 merge**：校验"不丢数据"——merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败走 fallback 时改为**不带 `--since` 的真全量导出**写回（保留历史），并对全量 Dolt COUNT 校验（ref #298）
+- **增量 merge**：merge 前先比对 Dolt `< since` 历史与旧 parquet `< since` 切片（双向 EXCEPT，可检出缺失历史/过期值/孤儿行三类分叉）；不一致 → **自动降级为不带 `--since` 的真全量导出**写回（先保留 `pre_merge_backup`），并对全量 Dolt COUNT 校验；一致 → 正常 merge，merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败 fallback 同全量导出（ref #298、#343）
 - **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/institution_survey/index_daily/index_basic）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，采集器写库时不填）
 - **⚠️ `--overwrite --since`**：显式覆盖时不再走增量 merge，而是用 `--since` 过滤后的导出**整体替换** parquet；该组合会丢掉过滤条件之外的历史行（与 `import --since` 同义）。无特殊需求应避免同时传这两个 flag（ref #298 外层根因提醒）。
 

@@ -406,6 +406,13 @@ struct AppendTableSpec<'a> {
 /// export rename (e.g. index_daily `trade_date` → `tradedate`). Any read or
 /// type error is treated conservatively as divergence (`Ok(false)`), matching
 /// the existing "corrupt parquet triggers a full-export recovery" semantics.
+///
+/// The `Result` wrapper is kept for a future strict-failure mode; today every
+/// internal error is deliberately mapped to `Ok(false)` (conservative
+/// fallback) and the `?` at the call site never fires. Cost note: this runs
+/// two EXCEPTs over the FULL `< since` history on every incremental import —
+/// O(history) but bounded by the table's pre-since rows, accepted in exchange
+/// for detecting auto-heal divergence (see decision record).
 #[allow(clippy::too_many_arguments)]
 fn incremental_history_matches(
     dolt_dir: &Path,
@@ -430,11 +437,18 @@ fn incremental_history_matches(
     };
     let hist_path = unique_work_path(&format!("{table_name}.hist"));
     if let Err(e) = std::fs::write(&hist_path, &hist_data) {
+        // Disk-full/interrupted writes can leave a partial staging file behind.
+        let _ = std::fs::remove_file(&hist_path);
         warn!("{table_name}: could not stage history slice ({e}); assuming divergent");
         return Ok(false);
     }
     let result = (|| -> Result<bool, Box<dyn std::error::Error>> {
         let duck = Connection::open_in_memory()?;
+        // Positional (SELECT *) EXCEPT on both sides — the invariant "old
+        // parquet column order == current select_cols order" must hold (both
+        // sides come from the same select_cols, see doc above); if a future
+        // schema change breaks it, DuckDB raises a column-count/type mismatch
+        // -> Err -> Ok(false) -> full export (safe, but worth knowing).
         // Dolt history rows not present (by value) in the old parquet slice.
         let dolt_extra: i64 = duck.query_row(
             &format!(
@@ -475,6 +489,15 @@ fn incremental_history_matches(
 /// rerun the Dolt query WITHOUT the `--since` filter, write a genuinely full
 /// export, then validate against the full Dolt row count (the old parquet may
 /// be corrupt, so a merge-level no-loss comparison cannot be relied on).
+///
+/// Backup retention policy (decision): the `{table}.pre_merge_backup_*` files
+/// are kept indefinitely for diagnosis, with no rotation — they live under
+/// the OS temp dir, are named with pid+SEQ (locatable), and are expected to
+/// be reclaimed by the system's temp cleaner; a fallback is rare (only on
+/// divergence or merge failure), so the accumulation rate is bounded in
+/// practice. Deliberately no auto-rotation here: deleting another process's
+/// backup (or the only record of a divergence) would destroy the diagnostic
+/// value this file exists for.
 fn recover_full_export(
     dolt_dir: &Path,
     path: &Path,
@@ -533,6 +556,16 @@ fn import_append_table<'a>(
     let effective_since = if path.exists() { since } else { None };
     let select_cols = select_cols.unwrap_or("*");
     let order_cols = dolt_order_cols.unwrap_or(partition_cols);
+
+    // #343: the history check stages its Dolt slice under
+    // `temp_dir()/compass_parquet_work` (see `unique_work_path`), so the
+    // directory must exist BEFORE the check runs — otherwise the stage write
+    // fails, the check conservatively reports divergence, and every
+    // incremental run would silently degrade to a full export without ever
+    // reaching the merge branch's own create_dir_all below (the directory
+    // would then never be created). Existing fallback/merge paths that also
+    // write staging files keep their own create_dir_all as a defense.
+    std::fs::create_dir_all(std::env::temp_dir().join("compass_parquet_work"))?;
 
     // #343: before trusting the incremental merge, verify the old parquet
     // mirrors Dolt for all rows older than `since`. This MUST run before the
@@ -600,6 +633,9 @@ fn import_append_table<'a>(
         let sql = format!(
             // #343: keep `priority`/`rn` for the WHERE dedupe only — never
             // write the internal columns into the production parquet.
+            // Positional UNION ALL: both sides must expose the same column
+            // order (old parquet == current select_cols); if a schema change
+            // breaks it, DuckDB raises a mismatch -> fallback (safe).
             "COPY (SELECT * EXCLUDE (priority, rn) FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY {partition_cols} ORDER BY {priority_order}) AS rn \
              FROM (SELECT *, 1 AS priority FROM read_parquet('{}') \
              UNION ALL SELECT *, 2 FROM read_parquet('{}'))) WHERE rn = 1 ORDER BY {partition_cols}) \
@@ -619,8 +655,13 @@ fn import_append_table<'a>(
             // cannot be relied on here).
             recover_full_export(dolt_dir, &path, table_name, select_cols, order_cols)?;
         } else {
-            std::fs::copy(&tmp_path, &path)?;
-            let merged_count = crate::validate::parquet_row_count(&path)?;
+            // No-loss guard against the merge result BEFORE it overwrites the
+            // production parquet: if the guard trips (old parquet with exact
+            // duplicate rows — EXCEPT is duplicate-insensitive; unreachable in
+            // production because every append table has a unique PK), the
+            // production file must remain untouched so `--overwrite` can
+            // recover it.
+            let merged_count = crate::validate::parquet_row_count(&tmp_path)?;
             if let Some(old_rows) = old_count
                 && merged_count < old_rows
             {
@@ -629,6 +670,7 @@ fn import_append_table<'a>(
                 )
                 .into());
             }
+            std::fs::copy(&tmp_path, &path)?;
         }
         let _ = std::fs::remove_file(&new_path);
         let _ = std::fs::remove_file(&tmp_path);
@@ -3421,6 +3463,16 @@ mod tests {
     // 合并 "旧 parquet ∪ Dolt >= since 切片"，早于 since 的缺失/过期行永久
     // 留缺；merge SQL 外层 SELECT * 把 priority/rn 写进正式 parquet。
 
+    /// #343 test isolation (review P2-1): `pre_merge_backup` filenames embed
+    /// only pid+SEQ, and several tests share a stem (capital_main_flow /
+    /// index_daily). The no-fallback tests (`second_run`,
+    /// `index_daily_fast_path`) assert that NO new backup files appear during
+    /// their window; the divergence tests for the same stem create them. Under
+    /// parallel `cargo test` execution those windows overlap, making the
+    /// assertion order-dependent, so the stem is serialized via these locks.
+    static CAPITAL_MAIN_FLOW_STEM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static INDEX_DAILY_STEM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Sorted column names of a parquet file (DuckDB DESCRIBE).
     fn parquet_columns(path: &std::path::Path) -> Vec<String> {
         let duck = duckdb::Connection::open_in_memory().expect("duckdb");
@@ -3432,8 +3484,8 @@ mod tests {
             .expect("prepare describe")
             .query_map([], |row| row.get(0))
             .expect("describe")
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<String>, _>>()
+            .expect("decode describe rows");
         cols.sort();
         cols
     }
@@ -3448,7 +3500,9 @@ mod tests {
         let prefix = format!("{stem}.pre_merge_backup_{}", std::process::id());
         std::fs::read_dir(&dir)
             .map(|rd| {
-                rd.filter_map(|e| e.ok())
+                rd.collect::<Result<Vec<_>, _>>()
+                    .expect("read dir entries")
+                    .iter()
                     .any(|e| e.file_name().to_string_lossy().starts_with(&prefix))
             })
             .unwrap_or(false)
@@ -3468,7 +3522,9 @@ mod tests {
         let prefix = format!("{stem}.pre_merge_backup_{}", std::process::id());
         std::fs::read_dir(&dir)
             .map(|rd| {
-                rd.filter_map(|e| e.ok())
+                rd.collect::<Result<Vec<_>, _>>()
+                    .expect("read dir entries")
+                    .iter()
                     .map(|e| e.file_name().to_string_lossy().to_string())
                     .filter(|n| n.starts_with(&prefix))
                     .collect()
@@ -3486,6 +3542,7 @@ mod tests {
     /// and the assertions below fail.
     #[test]
     fn incremental_merge_repairs_missing_history_before_since() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3559,6 +3616,7 @@ mod tests {
     /// slice), the assertion fails.
     #[test]
     fn incremental_merge_repairs_stale_history_values() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3630,6 +3688,7 @@ mod tests {
     /// fails.
     #[test]
     fn incremental_merge_removes_orphaned_parquet_rows() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3692,13 +3751,18 @@ mod tests {
     /// #343 attack (c-boundary): a row dated exactly `since - 1 day` is
     /// backfilled into Dolt after the first export — the seam between the
     /// history check (`< since`) and the incremental slice (`>= since`).
-    /// Also locks that the `== since` row (present on both sides) is kept
-    /// exactly once with its value.
+    /// Note: this scenario is inherently divergent (the `since - 1` row is
+    /// missing from the old parquet), so the repair path taken here is the
+    /// FULL-EXPORT fallback, not a merge — the `== since` row is naturally
+    /// unique in the full export. The merge-deduplication contract for a
+    /// `== since` row present on BOTH sides is covered by the fast-path
+    /// tests (`incremental_merge_fast_path_*` / `second_run_no_fallback`).
     ///
     /// RED today: the merge keeps only the 5 original rows; the
     /// `2026-01-04` (since-1 day) row is silently missing.
     #[test]
     fn incremental_merge_since_boundary_day_before_since() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3924,6 +3988,7 @@ mod tests {
     /// than since 2026-01-05) is missing after the merge.
     #[test]
     fn incremental_merge_index_daily_tradedate_detects_history_divergence() {
+        let _stem = INDEX_DAILY_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), INDEX_DAILY_PRODUCTION_SCHEMA);
@@ -3989,6 +4054,76 @@ mod tests {
         );
     }
 
+    /// #343 review P2-1 (positive lock): `parquet_date_col` must map the
+    /// export rename (`trade_date` → `tradedate`) so a CONSISTENT history
+    /// takes the fast-path merge. A wrong mapping (e.g. `None` → filtering
+    /// the parquet side by `trade_date`) raises a Binder error → Ok(false) →
+    /// full-export fallback, which the divergence test above cannot
+    /// distinguish from a correct fast path. Lock: no new pre_merge_backup
+    /// (no fallback), row set intact, no internal columns.
+    #[test]
+    fn incremental_merge_index_daily_fast_path_no_fallback() {
+        let _stem = INDEX_DAILY_STEM_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        setup_dolt(tmp.path());
+        dolt_sql(tmp.path(), INDEX_DAILY_PRODUCTION_SCHEMA);
+
+        // One pre-since bar + five >= since bars (the >= since slice must
+        // stay above the 500-byte tiny-data skip).
+        dolt_sql(
+            tmp.path(),
+            "INSERT INTO index_daily \
+             (symbol, trade_date, index_type, open, close, high, low, volume, amount) VALUES \
+             ('SH000001', '2026-01-02', 'index', 2900.0, 2910.0, 2920.0, 2890.0, 1.0e8, 2.0e8), \
+             ('SH000001', '2026-01-05', 'index', 3000.0, 3010.0, 3020.0, 2990.0, 1.1e8, 2.1e8), \
+             ('SH000001', '2026-01-06', 'index', 3100.0, 3110.0, 3120.0, 3090.0, 1.2e8, 2.2e8), \
+             ('SH000001', '2026-01-07', 'index', 3200.0, 3210.0, 3220.0, 3190.0, 1.3e8, 2.3e8), \
+             ('SH000001', '2026-01-08', 'index', 3300.0, 3310.0, 3320.0, 3290.0, 1.4e8, 2.4e8), \
+             ('SH000001', '2026-01-09', 'index', 3400.0, 3410.0, 3420.0, 3390.0, 1.5e8, 2.5e8)",
+        );
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::IndexDaily,
+            false,
+            None,
+        )
+        .expect("first full export");
+
+        // Consistent history (no Dolt change before since): snapshot the
+        // backup files, then run the incremental import.
+        let backups_before = this_process_pre_merge_backup_files("index_daily");
+        run(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            CompassTable::IndexDaily,
+            false,
+            Some("2026-01-05"),
+        )
+        .expect("fast-path incremental merge");
+
+        let parquet = tmp.path().join("index_daily.parquet");
+        assert_eq!(
+            read_parquet_row_count(&parquet),
+            6,
+            "consistent history must keep the full row set"
+        );
+        assert!(
+            !parquet_columns(&parquet).contains(&"priority".to_string())
+                && !parquet_columns(&parquet).contains(&"rn".to_string()),
+            "fast-path merge output must not carry internal columns"
+        );
+        let backups_after = this_process_pre_merge_backup_files("index_daily");
+        let new_backups: Vec<&String> = backups_after
+            .iter()
+            .filter(|f| !backups_before.contains(f))
+            .collect();
+        assert!(
+            new_backups.is_empty(),
+            "consistent history must take the fast path — no pre_merge_backup, got {new_backups:?}"
+        );
+    }
+
     /// #343 attack (f-scale-shape): a large old parquet (40 rows) with a
     /// single missing historical row must still trigger the repair path.
     /// Row-count guards cannot detect this (old 40 == merged 40), and the
@@ -3998,6 +4133,7 @@ mod tests {
     /// is missing, assertion fails.
     #[test]
     fn incremental_merge_large_history_single_missing_row() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -4067,6 +4203,7 @@ mod tests {
     /// second run a clean merge with no backup.
     #[test]
     fn incremental_merge_second_run_no_fallback_no_leak() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -4229,6 +4366,7 @@ mod tests {
 
     #[test]
     fn incremental_merge_empty_after_since_slice_still_repairs_auto_healed_history() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);

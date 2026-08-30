@@ -213,6 +213,10 @@ fn extract_backfill_window(symbol: &str, data: &Value, start: &str, end: &str) -
 /// exponential backoff (`backoff * 2^attempt`); Ok on first success, Err
 /// after exhaustion. #342: same backoff formula as the daily window
 /// (`fetch_symbol_window`, 2s/4s); the caller aborts the whole batch on Err.
+///
+/// `attempts` is the total number of op invocations (>= 1); 0 is rejected
+/// with `InvalidInput` — an empty loop would otherwise fall through to the
+/// trailing `unreachable!` and lie about the retry count.
 async fn retry_sina_backfill<F, Fut>(
     symbol: &str,
     attempts: u32,
@@ -223,14 +227,22 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<Vec<FlowRecord>>>,
 {
+    if attempts == 0 {
+        return Err(CollectError::InvalidInput(
+            "retry_sina_backfill: attempts must be >= 1".to_string(),
+        ));
+    }
     for attempt in 0..attempts {
         match op().await {
             Ok(rows) => return Ok(rows),
             Err(e) => {
                 if attempt + 1 < attempts {
                     // Plan #342: 2s/4s exponential backoff, same formula as the
-                    // daily window (`backoff * 2^attempt`).
-                    let wait = backoff * (1u64 << attempt) as u32;
+                    // daily window (`backoff * 2^attempt`). Invariant: the
+                    // sleeps must stay >= SINA_MIN_INTERVAL (100ms) because the
+                    // throttle is only re-armed on the next symbol's acquire,
+                    // not between retries of one symbol — see backfill().
+                    let wait = backoff * (1u32 << attempt);
                     eprintln!(
                         "    retry {}/{} for {symbol} in {wait:?}: {e}",
                         attempt + 1,
@@ -740,6 +752,13 @@ mod tests {
     // no_proxy() — so HTTPS_PROXY pointing at a just-released local port
     // makes every request fail instantly with connection refused (no DNS,
     // no external network, no timeouts).
+    //
+    // Wall-clock cost: this is an end-to-end test through the production
+    // backfill() path, so it sleeps the real 2s/4s backoff (~6s) before
+    // asserting exhaustion. The backoff floor itself is covered with an
+    // injected short backoff in retry_sina_backfill_exponential_backoff_sequence
+    // (10ms/20ms — not slept here); this test keeps the production constants
+    // on purpose, it is the strict-abort + error-naming contract.
 
     #[tokio::test]
     async fn backfill_permanent_failure_names_symbol_and_attempts() {
@@ -877,17 +896,22 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("3 failing attempts must surface as Err, got Ok"),
         };
-        assert!(
-            matches!(
-                &err,
-                CollectError::BackfillSymbolFailed {
-                    symbol,
-                    attempts: 3,
-                    ..
-                } if symbol == "SH600519"
+        match &err {
+            CollectError::BackfillSymbolFailed {
+                symbol,
+                attempts: 3,
+                reason,
+            } => {
+                assert_eq!(symbol, "SH600519", "exhaustion must name the symbol");
+                assert!(
+                    reason.contains("boom"),
+                    "the underlying error text must be forwarded, got: {reason:?}"
+                );
+            }
+            other => panic!(
+                "exhaustion must surface BackfillSymbolFailed{{symbol, attempts: 3}}, got: {other:?}"
             ),
-            "exhaustion must name the symbol and the attempt count, got: {err:?}"
-        );
+        }
     }
 
     #[tokio::test]
@@ -902,8 +926,12 @@ mod tests {
             Ok(_) => panic!("must exhaust, got Ok"),
         };
         assert!(matches!(err, CollectError::BackfillSymbolFailed { .. }));
-        // Two waits of 10ms/20ms (backoff * 2^attempt for attempt 0 and 1)
-        // plus at least one op call; the elapsed floor is the two waits.
+        // Known blind spot (documented, not locked): the elapsed floor only
+        // proves >= 10+20ms of total waiting, not the exact sequence (a single
+        // 30ms sleep or an extra post-exhaustion sleep would also pass), and
+        // the "no sleep after the last failure" guarantee is not asserted.
+        // Locking the exact sequence would need tokio time injection; the
+        // production 2s/4s formula is kept identical to the daily window.
         assert!(
             t0.elapsed() >= Duration::from_millis(30),
             "exponential backoff must sleep 10+20ms before exhaustion, elapsed: {:?}",

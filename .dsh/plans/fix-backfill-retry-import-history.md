@@ -212,6 +212,22 @@ if effective_since.is_some() && !overwrite && path.exists() {
 - 决策 2：#342 用泛型 retry runner + 退避注入（而非复制 fetch_symbol_window 循环）——
   使重试策略可单元测试（网络路径不可测），生产退避与每日路径同公式同常量语义。
 
+## 实现修正记录（review 后补，与 588b71a amendments 一并追溯）
+
+- #342 契约漂移：`BackfillSymbolFailed` 错误字段设计稿为 `source`，实现为 `reason`——
+  thiserror 2.0.19 会把字面名为 `source` 的字段自动当作 error source 处理（要求实现
+  `std::error::Error`），`String` 不满足 → 编译失败；改名 `reason` 且 Display 措辞
+  保持 `failed after {attempts} attempts: {reason}`（落盘测试契约不变）。
+  review 发现 588b71a amendment 未记录此漂移，现补。
+- #343 review P1-1 修复：`incremental_history_matches` 写 hist 前补
+  `create_dir_all(temp_dir()/compass_parquet_work)`——目录缺失时 hist 写失败 → 保守
+  降级 → 增量语义永久退化（且备份同样失败）；现置于检查块前，merge 分支的创建保留为防御。
+- #343 review P2-2 决策：`pre_merge_backup` 备份**不自动轮转**——诊断文件的价值高于
+  /tmp 占用，依赖系统临时清理；避免删除其它进程/唯一诊断记录（注释已记录）。
+- #343 review P2-1 测试竞态：no-fallback 断言测试与同 stem 的 fallback 测试（均写
+  `/tmp/compass_parquet_work` 的 pid 前缀 backup）在并行 cargo test 下窗口重叠 →
+  引入 stem 级静态 Mutex（capital_main_flow / index_daily 各一）串行化相关测试。
+
 ## 实现后
 
 1. `cargo test`（workspace）/ `cargo clippy -- -D warnings` / `cargo fmt --check` 全绿。
