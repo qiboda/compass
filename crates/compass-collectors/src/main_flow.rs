@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -25,6 +26,12 @@ pub const SINA_URL: &str =
 pub const SINA_DAILY_NUM: usize = 20;
 /// Historical backfill window: rows returned per symbol per request.
 pub const SINA_BACKFILL_NUM: usize = 1000;
+/// Per-symbol backfill retry count before the whole batch aborts (#342).
+pub const SINA_BACKFILL_RETRIES: u32 = 3;
+/// Base backoff for backfill retries; per-attempt wait is
+/// `SINA_BACKFILL_BACKOFF * 2^attempt` (2s/4s, same formula as the daily
+/// window in `fetch_symbol_window`).
+const SINA_BACKFILL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn sina_headers() -> HashMap<String, String> {
     let mut headers = HashMap::new();
@@ -182,6 +189,33 @@ fn finalize_daily_csv(output: &Path, rows: Vec<FlowRecord>) -> Result<PathBuf> {
 /// `[start, end]` inclusive membership (ISO dates compare lexicographically).
 fn in_backfill_range(day: &str, start: &str, end: &str) -> bool {
     day >= start && day <= end
+}
+
+/// Extract the in-range records of one Sina backfill page (pure).
+///
+/// #342: parse + range-filter logic extracted from the `backfill` loop so a
+/// per-symbol window can be retried as a unit without re-parsing the page, and
+/// tested without any network. Unparseable rows are skipped (same semantics as
+/// the inline loop); within-range rows keep the newest per (symbol, day).
+fn extract_backfill_window(symbol: &str, data: &Value, start: &str, end: &str) -> Vec<FlowRecord> {
+    unimplemented!("backfill window extraction: interface landed, behavior pending (#342)")
+}
+
+/// Retry a single-symbol Sina backfill fetch up to `attempts` times with
+/// exponential backoff (`backoff * 2^attempt`); Ok on first success, Err
+/// after exhaustion. #342: same backoff formula as the daily window
+/// (`fetch_symbol_window`, 2s/4s); the caller aborts the whole batch on Err.
+async fn retry_sina_backfill<F, Fut>(
+    symbol: &str,
+    attempts: u32,
+    backoff: std::time::Duration,
+    mut op: F,
+) -> Result<Vec<FlowRecord>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Vec<FlowRecord>>>,
+{
+    unimplemented!("backfill retry runner: interface landed, behavior pending (#342)")
 }
 
 /// Fetch the newest per-symbol window from Sina (`num=20`, page 1). A `null`
@@ -651,5 +685,94 @@ mod tests {
         assert!(in_backfill_range("2026-08-27", "2026-08-27", "2026-08-27"));
         assert!(!in_backfill_range("2026-08-26", "2026-08-27", "2026-08-28"));
         assert!(!in_backfill_range("2026-08-29", "2026-08-27", "2026-08-28"));
+    }
+
+    // ── Adversarial: backfill per-symbol retry (#342) ────────────────────
+    //
+    // RED rationale (plan fix-backfill-retry-import-history #342): backfill()
+    // today has NO per-symbol retry — the first transport error propagates
+    // via `?` (main_flow.rs backfill loop) and the error names neither the
+    // symbol nor the attempt count. The fix must retry SINA_BACKFILL_RETRIES
+    // (3) times with the daily-path backoff and fail strict with a symbol-
+    // naming error (BackfillSymbolFailed) after exhaustion.
+    //
+    // Deterministic failure injection WITHOUT any HTTP mock: wreq 0.16.1
+    // enables the system proxy by default (ClientBuilder auto_sys_proxy:
+    // true, client.rs build()) and HttpClient::new() does NOT call
+    // no_proxy() — so HTTPS_PROXY pointing at a just-released local port
+    // makes every request fail instantly with connection refused (no DNS,
+    // no external network, no timeouts).
+
+    #[tokio::test]
+    async fn backfill_permanent_failure_names_symbol_and_attempts() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // Dead local port: bind then release.
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
+            l.local_addr().expect("local addr").port()
+        };
+        let proxy = format!("http://127.0.0.1:{port}");
+        let keys = [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "COMPASS_CSV_DIR",
+        ];
+        let saved: Vec<(String, Option<std::ffi::OsString>)> = keys
+            .iter()
+            .map(|k| (k.to_string(), std::env::var_os(k)))
+            .collect();
+        unsafe {
+            std::env::set_var("HTTPS_PROXY", &proxy);
+            std::env::set_var("https_proxy", &proxy);
+            std::env::set_var("HTTP_PROXY", &proxy);
+            std::env::set_var("http_proxy", &proxy);
+            std::env::set_var("ALL_PROXY", &proxy);
+            std::env::set_var("all_proxy", &proxy);
+            // Neutralise any ambient NO_PROXY (e.g. "localhost,127.0.0.1")
+            // that would bypass the dead proxy and hit the real network.
+            std::env::set_var("NO_PROXY", "");
+            std::env::set_var("no_proxy", "");
+            // Keep the CSV output inside the temp dir (csv_dir() creates it).
+            std::env::set_var("COMPASS_CSV_DIR", tmp.path());
+        }
+
+        let err = backfill("2026-08-03", "2026-08-25", Some(&["SH600519".to_string()]))
+            .await
+            .expect_err("backfill must fail after retry exhaustion");
+
+        // Plan #342 contract: strict failure naming the symbol and the
+        // attempt count. RED today: bare HTTP error with neither.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SH600519") && msg.contains("3 attempts"),
+            "backfill error must name the symbol and 3-attempt exhaustion, got: {msg:?}"
+        );
+
+        // Strict abort: no partial CSV may be written on failure (write_csv
+        // must stay after the per-symbol loop).
+        let csv_file = tmp.path().join("RPT_MAIN_MONEY_FLOW_backfill.csv");
+        assert!(
+            !csv_file.exists(),
+            "no partial backfill CSV may be written on failure"
+        );
+
+        // Restore the environment so later tests do not inherit the dead
+        // proxy (success path only; a failure aborts the process anyway).
+        for (k, v) in saved {
+            unsafe {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
     }
 }
