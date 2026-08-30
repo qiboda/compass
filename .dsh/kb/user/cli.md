@@ -349,7 +349,7 @@ config.toml**。
 **财务三表增量修订检测（issue #299）**：`cargo run -p compass-collectors -- fetch balance-sheet --incremental`（income/cash_flow 同理）改用 **UPDATE_DATE 时间锚点**——filter=`(UPDATE_DATE>='{anchor}')`，锚点 = `min(data_updates.last_updated, state.json last_update_date)`（查 `fin_balance_sheet`/`fin_income`/`fin_cash_flow` 各自的 data_updates 行）。**无 anchor（首跑/无 state/无 data_updates）时固定 `2020-01-01`** 走一次 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举。增量模式忽略 `--years/--periods`。导入改 `import_replace_table(merge=True)` + **`INSERT ... ON DUPLICATE KEY UPDATE`**（SELECT 侧全列唯一别名 + ODKU 无前缀别名引用），同 `(symbol, report_date)` 修订行覆盖旧值、历史永不丢失；CSV 写入后按 `(SECURITY_CODE, REPORT_DATE)` keep-LAST 去重。state.json 记录 `last_report_date` + `last_update_date`（`total_rows`/`last_run`）。`compass-collectors sync` 已对三表默认 `run(incremental=True)`；手动全量枚举可运行不带 `--incremental` 的 fetch（仍 merge 导入）。**已知限制**：与 fin_indicators 相同——不做锚点前历史回补；fetch 与 import 应同日运行；API 下架/删除行不传播到 Dolt。
 
 SEPA 采集器说明：
-- `main_flow`：新浪 `MoneyFlow.ssl_qsfx_lscjfb` 逐股日频窗口（`daima=sh600519` 形式，num=20 只导 `trade_date > last_report_date` 的行）；字段映射 `main_net_inflow=r0_net+r1_net`、`main_net_inflow_rate=(r0_net+r1_net)/(r0+r1+r2+r3)`（除零→0）、r0_net/r1_net/r2_net/r3_net → super/large/medium/small、`trade_date=opendate`；按 (symbol, trade_date) merge 导入；0 新行删陈旧 CSV 且按交易日历判定为 no-op（#338）
+- `main_flow`：新浪 `MoneyFlow.ssl_qsfx_lscjfb` 逐股日频窗口（`daima=sh600519` 形式，num=20 只导 `trade_date > last_report_date` 的行）；字段映射 `main_net_inflow=r0_net+r1_net`、`main_net_inflow_rate=(r0_net+r1_net)/(r0+r1+r2+r3)×100`（百分数，除零→0）、r0_net/r1_net/r2_net/r3_net → super/large/medium/small、`trade_date=opendate`；按 (symbol, trade_date) merge 导入；0 新行删陈旧 CSV 且按交易日历判定为 no-op（#338）；逐股窗口建议在**盘后**运行（交易日数据发布前运行会 0 行并因日历含今日而失败，次日重跑可自愈）
 - `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
 - `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
@@ -468,6 +468,9 @@ cargo run --bin compass-data -- sepa backfill-dates --start 2026-08-13 --end 202
 （`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量；data_updates 只读不导出）。
 SEPA 派生表不再随每日管线自动计算；需要时手动运行
 `compass-data sepa backfill-dates` → `sepa temperature` → `sepa score --top 50`。
+**手动运行写回 Dolt 后必须自行提交并推送**（`sepa` 写回的表不在
+update-database.sh 的 COLLECTOR_TABLES allowlist 内，脚本不会提交它们）：
+`cd /data/compass-data/compass_data && dolt add <表> && dolt commit -m "..." && dolt push origin main`。
 
 ### 同步用时统计（issue #334）
 

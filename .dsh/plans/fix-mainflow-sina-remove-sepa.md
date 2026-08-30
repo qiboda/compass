@@ -44,8 +44,8 @@
   5. 0 新行 → `remove_file(csv)` + `Ok(路径)`（与 dragon::run 周末行为一致，
      import 因缺文件返回 0 → 由 #338 日历守卫判定 no-op）。
   6. 非空 → `write_csv`。
-- **字段映射**（与旧 EastMoney 口径一致）：
-  `main_net_inflow = r0_net + r1_net`；`main_net_inflow_rate = (r0_net+r1_net)/(r0+r1+r2+r3)`（除零→0）；
+- **字段映射**（与旧 EastMoney 口径一致；rate 为百分数，与历史 f184 行同量纲，2026-08-30 用户确认 ×100）：
+  `main_net_inflow = r0_net + r1_net`；`main_net_inflow_rate = (r0_net+r1_net)/(r0+r1+r2+r3)×100`（除零→0）；
   `super_large_net = r0_net`；`large_net = r1_net`；`medium_net = r2_net`；`small_net = r3_net`；
   `trade_date = opendate`；`update_date = today()`。
   `netamount`/`ratioamount`（全口径总净额/占比）不复用。
