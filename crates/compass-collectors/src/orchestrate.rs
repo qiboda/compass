@@ -51,6 +51,59 @@ fn require_nonzero(rows: u64, label: &str) -> Result<()> {
     }
 }
 
+/// Decision layer for 0-row daily imports (issue #338): a no-op only when the
+/// window contains no trading day, or when the calendar itself is unavailable
+/// / inverted; any other calendar error propagates (a broken data source must
+/// not be silently papered over).
+fn daily_zero_row_decision(
+    calendar_days: std::result::Result<Vec<String>, CollectError>,
+) -> Result<()> {
+    match calendar_days {
+        Ok(days) if days.is_empty() => {
+            eprintln!("[sync] 0-row import but no trading days in window — no-op");
+            Ok(())
+        }
+        Ok(_) => require_nonzero(0, "daily"),
+        Err(CollectError::EmptyCalendar) => {
+            eprintln!("[sync] trade calendar unavailable; 0-row import treated as no-op");
+            Ok(())
+        }
+        Err(CollectError::InvertedRange { .. }) => {
+            eprintln!("[sync] inverted calendar window; 0-row import treated as no-op");
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn next_day(date: &str) -> Result<String> {
+    let d = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| {
+        CollectError::InvalidDate {
+            label: "last_report_date".into(),
+            value: date.into(),
+        }
+    })?;
+    Ok((d + Duration::days(1)).format("%Y-%m-%d").to_string())
+}
+
+/// Daily-table row guard: `rows > 0` succeeds without touching the calendar;
+/// zero rows consult the trade calendar (anchor+1 .. today) — the calendar
+/// result is handed to `daily_zero_row_decision`.
+async fn require_daily_rows(table: &str, rows: u64) -> Result<()> {
+    if rows > 0 {
+        return Ok(());
+    }
+    let end = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let start = match crate::dolt::last_report_date(table).await? {
+        Some(since) => next_day(&since)?,
+        None => (Local::now().date_naive() - Duration::days(90))
+            .format("%Y-%m-%d")
+            .to_string(),
+    };
+    let calendar = crate::calendar::trade_calendar(&start, &end).await;
+    daily_zero_row_decision(calendar)
+}
+
 /// Run a sync phase, record its wall time to the optional timing writer, and
 /// return the original result. Timing failures are warnings only.
 macro_rules! timed {
@@ -92,7 +145,7 @@ pub async fn fetch(
         "dragon" => dragon::run(None, None, page_size).await,
         "block_trade" => block_trade::run(None, None, None, page_size).await,
         "institution_survey" => institution_survey::run(None, page_size).await,
-        "main_flow" => main_flow::run(DEFAULT_PAGE_SIZE * 10).await,
+        "main_flow" => main_flow::run().await,
         "index_daily" => index_daily::run().await,
         other => Err(CollectError::InvalidInput(format!(
             "unknown fetch target: {other}"
@@ -517,7 +570,7 @@ pub async fn sync(_restart: bool) -> Result<()> {
         "import",
         dragon::import_to_dolt(None).await
     )?;
-    require_nonzero(rows, "dragon_list")?;
+    require_daily_rows("dragon_list", rows).await?;
 
     eprintln!("\n[sync] Fetching block_trade...");
     let _ = timed!(
@@ -532,7 +585,7 @@ pub async fn sync(_restart: bool) -> Result<()> {
         "import",
         block_trade::import_to_dolt(None).await
     )?;
-    require_nonzero(rows, "block_trade")?;
+    require_daily_rows("block_trade", rows).await?;
 
     eprintln!("\n[sync] Fetching institution_survey...");
     let _ = timed!(
@@ -550,19 +603,14 @@ pub async fn sync(_restart: bool) -> Result<()> {
     require_nonzero(rows, "institution_survey")?;
 
     eprintln!("\n[sync] Fetching main_flow...");
-    let _ = timed!(
-        &timing,
-        "main_flow",
-        "fetch",
-        main_flow::run(DEFAULT_PAGE_SIZE * 10).await
-    )?;
+    let _ = timed!(&timing, "main_flow", "fetch", main_flow::run().await)?;
     let rows = timed!(
         &timing,
         "main_flow",
         "import",
         main_flow::import_to_dolt(None).await
     )?;
-    require_nonzero(rows, "capital_main_flow")?;
+    require_daily_rows("capital_main_flow", rows).await?;
 
     eprintln!("\n[sync] Fetching index_daily...");
     let _ = timed!(&timing, "index_daily", "fetch", index_daily::run().await)?;
@@ -579,7 +627,7 @@ pub async fn sync(_restart: bool) -> Result<()> {
         "import",
         index_daily::import_to_dolt(None).await
     )?;
-    require_nonzero(daily_rows, "index_daily")?;
+    require_daily_rows("index_daily", daily_rows).await?;
 
     eprintln!("\n[sync] Updating data_updates...");
     for tbl in [
@@ -604,6 +652,7 @@ pub async fn sync(_restart: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn last_csv_cell_ignores_blank_lines() {
@@ -624,5 +673,140 @@ mod tests {
             4,
             "capital_main_flow, index_daily, dragon_list, block_trade"
         );
+    }
+
+    // ── Adversarial: daily zero-row calendar decision (#338) ──────────────
+    //
+    // daily_zero_row_decision is the pure decision layer over the calendar
+    // query result.  RED before #338: the function does not exist yet
+    // (compile error); after a first compilable interface commit the GREEN
+    // contract below must hold exactly.
+
+    /// Trading days exist in (anchor+1 .. today], yet zero rows were imported:
+    /// the pipeline must FAIL (require_nonzero semantics) — a silent Ok here
+    /// would mask a broken data source exactly like the #306 weekend bug but
+    /// on a trading day.
+    #[test]
+    fn daily_zero_row_decision_nonempty_calendar_fails() {
+        let days = vec!["2026-08-28".to_string()];
+        let err = daily_zero_row_decision(Ok(days)).unwrap_err();
+        assert!(
+            matches!(err, CollectError::InvalidInput(_)),
+            "trading days exist but zero rows imported: must fail, got {err:?}"
+        );
+    }
+
+    /// Ok(empty) must be a no-op.  Adversarial: `trade_calendar` today returns
+    /// Err(EmptyCalendar) for an empty range, but the pure decision function
+    /// must not unwrap/short-circuit — a future calendar refactor that returns
+    /// Ok(empty) must still be treated as a no-op, not as a failure.
+    #[test]
+    fn daily_zero_row_decision_empty_list_is_noop() {
+        assert!(daily_zero_row_decision(Ok(Vec::new())).is_ok());
+    }
+
+    /// Err(EmptyCalendar) = calendar unavailable → weekend/no-trading-day
+    /// window → zero rows is legitimate; must be a no-op.
+    #[test]
+    fn daily_zero_row_decision_empty_calendar_error_is_noop() {
+        assert!(daily_zero_row_decision(Err(CollectError::EmptyCalendar)).is_ok());
+    }
+
+    /// Inverted range (anchor computed after today) must be a no-op, not a
+    /// hard failure: a clock skew or empty anchor must never abort sync.
+    #[test]
+    fn daily_zero_row_decision_inverted_range_is_noop() {
+        assert!(
+            daily_zero_row_decision(Err(CollectError::InvertedRange {
+                start: "2026-08-29".into(),
+                end: "2026-08-28".into(),
+            }))
+            .is_ok()
+        );
+    }
+
+    /// MissingRepo (investment_data absent) is NOT one of the two tolerated
+    /// calendar errors: it must propagate — otherwise a missing repo would be
+    /// silently papered over as "no trading days".
+    #[test]
+    fn daily_zero_row_decision_propagates_missing_repo() {
+        let err = daily_zero_row_decision(Err(CollectError::MissingRepo(PathBuf::from(
+            "/nonexistent/investment_data",
+        ))))
+        .unwrap_err();
+        assert!(matches!(err, CollectError::MissingRepo(_)));
+    }
+
+    /// Dolt subprocess failure must propagate — same rationale as above.
+    #[test]
+    fn daily_zero_row_decision_propagates_dolt_error() {
+        let err = daily_zero_row_decision(Err(CollectError::Dolt {
+            stderr: "mock dolt failure".into(),
+        }))
+        .unwrap_err();
+        assert!(matches!(err, CollectError::Dolt { .. }));
+    }
+
+    /// Adversarial whitelist-complement check: ANY error outside
+    /// {EmptyCalendar, InvertedRange} must propagate.  A naive implementation
+    /// that only special-cases Ok(empty)/Err(EmptyCalendar) but swallows
+    /// everything else (e.g. `let _ = ...; Ok(())`) would hide real failures.
+    #[test]
+    fn daily_zero_row_decision_propagates_other_errors() {
+        let err =
+            daily_zero_row_decision(Err(CollectError::InvalidInput("boom".into()))).unwrap_err();
+        assert!(matches!(err, CollectError::InvalidInput(_)));
+        let err = daily_zero_row_decision(Err(CollectError::InvalidDate {
+            label: "start".into(),
+            value: "2026-08-99".into(),
+        }))
+        .unwrap_err();
+        assert!(matches!(err, CollectError::InvalidDate { .. }));
+    }
+
+    /// require_nonzero is still the backfill-path guard (plan #338 keeps it
+    /// for capital_main_flow backfill: 0 rows = broken source, must fail).
+    /// Adversarial: locks the error message shape ("0 rows" + table label) so
+    /// a refactor that silently turns the backfill path into a no-op gets
+    /// caught at the message-contract level even if the call-site changes.
+    #[test]
+    fn require_nonzero_zero_row_message_contract() {
+        let err = require_nonzero(0, "capital_main_flow").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("capital_main_flow"),
+            "table label must appear in the error: {msg}"
+        );
+        assert!(
+            msg.contains("0 rows"),
+            "row count must appear in the error: {msg}"
+        );
+    }
+
+    // ── Requirement: daily zero-row calendar decision (#338) ───────────────
+    //
+    // Acceptance contract from plan fix-mainflow-sina-remove-sepa (#338):
+    // the Ok(non-empty) branch must fail with InvalidInput whose message
+    // contains "import returned 0 rows" (require_nonzero wording), and the
+    // require_daily_rows quick path must return Ok for rows>0 without touching
+    // the calendar.  The no-op/propagate branches are locked by the
+    // adversarial tests above — these two cover the remaining contract text.
+
+    #[test]
+    fn daily_zero_row_decision_nonempty_calendar_error_mentions_zero_rows() {
+        let err = daily_zero_row_decision(Ok(vec!["2026-08-28".to_string()])).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("import returned 0 rows"),
+            "plan #338: Ok(non-empty calendar) + 0 rows must carry \
+             'import returned 0 rows', got: {msg}"
+        );
+    }
+
+    /// require_daily_rows(table, rows>0) must succeed immediately without
+    /// querying the calendar (plan #338: `if rows > 0 { return Ok(()); }`).
+    #[tokio::test]
+    async fn require_daily_rows_nonzero_returns_ok_without_calendar() {
+        assert!(require_daily_rows("capital_main_flow", 5).await.is_ok());
     }
 }

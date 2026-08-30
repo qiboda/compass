@@ -7,16 +7,13 @@
 #   1. market data: compass-data import              (investment_data Dolt → Parquet)
 #   1b. verify:     check-stock-daily gaps           (missing trading day ⇒ hard fail)
 #   2. collect:     compass-collectors sync         (all compass_data sources → Dolt, auto-heal gaps)
-#   3. Dolt commit: collector tables                 (limited add, push; skipped when clean)
+#   3. Dolt commit: collector tables + data_updates  (limited add, push; skipped when clean)
 #   4. import:      import-compass 11 tables         (9 incremental/anchored + stock_basic/index_basic full)
-#   5. backfill:    sepa backfill-dates              (compute missing derived SEPA dates)
-#   6. compute:     sepa temperature + sepa score --top 50 (DELETE+append write-back)
-#   7. Dolt commit: compute tables                   (limited add, push; skipped when clean)
-#   8. print TOP50: reuse step 6 output, never recompute
 #
 # Idempotency: compass-collectors sync skips already-fetched dates (data_updates.
-# last_report_date); the sepa CLI write-back is DELETE+append per trade_date; the
-# Dolt commits are skipped when none of the allowlisted tables changed. The whole
+# last_report_date); data_updates itself is refreshed by the sync and committed
+# with the collector tables in step 3 — step 4 never exports it. The Dolt
+# commits are skipped when none of the allowlisted tables changed. The whole
 # script can be re-run any day without double-counting or data loss.
 #
 # Usage:
@@ -47,12 +44,13 @@ SYNC_INVESTMENT_SCRIPT="${SYNC_INVESTMENT_SCRIPT:-scripts/sync-investment-data.s
 export COMPASS_INVESTMENT_DATA_DIR="${COMPASS_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DIR}"
 export SEPA_INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DIR}"
 
-# Allowlisted table sets for the two Dolt commits (never `dolt add .`).
+# Allowlisted table set for the Dolt commit (never `dolt add .`).
 # The collector allowlist covers every compass_data table refreshed by the daily
-# pipeline: stock_basic, the four financial tables, the SEPA time-series tables,
-# and the index tables (index_basic is a side effect of index_daily import).
-COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic)
-COMPUTE_TABLES=(technical_factor industry_factor capital_factor final_score market_temperature data_updates)
+# pipeline — stock_basic, the four financial tables, the SEPA time-series tables,
+# the index tables (index_basic is a side effect of index_daily import), and
+# data_updates (refreshed by the compass-collectors sync itself), so the daily
+# data write-back is committed in a single step even on a compute-free day.
+COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic data_updates)
 
 # --- helpers ---
 red()   { echo -e "\033[31m$*\033[0m" >&2; }
@@ -347,6 +345,11 @@ anchor_for() {
 }
 
 for table in "${COLLECTOR_TABLES[@]}"; do
+    if [ "$table" = "data_updates" ]; then
+        # data_updates is written by the step 2 sync and committed in step 3;
+        # it is a bookkeeping table, never exported to Parquet.
+        continue
+    fi
     if [ "$table" = "stock_basic" ] || [ "$table" = "index_basic" ]; then
         # Full-overwrite tables: stock_basic is authoritative (no --since in
         # import_compass), index_basic is a version snapshot.
@@ -363,54 +366,6 @@ for table in "${COLLECTOR_TABLES[@]}"; do
             cargo run --bin compass-data -- import-compass --table "$table"
     fi
 done
-# --- 5. Backfill missing derived SEPA compute dates ---
-# sepa backfill-dates scans the Parquet trading calendar against the Dolt
-# compute tables and computes every missing date (technical_factor /
-# industry_factor / capital_factor / final_score / market_temperature).
-# It is idempotent and strict: any failure aborts the whole run.
-run_step 5 "backfill missing SEPA dates" "$PROJECT_ROOT" \
-    cargo run --bin compass-data -- sepa backfill-dates
-
-# --- 6. Compute: market temperature + TOP50, write back to Dolt ---
-# The CLI write-back is DELETE-by-trade_date + append, so re-running the same day
-# is idempotent. The score table is teed to a log so step 8 can reuse it without
-# recomputing.
-STEP6_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
-info "Step 6: compute — market temperature + TOP50 scores"
-SCORE_LOG="${TMPDIR:-/tmp}/sepa_top50_$(date +%Y%m%d).txt"
-if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- sepa temperature); then
-    record_step_event 6 "compute — market temperature + TOP50 scores" "failed" "$STEP6_START_NS"
-    red "step 6 failed: sepa temperature"
-    exit 1
-fi
-if ! (cd "$PROJECT_ROOT" && cargo run --bin compass-data -- sepa score --top 50 2>&1 | tee "$SCORE_LOG"); then
-    record_step_event 6 "compute — market temperature + TOP50 scores" "failed" "$STEP6_START_NS"
-    red "step 6 failed: sepa score --top 50"
-    exit 1
-fi
-record_step_event 6 "compute — market temperature + TOP50 scores" "success" "$STEP6_START_NS"
-
-# --- 7. Dolt commit: compute tables ---
-# Mandatory second commit — otherwise the compute-table changes stay in the
-# working tree and never reach the remote (epic #139 decision 2/9).
-STEP7_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
-info "Step 7: Dolt commit compute tables"
-if ! ( dolt_commit_changed "$COMPASS_DATA_DIR" 7 "compute" "feat: sepa scores ref #139" \
-    "${COMPUTE_TABLES[@]}" ); then
-    record_step_event 7 "Dolt commit compute tables" "failed" "$STEP7_START_NS"
-    exit 1
-fi
-record_step_event 7 "Dolt commit compute tables" "success" "$STEP7_START_NS"
-
-# --- 8. Print TOP50 (reuse step 6 output — never recompute) ---
-STEP8_START_NS="$(date +%s%N 2>/dev/null || date +%s)"
-info "Step 8: TOP50 list"
-if [ -s "$SCORE_LOG" ]; then
-    green "TOP50 printed by 'sepa score --top 50' in step 6; saved copy: $SCORE_LOG"
-else
-    green "TOP50 printed by 'sepa score --top 50' in step 6 above."
-fi
-record_step_event 8 "print TOP50" "success" "$STEP8_START_NS"
 
 echo ""
-green "Done. Next: cargo run --bin compass (GUI) to view the SEPA panel."
+green "Done."

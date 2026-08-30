@@ -266,14 +266,10 @@ else
     assert_true "run.status present" 'jq -e ".run.status | type == \"string\"" "$SCHEMA_JSON" >/dev/null 2>&1'
     assert_true "steps array present" 'jq -e ".steps | type == \"array\"" "$SCHEMA_JSON" >/dev/null 2>&1'
     assert_true "summary object present" 'jq -e ".summary | type == \"object\"" "$SCHEMA_JSON" >/dev/null 2>&1'
-    assert_true "steps use documented 0..8 numbering (backfill=5)" \
-        'jq -e "[.steps[] | select(.step==5)] | length >= 1" "$SCHEMA_JSON" >/dev/null 2>&1'
-    assert_true "steps use documented 0..8 numbering (compute=6)" \
-        'jq -e "[.steps[] | select(.step==6)] | length >= 1" "$SCHEMA_JSON" >/dev/null 2>&1'
-    assert_true "steps use documented 0..8 numbering (compute commit=7)" \
-        'jq -e "[.steps[] | select(.step==7)] | length >= 1" "$SCHEMA_JSON" >/dev/null 2>&1'
-    assert_true "steps use documented 0..8 numbering (print=8)" \
-        'jq -e "[.steps[] | select(.step==8)] | length >= 1" "$SCHEMA_JSON" >/dev/null 2>&1'
+    assert_true "steps use documented 0..4 numbering (import=4)" \
+        'jq -e "[.steps[] | select(.step==4)] | length >= 1" "$SCHEMA_JSON" >/dev/null 2>&1'
+    assert_true "no stale SEPA steps 5..8 remain in timing events" \
+        'jq -e "[.steps[] | select(.step == 5 or .step == 6 or .step == 7 or .step == 8)] | length == 0" "$SCHEMA_JSON" >/dev/null 2>&1'
 fi
 
 # ---------------------------------------------------------------------------

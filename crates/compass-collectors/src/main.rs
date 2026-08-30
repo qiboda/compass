@@ -294,19 +294,7 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         "main-flow" | "main_flow" => {
-            let mut page_size = 1000usize;
-            let mut i = 1;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--page-size" => {
-                        let raw = args.get(i + 1).ok_or("--page-size requires a value")?;
-                        page_size = raw.parse()?;
-                        i += 2;
-                    }
-                    other => return Err(format!("unknown flag {other}").into()),
-                }
-            }
-            let out = main_flow::run(page_size).await?;
+            let out = main_flow::run().await?;
             println!("{}", out.display());
             Ok(())
         }
@@ -730,7 +718,7 @@ fn print_usage() {
          \x20 block-trade [--start D] [--end D] [--years Y,Y] [--page-size N]\n\
          \x20 dragon [--start D] [--end D] [--page-size N]\n\
          \x20 institution-survey [--start-date D] [--page-size N]\n\
-         \x20 main-flow [--page-size N]\n\
+         \x20 main-flow\n\
          \x20 main-flow-backfill --start D --end D [--symbols S,S]\n\
          \x20 fin-indicators [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\
          \x20 balance-sheet [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\
