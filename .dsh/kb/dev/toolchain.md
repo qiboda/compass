@@ -761,3 +761,33 @@
   - real smoke: `import-compass --table block_trade --since 2026-08-21` 成功，Dolt 19724 行 / parquet 19724 行，无丢行。
 - **教训**: 任何 fallback 若覆盖数据文件，必须保证覆盖内容与声明一致（全量）；数据文件写操作前后应校验行数，
   不能静默用增量数据覆盖历史。merge 去重分区列必须与生产 Dolt 全主键一致，不能只靠事后 row-count 守卫兜底。
+
+### [compass-collectors] main_flow backfill 无单股重试，瞬时网络错误导致整个 sync 失败（issue #342）
+
+- **症状**: 2026-08-30 跑 `scripts/update-database.sh` step 2 `compass-collectors sync`，auto-heal
+  capital_main_flow 回补时报
+  `error: HTTP error: error decoding response body for uri (https://money.finance.sina.com.cn/.../MoneyFlow.ssl_qsfx_lscjfb?...&daima=bj920837...): error reading a body from connection`；
+  同一 URL 用 curl 复测返回 HTTP 200 且内容正常 → 瞬时网络/连接错误。
+- **根因**: `crates/compass-collectors/src/main_flow.rs::backfill()`（约 line 336-401）逐股循环
+  `client.get_json_with_headers_and_proxy(SINA_URL, ...)?`，没有单股重试/跳过；每日路径
+  `fetch_symbol_window()`（约 line 187-227）有 3 次重试并跳过失败，backfill 没有。与 PR #341
+  摘要“单股失败仅告警”不符。
+- **处理**: 本次重跑成功，未写库前失败安全（Dolt clean）。已建 issue #342 待代码修复。
+- **验证**: `update-database.sh` 第二次完整跑成功，总耗时约 5962 秒。
+- **教训**: 批量逐股/逐页网络回补路径必须与每日路径同等对待瞬时错误（重试+告警+失败清单），
+  不能把“整批失败”当“整批结果”。
+
+### [compass-data] import-compass --since 增量合并不会同步 auto-heal 回补的早于锚点历史（issue #343）
+
+- **症状**: 2026-08-30 auto-heal 补入 capital_main_flow 2026-08-03~08-25 后，Dolt 与 Parquet 不一致：
+  capital_main_flow Dolt 118097 / parquet 49885；institution_survey Dolt 325959 / parquet 325756；
+  fin_balance_sheet 4481/4479、fin_income 4476/4434、fin_cash_flow 4630/4612。
+- **根因**: `crates/compass-data/src/import_compass.rs::import_append_table()`（约 line 395-510）在
+  parquet 已存在且传 `--since` 时，只从 Dolt 导出 `date_col >= since` 切片并与旧 parquet 合并。
+  auto-heal 补进 Dolt 的**早于 since 的缺失日期**既不在增量切片也不在旧 parquet，因此永久留缺。
+- **处理（本次数据修复）**: 对全部 11 张 compass_data 表执行无 `--since` 的
+  `import-compass` 全量重建；重建后 Dolt ↔ Parquet 行数/最大日期完全一致，且 `priority`/`rn`
+  内部列已清除（增量 merge 成功路径会把这两列写进正式 parquet，下次 merge 才触发 Binder fallback）。
+- **验证**: 全量重建后 Python/DuckDB 查询 11 张 parquet 均与 Dolt 对齐。
+- **教训**: 增量导入必须假设“旧 parquet 可能缺失 Dolt 中早于锚点的历史行”；auto-heal 回补后
+  受影响表不能只跑 `--since` 增量，应强制全量 export 或先做缺失检测。
