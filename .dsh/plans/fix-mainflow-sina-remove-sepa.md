@@ -2,7 +2,9 @@
 
 > Worktree: `.worktrees/fix-mainflow-sina-remove-sepa-empty`
 > Issues: #338（既有，复用）/ #339（新建）/ #340（新建）
-> 一个 PR，三个 commit，各 ref 一个 issue。
+> 一个 PR，实现 commit 各 ref 一个 issue（另有 review-fix 与 docs commit，
+> 共 7 个 commit：ee3edfd #339 / ec5dfcf #338 / 200319c #340 / 40e68b7 docs /
+> d7e71b6 #339 review-fix / eccc7bd #340 timing-test-fix / 8125451 docs）。
 
 ## 背景
 
@@ -20,9 +22,9 @@
 
 | Status | Issue | Task | Depends On |
 |--------|-------|------|------------|
-| pending | #339 | capital_main_flow 采集/回补切换新浪逐股拉取 | — |
-| pending | #340 | update-database.sh 移除每日 SEPA 自动计算（step 5-8） | — |
-| pending | #338 | sync 日频表空增量按日历判定（无交易日 no-op） | — |
+| done | #339 | capital_main_flow 采集/回补切换新浪逐股拉取 | — |
+| done | #340 | update-database.sh 移除每日 SEPA 自动计算（step 5-8） | — |
+| done | #338 | sync 日频表空增量按日历判定（无交易日 no-op） | — |
 
 ## Issue #339 — capital_main_flow 切换新浪
 
