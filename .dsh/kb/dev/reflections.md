@@ -256,3 +256,23 @@
 ### Trends (last 10)
 - 文档同步类 PR 的"改错已正确内容"风险（本条目 backup zipfile 文档回归）与 #335/#336 系列文档改动需要更严格"先核实后改"——本次已通过审查抓出，下一步文档同步时对"修改已有描述"先确认原描述与实现一致性。
 - "凭模块名推断行为"反复出现（本条目 progress 写入方 ×2 修正；#336 早期审计也多次靠 grep 核实）——文档化库内部行为前 grep 实测应成为习惯。
+
+## 2026-08-30 — ref #338, #339, #340 主力资金流迁移新浪 + SEPA 移除 + 0 行日历判定
+
+**What was done**: capital_main_flow 采集/回补从东财 push2/push2his 切换新浪 lscjfb 逐股（#339）；update-database.sh 移除每日 SEPA 自动计算（#340）；sync 4 张日频表 0 行按交易日历判定 no-op（#338）。8 commits（3 实现 + 2 review-fix + 3 docs），Rust 87 测试、4 套 shell 套件、just check 全绿，5 角度审查完成。
+
+**User corrections** (if any): 无纠正型消息。用户对审查发现的 rate 量纲分歧作出决策：×100 统一为百分数（与东财 f184 历史行同量纲，2026-08-30 ask_user_question 确认）。
+
+**What went wrong**:
+1. plan 未写明 `main_net_inflow_rate` 量纲，测试锁定小数（0.02）；逻辑审查实证 Dolt 历史行为百分数（-3.45）才发现 100× 偏差——数据源迁移的字段契约缺少"与库内历史实际值同量纲"条款。
+2. main.rs usage 字符串含字面转义序列（`\x20`/`\n\`），edit 连续 5 次 "old_string was not found"；用 python repr 核对后定位（旧串带尾随换行导致不匹配）。另有 1 次 old==new 笔误、1 次 edit 误吞 normalize_num 主体需修复、1 次 "file changed since read"（fmt/commit 后未先重读）。
+3. `git apply --cached` 配合 `git diff -U0` 补丁需加 `--unidiff-zero`（首跑失败）；`rm -rf` 被 trash-put 包装、路径不存在时报 exit 74。
+4. orchestrate.rs 签名写成 `Result<Vec<String>, CollectError>` 撞 crate 单参 Result 别名（E0107），改用 `std::result::Result`。
+
+**Lessons learned**:
+1. 数据源迁移写回既有数值列前，先 `dolt sql` 抽样核对历史行单位（百分数/小数/元/万）并写入 plan 契约+决策记录——"与 f184 语义一致"的类比推断不够，必须数字对数字。
+2. 含字面转义序列的文件先 python `repr()` 核对字节再 edit；old_string 不带尾随换行；替换大块后立即 read 验证结构。
+3. `git apply --cached` + `-U0` 补丁必须带 `--unidiff-zero`；用 `git show :path` + 临时 worktree 验证暂存树独立可编译（本批 C1 已验证）。
+4. 跨文件/跨表签名用全路径 `std::result::Result` 避免撞 crate 别名。
+
+**Process improvements**: 决策记录与 plan（commit 8125451/b437e46）已写明 rate 百分数量纲、单股跳过限制、手动 sepa 后 commit/push 指引（文档落实）。无新增 hook/issue——"量纲抽样核对"暂无法脚本化（需人对 Dolt 历史值判断），若再次出现同模式则建 issue 固化。
