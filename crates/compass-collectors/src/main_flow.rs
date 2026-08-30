@@ -119,7 +119,10 @@ fn daima(symbol: &str) -> String {
 /// Parse one `MoneyFlow.ssl_qsfx_lscjfb` row into a `FlowRecord`.
 /// `opendate` is mandatory (a missing date cannot be an importable row);
 /// all amounts are numeric defaults (0.0) and the rate uses the main-force
-/// share of total turnover: (r0_net+r1_net)/(r0+r1+r2+r3), 0 on a zero sum.
+/// share of total turnover as a *percent* (the EastMoney f184 unit the
+/// historical rows use): (r0_net+r1_net)/(r0+r1+r2+r3) × 100, 0 on a zero
+/// sum. `ratioamount` is deliberately unused — its denominator is the
+/// whole-market net amount, not this symbol's turnover.
 fn parse_sina_row(symbol: &str, row: &Value) -> Option<FlowRecord> {
     let trade_date = row.get("opendate")?.as_str()?.trim().to_string();
     if trade_date.is_empty() {
@@ -138,7 +141,7 @@ fn parse_sina_row(symbol: &str, row: &Value) -> Option<FlowRecord> {
     let rate = if denominator == 0.0 {
         0.0
     } else {
-        main_net_inflow / denominator
+        (main_net_inflow / denominator) * 100.0
     };
     Some(FlowRecord {
         symbol: symbol.to_string(),
@@ -210,8 +213,9 @@ async fn fetch_symbol_window(
             Ok(_) => return Ok(Vec::new()),
             Err(e) => {
                 if attempt < 2 {
-                    let wait = std::time::Duration::from_secs(1u64 << attempt);
-                    eprintln!("    retry {}+1 for {symbol} in {wait:?}: {e}", attempt + 1);
+                    // Plan #339: 2s/4s exponential backoff between retries.
+                    let wait = std::time::Duration::from_secs(2u64 << attempt);
+                    eprintln!("    retry {}/3 for {symbol} in {wait:?}: {e}", attempt + 1);
                     tokio::time::sleep(wait).await;
                     continue;
                 }
@@ -239,18 +243,29 @@ pub async fn run() -> Result<PathBuf> {
     let mut progress = Progress::new("main_flow", None, Some(output_path.clone()), "start")?;
 
     let mut all_rows = Vec::new();
+    let mut failed = 0u32;
     for symbol in &symbols {
         match fetch_symbol_window(&client, &mut throttle, symbol).await {
             Ok(rows) => all_rows.extend(rows),
-            Err(e) => eprintln!("[main_flow] {symbol}: window fetch failed, skipping: {e}"),
+            Err(e) => {
+                failed += 1;
+                eprintln!("[main_flow] {symbol}: window fetch failed, skipping: {e}");
+            }
         }
     }
+    if failed > 0 {
+        eprintln!(
+            "[main_flow] WARNING: {failed} of {} symbols failed this window — \
+             affected symbol rows may be missing until the next run",
+            symbols.len()
+        );
+    }
     let _ = progress.update(
-        Some(all_rows.len() as u64),
         Some(symbols.len() as u64),
+        Some(all_rows.len() as u64),
         None,
         Some(format!(
-            "Fetched {} rows from {} symbols",
+            "Fetched {} rows from {} symbols, {failed} failed",
             all_rows.len(),
             symbols.len()
         )),
@@ -533,7 +548,10 @@ mod tests {
         assert_eq!(r.symbol, "SH600519");
         assert_eq!(r.trade_date, "2026-08-28");
         assert_eq!(r.main_net_inflow, "5", "r0_net 2 + r1_net 3");
-        assert_eq!(r.main_net_inflow_rate, "0.02", "(2+3)/(100+50+50+50)");
+        assert_eq!(
+            r.main_net_inflow_rate, "2",
+            "(2+3)/(100+50+50+50) = 2%, percent unit matches historical f184"
+        );
         assert_eq!(r.super_large_net, "2");
         assert_eq!(r.large_net, "3");
         assert_eq!(r.medium_net, "4");
