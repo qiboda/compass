@@ -235,3 +235,14 @@ if effective_since.is_some() && !overwrite && path.exists() {
    验证历史一致 → 快速 merge、无 priority/rn、行数 == Dolt；不跑 ~1h 全量 update-database.sh。
 3. commit → 五角度 review → 修复（≤2 轮）→ rebase origin/master → skwy-reflect → 用户确认 push →
    push + PR → 合并后 issue 收尾（完成 comment + close）。
+
+## 验证波（F1-F4，2026-08-31）
+
+- **F1 evidence**：`.dsh/evidence/ref-342-343-backfill-retry-import-history.md` 已落盘，
+  与 HEAD 82e8f2a 一致（8 commits，逐条列明）。实现 commit 完成后一次性写，无中途过期。
+- **F2 审查**：两轮共 4 次 review（#342 0a9ad431/2905da88、#343 c25d61a0/8ec02954），
+  无 P0/P1；全部 P2/P3 采纳并修复于 1000998/82e8f2a，无需第 3 轮。
+- **F3 测试**：compass-collectors 98 lib、compass-data 113 lib + 108 bin + 37 集成全绿；
+  fmt/clippy 干净；workspace `just check` 结果见 evidence。
+- **F4 scope fidelity**：plan 验收逐条核对通过（#342 5 条、#343 6 条），
+  详见 evidence F4 节；无范围外改动。
