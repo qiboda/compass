@@ -216,7 +216,9 @@ fn extract_backfill_window(symbol: &str, data: &Value, start: &str, end: &str) -
 ///
 /// `attempts` is the total number of op invocations (>= 1); 0 is rejected
 /// with `InvalidInput` — an empty loop would otherwise fall through to the
-/// trailing `unreachable!` and lie about the retry count.
+/// trailing `unreachable!` and lie about the retry count. The delay shifts
+/// run only for `attempt < attempts - 1`, so `attempts <= 33` keeps every
+/// `1u32 << attempt` in range (the sole caller passes 3).
 async fn retry_sina_backfill<F, Fut>(
     symbol: &str,
     attempts: u32,
@@ -232,6 +234,10 @@ where
             "retry_sina_backfill: attempts must be >= 1".to_string(),
         ));
     }
+    debug_assert!(
+        attempts <= 33,
+        "2^attempt must stay in u32 range (max shift index is attempts - 2)"
+    );
     for attempt in 0..attempts {
         match op().await {
             Ok(rows) => return Ok(rows),
@@ -851,6 +857,15 @@ mod tests {
             SINA_BACKFILL_RETRIES, 3,
             "plan #342: retry count must match the daily-window policy"
         );
+        // Rate-limit invariant (#342): retry sleeps (2s/4s) must stay >= the
+        // per-symbol min interval because the throttle is only re-armed on the
+        // next symbol's acquire, not between retries of one symbol — see
+        // backfill(). Stops a future constant tweak from silently breaking the
+        // lower bound.
+        assert!(
+            SINA_BACKFILL_BACKOFF >= SINA_MIN_INTERVAL,
+            "backoff must not dip below the per-symbol min interval"
+        );
     }
 
     #[tokio::test]
@@ -936,6 +951,37 @@ mod tests {
             t0.elapsed() >= Duration::from_millis(30),
             "exponential backoff must sleep 10+20ms before exhaustion, elapsed: {:?}",
             t0.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_sina_backfill_rejects_zero_attempts() {
+        // Lock the attempts == 0 guard: the op must never run and the runner
+        // must surface InvalidInput (not a lying unreachable! retry count).
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let mut op = {
+            let calls = calls.clone();
+            move || {
+                let calls = calls.clone();
+                async move {
+                    calls.set(calls.get() + 1);
+                    Ok(Vec::new())
+                }
+            }
+        };
+        let result = retry_sina_backfill("SH600519", 0, Duration::from_millis(2), &mut op).await;
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("attempts == 0 must be rejected, got Ok"),
+        };
+        assert!(
+            matches!(err, CollectError::InvalidInput(_)),
+            "expected InvalidInput, got: {err:?}"
+        );
+        assert_eq!(
+            calls.get(),
+            0,
+            "op must never be invoked with attempts == 0"
         );
     }
 

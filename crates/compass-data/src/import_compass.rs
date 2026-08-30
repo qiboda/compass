@@ -3542,7 +3542,9 @@ mod tests {
     /// and the assertions below fail.
     #[test]
     fn incremental_merge_repairs_missing_history_before_since() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3616,7 +3618,9 @@ mod tests {
     /// slice), the assertion fails.
     #[test]
     fn incremental_merge_repairs_stale_history_values() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3688,7 +3692,9 @@ mod tests {
     /// fails.
     #[test]
     fn incremental_merge_removes_orphaned_parquet_rows() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3762,7 +3768,9 @@ mod tests {
     /// `2026-01-04` (since-1 day) row is silently missing.
     #[test]
     fn incremental_merge_since_boundary_day_before_since() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3846,6 +3854,9 @@ mod tests {
     /// outer `SELECT *` carries priority and rn into the output parquet.
     #[test]
     fn incremental_merge_fast_path_no_internal_columns() {
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -3871,6 +3882,11 @@ mod tests {
 
         // History is fully consistent (2026-01-03 present on both sides);
         // the merge on the fast path must succeed and must not leak columns.
+        // Snapshot backups first: an unintended fallback (history divergence
+        // mis-detected or DuckDB merge failure) would create a new
+        // pre_merge_backup — the diagnostic signal that the fast path was
+        // actually taken (mirrors second_run_no_fallback_no_leak).
+        let backups_before = this_process_pre_merge_backup_files("capital_main_flow");
         run(
             tmp.path().to_path_buf(),
             tmp.path().to_path_buf(),
@@ -3905,6 +3921,15 @@ mod tests {
             parquet_columns(&parquet),
             expected,
             "production parquet must not carry internal priority/rn columns"
+        );
+        let backups_after = this_process_pre_merge_backup_files("capital_main_flow");
+        let new_backups: Vec<&String> = backups_after
+            .iter()
+            .filter(|f| !backups_before.contains(f))
+            .collect();
+        assert!(
+            new_backups.is_empty(),
+            "fast path must be a clean merge — no new pre_merge_backup, got {new_backups:?}"
         );
     }
 
@@ -3988,7 +4013,9 @@ mod tests {
     /// than since 2026-01-05) is missing after the merge.
     #[test]
     fn incremental_merge_index_daily_tradedate_detects_history_divergence() {
-        let _stem = INDEX_DAILY_STEM_LOCK.lock().unwrap();
+        let _stem = INDEX_DAILY_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), INDEX_DAILY_PRODUCTION_SCHEMA);
@@ -4063,7 +4090,9 @@ mod tests {
     /// (no fallback), row set intact, no internal columns.
     #[test]
     fn incremental_merge_index_daily_fast_path_no_fallback() {
-        let _stem = INDEX_DAILY_STEM_LOCK.lock().unwrap();
+        let _stem = INDEX_DAILY_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), INDEX_DAILY_PRODUCTION_SCHEMA);
@@ -4133,7 +4162,9 @@ mod tests {
     /// is missing, assertion fails.
     #[test]
     fn incremental_merge_large_history_single_missing_row() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -4203,7 +4234,9 @@ mod tests {
     /// second run a clean merge with no backup.
     #[test]
     fn incremental_merge_second_run_no_fallback_no_leak() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
@@ -4366,7 +4399,9 @@ mod tests {
 
     #[test]
     fn incremental_merge_empty_after_since_slice_still_repairs_auto_healed_history() {
-        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK.lock().unwrap();
+        let _stem = CAPITAL_MAIN_FLOW_STEM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         setup_dolt(tmp.path());
         dolt_sql(tmp.path(), MAIN_FLOW_SCHEMA);
