@@ -262,20 +262,23 @@ assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
 assert_order "step 4: index_basic full overwrite follows index_daily" "$T1/calls.log" \
     "import-compass --table index_daily" "import-compass --table index_basic"
 
-assert_true "step 6: temperature before score" \
-    'grep -qx "cargo run --bin compass-data -- sepa temperature" "$T1/calls.log" &&
-     grep -qx "cargo run --bin compass-data -- sepa score --top 50" "$T1/calls.log"'
-assert_order "step 6: temperature runs before score" "$T1/calls.log" \
-    "sepa temperature" "sepa score --top 50"
-assert_true "step 5: sepa backfill-dates runs" \
-    'grep -qx "cargo run --bin compass-data -- sepa backfill-dates" "$T1/calls.log"'
-assert_order "step 5: backfill after last import-compass" "$T1/calls.log" \
-    "import-compass --table index_basic" "sepa backfill-dates"
-assert_order "step 5: backfill before temperature" "$T1/calls.log" \
-    "sepa backfill-dates" "sepa temperature"
+assert_true "no sepa backfill-dates call remains in the sequence" \
+    '! grep -q "sepa backfill-dates" "$T1/calls.log"'
+assert_true "no sepa temperature call remains in the sequence" \
+    '! grep -q "sepa temperature" "$T1/calls.log"'
+assert_true "no sepa score call remains in the sequence" \
+    '! grep -qE "sepa score" "$T1/calls.log"'
+assert_true "last cargo invocation is the final import-compass (wraps up after step 4)" \
+    'test "$(grep "^cargo " "$T1/calls.log" | tail -n1)" = "cargo run --bin compass-data -- import-compass --table index_basic"'
+assert_true "no TOP50 screen output remains (step 8 removed)" \
+    '! grep -qi "top ?50" "$T1/out.log"'
+T1_TIMING_FILE="$(ls "$T1/timings"/*.json 2>/dev/null | head -n1 || true)"
+assert_true "timing report written for the run" 'test -n "$T1_TIMING_FILE"'
+assert_false "timing events contain no step 5-8 (sepa stages removed)" \
+    'test -n "$T1_TIMING_FILE" && grep -qE "\"step\"[[:space:]]*:[[:space:]]*[5-8]" "$T1_TIMING_FILE"'
 assert_true "no dolt commit/push when nothing changed" \
     '! grep -qE "^dolt (add|commit|push) " "$T1/calls.log"'
-assert_true "skip message shown for both commit steps" \
+assert_true "skip message shown for the collector commit step" \
     'grep -q "skipping Dolt commit" "$T1/out.log"'
 assert_true "done message" 'grep -q "Done." "$T1/out.log"'
 
@@ -307,38 +310,44 @@ assert_true "collector commit message with ref" \
     'grep -qx "dolt --data-dir $T2/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T2/calls.log"'
 assert_true "push origin main" \
     'grep -qx "dolt --data-dir $T2/repos/compass_data push origin main" "$T2/calls.log"'
-assert_true "no compute commit on clean step 7" \
+assert_true "no sepa scores compute commit remains" \
     '! grep -q "sepa scores" "$T2/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 3. Compute commit path: second commit after scoring (decision 2/9)
+# 3. data_updates commit path (#340): step 3 stages the allowlisted
+#    data_updates table while non-allowlisted compute tables stay untouched —
+#    no second commit, no sepa subcommand anywhere.
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 3. compute tables changed → second Dolt commit ---"
+echo "--- 3. data_updates changed → single collector commit, zero sepa ---"
 T3="$TMP_ROOT/t3"
 mkdir -p "$T3"
 setup_fakes "$T3"
 cat > "$T3/status.seq" <<'EOF'
-On branch main
-nothing to commit, working tree clean
-===
 On branch main
 Changes not staged for commit:
 	modified:         final_score
 	modified:         data_updates
 	new table:        technical_factor
 ===
+On branch main
+nothing to commit, working tree clean
+===
 EOF
 run_script "$T3"
 assert_true "exit 0" 'test "$(cat "$T3/exit.code")" = 0'
-assert_true "compute add limited to changed tables (allowlist order)" \
-    'grep -qx "dolt --data-dir $T3/repos/compass_data add technical_factor final_score data_updates" "$T3/calls.log"'
-assert_true "compute commit message with ref" \
-    'grep -qx "dolt --data-dir $T3/repos/compass_data commit -m feat: sepa scores ref #139" "$T3/calls.log"'
-assert_true "compute push origin main" \
+assert_true "step 3 add limited to allowlisted data_updates" \
+    'grep -qx "dolt --data-dir $T3/repos/compass_data add data_updates" "$T3/calls.log"'
+assert_false "non-allowlisted compute tables never staged" \
+    'grep -qE "add .*(final_score|technical_factor)" "$T3/calls.log"'
+assert_true "step 3 commit message is the collector data commit" \
+    'grep -qx "dolt --data-dir $T3/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T3/calls.log"'
+assert_true "step 3 push origin main" \
     'grep -qx "dolt --data-dir $T3/repos/compass_data push origin main" "$T3/calls.log"'
-assert_true "no collector commit on clean step 3" \
-    '! grep -q "sepa collectors data" "$T3/calls.log"'
+assert_true "no sepa scores compute commit remains" \
+    '! grep -q "sepa scores" "$T3/calls.log"'
+assert_true "no sepa subcommand runs in the sequence" \
+    '! grep -q "cargo run --bin compass-data -- sepa" "$T3/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 4. Failure: step 1 (import) fails → non-zero exit + red error
@@ -356,7 +365,8 @@ EOF
 run_script "$T4" FAKE_CARGO_FAIL_CALL=1
 assert_true "non-zero exit on step 1 failure" 'test "$(cat "$T4/exit.code")" != 0'
 assert_true "error names step 1" 'grep -q "step 1 failed" "$T4/err.log"'
-assert_false "no further steps after failure" 'grep -q "sepa temperature" "$T4/calls.log"'
+assert_false "no further steps after failure" \
+    'grep -q "import-compass" "$T4/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 5. Preflight: missing DoltHub credentials → abort before any step
@@ -420,8 +430,8 @@ assert_true "step 4: stock_basic full overwrite first" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T7/calls.log"'
 assert_true "step 4: index_basic full overwrite last" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T7/calls.log"'
-assert_true "COLLECTOR_TABLES declares all 11 compass_data tables in order" \
-    'test "$(grep "^COLLECTOR_TABLES=" "$SEPA_SCRIPT")" = "COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic)"'
+assert_true "COLLECTOR_TABLES declares all 11 compass_data tables plus data_updates in order" \
+    'test "$(grep "^COLLECTOR_TABLES=" "$SEPA_SCRIPT")" = "COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic data_updates)"'
 
 # ---------------------------------------------------------------------------
 # 8. Error path: sync (step 2) fails → non-zero exit, no step 4/5/6/7
@@ -444,8 +454,8 @@ assert_true "non-zero exit on sync failure" 'test "$(cat "$T8/exit.code")" != 0'
 assert_true "sync call was attempted" \
     'grep -qx "cargo run --bin compass-collectors -- sync" "$T8/calls.log"'
 assert_true "error names step 2" 'grep -q "step 2 failed" "$T8/err.log"'
-assert_false "no step 4/5 after sync failure" \
-    'grep -q "import-compass" "$T8/calls.log" || grep -q "sepa temperature" "$T8/calls.log"'
+assert_false "no step 4 after sync failure" \
+    'grep -q "import-compass" "$T8/calls.log"'
 
 # ---------------------------------------------------------------------------
 # 9. Allowlist boundary: index_daily + index_basic plus existing collector changed
@@ -478,7 +488,7 @@ assert_false "no dolt add ." 'grep -q "dolt .* add \." "$T9/calls.log"'
 assert_true "collector commit + push happen" \
     'grep -qx "dolt --data-dir $T9/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T9/calls.log" &&
      grep -qx "dolt --data-dir $T9/repos/compass_data push origin main" "$T9/calls.log"'
-assert_true "no compute commit on clean step 7" \
+assert_true "no sepa scores compute commit remains" \
     '! grep -q "sepa scores" "$T9/calls.log"'
 
 # ---------------------------------------------------------------------------
@@ -730,8 +740,8 @@ assert_true "the failed cargo invocation is the Rust sync, not a fetch/import" \
      ! grep -q "compass-collectors -- fetch" "$T13/calls.log" &&
      ! grep -q "compass-collectors -- import" "$T13/calls.log"'
 assert_true "error names step 2" 'grep -q "step 2 failed" "$T13/err.log"'
-assert_false "no step 4/5 after sync failure" \
-    'grep -q "import-compass" "$T13/calls.log" || grep -q "sepa temperature" "$T13/calls.log"'
+assert_false "no step 4 after sync failure" \
+    'grep -q "import-compass" "$T13/calls.log"'
 assert_true "exactly one sync attempt (no retry)" \
     'test "$(grep -c "^cargo run --bin compass-collectors -- sync" "$T13/calls.log")" -eq 1'
 
@@ -774,7 +784,7 @@ assert_false "no dolt add ." 'grep -q "dolt .* add \." "$T14/calls.log"'
 assert_true "collector commit + push happen" \
     'grep -qx "dolt --data-dir $T14/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T14/calls.log" &&
      grep -qx "dolt --data-dir $T14/repos/compass_data push origin main" "$T14/calls.log"'
-assert_true "no compute commit on clean step 7" \
+assert_true "no sepa scores compute commit remains" \
     '! grep -q "sepa scores" "$T14/calls.log"'
 
 # ---------------------------------------------------------------------------
@@ -854,6 +864,116 @@ assert_true "cli.md daily pipeline covers financial tables" \
     'grep -qE "fin_indicators|财务四表|财务表" "$CLI_DOC"'
 assert_true "cli.md daily pipeline reflects 11-table / full refresh" \
     'grep -qE "11 张表|11 tables|11 个表|全部 11|all 11|完整.*刷新|完整.*compass_data|compass_data 每日刷新|daily.*compass_data" "$CLI_DOC"'
+
+# ---------------------------------------------------------------------------
+# 18. Adversarial (#340): after removing SEPA step 5-8, `data_updates` is part
+#     of COLLECTOR_TABLES and step 2 sync updates it — if it is the ONLY
+#     changed allowlisted table, step 3 must stage + commit + push it, while
+#     NO `sepa` subcommand may run anywhere and NO `sepa scores` compute
+#     commit may happen.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 18. adversarial: data_updates-only change → step3 commit, zero sepa ---"
+T18="$TMP_ROOT/t18"
+mkdir -p "$T18"
+setup_fakes "$T18"
+cat > "$T18/status.seq" <<'EOF'
+On branch main
+Changes not staged for commit:
+	modified:         data_updates
+===
+On branch main
+nothing to commit, working tree clean
+===
+EOF
+run_script "$T18"
+assert_true "exit 0" 'test "$(cat "$T18/exit.code")" = 0'
+assert_true "step 3 stages data_updates as a collector table" \
+    'grep -qx "dolt --data-dir $T18/repos/compass_data add data_updates" "$T18/calls.log"'
+assert_true "step 3 commit message contains collectors data" \
+    'grep -q "commit -m feat: sepa collectors data ref #139" "$T18/calls.log"'
+assert_true "step 3 push happens after data_updates-only change" \
+    'grep -qx "dolt --data-dir $T18/repos/compass_data push origin main" "$T18/calls.log"'
+assert_false "no sepa subcommand runs anywhere in the pipeline" \
+    'grep -q "cargo run --bin compass-data -- sepa" "$T18/calls.log"'
+assert_false "no compute (sepa scores) commit happens" \
+    'grep -q "sepa scores" "$T18/calls.log"'
+assert_false "data_updates is never exported via import-compass in step 4" \
+    'grep -q "import-compass --table data_updates" "$T18/calls.log"'
+
+# ---------------------------------------------------------------------------
+# 19. Adversarial (#340): even with compute tables dirty in the (former)
+#     step-7 window, the pipeline must not perform a second Dolt commit and
+#     must not run any sepa subcommand — SEPA compute is manual-only now.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 19. adversarial: dirty compute tables produce no step-7 commit ---"
+T19="$TMP_ROOT/t19"
+mkdir -p "$T19"
+setup_fakes "$T19"
+cat > "$T19/status.seq" <<'EOF'
+On branch main
+nothing to commit, working tree clean
+===
+On branch main
+Changes not staged for commit:
+	modified:         final_score
+	modified:         market_temperature
+	new table:        technical_factor
+===
+EOF
+run_script "$T19"
+assert_true "exit 0" 'test "$(cat "$T19/exit.code")" = 0'
+assert_false "no compute commit (sepa scores) when compute tables dirty" \
+    'grep -q "sepa scores" "$T19/calls.log"'
+assert_false "no compute tables are ever staged" \
+    'grep -qE "add (technical_factor|industry_factor|capital_factor|final_score|market_temperature)" "$T19/calls.log"'
+assert_false "no sepa subcommand runs in the pipeline" \
+    'grep -q "cargo run --bin compass-data -- sepa" "$T19/calls.log"'
+
+# ---------------------------------------------------------------------------
+# 20. Adversarial (#340): static contract — the compute stages are gone from
+#     the script and data_updates joined the collector allowlist.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 20. adversarial: COLLECTOR_TABLES contains data_updates, COMPUTE_TABLES gone ---"
+assert_true "COLLECTOR_TABLES declares data_updates" \
+    'grep -qE "^COLLECTOR_TABLES=.*data_updates" "$SEPA_SCRIPT"'
+assert_false "COMPUTE_TABLES variable removed" \
+    'grep -q "^COMPUTE_TABLES=" "$SEPA_SCRIPT"'
+assert_false "no step 5 sepa backfill-dates" \
+    'grep -q "sepa backfill-dates" "$SEPA_SCRIPT"'
+assert_false "no step 6 sepa temperature" \
+    'grep -q "sepa temperature" "$SEPA_SCRIPT"'
+assert_false "no step 7 compute Dolt commit" \
+    'grep -q "Step 7: Dolt commit compute tables" "$SEPA_SCRIPT"'
+assert_false "no step 8 TOP50 block" \
+    'grep -q "TOP50" "$SEPA_SCRIPT"'
+
+# ---------------------------------------------------------------------------
+# 21. Adversarial (#340): step 2 sync failure must abort before ANY sepa
+#     subcommand (backfill-dates / temperature / score) — the SEPA stages may
+#     not be reachable at all once step 2 fails.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- 21. adversarial: sync failure → zero sepa invocations ---"
+T21="$TMP_ROOT/t21"
+mkdir -p "$T21"
+setup_fakes "$T21"
+cat > "$T21/status.seq" <<'EOF'
+On branch main
+nothing to commit, working tree clean
+===
+On branch main
+nothing to commit, working tree clean
+===
+EOF
+run_script "$T21" FAKE_CARGO_FAIL_CALL=3
+assert_true "non-zero exit on sync failure" 'test "$(cat "$T21/exit.code")" != 0'
+assert_true "sync was attempted" \
+    'grep -qx "cargo run --bin compass-collectors -- sync" "$T21/calls.log"'
+assert_false "no sepa subcommand after sync failure" \
+    'grep -q "cargo run --bin compass-data -- sepa" "$T21/calls.log"'
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then
