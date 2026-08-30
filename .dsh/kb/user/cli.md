@@ -267,7 +267,7 @@ Python `collectors/` 已在 epic #310 完成迁移并退役。它使用 `wreq`
 | `block-trade` | 大宗交易专用入口（`--start`/`--end`/`--years`/`--page-size`） |
 | `dragon` | 龙虎榜专用入口（`--start`/`--end`/`--page-size`） |
 | `institution-survey` | 机构调研专用入口（`--start-date`/`--page-size`） |
-| `main-flow` | 主力资金流专用入口（`--page-size`） |
+| `main-flow` | 主力资金流专用入口（新浪 lscjfb 逐股窗口，无需参数） |
 | `main-flow-backfill --start D --end D [--symbols S,S]` | 主力资金流回补 |
 | `fin-indicators` | 财务指标（`--years`/`--periods`/`--page-size`/`--incremental`） |
 | `balance-sheet` / `income` / `cash-flow` | 财务三表（同 fin-indicators 参数） |
@@ -287,7 +287,7 @@ cargo run -p compass-collectors -- fetch fin_indicators
 cargo run -p compass-collectors -- fetch balance_sheet
 cargo run -p compass-collectors -- fetch income
 cargo run -p compass-collectors -- fetch cash_flow
-cargo run -p compass-collectors -- fetch main_flow            # SEPA: 主力资金流（push2 当日截面）
+cargo run -p compass-collectors -- fetch main_flow            # SEPA: 主力资金流（新浪 lscjfb 逐股 num=20 窗口）
 cargo run -p compass-collectors -- fetch dragon               # SEPA: 龙虎榜席位
 cargo run -p compass-collectors -- fetch block_trade          # SEPA: 大宗交易
 cargo run -p compass-collectors -- fetch institution_survey   # SEPA: 机构调研
@@ -349,7 +349,7 @@ config.toml**。
 **财务三表增量修订检测（issue #299）**：`cargo run -p compass-collectors -- fetch balance-sheet --incremental`（income/cash_flow 同理）改用 **UPDATE_DATE 时间锚点**——filter=`(UPDATE_DATE>='{anchor}')`，锚点 = `min(data_updates.last_updated, state.json last_update_date)`（查 `fin_balance_sheet`/`fin_income`/`fin_cash_flow` 各自的 data_updates 行）。**无 anchor（首跑/无 state/无 data_updates）时固定 `2020-01-01`** 走一次 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举。增量模式忽略 `--years/--periods`。导入改 `import_replace_table(merge=True)` + **`INSERT ... ON DUPLICATE KEY UPDATE`**（SELECT 侧全列唯一别名 + ODKU 无前缀别名引用），同 `(symbol, report_date)` 修订行覆盖旧值、历史永不丢失；CSV 写入后按 `(SECURITY_CODE, REPORT_DATE)` keep-LAST 去重。state.json 记录 `last_report_date` + `last_update_date`（`total_rows`/`last_run`）。`compass-collectors sync` 已对三表默认 `run(incremental=True)`；手动全量枚举可运行不带 `--incremental` 的 fetch（仍 merge 导入）。**已知限制**：与 fin_indicators 相同——不做锚点前历史回补；fetch 与 import 应同日运行；API 下架/删除行不传播到 Dolt。
 
 SEPA 采集器说明：
-- `main_flow`：东财 push2 当日全市场主力资金流截面（f62/f184/f66/f72/f78/f84）；按 (symbol, trade_date) 累积每日截面（merge 导入）
+- `main_flow`：新浪 `MoneyFlow.ssl_qsfx_lscjfb` 逐股日频窗口（`daima=sh600519` 形式，num=20 只导 `trade_date > last_report_date` 的行）；字段映射 `main_net_inflow=r0_net+r1_net`、`main_net_inflow_rate=(r0_net+r1_net)/(r0+r1+r2+r3)`（除零→0）、r0_net/r1_net/r2_net/r3_net → super/large/medium/small、`trade_date=opendate`；按 (symbol, trade_date) merge 导入；0 新行删陈旧 CSV 且按交易日历判定为 no-op（#338）
 - `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
 - `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
@@ -463,10 +463,11 @@ cargo run --bin compass-data -- sepa backfill-dates --start 2026-08-13 --end 202
 每日一键流水线见 `scripts/update-database.sh`：step 0 同步
 `investment_data` 上游（`scripts/sync-investment-data.sh`）→ `cargo import`
 → `check-stock-daily` 缺口硬校验 → `compass-collectors sync`
-（自动检测并回补日频源数据缺口）→ Dolt commit → import-compass 11 张表
-（`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量）→ `sepa backfill-dates`
-补算缺失派生表 → `sepa temperature` + `sepa score --top 50` → Dolt commit →
-TOP50。
+（自动检测并回补日频源数据缺口；0 行日频 import 按交易日历判定 no-op）
+→ Dolt commit（含 data_updates）→ import-compass 11 张表
+（`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量；data_updates 只读不导出）。
+SEPA 派生表不再随每日管线自动计算；需要时手动运行
+`compass-data sepa backfill-dates` → `sepa temperature` → `sepa score --top 50`。
 
 ### 同步用时统计（issue #334）
 

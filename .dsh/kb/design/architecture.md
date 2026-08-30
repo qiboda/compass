@@ -478,16 +478,19 @@ sync-investment 编排；`scripts/update-database.sh` 为生产入口。
 
 数据管线允许不每天运行：`compass-collectors sync` 在采集前用
 `investment_data.ts_trade_day_calendar`（SSE `is_open=1`）与各日频表 Dolt
-现有日期做缺口扫描，缺失时自动回补——`capital_main_flow` 走 EastMoney
-`fflow/daykline` 逐股历史 API，`index_daily`/`dragon_list`/`block_trade`
-按显式范围回补；回补失败严格 abort。`scripts/update-database.sh`
-（原每日一键脚本，已彻底改名）在 import-compass 之后调用
-`sepa backfill-dates` 补算缺失的 SEPA 派生表，并在 import 后通过
-`check-stock-daily` 硬校验 `stock_daily.parquet` 的交易日历缺口。
+现有日期做缺口扫描，缺失时自动回补——`capital_main_flow` 走新浪
+`MoneyFlow.ssl_qsfx_lscjfb` 逐股历史 API（`daima` 小写前缀，
+num=1000 按 [start,end] 过滤），`index_daily`/`dragon_list`/`block_trade`
+按显式范围回补；回补失败严格 abort；sync 内 4 张日频表的 0 行 import 按
+交易日历判定 no-op（见 data-providers.md #338 决策）。`scripts/update-database.sh`
+（原每日一键脚本，已彻底改名）在 import-compass 之后通过
+`check-stock-daily` 硬校验 `stock_daily.parquet` 的交易日历缺口；
+SEPA 派生表（technical_factor/final_score 等）已从每日管线移除，
+改为手动执行 `compass-data sepa …` 子命令。
 
 ### 同步用时统计（issue #334）
 
-每日管线增加可选计时层：`scripts/update-database.sh` 记录 step 0~8 及总时长；
+每日管线增加可选计时层：`scripts/update-database.sh` 记录 step 0~4 及总时长；
 `compass-collectors sync` 在设置 `COMPASS_TIMING_FILE` 时向 JSONL 追加每个
 来源的 fetch/import 阶段事件（`crates/compass-collectors/src/timing.rs`）；
 shell 把步骤事件与采集器事件合并成单个本地 JSON

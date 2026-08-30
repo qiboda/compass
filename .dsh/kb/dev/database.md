@@ -56,13 +56,16 @@ row_count + last_report_date）。消费方：
   import 写入，供新鲜度校验使用。
 - **update-database.sh 增量锚点**（`scripts/update-database.sh` step 2/4）：step 0 先同步
   `investment_data` 上游（`scripts/sync-investment-data.sh`）；step 2 由
-  `compass-collectors sync` 统一刷新全部 11 张 `compass_data` 表，并在开头自动
-  检测/回补日频源表缺口（`ts_trade_day_calendar` 对比 Dolt 现有交易日）；
+  `compass-collectors sync` 统一刷新全部 11 张 `compass_data` 表 + `data_updates`，
+  并在开头自动检测/回补日频源表缺口（`ts_trade_day_calendar` 对比 Dolt 现有交易日）；
+  step 2 内 4 张日频表的 0 行 import 按交易日历判定 no-op（#338）；
   step 4 对**逐表读取**各表自身的 `last_report_date`（含 `fin_*` 财务表与
   `index_daily`）；缺失/NULL 锚点的表走全量导入，不再用全局 MAX 锚点；
   `stock_basic` 与 `index_basic` 是版本快照/权威表，始终全量覆盖，不查询锚点；
-  import-compass 后调用 `sepa backfill-dates` 补算缺失派生表，import 后还会用
-  `check-stock-daily` 对 Parquet 交易日历硬校验缺失
+  `data_updates` 仅由 step 2 写入、step 3 提交，step 4 跳过（不导出）；
+  import 后还会用 `check-stock-daily` 对 Parquet 交易日历硬校验缺失；
+  SEPA 派生表（`sepa backfill-dates`/`temperature`/`score`）不再自动计算，
+  手动运行 `compass-data sepa …` 子命令
 - **import-compass 新鲜度校验（ref #136）**：导入后读 `last_report_date`，过期
   仅 warn 不退出（财务表 120 天 / 行情表 7 天 / stock_basic 不检查）
 
@@ -74,7 +77,7 @@ stock_basic = NULL（写库只填 4 列，见 `crates/compass-collectors/src/sto
 
 **运行统计（issue #334）**：`scripts/update-database.sh` 每次运行在
 `logs/sync-timings/` 下生成一个 JSON 计时文件（`SYNC_TIMING_DIR` 可覆盖），
-记录 run 元信息、step 0~8 耗时和 `compass-collectors sync` 各来源 fetch/import
+记录 run 元信息、step 0~4 耗时和 `compass-collectors sync` 各来源 fetch/import
 耗时；测试/临时运行可设置 `COMPASS_TIMING_FILE` 指定 Rust 上报文件。计时失败仅
 warning，不写入/不修改任何 Dolt 表。
 
