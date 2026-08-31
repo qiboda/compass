@@ -67,6 +67,18 @@ pub enum CollectError {
     /// Generic invalid-input error.
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    /// A per-symbol Sina backfill fetch failed after exhausting retries; the
+    /// whole batch is aborted (strict failure, no skip-and-continue).
+    #[error("backfill: symbol {symbol:?} failed after {attempts} attempts: {reason}")]
+    BackfillSymbolFailed {
+        /// The symbol whose fetch failed.
+        symbol: String,
+        /// Number of attempts made before giving up.
+        attempts: u32,
+        /// Underlying fetch error message.
+        reason: String,
+    },
 }
 
 /// Result alias with [`CollectError`] as the error type.

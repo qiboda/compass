@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -25,6 +26,12 @@ pub const SINA_URL: &str =
 pub const SINA_DAILY_NUM: usize = 20;
 /// Historical backfill window: rows returned per symbol per request.
 pub const SINA_BACKFILL_NUM: usize = 1000;
+/// Per-symbol backfill retry count before the whole batch aborts (#342).
+pub const SINA_BACKFILL_RETRIES: u32 = 3;
+/// Base backoff for backfill retries; per-attempt wait is
+/// `SINA_BACKFILL_BACKOFF * 2^attempt` (2s/4s, same formula as the daily
+/// window in `fetch_symbol_window`).
+const SINA_BACKFILL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn sina_headers() -> HashMap<String, String> {
     let mut headers = HashMap::new();
@@ -182,6 +189,83 @@ fn finalize_daily_csv(output: &Path, rows: Vec<FlowRecord>) -> Result<PathBuf> {
 /// `[start, end]` inclusive membership (ISO dates compare lexicographically).
 fn in_backfill_range(day: &str, start: &str, end: &str) -> bool {
     day >= start && day <= end
+}
+
+/// Extract the in-range records of one Sina backfill page (pure).
+///
+/// #342: parse + range-filter logic extracted from the `backfill` loop so a
+/// per-symbol window can be retried as a unit without re-parsing the page, and
+/// tested without any network. Unparseable rows are skipped (same semantics as
+/// the inline loop); rows are yielded in page order and deduplication by
+/// (symbol, day) remains in the caller's `seen` map (pre-#342 semantics).
+fn extract_backfill_window(symbol: &str, data: &Value, start: &str, end: &str) -> Vec<FlowRecord> {
+    let Value::Array(items) = data else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|row| parse_sina_row(symbol, row))
+        .filter(|record| in_backfill_range(&record.trade_date, start, end))
+        .collect()
+}
+
+/// Retry a single-symbol Sina backfill fetch up to `attempts` times with
+/// exponential backoff (`backoff * 2^attempt`); Ok on first success, Err
+/// after exhaustion. #342: same backoff formula as the daily window
+/// (`fetch_symbol_window`, 2s/4s); the caller aborts the whole batch on Err.
+///
+/// `attempts` is the total number of op invocations (>= 1); 0 is rejected
+/// with `InvalidInput` — an empty loop would otherwise fall through to the
+/// trailing `unreachable!` and lie about the retry count. The delay shifts
+/// run only for `attempt < attempts - 1`, so `attempts <= 33` keeps every
+/// `1u32 << attempt` in range (the sole caller passes 3).
+async fn retry_sina_backfill<F, Fut>(
+    symbol: &str,
+    attempts: u32,
+    backoff: std::time::Duration,
+    mut op: F,
+) -> Result<Vec<FlowRecord>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Vec<FlowRecord>>>,
+{
+    if attempts == 0 {
+        return Err(CollectError::InvalidInput(
+            "retry_sina_backfill: attempts must be >= 1".to_string(),
+        ));
+    }
+    debug_assert!(
+        attempts <= 33,
+        "2^attempt must stay in u32 range (max shift index is attempts - 2)"
+    );
+    for attempt in 0..attempts {
+        match op().await {
+            Ok(rows) => return Ok(rows),
+            Err(e) => {
+                if attempt + 1 < attempts {
+                    // Plan #342: 2s/4s exponential backoff, same formula as the
+                    // daily window (`backoff * 2^attempt`). Invariant: the
+                    // sleeps must stay >= SINA_MIN_INTERVAL (100ms) because the
+                    // throttle is only re-armed on the next symbol's acquire,
+                    // not between retries of one symbol — see backfill().
+                    let wait = backoff * (1u32 << attempt);
+                    eprintln!(
+                        "    retry {}/{} for {symbol} in {wait:?}: {e}",
+                        attempt + 1,
+                        attempts
+                    );
+                    tokio::time::sleep(wait).await;
+                } else {
+                    return Err(CollectError::BackfillSymbolFailed {
+                        symbol: symbol.to_string(),
+                        attempts,
+                        reason: e.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    unreachable!("retry loop always returns")
 }
 
 /// Fetch the newest per-symbol window from Sina (`num=20`, page 1). A `null`
@@ -369,28 +453,34 @@ pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Res
     let mut throttle = Throttle::new(SINA_MIN_INTERVAL);
 
     for symbol in &symbol_list {
-        let mut params = HashMap::new();
-        params.insert("page".to_string(), "1".to_string());
-        params.insert("num".to_string(), SINA_BACKFILL_NUM.to_string());
-        params.insert("sort".to_string(), "opendate".to_string());
-        params.insert("asc".to_string(), "0".to_string());
-        params.insert("daima".to_string(), daima(symbol));
-
+        // One throttle acquire per symbol (pre-#342 pacing); retry attempts are
+        // separated by the exponential backoff inside the runner anyway. The
+        // retry closure captures only shared references — `F: FnMut() -> Fut`
+        // rejects `&mut` captures (the future would escape the closure body).
         throttle.acquire().await;
-        let data = client
-            .get_json_with_headers_and_proxy(SINA_URL, &params, &sina_headers(), None)
-            .await?;
-        if let Value::Array(items) = data {
-            for row in items {
-                let Some(record) = parse_sina_row(symbol, &row) else {
-                    continue;
-                };
-                let day = record.trade_date.clone();
-                if !in_backfill_range(&day, start, end) {
-                    continue;
-                }
-                seen.insert((symbol.clone(), day), record);
-            }
+        let rows = retry_sina_backfill(
+            symbol,
+            SINA_BACKFILL_RETRIES,
+            SINA_BACKFILL_BACKOFF,
+            || async {
+                let mut params = HashMap::new();
+                params.insert("page".to_string(), "1".to_string());
+                params.insert("num".to_string(), SINA_BACKFILL_NUM.to_string());
+                params.insert("sort".to_string(), "opendate".to_string());
+                params.insert("asc".to_string(), "0".to_string());
+                params.insert("daima".to_string(), daima(symbol));
+
+                let data = client
+                    .get_json_with_headers_and_proxy(SINA_URL, &params, &sina_headers(), None)
+                    .await?;
+                Ok(extract_backfill_window(symbol, &data, start, end))
+            },
+        )
+        .await?;
+
+        for record in rows {
+            let day = record.trade_date.clone();
+            seen.insert((symbol.clone(), day), record);
         }
     }
 
@@ -651,5 +741,344 @@ mod tests {
         assert!(in_backfill_range("2026-08-27", "2026-08-27", "2026-08-27"));
         assert!(!in_backfill_range("2026-08-26", "2026-08-27", "2026-08-28"));
         assert!(!in_backfill_range("2026-08-29", "2026-08-27", "2026-08-28"));
+    }
+
+    // ── Adversarial: backfill per-symbol retry (#342) ────────────────────
+    //
+    // RED rationale (plan fix-backfill-retry-import-history #342): backfill()
+    // today has NO per-symbol retry — the first transport error propagates
+    // via `?` (main_flow.rs backfill loop) and the error names neither the
+    // symbol nor the attempt count. The fix must retry SINA_BACKFILL_RETRIES
+    // (3) times with the daily-path backoff and fail strict with a symbol-
+    // naming error (BackfillSymbolFailed) after exhaustion.
+    //
+    // Deterministic failure injection WITHOUT any HTTP mock: wreq 0.16.1
+    // enables the system proxy by default (ClientBuilder auto_sys_proxy:
+    // true, client.rs build()) and HttpClient::new() does NOT call
+    // no_proxy() — so HTTPS_PROXY pointing at a just-released local port
+    // makes every request fail instantly with connection refused (no DNS,
+    // no external network, no timeouts).
+    //
+    // Wall-clock cost: this is an end-to-end test through the production
+    // backfill() path, so it sleeps the real 2s/4s backoff (~6s) before
+    // asserting exhaustion. The backoff floor itself is covered with an
+    // injected short backoff in retry_sina_backfill_exponential_backoff_sequence
+    // (10ms/20ms — not slept here); this test keeps the production constants
+    // on purpose, it is the strict-abort + error-naming contract.
+
+    #[tokio::test]
+    async fn backfill_permanent_failure_names_symbol_and_attempts() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // Dead local port: bind then release.
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
+            l.local_addr().expect("local addr").port()
+        };
+        let proxy = format!("http://127.0.0.1:{port}");
+        let keys = [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "COMPASS_CSV_DIR",
+        ];
+        let saved: Vec<(String, Option<std::ffi::OsString>)> = keys
+            .iter()
+            .map(|k| (k.to_string(), std::env::var_os(k)))
+            .collect();
+        unsafe {
+            std::env::set_var("HTTPS_PROXY", &proxy);
+            std::env::set_var("https_proxy", &proxy);
+            std::env::set_var("HTTP_PROXY", &proxy);
+            std::env::set_var("http_proxy", &proxy);
+            std::env::set_var("ALL_PROXY", &proxy);
+            std::env::set_var("all_proxy", &proxy);
+            // Neutralise any ambient NO_PROXY (e.g. "localhost,127.0.0.1")
+            // that would bypass the dead proxy and hit the real network.
+            std::env::set_var("NO_PROXY", "");
+            std::env::set_var("no_proxy", "");
+            // Keep the CSV output inside the temp dir (csv_dir() creates it).
+            std::env::set_var("COMPASS_CSV_DIR", tmp.path());
+        }
+
+        let err = backfill("2026-08-03", "2026-08-25", Some(&["SH600519".to_string()]))
+            .await
+            .expect_err("backfill must fail after retry exhaustion");
+
+        // Plan #342 contract: strict failure naming the symbol and the
+        // attempt count. RED today: bare HTTP error with neither.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SH600519") && msg.contains("3 attempts"),
+            "backfill error must name the symbol and 3-attempt exhaustion, got: {msg:?}"
+        );
+
+        // Strict abort: no partial CSV may be written on failure (write_csv
+        // must stay after the per-symbol loop).
+        let csv_file = tmp.path().join("RPT_MAIN_MONEY_FLOW_backfill.csv");
+        assert!(
+            !csv_file.exists(),
+            "no partial backfill CSV may be written on failure"
+        );
+
+        // Restore the environment so later tests do not inherit the dead
+        // proxy (success path only; a failure aborts the process anyway).
+        for (k, v) in saved {
+            unsafe {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    // ── Adversarial: #342 interface-level tests (phase 2, SHA 64ef76c) ────
+    //
+    // These target the plan-declared interface that landed with the skeleton
+    // commit (SINA_BACKFILL_RETRIES / retry_sina_backfill /
+    // extract_backfill_window). The runner and extractor currently have
+    // `unimplemented!()` bodies, so the retry_* tests RED as panics until the
+    // behavior lands; the pure-signature test passes immediately. They use
+    // short injected backoffs (2ms/10ms) so the production 2s/4s sequence is
+    // never actually slept through in tests.
+
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn sina_backfill_retries_constant_is_three() {
+        assert_eq!(
+            SINA_BACKFILL_RETRIES, 3,
+            "plan #342: retry count must match the daily-window policy"
+        );
+        // Rate-limit invariant (#342): retry sleeps (2s/4s) must stay >= the
+        // per-symbol min interval because the throttle is only re-armed on the
+        // next symbol's acquire, not between retries of one symbol — see
+        // backfill(). Stops a future constant tweak from silently breaking the
+        // lower bound.
+        assert!(
+            SINA_BACKFILL_BACKOFF >= SINA_MIN_INTERVAL,
+            "backoff must not dip below the per-symbol min interval"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_sina_backfill_succeeds_after_transient_errors() {
+        // The retry runner takes FnMut() -> Fut with no lifetime bound, so a
+        // plain `async { calls += 1 }` cannot capture `&mut` locals (the
+        // future would escape the closure body). Count via an Rc<Cell> that
+        // is moved into each future instead.
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let mut op = {
+            let calls = calls.clone();
+            move || {
+                let calls = calls.clone();
+                async move {
+                    let n = calls.get() + 1;
+                    calls.set(n);
+                    if n < 3 {
+                        Err(CollectError::InvalidInput("transient".into()))
+                    } else {
+                        Ok(Vec::new())
+                    }
+                }
+            }
+        };
+        let rows = retry_sina_backfill("SH600519", 3, Duration::from_millis(2), &mut op)
+            .await
+            .expect("retry must succeed on the 3rd attempt");
+        assert_eq!(
+            calls.get(),
+            3,
+            "op must be invoked exactly once per attempt"
+        );
+        assert!(rows.is_empty(), "empty success window must propagate as Ok");
+    }
+
+    #[tokio::test]
+    async fn retry_sina_backfill_exhaustion_names_symbol() {
+        let result = retry_sina_backfill("SH600519", 3, Duration::from_millis(2), || async {
+            Err(CollectError::InvalidInput("boom".into()))
+        })
+        .await;
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("3 failing attempts must surface as Err, got Ok"),
+        };
+        match &err {
+            CollectError::BackfillSymbolFailed {
+                symbol,
+                attempts: 3,
+                reason,
+            } => {
+                assert_eq!(symbol, "SH600519", "exhaustion must name the symbol");
+                assert!(
+                    reason.contains("boom"),
+                    "the underlying error text must be forwarded, got: {reason:?}"
+                );
+            }
+            other => panic!(
+                "exhaustion must surface BackfillSymbolFailed{{symbol, attempts: 3}}, got: {other:?}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_sina_backfill_exponential_backoff_sequence() {
+        let t0 = Instant::now();
+        let result = retry_sina_backfill("SH600519", 3, Duration::from_millis(10), || async {
+            Err(CollectError::InvalidInput("boom".into()))
+        })
+        .await;
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("must exhaust, got Ok"),
+        };
+        assert!(matches!(err, CollectError::BackfillSymbolFailed { .. }));
+        // Known blind spot (documented, not locked): the elapsed floor only
+        // proves >= 10+20ms of total waiting, not the exact sequence (a single
+        // 30ms sleep or an extra post-exhaustion sleep would also pass), and
+        // the "no sleep after the last failure" guarantee is not asserted.
+        // Locking the exact sequence would need tokio time injection; the
+        // production 2s/4s formula is kept identical to the daily window.
+        assert!(
+            t0.elapsed() >= Duration::from_millis(30),
+            "exponential backoff must sleep 10+20ms before exhaustion, elapsed: {:?}",
+            t0.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_sina_backfill_rejects_zero_attempts() {
+        // Lock the attempts == 0 guard: the op must never run and the runner
+        // must surface InvalidInput (not a lying unreachable! retry count).
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let mut op = {
+            let calls = calls.clone();
+            move || {
+                let calls = calls.clone();
+                async move {
+                    calls.set(calls.get() + 1);
+                    Ok(Vec::new())
+                }
+            }
+        };
+        let result = retry_sina_backfill("SH600519", 0, Duration::from_millis(2), &mut op).await;
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("attempts == 0 must be rejected, got Ok"),
+        };
+        assert!(
+            matches!(err, CollectError::InvalidInput(_)),
+            "expected InvalidInput, got: {err:?}"
+        );
+        assert_eq!(
+            calls.get(),
+            0,
+            "op must never be invoked with attempts == 0"
+        );
+    }
+
+    // ── Requirement: #342 extract_backfill_window (pure, no network) ─────
+    //
+    // Acceptance contract (plan fix-backfill-retry-import-history #342 +
+    // issue #342): the per-symbol Sina backfill page parser keeps only rows
+    // dated inside the inclusive [start, end] window, drops the rows that
+    // parse_sina_row rejects (missing/empty/non-string opendate), and stamps
+    // the passed-in symbol on every record. Non-array bodies yield an empty
+    // window. RED: the body at main_flow.rs:201 is unimplemented!().
+
+    /// Minimal valid Sina lscjfb row: fixed r0..r3 = 100 each (denominator
+    /// 400), so main_net_inflow = r0_net + r1_net and
+    /// rate = (r0_net + r1_net) / 400 * 100.
+    fn sina_row(day: &str, r0_net: &str, r1_net: &str) -> serde_json::Value {
+        serde_json::json!({
+            "opendate": day,
+            "trade": "sh600519",
+            "num": 1,
+            "r0": "100", "r0_net": r0_net,
+            "r1": "100", "r1_net": r1_net,
+            "r2": "100", "r2_net": "0",
+            "r3": "100", "r3_net": "0",
+        })
+    }
+
+    #[test]
+    fn extract_backfill_window_keeps_rows_in_range() {
+        let data = serde_json::json!([
+            sina_row("2026-08-24", "1", "2"), // before start
+            sina_row("2026-08-25", "3", "4"), // start
+            sina_row("2026-08-26", "5", "6"),
+            sina_row("2026-08-27", "7", "8"),  // end
+            sina_row("2026-08-28", "9", "10"), // after end
+        ]);
+        let rows = extract_backfill_window("SH600519", &data, "2026-08-25", "2026-08-27");
+        assert_eq!(rows.len(), 3, "only in-range rows survive");
+        let mut days: Vec<&str> = rows.iter().map(|r| r.trade_date.as_str()).collect();
+        days.sort_unstable();
+        assert_eq!(days, ["2026-08-25", "2026-08-26", "2026-08-27"]);
+    }
+
+    #[test]
+    fn extract_backfill_window_parses_values_with_sina_semantics() {
+        let data = serde_json::json!([sina_row("2026-08-26", "2", "3")]);
+        let rows = extract_backfill_window("SH600519", &data, "2026-08-25", "2026-08-27");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].trade_date, "2026-08-26");
+        assert_eq!(rows[0].main_net_inflow, "5", "r0_net 2 + r1_net 3");
+        assert_eq!(
+            rows[0].main_net_inflow_rate, "1.25",
+            "(2+3)/(100+100+100+100) × 100 = 1.25%"
+        );
+    }
+
+    #[test]
+    fn extract_backfill_window_skips_bad_rows() {
+        // Missing / empty / non-string opendate and a non-object element:
+        // parse_sina_row rejects all of them — the window must drop them
+        // rather than panic or emit garbage rows.
+        let data = serde_json::json!([
+            {"trade": "sh600519", "r0_net": "1", "r1_net": "2"},   // no opendate
+            {"opendate": "", "r0_net": "1", "r1_net": "2"},        // empty date
+            {"opendate": 20260826, "r0_net": "1", "r1_net": "2"},  // non-string
+            "not-an-object",
+            sina_row("2026-08-26", "1", "2"),                      // valid
+        ]);
+        let rows = extract_backfill_window("SH600519", &data, "2026-08-25", "2026-08-27");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].trade_date, "2026-08-26");
+    }
+
+    #[test]
+    fn extract_backfill_window_stamps_passed_symbol() {
+        let data = serde_json::json!([sina_row("2026-08-26", "1", "2"),]);
+        // #342 原始故障 symbol（bj920837）。
+        let rows = extract_backfill_window("BJ920837", &data, "2026-08-25", "2026-08-27");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].symbol, "BJ920837",
+            "record must carry the fetched symbol, not the row's `trade` field"
+        );
+    }
+
+    #[test]
+    fn extract_backfill_window_non_array_returns_empty() {
+        for value in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!("text"),
+            serde_json::Value::Bool(true),
+        ] {
+            assert!(
+                extract_backfill_window("SH600519", &value, "2026-08-25", "2026-08-27").is_empty(),
+                "non-array page body must yield an empty window, got {value:?}"
+            );
+        }
     }
 }
