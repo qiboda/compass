@@ -276,3 +276,31 @@
 4. 跨文件/跨表签名用全路径 `std::result::Result` 避免撞 crate 别名。
 
 **Process improvements**: 决策记录与 plan（commit 8125451/b437e46）已写明 rate 百分数量纲、单股跳过限制、手动 sepa 后 commit/push 指引（文档落实）。无新增 hook/issue——"量纲抽样核对"暂无法脚本化（需人对 Dolt 历史值判断），若再次出现同模式则建 issue 固化。
+
+## 2026-08-31 — ref #342, #343 backfill 单股重试 + 增量 merge 历史校验
+
+**What was done**: 修复 #342（`main_flow::backfill` 逐股 3 次重试、2s/4s 指数退避、耗尽后整批 strict 中止且错误带 symbol/attempts——不再留部分 CSV）+ #343（`import-compass --since` 增量 merge 前用 Dolt vs 旧 parquet 历史切片（< since）双向 EXCEPT 校验，不一致降级全量导出 + pre_merge_backup；merge 输出 `SELECT * EXCLUDE (priority, rn)` 清除内部列）。RED 测试由对抗/需求子代理落盘（#342 10 个、#343 12 个，另加主 agent 第 2 轮补 2 个）全部转 GREEN；两轮 4 路 subagent_review 无 P0/P1；workspace just check 全绿；真实数据冒烟 capital_main_flow（--since 2026-08-28）=118097 行、9 列无 priority/rn == Dolt。分支 fix/backfill-retry-import-history 共 9 commits（46a324b..8db2679）。
+
+**User corrections** (if any): 无纠正型消息。本 session 共 2 条用户消息：worktree 启动模板（审计自动标 ⚠️ 纠正候选，实为会话启动指令）+ "push"（Never auto-push 的显式授权，等待确认后再 push 执行）。
+
+**What went wrong**:
+1. 编译失败 1 次（E0277）：round-2 新增 `retry_sina_backfill_rejects_zero_attempts` 初版用 `.await.expect_err(...)`，`FlowRecord` 无 Debug trait。**对抗测试 agent 报告中已写明"FlowRecord 无 Debug（测试用 match 解构）"**——信息在上下文仍踩坑；改 `match result { Err(e)=>e, Ok(_)=>panic! }`（与既有 retry 测试一致）后通过。
+2. 编辑类摩擦 6 次 isError（import_compass.rs 为主）："file changed since it was read" ×3、"old_string matched 4 times" ×1、"old_string was not found" ×1、job_output 误传 subagent id 当 job id ×1（"unknown job f7bb3357…"）。均按工具提示立即重读/换唯一锚点后成功，无结构损失；集中在 edit ×54 的高编辑量回合。
+3. 测试数据 INSERT 静默错位 1 次（前期回合）：Dolt 无列名 VALUES 插入把 'd' 写入 `update_date DATE` 列——`Command::output().expect()` 只查 spawn 不查退出码；已改为显式列名列表。同文件测试 helper `dolt_sql`（import_compass.rs:2618-2632）现 `assert!(out.status.success(), ...)` 已防此类静默。
+4. 无门禁违规。git 客观验证：`git branch --contains HEAD` = 仅 fix/backfill-retry-import-history；`git worktree list` 无本会话创建的闲置 worktree（issue-112/121/122 为历史 worktree；/tmp/compass-master-check-baseline 为既有 prunable detached）；origin/master..HEAD=9 commits 与 evidence 清单一致。
+
+**Lessons learned**:
+1. 编写测试前先核对同文件既有断言模式与类型 trait 边界（FlowRecord 无 Debug → 用 match 解构而非 expect_err）；子代理报告中的类型/边界事实必须拿来即用，不能只读到不落实。
+2. 同文件连续大量编辑（尤其被子代理并行落盘过的文件）：每次编辑前 read 最新、old_string 用函数签名级唯一锚点、编辑后立即 read 验证结构——与 #336/#338 的 edit 教训同源，本次已实战控制。
+3. Dolt 测试数据 INSERT 必须显式列名（位置插入对 DATE/数值列易错位且可静默失败）；所有 Dolt 命令 helper 必须断言退出码。
+4. 子代理报告语义事实（500B tiny-skip 早退会让历史检查永不执行 → 检查前置；stem 锁竞态；lock poison 连锁）本次已直接用于实现修正——委托测试的先验信息是设计输入，不是背景噪音。
+
+**Process improvements**:
+- 已落实（随本 PR）：plan 实现修正记录（source→reason thiserror 契约漂移、历史检查前置 500B skip、throttle 置于 runner 外、备份不轮转决策、stem 锁竞态）；测试基础严格化（parquet_columns/backup helpers `collect::<Result>`、stem 锁 `unwrap_or_else(|e| e.into_inner())` poison-safe、`dolt_sql` 退出码断言）；F1-F4 evidence 落盘 `.dsh/evidence/ref-342-343-backfill-retry-import-history.md`。
+- None（一次性教训）：FlowRecord Debug 锚点、编辑重读纪律为执行纪律类，工具契约/文件内既有模式已覆盖，无法脚本化。
+- 自动化盘点：反思输入采集（reflect-audit.sh 提取摩擦信号）与 git 验证本次由主 agent 手工执行——audit 脚本的 git 验证需在 git 仓库内运行（本次传 --git 无效被跳过，已手工补跑），下次反思保留手工验证习惯。
+
+### Trends (last 10)
+- 独立 RED/adversarial/requirement 子代理测试未闭环模式（B1→B7 连续条目列为 open，ref #311-#326）在 #342/#343 **首次完整闭环**：gate 3.5/4 均委派、RED 证据真实、修复后全 GREEN——该趋势项自此关闭。
+- 主 agent edit 工具摩擦第三次复现（#336 误删函数头、#338 edit ×5 失败、本次 ×6 isError）：同文件多轮编辑 + 子代理并行落盘的固定摩擦源；无自动机制，继续依赖"重读+唯一锚点"纪律，#338 已建议的编辑后 read 验证本次落实。
+- Dolt/测试基建细节问题（#326 SQL 拼缝、#334 helper 细节、本次 INSERT 错位）均由真实冒烟或独立测试抓出而非静态检查——测试基建与生产代码同样需要 review 注意力。
