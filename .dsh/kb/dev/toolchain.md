@@ -772,7 +772,9 @@
   `client.get_json_with_headers_and_proxy(SINA_URL, ...)?`，没有单股重试/跳过；每日路径
   `fetch_symbol_window()`（约 line 187-227）有 3 次重试并跳过失败，backfill 没有。与 PR #341
   摘要“单股失败仅告警”不符。
-- **处理**: 本次重跑成功，未写库前失败安全（Dolt clean）。已建 issue #342 待代码修复。
+- **处理**: 本次重跑成功，未写库前失败安全（Dolt clean）。已建 issue #342；已修复于 PR #344
+  （2026-08-31）：`backfill()` 逐股 3 次重试（2s/4s 指数退避，与每日路径同公式），耗尽后整批
+  strict 中止、错误带 symbol/attempts、不写部分 CSV。
 - **验证**: `update-database.sh` 第二次完整跑成功，总耗时约 5962 秒。
 - **教训**: 批量逐股/逐页网络回补路径必须与每日路径同等对待瞬时错误（重试+告警+失败清单），
   不能把“整批失败”当“整批结果”。
@@ -788,6 +790,9 @@
 - **处理（本次数据修复）**: 对全部 11 张 compass_data 表执行无 `--since` 的
   `import-compass` 全量重建；重建后 Dolt ↔ Parquet 行数/最大日期完全一致，且 `priority`/`rn`
   内部列已清除（增量 merge 成功路径会把这两列写进正式 parquet，下次 merge 才触发 Binder fallback）。
+  已修复于 PR #344（2026-08-31）：merge 前做 Dolt `<since` vs 旧 parquet `<since` 双向 EXCEPT 历史
+  一致性校验，发散/不可读自动降级全量导出（pre_merge_backup 保留）；merge 输出
+  `SELECT * EXCLUDE (priority, rn)` 清除内部列。
 - **验证**: 全量重建后 Python/DuckDB 查询 11 张 parquet 均与 Dolt 对齐。
 - **教训**: 增量导入必须假设“旧 parquet 可能缺失 Dolt 中早于锚点的历史行”；auto-heal 回补后
   受影响表不能只跑 `--since` 增量，应强制全量 export 或先做缺失检测。
