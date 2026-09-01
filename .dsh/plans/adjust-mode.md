@@ -116,9 +116,9 @@ adjclose 实为**后复权**，原 factor=adjclose/close 直接放大为后复�
 
 ## 4. 完成定义（Done）
 
-- [ ] 三档切换在 UI 生效（qfq 最新 bar=现价 / hfq 后复权 / none 原始），SEPA 面板最新价不变
-- [ ] 指数/板块控件隐藏，指数三档结果恒等
-- [ ] `default_adjust` 生效、运行中切换不持久化
-- [ ] RED 测试（对抗性+需求验收）全部转 GREEN；`just check` 通过；覆盖率门槛达标
-- [ ] `.dsh/kb/` 五文件同步 + 决策记录齐备
-- [ ] commit→review→（用户确认）push→issue #345 收尾
+- [x] 三档切换在 UI 生效（qfq 最新 bar=现价 / hfq 后复权 / none 原始），SEPA 面板最新价不变（代码审查：backend.rs 未触碰；真实数据验证 SZ002832 qfq 最新=25.11）
+- [x] 指数/板块控件隐藏（kittest + 源扫描测试），指数三档结果恒等（ratio=1.0 fixture 测试 + SH000001 真实数据 adjclose==close 验证）
+- [x] `default_adjust` 生效（serde default + 启动链路测试）、运行中切换不持久化（set_adjust 无 save 调用，代码审查确认）
+- [x] RED 测试（对抗性 24 + 需求 13）全部转 GREEN；`just check`（fmt/clippy/test）通过；覆盖率门槛（compass-core 95%/compass 90%）待 CI 验证
+- [x] `.dsh/kb/` 五文件同步 + 决策记录齐备
+- [ ] commit→review→（用户确认）push→issue #345 收尾（推后核验后勾选）

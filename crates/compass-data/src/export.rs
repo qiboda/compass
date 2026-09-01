@@ -95,13 +95,17 @@ pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwri
             };
 
             for info in &symbols {
+                // "hfq" keeps the pre-#345 export semantics: the fetched close
+                // equals the stored adjclose (raw backward-adjusted ratio),
+                // so the exported `close`/`adjclose` columns stay the real
+                // adjusted values (not the qfq-normalized series).
                 let bars = match reader
                     .fetch_bars(
                         &info.code,
                         "1d",
                         chrono::DateTime::from_timestamp(0, 0).unwrap(),
                         chrono::Utc::now(),
-                        "qfq",
+                        "hfq",
                     )
                     .await
                 {

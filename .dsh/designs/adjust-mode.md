@@ -348,4 +348,4 @@ close 位模式变化会触发指标重算，不会出现陈旧 MA/BOLL）。
 | 宽度 | 0（内容自适应）/ 96px / 更多 | **固定 96px** | 三档文案等宽（zh 3 字），固定宽度切换不动布局；缩放字体时按钮按文本撑宽不截断 | 内容自适应在 zh/en 间宽度跳动，波及 Segmented 位置；更大宽度与 Group B 密度不匹配 |
 | 触发加载状态 | 加 Info toast / 复用 loading spinner | **复用 loading（无 toast）** | 与周期切换一致（无 toast）；重载即反馈 | toast 对高频视图属性切换是噪声 |
 | adjust 状态存放 | App 字段独占 / SharedState Dynamic | **SharedState `Dynamic<String>`（默认 qfq）+ App `adjust_index`** | 与 timeframe 双轨一致（state.rs:14-15 取值 / App 持索引）；dispatcher 行点击联动需读值组 FetchRequest | 仅 App 持有则 SEPA/screener 联动无法带档位；仅 SharedState 则无法驱动 Dropdown 初始选中 |
-| en 文案 | QFQ/HFQ/None / Adj. Fwd/Adj. Bwd/None | **QFQ / HFQ / None**（推荐，待确认） | 东财惯例缩写，trigger ≈30px 宽；96px 宽度富余最大 | 自解释长文本使 trigger 超宽（~110px），Group B 占比失衡 |
+| en 文案 | QFQ/HFQ/None / Adj. Fwd/Adj. Bwd/None | **QFQ / HFQ / None** | 东财惯例缩写，trigger ≈30px 宽；96px 宽度富余最大 | 自解释长文本使 trigger 超宽（~110px），Group B 占比失衡 |

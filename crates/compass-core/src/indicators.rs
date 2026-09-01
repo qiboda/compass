@@ -172,7 +172,10 @@ pub fn adjust_ohlc(raw: &[RawBar], adjclose: &[Option<f64>], mode: AdjustMode) -
                 Some(a) if a.is_finite() && a > 0.0 => a / r.close,
                 _ => 1.0,
             };
-            (r.close > 0.0 && adj.is_some_and(|a| a.is_finite() && a > 0.0)).then_some(ratio)
+            // Guard the quotient too: a subnormal close could overflow the
+            // division to inf; only a finite ratio is a valid anchor.
+            (r.close > 0.0 && adj.is_some_and(|a| a.is_finite() && a > 0.0) && ratio.is_finite())
+                .then_some(ratio)
         })
         .collect();
     // Forward anchor: ratio of the last valid bar (ascending series). When a
