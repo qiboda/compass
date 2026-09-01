@@ -304,3 +304,35 @@
 - 独立 RED/adversarial/requirement 子代理测试未闭环模式（B1→B7 连续条目列为 open，ref #311-#326）在 #342/#343 **首次完整闭环**：gate 3.5/4 均委派、RED 证据真实、修复后全 GREEN——该趋势项自此关闭。
 - 主 agent edit 工具摩擦第三次复现（#336 误删函数头、#338 edit ×5 失败、本次 ×6 isError）：同文件多轮编辑 + 子代理并行落盘的固定摩擦源；无自动机制，继续依赖"重读+唯一锚点"纪律，#338 已建议的编辑后 read 验证本次落实。
 - Dolt/测试基建细节问题（#326 SQL 拼缝、#334 helper 细节、本次 INSERT 错位）均由真实冒烟或独立测试抓出而非静态检查——测试基建与生产代码同样需要 review 注意力。
+
+## 2026-09-01 — ref #345 K 线复权方式切换 + adjclose 口径修复
+
+**What was done**: fetch_bars 三档复权（qfq 前复权/锚=最新有效 ratio 日、hfq 后复权、none 不复权）从数据层贯穿 GUI（Group B Dropdown 替代静态 Tag，SEPA/screener/market 联动天然携带档位，指数/板块隐藏，default_adjust 配置默认 qfq，运行中切换不持久化）。5 commits（4 实现 + 1 review-fix）；对抗 24 + 需求 13 测试全 GREEN；外部网络对照：东财官方 62 个除权除息事件 62/62 吻合（误差 ≤0.13%），不复权与腾讯逐日一致 ≤1e-6。审查 approve-with-notes，P1-1（export 导出口径）+ P2-1/2/4 已修。
+
+**User corrections**:
+- 「记得 找几个股票的网络数据对照一下前后复权的计算是不是正确。」——review 完成后用户追加外部真实数据交叉验证要求。教训：数值/复权类 feature 的完成定义应含「外部权威信源对照」（本实现若交卷时未验证，用户会再要）。验证中腾讯复权曲线自身不自洽（无事件日每日漂移 393-532 次），官方除权事件才是可信源头。
+
+**What went wrong**:
+1. edit 摩擦第 4 次复现（#336/#338/#342-343 之后）：turn 2 edit×90、16 次 isError（"file changed since it was read" ×N、"edit requires reading first" ×N）。
+2. 数据源试错 3 轮：东财 push2his SSL 断（curl exit 56；初版 python 无短超时，60s 超时整体被杀）→ 腾讯 ifzq.gtimg.cn（qfq 可用；hfq 无事件日也逐日漂移，非标准等比复权）→ 东财 datacenter-web RPT_SHAREBONUS_DET 官方事件（终解）。教训：先探测接口（短超时 curl）再写长脚本；行情软件复权曲线先用内部自洽性验证。
+3. parquet 列名 `trade_date` 写错（实际 `tradedate`）→ BinderException 返工；写 SQL 前应先 DESCRIBE。
+4. 对照脚本 v1 语法笔误（`'hfq_ratio_const'(min,max)`）→ 重写。
+5. 非事件日 ratio drift 阈值 1e-6 过严误报 2129 天——实际为 2 位小数舍入噪声（median ≤0.003%，p95 ≤0.026%）；阈值按噪声量级重新设定后再判。
+6. reflect-audit.sh `--git` 参数失效（worktree `.git` 是文件，`-d "$GIT_DIR/.git"` 判定失败；#342-343 已记录未修，本次修复）。
+7. 最后核实 grep 模式跨行不匹配 exit 1（小摩擦，换精确锚点）。
+
+**Lessons learned**:
+1. 数值/复权类验证矩阵：**官方除权除息事件（源头真理）> 平台三档曲线（需先验自洽性）> 内部恒等式**；外部接口先短超时探测再写脚本。
+2. 大批编辑（>10 次或同文件 >5 次）用 run_code 脚本化 / write 全量重写；edit 前必重读最新版。
+3. 写 SQL 前 DESCRIBE 核实列名；数值对照先测噪声量级再定判定阈值（本例 0.5% 事件阈值 vs 0.03% 噪声 p95）。
+4. 故障接口快速降级换源，不做无结果重试（push2his 两种 host 均 SSL 断后直接换信源类型）。
+
+**Process improvements**:
+- 本次已落实（随本 PR 提交）：`.dsh/kb/dev/process.md` 新增「编辑纪律」小节（4 次复现的固化：重读/脚本化/唯一锚点/验证）；全局 skill 脚本 `reflect-audit.sh` git 检测修复（`git -C "$GIT_DIR" rev-parse --git-dir` 替代 `-d .git`，worktree 兼容，已验证）。
+- proposed (ref #346)：复权因子事件验证脚本落库 `scripts/verify_adjust_events.py`（东财官方事件 ↔ parquet adjclose 因子跳变校验，62/62 ≤0.13% 实证；数据管线 import 后冒烟复用）。
+- 自动化盘点：验证脚本首版在 /tmp——已建 issue 落库；audit 脚本修复本轮完成。
+
+### Trends (last 10)
+- edit 工具摩擦连续第 4 条（#336/#338/#342-343/本条目）：**本轮已落实**为 process.md「编辑纪律」+ 脚本化建议——该趋势项待下次复盘确认是否关闭。
+- 「数值验证需外部权威对照」趋势形成（#338-340 rate 量纲抽样库内历史值、本条目官方除权事件）：验证准绳是「库内既有值/官方事件」，不是平台曲线。
+- 外部数据源可达性波动（#338 东财→新浪、本条目 push2his SSL 断→datacenter）：多源探测应并行短超时，单源失败快速切换不阻塞。
