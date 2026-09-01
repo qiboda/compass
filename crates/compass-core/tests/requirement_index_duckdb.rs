@@ -113,7 +113,7 @@ async fn fetch_bars_monthly_aggregates_index_sum_volume() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("SH000001", "1M", epoch_start(), epoch_end())
+        .fetch_bars("SH000001", "1M", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("fetch_bars 1M over index must not error");
 
@@ -157,7 +157,7 @@ async fn fetch_bars_monthly_aggregates_stock_unchanged() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("SZ000001", "1M", epoch_start(), epoch_end())
+        .fetch_bars("SZ000001", "1M", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("fetch_bars 1M over stock must not error");
 

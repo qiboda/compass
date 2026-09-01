@@ -103,7 +103,9 @@ fn bench_cold_read(c: &mut Criterion) {
             b.iter_batched(
                 || ParquetReader::new(&dir_path).unwrap(),
                 |reader| {
-                    let bars = reader.fetch_bars_blocking("SZ000001", start, end).unwrap();
+                    let bars = reader
+                        .fetch_bars_blocking("SZ000001", start, end, "qfq")
+                        .unwrap();
                     black_box(bars);
                 },
                 BatchSize::PerIteration,
@@ -130,7 +132,9 @@ fn bench_warm_read(c: &mut Criterion) {
 
         group.bench_function(format!("{}_rows", rows), |b| {
             b.iter(|| {
-                let bars = reader.fetch_bars_blocking("SZ000001", start, end).unwrap();
+                let bars = reader
+                    .fetch_bars_blocking("SZ000001", start, end, "qfq")
+                    .unwrap();
                 black_box(bars);
             });
         });
@@ -159,7 +163,9 @@ fn bench_real_data(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_data");
     group.bench_function("SZ000001", |b| {
         b.iter(|| {
-            let bars = reader.fetch_bars_blocking("SZ000001", start, end).unwrap();
+            let bars = reader
+                .fetch_bars_blocking("SZ000001", start, end, "qfq")
+                .unwrap();
             black_box(bars);
         });
     });

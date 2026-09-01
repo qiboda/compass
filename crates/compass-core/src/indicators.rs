@@ -108,33 +108,88 @@ pub struct RawBar {
     pub volume: f64,
 }
 
-/// Forward-adjust a raw OHLCV series into chart bars.
+/// Price adjustment mode (复权方式) for chart bars.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdjustMode {
+    /// Forward-adjusted (前复权): the latest bar equals the current market
+    /// price; historical bars are scaled by `ratio_i / r_anchor` where
+    /// `r_anchor` is the ratio of the last valid bar.
+    Forward,
+    /// Backward-adjusted (后复权): raw prices scaled by
+    /// `ratio_i = adjclose_i / close_i` (the stored adjclose itself).
+    Backward,
+    /// Unadjusted (不复权): raw prices as-is.
+    None,
+}
+
+impl std::str::FromStr for AdjustMode {
+    type Err = std::convert::Infallible;
+
+    /// Parses a canonical mode string: `"qfq"` (forward), `"hfq"`
+    /// (backward), `"none"` (unadjusted); unknown values fall back to
+    /// [`AdjustMode::Forward`] — the app/UI default.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "hfq" => Self::Backward,
+            "none" => Self::None,
+            _ => Self::Forward,
+        })
+    }
+}
+
+/// Adjust a raw OHLCV series into chart bars for a given [`AdjustMode`].
 ///
-/// Adjustment factor per bar: `factor = adjclose_i / close_i` (forward-adjusted
-/// close over unadjusted close). The latest bar has `adjclose == close` so its
-/// factor is 1.0 (前复权锚点). Every OHLC price is scaled by its bar's factor;
-/// volume is passed through unchanged.
+/// Per-bar adjustment factor (every OHLC price is scaled; volume is passed
+/// through unchanged):
 ///
-/// Bars with `close <= 0` or non-finite `adjclose` fall back to `factor = 1.0`
-/// (no scaling) instead of producing NaN/Inf. Output bars are in ascending
-/// time order, matching the input.
+/// - [`AdjustMode::None`]: `factor = 1.0` for every bar.
+/// - [`AdjustMode::Backward`]: `factor = ratio`, where
+///   `ratio = adjclose_i / close_i` — the stored adjclose is itself the
+///   backward-adjusted close, so prices scale to the adjusted series.
+/// - [`AdjustMode::Forward`]: `factor = ratio / r_anchor`, where `r_anchor`
+///   is the ratio of the **last valid bar** in the series; the anchor bar
+///   keeps `factor = 1.0` (前复权锚点, latest bar = current price).
+///
+/// A bar's ratio is invalid (falls back to `factor = 1.0`) when `close <= 0`
+/// or `adjclose` is `None`, non-finite, or `<= 0`. When `Forward` and no valid
+/// ratio exists, every factor is 1.0. Output bars are in ascending time
+/// order, matching the input.
 ///
 /// # Panics
 ///
 /// Never panics; `adjclose.len()` must equal `raw.len()` (debug-asserted).
-pub fn adjust_ohlc(raw: &[RawBar], adjclose: &[f64]) -> Vec<Bar> {
+pub fn adjust_ohlc(raw: &[RawBar], adjclose: &[Option<f64>], mode: AdjustMode) -> Vec<Bar> {
     debug_assert_eq!(
         adjclose.len(),
         raw.len(),
         "adjclose must provide exactly one factor per raw bar"
     );
-    raw.iter()
+    let ratios: Vec<Option<f64>> = raw
+        .iter()
         .zip(adjclose)
         .map(|(r, &adj)| {
-            let factor = if r.close > 0.0 && adj.is_finite() && adj > 0.0 {
-                adj / r.close
-            } else {
-                1.0
+            let ratio = match adj {
+                Some(a) if a.is_finite() && a > 0.0 => a / r.close,
+                _ => 1.0,
+            };
+            (r.close > 0.0 && adj.is_some_and(|a| a.is_finite() && a > 0.0)).then_some(ratio)
+        })
+        .collect();
+    // Forward anchor: ratio of the last valid bar (ascending series). When a
+    // bar's ratio is valid, the anchor is Some by definition (this bar or a
+    // later one); unwrap_or(1.0) only guards the impossible all-invalid case.
+    let anchor = match mode {
+        AdjustMode::Forward => ratios.iter().rev().find_map(|r| *r),
+        _ => None,
+    };
+    raw.iter()
+        .zip(&ratios)
+        .map(|(r, ratio)| {
+            let factor = match (mode, ratio) {
+                (AdjustMode::None, _) => 1.0,
+                (AdjustMode::Backward, Some(ratio)) => *ratio,
+                (AdjustMode::Forward, Some(ratio)) => ratio / anchor.unwrap_or(1.0),
+                (_, None) => 1.0,
             };
             let time = DateTime::<Utc>::from_naive_utc_and_offset(
                 r.date
@@ -335,6 +390,10 @@ mod tests {
             .collect()
     }
 
+    fn adj(values: &[f64]) -> Vec<Option<f64>> {
+        values.iter().map(|&v| Some(v)).collect()
+    }
+
     /// Latest bar has adjclose == close (前复权锚点) → factor 1.0, prices
     /// unchanged; historical bars scaled so that scaled_close == adjclose.
     #[test]
@@ -342,8 +401,8 @@ mod tests {
         // Two bars: latest close 20 / adjclose 20 (anchor), older close 10 /
         // adjclose 8 (factor 0.8).
         let raw = raw_bars(&[10.0, 20.0]);
-        let adj = vec![8.0, 20.0];
-        let bars = adjust_ohlc(&raw, &adj);
+        let adj = adj(&[8.0, 20.0]);
+        let bars = adjust_ohlc(&raw, &adj, AdjustMode::Forward);
 
         assert_eq!(bars.len(), 2);
 
@@ -369,7 +428,7 @@ mod tests {
     #[test]
     fn adjust_ohlc_preserves_dates() {
         let raw = raw_bars(&[10.0, 20.0]);
-        let bars = adjust_ohlc(&raw, &[8.0, 20.0]);
+        let bars = adjust_ohlc(&raw, &adj(&[8.0, 20.0]), AdjustMode::Forward);
         assert_eq!(bars[0].time.date_naive(), raw[0].date);
         assert_eq!(bars[1].time.date_naive(), raw[1].date);
     }
@@ -378,7 +437,7 @@ mod tests {
     #[test]
     fn adjust_ohlc_zero_close_falls_back_to_factor_one() {
         let raw = raw_bars(&[0.0, 20.0]);
-        let bars = adjust_ohlc(&raw, &[0.0, 20.0]);
+        let bars = adjust_ohlc(&raw, &adj(&[0.0, 20.0]), AdjustMode::Forward);
         assert!(bars[0].open.is_finite());
         assert!(bars[0].high.is_finite());
         assert!(bars[0].low.is_finite());
@@ -391,7 +450,7 @@ mod tests {
     #[test]
     fn adjust_ohlc_nan_adjclose_falls_back_to_factor_one() {
         let raw = raw_bars(&[10.0, 20.0]);
-        let bars = adjust_ohlc(&raw, &[f64::NAN, 20.0]);
+        let bars = adjust_ohlc(&raw, &[Some(f64::NAN), Some(20.0)], AdjustMode::Forward);
         assert!(bars[0].close.is_finite());
         assert_eq!(bars[0].close, 10.0); // factor 1.0 → unchanged
     }
@@ -399,6 +458,60 @@ mod tests {
     /// Empty input → empty output, no panic.
     #[test]
     fn adjust_ohlc_empty_input_returns_empty() {
-        assert!(adjust_ohlc(&[], &[]).is_empty());
+        assert!(adjust_ohlc(&[], &[], AdjustMode::Forward).is_empty());
+    }
+
+    /// Backward mode scales by raw ratio: latest ratio is not normalized to 1.
+    #[test]
+    fn adjust_ohlc_backward_uses_raw_ratio() {
+        let raw = raw_bars(&[10.0, 20.0]);
+        let bars = adjust_ohlc(&raw, &adj(&[8.0, 25.0]), AdjustMode::Backward);
+        assert!((bars[0].close - 8.0).abs() < 1e-9); // 10 × 8/10
+        assert!((bars[1].close - 25.0).abs() < 1e-9); // 20 × 25/20
+    }
+
+    /// None mode leaves every price untouched.
+    #[test]
+    fn adjust_ohlc_none_leaves_prices_untouched() {
+        let raw = raw_bars(&[10.0, 20.0]);
+        let bars = adjust_ohlc(&raw, &adj(&[8.0, 25.0]), AdjustMode::None);
+        assert_eq!(bars[0].close, 10.0);
+        assert_eq!(bars[1].close, 20.0);
+        assert_eq!(bars[0].volume, 1000.0);
+    }
+
+    /// Forward anchor is the last **valid** ratio: a trailing invalid bar does
+    /// not capture the anchor (it keeps factor 1.0) and earlier bars are
+    /// normalized against the last valid one.
+    #[test]
+    fn adjust_ohlc_forward_anchor_is_last_valid_ratio() {
+        // Ratios: 8/10 = 0.8, 18/20 = 0.9, NULL (invalid).
+        let raw = raw_bars(&[10.0, 20.0, 14.0]);
+        let adj: Vec<Option<f64>> = vec![Some(8.0), Some(18.0), None];
+        let bars = adjust_ohlc(&raw, &adj, AdjustMode::Forward);
+        let anchor = 0.9;
+        assert!((bars[0].close - 10.0 * 0.8 / anchor).abs() < 1e-9);
+        assert!((bars[1].close - 20.0 * 0.9 / anchor).abs() < 1e-9); // anchor → factor 1.0
+        assert!((bars[2].close - 14.0).abs() < 1e-9); // invalid → factor 1.0
+    }
+
+    /// No valid ratio anywhere → every factor is 1.0 (no division by nothing).
+    #[test]
+    fn adjust_ohlc_forward_no_valid_ratio_keeps_prices() {
+        let raw = raw_bars(&[10.0, 20.0]);
+        let adj: Vec<Option<f64>> = vec![None, Some(f64::NAN)];
+        let bars = adjust_ohlc(&raw, &adj, AdjustMode::Forward);
+        assert_eq!(bars[0].close, 10.0);
+        assert_eq!(bars[1].close, 20.0);
+    }
+
+    /// Unknown strings parse to Forward (the app default).
+    #[test]
+    fn adjust_mode_from_str_unknown_falls_back_to_forward() {
+        assert_eq!("qfq".parse::<AdjustMode>().unwrap(), AdjustMode::Forward);
+        assert_eq!("hfq".parse::<AdjustMode>().unwrap(), AdjustMode::Backward);
+        assert_eq!("none".parse::<AdjustMode>().unwrap(), AdjustMode::None);
+        assert_eq!("bogus".parse::<AdjustMode>().unwrap(), AdjustMode::Forward);
+        assert_eq!("".parse::<AdjustMode>().unwrap(), AdjustMode::Forward);
     }
 }

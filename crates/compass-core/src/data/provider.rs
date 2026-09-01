@@ -56,16 +56,24 @@ pub enum DataError {
 /// and synthetic data without changing consumer code.
 #[async_trait]
 pub trait DataProvider: Send + Sync {
-    /// Fetch OHLCV bars for a symbol, timeframe, and date range. Bars are
-    /// **forward-adjusted** (前复权): OHLC is scaled by
-    /// `factor_i = adjclose_i / close_i`, so the latest bar's price equals the
-    /// current market price.
+    /// Fetch OHLCV bars for a symbol, timeframe, and date range.
+    ///
+    /// `adjust` selects the price adjustment mode (复权方式) with canonical
+    /// values `"qfq"` (forward-adjusted, default), `"hfq"` (backward-adjusted),
+    /// and `"none"` (unadjusted). Unknown values fall back to `"qfq"`.
+    ///
+    /// Forward adjustment (ref #345) scales each bar by
+    /// `factor_i = (adjclose_i / close_i) / r_anchor`, where `r_anchor` is the
+    /// ratio of the last valid bar in the queried range — the latest bar's
+    /// price equals the current market price. Backward adjustment scales by
+    /// the raw ratio `adjclose_i / close_i` (the stored adjclose itself).
     async fn fetch_bars(
         &self,
         symbol: &str,
         timeframe: &str,
         range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
+        adjust: &str,
     ) -> Result<Vec<Bar>, DataError>;
 
     /// Search for symbols matching a query string.

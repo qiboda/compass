@@ -32,6 +32,7 @@ impl DataProvider for SyntheticProvider {
         _timeframe: &str,
         _range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
+        _adjust: &str,
     ) -> Result<Vec<Bar>, DataError> {
         const COUNT: usize = 200;
         const START_PRICE: f64 = 100.0;
@@ -99,7 +100,7 @@ mod tests {
     async fn fetch_bars_has_price_movement() {
         let p = SyntheticProvider;
         let bars = p
-            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
+            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .unwrap();
         assert_eq!(bars.len(), 200);
@@ -112,7 +113,7 @@ mod tests {
     async fn fetch_bars_consistent_ohlc() {
         let p = SyntheticProvider;
         let bars = p
-            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end())
+            .fetch_bars("any", "1d", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .unwrap();
         for w in bars.windows(2) {

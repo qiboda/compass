@@ -41,8 +41,11 @@ fn reject_output_inside_input(input: &Path, output: &Path) -> bool {
 }
 
 /// Forward-adjustment factor SQL: `adjclose/close` when close > 0 and adjclose
-/// is finite and > 0, else 1.0 — identical to `indicators::adjust_ohlc` so the
-/// csv/parquet-dir exports never drift from the chart reading path.
+/// is finite and > 0, else 1.0 — the same ratio/validity rule as the chart
+/// read path (`indicators::adjust_ohlc`, ref #345; qfq mode further divides
+/// by the last valid ratio's anchor) so the csv/parquet-dir exports
+/// never drift from the chart reading path. Exports use the raw ratio
+/// (equivalent to hfq scaling).
 const ADJ_FACTOR_SQL: &str = "CASE WHEN close > 0 AND adjclose IS NOT NULL AND \
      isfinite(adjclose) AND adjclose > 0 THEN adjclose / close ELSE 1.0 END";
 
@@ -98,6 +101,7 @@ pub async fn run_export(input: PathBuf, format: String, output: PathBuf, overwri
                         "1d",
                         chrono::DateTime::from_timestamp(0, 0).unwrap(),
                         chrono::Utc::now(),
+                        "qfq",
                     )
                     .await
                 {
@@ -1558,6 +1562,7 @@ mod tests {
                 "1d",
                 chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
                 chrono::Utc::now(),
+                "qfq",
             )
             .await
             .expect("fetch_bars on the exported directory must succeed");
@@ -1830,6 +1835,7 @@ mod tests {
                 "1d",
                 chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
                 chrono::Utc::now(),
+                "qfq",
             )
             .await
             .expect("fetch_bars must read the exported stock_daily.parquet");
@@ -1884,6 +1890,7 @@ mod tests {
                 "1d",
                 chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
                 chrono::Utc::now(),
+                "qfq",
             )
             .await
             .expect("stock rows must survive an empty index parquet");
@@ -1942,7 +1949,7 @@ mod tests {
         .await;
         let reader = ParquetReader::new(&out_dir).expect("reopen after round 1");
         let round1 = reader
-            .fetch_bars("SZ000001", "1d", epoch, now)
+            .fetch_bars("SZ000001", "1d", epoch, now, "qfq")
             .await
             .expect("round 1 data must be present after its export");
         assert_eq!(round1.len(), 1, "round 1 must write exactly one row");
@@ -1963,14 +1970,14 @@ mod tests {
             "overwrite must replace stale stock data, not append or keep it"
         );
         let bars = reader
-            .fetch_bars("SH600000", "1d", epoch, now)
+            .fetch_bars("SH600000", "1d", epoch, now, "qfq")
             .await
             .expect("round 2 data must be present");
         assert_eq!(bars.len(), 1);
         assert!((bars[0].volume - 2000.0).abs() < 1e-9);
         assert!(
             reader
-                .fetch_bars("SZ000001", "1d", epoch, now)
+                .fetch_bars("SZ000001", "1d", epoch, now, "qfq")
                 .await
                 .is_err(),
             "round-1 symbol must be gone after an overwrite export"
@@ -2016,7 +2023,7 @@ mod tests {
         let epoch = chrono::DateTime::from_timestamp(0, 0).expect("epoch");
         assert!(
             reader
-                .fetch_bars("SZ000001", "1d", epoch, chrono::Utc::now())
+                .fetch_bars("SZ000001", "1d", epoch, chrono::Utc::now(), "qfq")
                 .await
                 .is_ok(),
             "input data must remain readable after a refused export"
@@ -2197,6 +2204,7 @@ mod tests {
                 "1d",
                 chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
                 chrono::Utc::now(),
+                "qfq",
             )
             .await
             .expect("the served symbol must survive partial failures");

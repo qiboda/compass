@@ -122,7 +122,7 @@ async fn fetch_bars_falls_back_to_index_daily_parquet() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("SH000001", "1d", epoch_start(), epoch_end())
+        .fetch_bars("SH000001", "1d", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("fetch_bars should not error");
 
@@ -151,7 +151,7 @@ async fn fetch_bars_bk_symbol_routes_to_index_daily() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("BK0475", "1d", epoch_start(), epoch_end())
+        .fetch_bars("BK0475", "1d", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("fetch_bars should not error");
 
@@ -182,7 +182,7 @@ async fn fetch_bars_weekly_aggregates_index_sum_volume() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("SH000001", "1w", epoch_start(), epoch_end())
+        .fetch_bars("SH000001", "1w", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("fetch_bars 1w should not error");
 
@@ -211,7 +211,7 @@ async fn fetch_bars_stock_symbol_not_leaked_from_index() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("SZ000001", "1d", epoch_start(), epoch_end())
+        .fetch_bars("SZ000001", "1d", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("stock fetch should succeed");
 
@@ -237,7 +237,7 @@ async fn fetch_bars_prefers_stock_over_index_on_collision() {
 
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let bars = provider
-        .fetch_bars("SH000001", "1d", epoch_start(), epoch_end())
+        .fetch_bars("SH000001", "1d", epoch_start(), epoch_end(), "qfq")
         .await
         .expect("fetch should succeed");
 
@@ -254,7 +254,7 @@ async fn fetch_bars_both_files_missing_returns_empty_no_panic() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
     let result = provider
-        .fetch_bars("SH000001", "1d", epoch_start(), epoch_end())
+        .fetch_bars("SH000001", "1d", epoch_start(), epoch_end(), "qfq")
         .await;
     assert!(
         result.is_ok() || result.is_err(),
@@ -281,8 +281,8 @@ async fn concurrent_fetch_bars_stock_and_index_both_succeed() {
     let provider = DuckDbProvider::new(Some(tmp.path().to_path_buf())).expect("provider");
 
     let (stock_res, index_res) = tokio::join!(
-        provider.fetch_bars("SZ000001", "1d", epoch_start(), epoch_end()),
-        provider.fetch_bars("SH000001", "1d", epoch_start(), epoch_end()),
+        provider.fetch_bars("SZ000001", "1d", epoch_start(), epoch_end(), "qfq"),
+        provider.fetch_bars("SH000001", "1d", epoch_start(), epoch_end(), "qfq"),
     );
 
     let stock_bars = stock_res.expect("stock fetch");
