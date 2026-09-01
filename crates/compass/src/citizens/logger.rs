@@ -102,7 +102,7 @@ mod tests {
         let state = CitizenState::new();
         let mut panel = LoggerPanel::new(id, state);
 
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         let tokens = ThemeTokens::dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -120,7 +120,7 @@ mod tests {
         let state = CitizenState::new();
         let mut panel = LoggerPanel::new(id, state);
 
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         let tokens = ThemeTokens::dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {

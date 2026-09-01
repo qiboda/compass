@@ -17,7 +17,10 @@ tab.market: 大盘
 toolbar:
   fetch: 获取数据
   loading: 加载中…
-  adjust: 前复权
+  adjust:
+    qfq: 前复权
+    hfq: 后复权
+    none: 不复权
   toggle_sidebar: 切换侧边栏
 
 sidebar:

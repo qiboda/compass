@@ -16,6 +16,8 @@ pub enum AppMessage {
 pub struct FetchRequest {
     pub symbol: String,
     pub timeframe: String,
+    /// Price adjustment mode: "qfq"/"hfq"/"none" (default "qfq").
+    pub adjust: String,
     pub range_start: DateTime<Utc>,
     pub range_end: DateTime<Utc>,
 }

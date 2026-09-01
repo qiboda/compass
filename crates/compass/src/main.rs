@@ -21,7 +21,6 @@ use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
 use compass_ui::widgets::segmented::Segmented;
 use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
 use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
-use compass_ui::widgets::tag::{Tag, TagVariant};
 use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use compass_ui::widgets::toolbar::Toolbar;
 
@@ -65,6 +64,7 @@ fn main() -> eframe::Result {
     let shared_state = Arc::new(state::SharedState::new(
         &config.app.app.default_symbol,
         &config.app.app.default_timeframe,
+        &config.app.app.default_adjust,
     ));
     shared_state.watchlist.set(config.watchlist.symbols.clone());
 
@@ -204,6 +204,7 @@ fn main() -> eframe::Result {
                 picker_list,
                 stock_picker,
                 timeframe_index: timeframe_index_from_value(&config.app.app.default_timeframe),
+                adjust_index: adjust_index_from_value(&config.app.app.default_adjust),
                 theme,
                 dock_style,
                 _backend_handle,
@@ -836,6 +837,9 @@ struct CompassApp {
     picker_list: Vec<compass_core::model::StockBasic>,
     stock_picker: StockPicker<compass_core::model::StockBasic>,
     timeframe_index: usize,
+    /// Selected price adjustment mode index (0=qfq, 1=hfq, 2=none), kept in
+    /// sync with `shared_state.adjust` (mirrors `timeframe_index`).
+    adjust_index: usize,
     theme: CompassTheme,
     dock_style: egui_dock::Style,
     _backend_handle: backend::BackendHandle,
@@ -1115,6 +1119,18 @@ impl CompassApp {
         self.fetch_bars();
     }
 
+    /// Switch the price adjustment mode (复权方式) and reload immediately.
+    ///
+    /// Mirrors [`Self::set_timeframe`]: the shared state is synced first, then
+    /// the chart reloads unconditionally (last request wins) so the chart and
+    /// the toolbar label never disagree. Session-only — never persisted.
+    fn set_adjust(&mut self, idx: usize) {
+        debug!(adjust = adjust_value(idx), "adjust changed");
+        self.adjust_index = idx;
+        self.shared_state.adjust.set(adjust_value(idx).to_string());
+        self.fetch_bars();
+    }
+
     /// Widget id of the search input rendered inside [`Sidebar::show`].
     ///
     /// The sidebar body runs under an explicit `sidebar_body` Ui id so the
@@ -1389,9 +1405,9 @@ impl CompassApp {
                 self.symbol_input_id = Some(response.id);
             });
 
-            // Group B — 周期: segmented 1d/1w/1M + 前复权 tag. The adjust tag
-            // is hidden when the current symbol is an index/board (指数不
-            // 复权, fqt=0 — plan T7); stocks keep it.
+            // Group B — 周期: segmented 1d/1w/1M + 复权方式 dropdown. The
+            // adjust control is hidden when the current symbol is an
+            // index/board (指数不复权 — plan T7); stocks keep it.
             tb.group(ui, |ui| {
                 if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
                     .selected(self.timeframe_index)
@@ -1401,12 +1417,21 @@ impl CompassApp {
                 }
                 let current_symbol = self.shared_state.symbol.get();
                 let is_index = self.is_index_or_board(&current_symbol);
-                if !is_index {
-                    let adjust = t!("toolbar.adjust");
-                    Tag::new(&tokens, &adjust)
-                        .variant(TagVariant::Custom)
-                        .color(tokens.color.info)
-                        .show(ui);
+                if !is_index
+                    && let Some(idx) = Dropdown::new(
+                        &tokens,
+                        [
+                            t!("toolbar.adjust.qfq"),
+                            t!("toolbar.adjust.hfq"),
+                            t!("toolbar.adjust.none"),
+                        ],
+                    )
+                    .id_salt("adjust")
+                    .selected(self.adjust_index)
+                    .width(96.0)
+                    .show(ui)
+                {
+                    self.set_adjust(idx);
                 }
             });
 
@@ -1542,6 +1567,30 @@ fn timeframe_index_from_value(value: &str) -> usize {
     }
 }
 
+/// Map an adjust index to its canonical mode value. The inverse mapping is
+/// [`adjust_index_from_value`] — keep the two matches in sync. Out-of-range
+/// indices fall back to "qfq" so the toolbar selection and the chart never
+/// disagree.
+fn adjust_value(idx: usize) -> &'static str {
+    match idx {
+        1 => "hfq",
+        2 => "none",
+        _ => "qfq",
+    }
+}
+
+/// Map an adjust mode value back to its index. The inverse mapping is
+/// [`adjust_value`] — keep the two matches in sync. Unknown values fall back
+/// to 0 ("qfq") so a stale/typo'd configured mode never yields an index
+/// outside the Dropdown options.
+fn adjust_index_from_value(value: &str) -> usize {
+    match value {
+        "hfq" => 1,
+        "none" => 2,
+        _ => 0,
+    }
+}
+
 /// Latest close as the status-bar price plus the change vs. the previous
 /// close (percent). `(None, None)` when there is no data; a single bar
 /// yields a price with no change.
@@ -1576,6 +1625,8 @@ mod tests {
 
     use crate::build_industry_names;
 
+    use crate::adjust_index_from_value;
+    use crate::adjust_value;
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
     use crate::latest_quote;
@@ -1637,7 +1688,7 @@ mod tests {
 
     #[test]
     fn shared_state_initializes_with_defaults() {
-        let state = SharedState::new("SZ000001", "1d");
+        let state = SharedState::new("SZ000001", "1d", "qfq");
         assert_eq!(state.symbol.get(), "SZ000001");
         assert_eq!(state.bars.get().len(), 0);
         assert!(!state.loading.get());
@@ -1721,6 +1772,56 @@ mod tests {
         assert_eq!(timeframe_value(0), "1d");
         assert_eq!(timeframe_value(1), "1w");
         assert_eq!(timeframe_value(2), "1M");
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #345 — adjust_value / adjust_index_from_value contract:
+    //   0→"qfq", 1→"hfq", 2→"none", out-of-range index → "qfq";
+    //   inverse: known values map back, unknown values (incl. casing,
+    //   whitespace, Unicode) fall back to index 0 ("qfq").
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn adjust_value_returns_correct_strings() {
+        assert_eq!(adjust_value(0), "qfq");
+        assert_eq!(adjust_value(1), "hfq");
+        assert_eq!(adjust_value(2), "none");
+        // Out-of-range indices must fall back to "qfq", never panic.
+        assert_eq!(adjust_value(3), "qfq");
+        assert_eq!(adjust_value(usize::MAX), "qfq");
+    }
+
+    #[test]
+    fn adjust_index_from_value_maps_known_values() {
+        assert_eq!(adjust_index_from_value("qfq"), 0);
+        assert_eq!(adjust_index_from_value("hfq"), 1);
+        assert_eq!(adjust_index_from_value("none"), 2);
+    }
+
+    #[test]
+    fn adjust_index_from_value_unknown_falls_back_to_zero() {
+        // A hand-edited config (issue: typo, stale value, casing, padding)
+        // must never leave the toolbar index out of range.
+        for bad in [
+            "invalid",
+            "",
+            "QFQ",
+            "None",
+            "None ",
+            " qfq",
+            "前复权",
+            "复权",
+            "adj",
+            "hfq\n",
+            "none\u{200b}",
+            "⚠️",
+        ] {
+            assert_eq!(
+                adjust_index_from_value(bad),
+                0,
+                "unknown adjust value {bad:?} must fall back to 0 (qfq)"
+            );
+        }
     }
 
     // ======================================================================
@@ -2031,17 +2132,31 @@ default_timeframe = "1w"
         let _ = harness.get_by_label_contains("compass_dark");
     }
 
+    /// Contract upgrade (issue #345): the static 前复权 Tag becomes a
+    /// three-option Dropdown. Assert the trigger renders the current mode
+    /// (default qfq) and that all three option labels (前复权/后复权/不复权)
+    /// are present once the popup is open.
     #[test]
     fn render_toolbar_renders_adjusted_price_tag() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
-        let harness = egui_kittest::Harness::new_ui(|ui| {
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
             app.render_toolbar(ui);
         });
+        harness.run();
 
-        let _ = harness.get_by_label(&tr("toolbar.adjust"));
+        // Trigger shows the current selection (qfq → 前复权 + caret glyph).
+        let _ = harness.get_by_label_contains(&tr("toolbar.adjust.qfq"));
+        // Open the popup and assert all three option labels exist.
+        harness
+            .get_by_label_contains(&tr("toolbar.adjust.qfq"))
+            .click();
+        harness.run();
+        let _ = harness.get_by_label(&tr("toolbar.adjust.qfq"));
+        let _ = harness.get_by_label(&tr("toolbar.adjust.hfq"));
+        let _ = harness.get_by_label(&tr("toolbar.adjust.none"));
     }
 
     #[test]
@@ -2061,6 +2176,151 @@ default_timeframe = "1w"
         }
 
         assert_eq!(app.timeframe_index, 1);
+    }
+
+    /// The adjust Dropdown must NOT render when the current symbol is an
+    /// index/board (plan §1/design §4): a BK-prefixed board code and an
+    /// index_list entry with a non-empty index_type both hide the control;
+    /// switching back to a stock restores it (session-level state survives).
+    #[test]
+    fn render_toolbar_hides_adjust_dropdown_for_index_and_board() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+
+        // BK-prefixed board code → control hidden.
+        app.shared_state.symbol.set("BK0001".to_string());
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.run();
+            assert!(
+                harness
+                    .query_by_label_contains(&tr("toolbar.adjust.qfq"))
+                    .is_none(),
+                "adjust Dropdown must be hidden for a BK-prefixed board symbol"
+            );
+        }
+
+        // Index symbol present in `index_list` with non-empty index_type → hidden.
+        app.index_list = vec![index_basic(
+            "SH000001",
+            "上证指数",
+            "official",
+            Some("SSE Composite"),
+        )];
+        app.shared_state.symbol.set("SH000001".to_string());
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.run();
+            assert!(
+                harness
+                    .query_by_label_contains(&tr("toolbar.adjust.qfq"))
+                    .is_none(),
+                "adjust Dropdown must be hidden for an index_list symbol"
+            );
+        }
+
+        // Back to a stock → control rendered again, and it must be an
+        // INTERACTIVE dropdown: clicking the trigger opens a popup with all
+        // three options. The old static Tag (Sense::hover) would ignore the
+        // click → this assertion is RED against the pre-implementation UI.
+        app.shared_state.symbol.set("SZ000001".to_string());
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.run();
+            assert!(
+                harness
+                    .query_by_label_contains(&tr("toolbar.adjust.qfq"))
+                    .is_some(),
+                "adjust Dropdown must reappear for a stock symbol"
+            );
+            harness
+                .get_by_label_contains(&tr("toolbar.adjust.qfq"))
+                .click();
+            harness.run();
+            let _ = harness.get_by_label(&tr("toolbar.adjust.hfq"));
+        }
+    }
+
+    /// Selecting a different adjust mode must behave exactly like the
+    /// timeframe switch (plan §1.5 `set_adjust`): sync `adjust_index` +
+    /// `shared_state.adjust`, then trigger an UNCONDITIONAL fetch (loading
+    /// set synchronously; last request wins). Mirrors
+    /// `render_toolbar_timeframe_switch_changes_index`.
+    #[test]
+    fn render_toolbar_adjust_switch_syncs_state_and_triggers_fetch() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+
+        {
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                app.render_toolbar(ui);
+            });
+            harness.run();
+            harness
+                .get_by_label_contains(&tr("toolbar.adjust.qfq"))
+                .click();
+            harness.run();
+            harness.get_by_label(&tr("toolbar.adjust.hfq")).click();
+            harness.step();
+        }
+
+        assert_eq!(app.adjust_index, 1, "hfq must map to dropdown index 1");
+        assert_eq!(
+            app.shared_state.adjust.get(),
+            "hfq",
+            "shared_state.adjust must sync to the selected mode"
+        );
+        assert!(
+            app.shared_state.loading.get(),
+            "adjust switch must trigger an immediate fetch (unconditional reload, \
+             last request wins)"
+        );
+    }
+
+    /// Requirement (plan §4 "default_adjust 生效"): a fresh app built from
+    /// `AppConfig::default()` (default_adjust = "qfq") must seed
+    /// `SharedState.adjust` with "qfq" — the very first fetch carries qfq
+    /// even though no switch ever happened.
+    #[test]
+    fn app_startup_seeds_default_adjust_qfq_into_shared_state() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        assert_eq!(
+            app.shared_state.adjust.get(),
+            "qfq",
+            "AppConfig::default() default_adjust must seed SharedState.adjust"
+        );
+        assert_eq!(
+            app.adjust_index, 0,
+            "adjust_index_from_value(\"qfq\") must be 0 at startup"
+        );
+    }
+
+    /// The zh/en key-value reference table must replace the legacy
+    /// ("toolbar.adjust", "前复权", "Adj.") row with the three new option
+    /// keys (plan 步骤 11) — a stale entry would silently pin the old
+    /// single-mode UI contract.
+    #[test]
+    fn key_tree_carries_three_adjust_keys_and_drops_legacy_row() {
+        assert!(KEY_TREE.contains(&("toolbar.adjust.qfq", "前复权", "QFQ")));
+        assert!(KEY_TREE.contains(&("toolbar.adjust.hfq", "后复权", "HFQ")));
+        assert!(KEY_TREE.contains(&("toolbar.adjust.none", "不复权", "None")));
+        assert!(
+            !KEY_TREE.contains(&("toolbar.adjust", "前复权", "Adj.")),
+            "legacy toolbar.adjust row must be removed from KEY_TREE"
+        );
     }
 
     #[test]
@@ -2320,7 +2580,7 @@ default_timeframe = "1w"
         let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
         let (llm_signal, _llm_slot) = factory::create_signal_slot::<RunLlmRequest>();
-        let shared = SharedState::new("SZ000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
         let mut dock_state =
@@ -2877,7 +3137,7 @@ default_timeframe = "1w"
 
     #[test]
     fn export_logs_writes_entries_to_file() {
-        let state = SharedState::new("SZ000001", "1d");
+        let state = SharedState::new("SZ000001", "1d", "qfq");
         {
             let logger = egui_lens::ReactiveEventLogger::new(&state.log);
             logger.log_info("hello world");
@@ -2904,7 +3164,7 @@ default_timeframe = "1w"
 
     #[test]
     fn export_logs_empty_state_writes_header_only() {
-        let state = SharedState::new("SZ000001", "1d");
+        let state = SharedState::new("SZ000001", "1d", "qfq");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("empty.txt");
 
@@ -3834,6 +4094,7 @@ default_timeframe = "1w"
                 app: AppSection {
                     default_symbol: "600519".to_string(),
                     default_timeframe: "1d".to_string(),
+                    default_adjust: "qfq".to_string(),
                 },
                 ..AppConfig::default()
             },
@@ -3931,7 +4192,9 @@ default_timeframe = "1w"
         ("tab.sepa", "东方SEPA", "East SEPA"),
         ("toolbar.fetch", "获取数据", "Fetch"),
         ("toolbar.loading", "加载中…", "Loading..."),
-        ("toolbar.adjust", "前复权", "Adj."),
+        ("toolbar.adjust.qfq", "前复权", "QFQ"),
+        ("toolbar.adjust.hfq", "后复权", "HFQ"),
+        ("toolbar.adjust.none", "不复权", "None"),
         ("toolbar.toggle_sidebar", "切换侧边栏", "Toggle sidebar"),
         ("sidebar.group_watchlist", "自选", "Watchlist"),
         ("sidebar.search_placeholder", "搜索自选", "Search watchlist"),

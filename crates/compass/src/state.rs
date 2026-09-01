@@ -13,6 +13,8 @@ pub struct SharedState {
     pub symbol: Dynamic<String>,
     /// Current timeframe (e.g. "1d", "1w", "1M").
     pub timeframe: Dynamic<String>,
+    /// Current price adjustment mode (复权方式): "qfq"/"hfq"/"none".
+    pub adjust: Dynamic<String>,
     /// OHLCV bars for the current chart.
     pub bars: Dynamic<Vec<Bar>>,
     /// `true` while a data fetch is in flight.
@@ -64,14 +66,16 @@ pub struct SharedState {
 }
 
 impl SharedState {
-    /// Creates a new `SharedState` with the given default symbol.
+    /// Creates a new `SharedState` with the given defaults.
     ///
     /// All fields are initialized to sensible defaults — empty bars, not
-    /// loading, no error, and an empty log.
-    pub fn new(default_symbol: &str, default_timeframe: &str) -> Self {
+    /// loading, no error, and an empty log. `default_adjust` seeds the price
+    /// adjustment mode ("qfq"/"hfq"/"none", default "qfq").
+    pub fn new(default_symbol: &str, default_timeframe: &str, default_adjust: &str) -> Self {
         Self {
             symbol: Dynamic::new(default_symbol.to_string()),
             timeframe: Dynamic::new(default_timeframe.to_string()),
+            adjust: Dynamic::new(default_adjust.to_string()),
             bars: Dynamic::new(Vec::new()),
             loading: Dynamic::new(false),
             error: Dynamic::new(None),
@@ -94,5 +98,41 @@ impl SharedState {
             industry_names: Dynamic::new(std::collections::HashMap::new()),
             watchlist: Dynamic::new(Vec::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // Issue #345 — `SharedState::new` takes a default_adjust param and seeds
+    // `adjust` with it; "qfq" is the documented default.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shared_state_new_seeds_adjust_from_param() {
+        assert_eq!(
+            SharedState::new("SZ000001", "1d", "qfq").adjust.get(),
+            "qfq"
+        );
+        assert_eq!(
+            SharedState::new("SZ000001", "1d", "hfq").adjust.get(),
+            "hfq"
+        );
+        assert_eq!(
+            SharedState::new("SZ000001", "1d", "none").adjust.get(),
+            "none"
+        );
+    }
+
+    /// Adversarial: the seed must arrive via the param, not via a hard-coded
+    /// "qfq" constant that ignores the caller's configured default.
+    #[test]
+    fn shared_state_new_adjust_reflects_caller_default_not_hardcoded() {
+        let state = SharedState::new("SH600519", "1M", "hfq");
+        assert_eq!(state.adjust.get(), "hfq");
+        assert_eq!(state.timeframe.get(), "1M");
+        assert_eq!(state.symbol.get(), "SH600519");
     }
 }

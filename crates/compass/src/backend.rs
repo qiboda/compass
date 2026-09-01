@@ -101,7 +101,13 @@ pub fn wire_backend(
             };
 
             match provider
-                .fetch_bars(&req.symbol, &req.timeframe, req.range_start, req.range_end)
+                .fetch_bars(
+                    &req.symbol,
+                    &req.timeframe,
+                    req.range_start,
+                    req.range_end,
+                    &req.adjust,
+                )
                 .await
             {
                 Ok(bars) if bars.is_empty() => FetchResponse {
@@ -525,6 +531,7 @@ mod tests {
         FetchRequest {
             symbol: symbol.to_string(),
             timeframe: "1d".to_string(),
+            adjust: "qfq".to_string(),
             range_start: DateTime::from_timestamp(0, 0).expect("valid epoch"),
             range_end: DateTime::from_timestamp(4_000_000_000, 0).expect("valid end timestamp"),
         }
@@ -618,7 +625,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         rust_i18n::set_locale("en");
         let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_xyz".into());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -668,7 +675,7 @@ mod tests {
         );
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -710,7 +717,7 @@ mod tests {
         );
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -759,7 +766,7 @@ mod tests {
         );
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("999999", "1d"));
+        let state = Arc::new(SharedState::new("999999", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (work_signal, _screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -882,7 +889,7 @@ mod tests {
         write_screener_parquet(temp_dir.path());
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -935,7 +942,7 @@ mod tests {
         write_screener_parquet(temp_dir.path());
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -977,7 +984,7 @@ mod tests {
         write_screener_parquet(temp_dir.path());
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work_signal, screener_signal, _sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -1031,7 +1038,7 @@ mod tests {
         write_screener_parquet(temp_dir.path());
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work_signal, _screener_signal, sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -1077,7 +1084,7 @@ mod tests {
         write_screener_parquet(temp_dir.path());
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work_signal, _screener_signal, sepa_signal, _index_signal, _llm_signal, _backend) =
@@ -1121,7 +1128,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
 
         let config = config_with_parquet_dir(temp_dir.path().to_string_lossy().to_string());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work_signal, _screener_signal, _sepa_signal, index_signal, _llm_signal, _backend) =
@@ -1195,7 +1202,7 @@ mod tests {
             "{\"Series\":{\"UpDays\":{\"n\":5,\"min_pct\":3.0}}}",
         );
         let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
@@ -1226,7 +1233,7 @@ mod tests {
     #[test]
     fn llm_path_not_configured_returns_error_without_panic() {
         let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work, _screener, _sepa, _index, llm_signal, _backend) =
@@ -1260,7 +1267,7 @@ mod tests {
             then.status(500).body("boom");
         });
         let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
@@ -1296,7 +1303,7 @@ mod tests {
             "{\"Series\":{\"UpDays\":{\"n\":5,\"min_pct\":3.0}}}",
         );
         let config = config_with_parquet_dir("/tmp/compass_test_nonexistent_llm_xyz".into());
-        let state = Arc::new(SharedState::new("000001", "1d"));
+        let state = Arc::new(SharedState::new("000001", "1d", "qfq"));
         let egui_ctx = egui::Context::default();
 
         let (_work, _screener, _sepa, _index, llm_signal, _backend) = wire_backend(
