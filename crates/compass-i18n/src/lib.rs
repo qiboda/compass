@@ -42,8 +42,12 @@ pub const KEY_TAB_MARKET: &str = "tab.market";
 pub const KEY_TOOLBAR_FETCH: &str = "toolbar.fetch";
 /// i18n key constant for `"toolbar.loading"`.
 pub const KEY_TOOLBAR_LOADING: &str = "toolbar.loading";
-/// i18n key constant for `"toolbar.adjust"`.
-pub const KEY_TOOLBAR_ADJUST: &str = "toolbar.adjust";
+/// i18n key constant for `"toolbar.adjust.qfq"`.
+pub const KEY_TOOLBAR_ADJUST_QFQ: &str = "toolbar.adjust.qfq";
+/// i18n key constant for `"toolbar.adjust.hfq"`.
+pub const KEY_TOOLBAR_ADJUST_HFQ: &str = "toolbar.adjust.hfq";
+/// i18n key constant for `"toolbar.adjust.none"`.
+pub const KEY_TOOLBAR_ADJUST_NONE: &str = "toolbar.adjust.none";
 /// i18n key constant for `"toolbar.toggle_sidebar"`.
 pub const KEY_TOOLBAR_TOGGLE_SIDEBAR: &str = "toolbar.toggle_sidebar";
 /// i18n key constant for `"sidebar.group_watchlist"`.
@@ -366,7 +370,9 @@ pub const ALL_KEYS: &[&str] = &[
     KEY_TAB_MARKET,
     KEY_TOOLBAR_FETCH,
     KEY_TOOLBAR_LOADING,
-    KEY_TOOLBAR_ADJUST,
+    KEY_TOOLBAR_ADJUST_QFQ,
+    KEY_TOOLBAR_ADJUST_HFQ,
+    KEY_TOOLBAR_ADJUST_NONE,
     KEY_TOOLBAR_TOGGLE_SIDEBAR,
     KEY_SIDEBAR_GROUP_WATCHLIST,
     KEY_SIDEBAR_SEARCH_PLACEHOLDER,
@@ -529,6 +535,12 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    /// Serializes process-global `set_locale` calls across parallel tests —
+    /// `rust_i18n::set_locale` is process-global, so any test that asserts an
+    /// exact locale-specific value must hold this lock (mirrors
+    /// `ui_fixes_218::LANG_LOCK` in the compass crate).
+    static TEST_LOCALE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn locale_keys() -> std::collections::BTreeMap<String, BTreeSet<String>> {
         let path = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
         let locales =
@@ -566,6 +578,9 @@ mod tests {
     /// `t!(key) != key` is the anti-false-positive check (plan Metis A7).
     #[test]
     fn all_key_constants_resolve_in_zh_and_en() {
+        let _guard = TEST_LOCALE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for &key in ALL_KEYS {
             rust_i18n::set_locale("zh");
             let zh = t!(key);
@@ -700,6 +715,90 @@ mod tests {
                 !is_allowed_zh_token(key),
                 "key {key} 不在白名单内，is_allowed_zh_token 必须返回 false"
             );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #345 — toolbar.adjust three-option i18n contract (plan §2 C10 /
+    // design §6): qfq=前复权/QFQ, hfq=后复权/HFQ, none=不复权/None; the
+    // legacy leaf "toolbar.adjust: 前复权 / Adj." must be removed.
+    // -----------------------------------------------------------------------
+
+    /// The new key constants must exist, carry the documented keys, and be
+    /// registered in ALL_KEYS so the key-completeness gate covers them.
+    #[test]
+    fn toolbar_adjust_option_constants_defined_and_registered() {
+        assert_eq!(KEY_TOOLBAR_ADJUST_QFQ, "toolbar.adjust.qfq");
+        assert_eq!(KEY_TOOLBAR_ADJUST_HFQ, "toolbar.adjust.hfq");
+        assert_eq!(KEY_TOOLBAR_ADJUST_NONE, "toolbar.adjust.none");
+        for key in [
+            KEY_TOOLBAR_ADJUST_QFQ,
+            KEY_TOOLBAR_ADJUST_HFQ,
+            KEY_TOOLBAR_ADJUST_NONE,
+        ] {
+            assert!(
+                ALL_KEYS.contains(&key),
+                "ALL_KEYS must register the new adjust constant {key}"
+            );
+        }
+    }
+
+    /// Documented values (design §6, user-确认): zh 前复权/后复权/不复权,
+    /// en QFQ/HFQ/None. The t!() runtime lookup must resolve exactly these
+    /// strings in the respective locale.
+    #[test]
+    fn toolbar_adjust_option_keys_resolve_to_documented_values() {
+        let _guard = TEST_LOCALE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rust_i18n::set_locale("zh");
+        assert_eq!(t!("toolbar.adjust.qfq"), "前复权");
+        assert_eq!(t!("toolbar.adjust.hfq"), "后复权");
+        assert_eq!(t!("toolbar.adjust.none"), "不复权");
+
+        rust_i18n::set_locale("en");
+        assert_eq!(t!("toolbar.adjust.qfq"), "QFQ");
+        assert_eq!(t!("toolbar.adjust.hfq"), "HFQ");
+        assert_eq!(t!("toolbar.adjust.none"), "None");
+
+        rust_i18n::set_locale("zh");
+    }
+
+    /// The legacy leaf must be gone from BOTH locale files (on-disk source
+    /// of truth): a leftover `toolbar.adjust: 前复权` leaf would sit inside
+    /// the same node as the new option sub-keys and pin the old contract.
+    #[test]
+    fn toolbar_adjust_legacy_key_removed_from_locale_files() {
+        let path = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        let locales =
+            rust_i18n::try_load_locales(&path, |_| false, true).expect("locales dir must parse");
+        for locale in ["zh", "en"] {
+            let dict = &locales[locale];
+            assert!(
+                dict.contains_key("toolbar.adjust.qfq"),
+                "{locale}: toolbar.adjust.qfq key missing"
+            );
+            assert!(
+                dict.contains_key("toolbar.adjust.hfq"),
+                "{locale}: toolbar.adjust.hfq key missing"
+            );
+            assert!(
+                dict.contains_key("toolbar.adjust.none"),
+                "{locale}: toolbar.adjust.none key missing"
+            );
+            assert!(
+                !dict.contains_key("toolbar.adjust"),
+                "{locale}: legacy toolbar.adjust leaf must be removed"
+            );
+            if locale == "zh" {
+                assert_eq!(dict["toolbar.adjust.qfq"], "前复权");
+                assert_eq!(dict["toolbar.adjust.hfq"], "后复权");
+                assert_eq!(dict["toolbar.adjust.none"], "不复权");
+            } else {
+                assert_eq!(dict["toolbar.adjust.qfq"], "QFQ");
+                assert_eq!(dict["toolbar.adjust.hfq"], "HFQ");
+                assert_eq!(dict["toolbar.adjust.none"], "None");
+            }
         }
     }
 }

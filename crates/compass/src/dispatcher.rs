@@ -72,10 +72,12 @@ pub fn handle(
     match msg {
         AppMessage::FetchBars => {
             let symbol = state.symbol.get();
+            let adjust = state.adjust.get();
 
             let request = FetchRequest {
                 symbol,
                 timeframe,
+                adjust,
                 range_start: Utc::now() - chrono::Duration::days(365),
                 range_end: Utc::now(),
             };
@@ -173,7 +175,7 @@ mod tests {
     fn drain_citizen_appends_lifecycle_messages_to_log() {
         let mut dispatcher = Dispatcher::new();
         let _registered = register_citizens(&mut dispatcher);
-        let state = SharedState::new("SZ000001", "1d");
+        let state = SharedState::new("SZ000001", "1d", "qfq");
 
         assert_eq!(state.log.get().log_count(), 0, "log should start empty");
 
@@ -193,7 +195,7 @@ mod tests {
 
     #[test]
     fn handle_fetch_bars_sends_request_and_sets_loading() {
-        let state = SharedState::new("SZ000001", "1d");
+        let state = SharedState::new("SZ000001", "1d", "qfq");
         let (signal, slot) = factory::create_signal_slot::<FetchRequest>();
 
         assert!(!state.loading.get(), "loading should start false");
@@ -228,7 +230,7 @@ mod tests {
 
     #[test]
     fn handle_fetch_bars_resets_loading_on_send_failure() {
-        let state = SharedState::new("SH600519", "1d");
+        let state = SharedState::new("SH600519", "1d", "qfq");
         let (signal, slot) = factory::create_signal_slot::<FetchRequest>();
 
         // Drop the slot so the receiver is gone — send will fail.
@@ -258,7 +260,7 @@ mod tests {
 
     #[test]
     fn dispatch_symbol_fetch_sets_symbol_and_triggers_fetch() {
-        let state = SharedState::new("SZ000001", "1d");
+        let state = SharedState::new("SZ000001", "1d", "qfq");
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
 
         dispatch_symbol_fetch(&state, &work_signal, "SH600519");
@@ -267,6 +269,89 @@ mod tests {
         assert!(
             state.loading.get(),
             "symbol fetch must dispatch a FetchBars request"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // dispatch_symbol_fetch — adjust-mode state consistency (issue #345)
+    // -----------------------------------------------------------------------
+
+    /// Row-click linkage must carry the CURRENT adjust mode into the
+    /// FetchRequest so the linked chart renders the same mode as the main
+    /// chart. A dispatcher that only forwards timeframe (and drops adjust)
+    /// would regress the chart to the default qfq after a user switch.
+    #[test]
+    fn dispatch_symbol_fetch_carries_current_adjust() {
+        let state = SharedState::new("SZ000001", "1d", "hfq");
+        let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
+
+        dispatch_symbol_fetch(&state, &work_signal, "SH600519");
+
+        let request = work_slot
+            .receiver
+            .lock()
+            .unwrap()
+            .recv()
+            .expect("slot should receive the FetchRequest");
+        assert_eq!(request.symbol, "SH600519");
+        assert_eq!(request.timeframe, "1d");
+        assert_eq!(request.adjust, "hfq", "linked fetch must carry adjust mode");
+    }
+
+    /// Race-adjacency: rapid successive adjust switches followed immediately
+    /// by a row click must read the LAST written value (last write wins), not
+    /// a snapshot or a cached earlier mode.
+    #[test]
+    fn dispatch_symbol_fetch_after_rapid_adjust_switches_uses_last_value() {
+        let state = SharedState::new("SZ000001", "1d", "qfq");
+        let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
+
+        // Simulate a rapid user toggle qfq → hfq → none before the click lands.
+        state.adjust.set("qfq".to_string());
+        state.adjust.set("hfq".to_string());
+        state.adjust.set("none".to_string());
+
+        dispatch_symbol_fetch(&state, &work_signal, "SZ300683");
+
+        let request = work_slot
+            .receiver
+            .lock()
+            .unwrap()
+            .recv()
+            .expect("slot should receive the FetchRequest");
+        assert_eq!(
+            request.adjust, "none",
+            "last written adjust must win (stale mode would disagree with toolbar)"
+        );
+    }
+
+    /// Requirement (plan §1.5/§2 B8): the DEFAULT adjust mode ("qfq" — the
+    /// never-switched state a fresh app starts in) must be carried into the
+    /// linked FetchRequest too. A dispatcher that only forwards `timeframe`
+    /// would drop the mode and regress the linked chart to a hardcoded
+    /// forward-adjust.
+    #[test]
+    fn dispatch_symbol_fetch_default_qfq_is_carried() {
+        let state = SharedState::new("SZ000001", "1d", "qfq");
+        let (work_signal, work_slot) = factory::create_signal_slot::<FetchRequest>();
+
+        dispatch_symbol_fetch(&state, &work_signal, "SH600519");
+
+        let request = work_slot
+            .receiver
+            .lock()
+            .unwrap()
+            .recv()
+            .expect("slot should receive the FetchRequest");
+        assert_eq!(request.symbol, "SH600519");
+        assert_eq!(request.timeframe, "1d");
+        assert_eq!(
+            request.adjust, "qfq",
+            "the default qfq mode must be carried into the linked fetch"
+        );
+        assert!(
+            state.loading.get(),
+            "row click must trigger a fetch even in the default mode"
         );
     }
 }

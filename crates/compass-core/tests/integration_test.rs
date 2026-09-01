@@ -49,7 +49,7 @@ async fn parquet_reader_loads_exported_data() {
     let end = chrono::Utc::now();
 
     let bars = reader
-        .fetch_bars(&first.code, "1d", start, end)
+        .fetch_bars(&first.code, "1d", start, end, "qfq")
         .await
         .expect("fetch_bars failed");
 
@@ -102,7 +102,7 @@ async fn duckdb_timeframe_aggregation_roundtrip() {
     let end = chrono::Utc::now();
 
     let day_bars = provider
-        .fetch_bars("000001", "1d", start, end)
+        .fetch_bars("000001", "1d", start, end, "qfq")
         .await
         .expect("fetch 1d failed");
     assert_eq!(day_bars.len(), 10, "1d must return the 10 saved daily bars");
@@ -110,7 +110,7 @@ async fn duckdb_timeframe_aggregation_roundtrip() {
     assert_eq!(day_bars[9].close, 19.0);
 
     let week_bars = provider
-        .fetch_bars("000001", "1w", start, end)
+        .fetch_bars("000001", "1w", start, end, "qfq")
         .await
         .expect("fetch 1w failed");
     assert_eq!(week_bars.len(), 2, "1w must aggregate to 2 weekly bars");
@@ -128,7 +128,7 @@ async fn duckdb_timeframe_aggregation_roundtrip() {
     assert_eq!(w2.volume, 1500.0, "week 2 volume = sum");
 
     let month_bars = provider
-        .fetch_bars("000001", "1M", start, end)
+        .fetch_bars("000001", "1M", start, end, "qfq")
         .await
         .expect("fetch 1M failed");
     assert_eq!(month_bars.len(), 1, "1M must aggregate to 1 monthly bar");

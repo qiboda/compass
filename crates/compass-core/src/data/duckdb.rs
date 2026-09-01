@@ -11,7 +11,7 @@ use egui_charts::model::Bar;
 use tracing;
 
 use crate::data::provider::{DataError, DataProvider, DataWriter, NegativeCache};
-use crate::indicators::{RawBar, adjust_ohlc};
+use crate::indicators::{AdjustMode, RawBar, adjust_ohlc};
 use crate::model::SymbolInfo;
 
 // ---------------------------------------------------------------------------
@@ -516,6 +516,7 @@ impl DataProvider for DuckDbProvider {
         timeframe: &str,
         range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
+        adjust: &str,
     ) -> Result<Vec<Bar>, DataError> {
         let symbol = symbol.to_string();
         let start_str = range_start.format("%Y-%m-%d").to_string();
@@ -523,6 +524,7 @@ impl DataProvider for DuckDbProvider {
         let conn = Arc::clone(&self.conn);
         let parquet_dir = self.parquet_dir.clone();
         let timeframe = timeframe.to_string();
+        let adjust = adjust.to_string();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn
@@ -729,17 +731,54 @@ impl DataProvider for DuckDbProvider {
 
             // Issue #46: timeframe aggregation — re-query with date_trunc
             // GROUP BY for weekly/monthly OHLCV resample from daily data.
-            // Forward-adjustment (ref #176): daily bars are scaled by
-            // factor = adjclose/close BEFORE aggregation, so the weekly
-            // MAX(high)/MIN(low) are extremes of the adjusted series.
+            // Adjustment (ref #345): daily bars are scaled by the mode's
+            // factor BEFORE aggregation, so the weekly MAX(high)/MIN(low) are
+            // extremes of the adjusted series. Forward mode normalizes against
+            // the last valid ratio of the *same query window* (anchor CTE);
+            // invalid rows keep factor 1.0 and are never divided by the anchor.
             if timeframe != "1d" && !rows.is_empty() {
                 let unit = match timeframe.as_str() {
                     "1w" => "week",
                     "1M" => "month",
                     _ => "day",
                 };
+                let mode: AdjustMode = std::str::FromStr::from_str(&adjust).unwrap();
+                let (anchor_prefix, scale_expr, anchor_params): (String, String, usize) =
+                    match mode {
+                        AdjustMode::None => (
+                            String::new(),
+                            "1.0".to_string(),
+                            0,
+                        ),
+                        AdjustMode::Backward => (
+                            String::new(),
+                            "CASE WHEN close > 0 AND adjclose IS NOT NULL
+                                       AND isfinite(adjclose) AND adjclose > 0
+                                  THEN adjclose / close ELSE 1.0 END"
+                                .to_string(),
+                            0,
+                        ),
+                        AdjustMode::Forward => (
+                            "WITH anchor AS (
+                                 SELECT (adjclose / close) AS r
+                                 FROM stock_daily
+                                 WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+                                   AND close > 0 AND adjclose IS NOT NULL
+                                   AND isfinite(adjclose) AND adjclose > 0
+                                 ORDER BY trade_date DESC LIMIT 1
+                             )"
+                            .to_string(),
+                            "CASE WHEN close > 0 AND adjclose IS NOT NULL
+                                       AND isfinite(adjclose) AND adjclose > 0
+                                  THEN (adjclose / close) / (SELECT r FROM anchor)
+                                  ELSE 1.0 END"
+                                .to_string(),
+                            3,
+                        ),
+                    };
                 let sql = format!(
-                    "SELECT CAST(grp_date AS VARCHAR) as trade_date,
+                    "{anchor_prefix}
+                     SELECT CAST(grp_date AS VARCHAR) as trade_date,
                             open, high, low, close, volume
                      FROM (
                          SELECT
@@ -758,9 +797,7 @@ impl DataProvider for DuckDbProvider {
                                     volume
                              FROM (
                                  SELECT trade_date, open, high, low, close, volume,
-                                        CASE WHEN close > 0 AND adjclose IS NOT NULL
-                                                  AND isfinite(adjclose) AND adjclose > 0
-                                             THEN adjclose / close ELSE 1.0 END AS scale
+                                        {scale_expr} AS scale
                                  FROM stock_daily
                                  WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
                                  ORDER BY trade_date ASC
@@ -770,10 +807,20 @@ impl DataProvider for DuckDbProvider {
                      ) ORDER BY trade_date"
                 );
                 let mut agg_stmt = conn.prepare(&sql).map_err(DataError::Database)?;
+                let bind_vals: Vec<&str> = if anchor_params == 3 {
+                    vec![
+                        symbol.as_str(),
+                        start_str.as_str(),
+                        end_str.as_str(),
+                        symbol.as_str(),
+                        start_str.as_str(),
+                        end_str.as_str(),
+                    ]
+                } else {
+                    vec![symbol.as_str(), start_str.as_str(), end_str.as_str()]
+                };
                 let agg_rows: Vec<(String, f64, f64, f64, f64, f64)> = agg_stmt
-                    .query_map(
-                        params![symbol.as_str(), start_str.as_str(), end_str.as_str()],
-                        |row| {
+                    .query_map(duckdb::params_from_iter(bind_vals), |row| {
                             Ok((
                                 row.get::<_, String>(0)?,
                                 row.get(1)?,
@@ -806,10 +853,11 @@ impl DataProvider for DuckDbProvider {
                 return Ok(bars);
             }
 
-            // Daily path: forward-adjust each bar by adjclose/close. Rows with
-            // NULL adjclose (e.g. written by save_bars) keep factor 1.0.
+            // Daily path: adjust each bar per mode (ref #345). Rows with
+            // NULL/invalid adjclose keep factor 1.0 — and never capture the
+            // forward anchor (the anchor is the last *valid* ratio).
             let mut raw: Vec<RawBar> = Vec::with_capacity(rows.len());
-            let mut adjclose: Vec<f64> = Vec::with_capacity(rows.len());
+            let mut adjclose: Vec<Option<f64>> = Vec::with_capacity(rows.len());
             for (date_str, open, high, low, close, volume, adj) in rows {
                 let Some(time) = DuckDbProvider::date_str_to_utc(&date_str) else {
                     continue;
@@ -822,10 +870,14 @@ impl DataProvider for DuckDbProvider {
                     close,
                     volume,
                 });
-                adjclose.push(adj.unwrap_or(close));
+                adjclose.push(adj);
             }
 
-            Ok(adjust_ohlc(&raw, &adjclose))
+            Ok(adjust_ohlc(
+                &raw,
+                &adjclose,
+                adjust.parse().expect("infallible AdjustMode parse"),
+            ))
         })
         .await
         .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
@@ -1018,7 +1070,7 @@ mod tests {
             .expect("save_bars failed");
 
         let fetched = provider
-            .fetch_bars(symbol, timeframe, fetch_all_start(), fetch_all_end())
+            .fetch_bars(symbol, timeframe, fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch_bars failed");
 
@@ -1044,7 +1096,13 @@ mod tests {
         }
 
         let other_sym = provider
-            .fetch_bars("NOT_EXIST", timeframe, fetch_all_start(), fetch_all_end())
+            .fetch_bars(
+                "NOT_EXIST",
+                timeframe,
+                fetch_all_start(),
+                fetch_all_end(),
+                "qfq",
+            )
             .await
             .expect("fetch_bars for other symbol failed");
         assert!(
@@ -1286,7 +1344,7 @@ mod tests {
 
         // Verify: d1 should still have close=10.0 (skipped), d2 should have close=20.0
         let bars = provider
-            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end())
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch");
 
@@ -1331,7 +1389,7 @@ mod tests {
             .expect("overwrite insert");
 
         let bars = provider
-            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end())
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch");
 
@@ -1488,7 +1546,7 @@ mod tests {
 
         // Symbol is matched by column value in stock_daily.parquet
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars should succeed");
 
@@ -1518,7 +1576,7 @@ mod tests {
             .with_timezone(&chrono::Utc);
 
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars should succeed");
 
@@ -1544,7 +1602,7 @@ mod tests {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars should succeed");
 
@@ -1569,7 +1627,7 @@ mod tests {
 
         // Non-matching symbol should return empty, not error
         let result = provider
-            .fetch_bars("'; DROP TABLE stock_daily; --", "1d", start, end)
+            .fetch_bars("'; DROP TABLE stock_daily; --", "1d", start, end, "qfq")
             .await;
 
         assert!(
@@ -1599,7 +1657,7 @@ mod tests {
 
         // First fetch — reads from parquet, should cache in-memory
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("first fetch");
         assert_eq!(bars.len(), 2, "should read 2 bars from parquet");
@@ -1620,12 +1678,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Forward-adjustment (前复权) tests — fetch scales OHLC by adjclose/close
+    // Adjustment (复权) tests — fetch scales OHLC per adjust mode
+    // (qfq/hfq/none, ref #345; qfq anchor = last valid adjclose/close ratio)
     // -----------------------------------------------------------------------
 
-    /// Daily fetch from the in-memory table scales every OHLC price by
-    /// factor = adjclose/close (ref #176). Latest bar is the anchor
-    /// (adjclose == close → factor 1.0, prices unchanged).
+    /// Daily fetch from the in-memory table scales every OHLC price by the
+    /// mode's factor (default qfq: ratio normalized by the last valid ratio).
+    /// For this fixture (latest bar adjclose == close → ratio 1.0) the qfq
+    /// factor equals the raw ratio, prices unchanged on the anchor bar.
     #[tokio::test]
     async fn fetch_bars_daily_scales_ohlc_by_adjclose_from_memory_table() {
         let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
@@ -1643,7 +1703,7 @@ mod tests {
         }
 
         let bars = provider
-            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end())
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch_bars failed");
 
@@ -1678,7 +1738,7 @@ mod tests {
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
 
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars failed");
 
@@ -1718,7 +1778,7 @@ mod tests {
         }
 
         let bars = provider
-            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end())
+            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch_bars failed");
 
@@ -1790,7 +1850,7 @@ mod tests {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
         let result = provider
-            .fetch_bars("000001", timeframe, start, end)
+            .fetch_bars("000001", timeframe, start, end, "qfq")
             .await
             .expect("fetch_bars failed");
 
@@ -1857,7 +1917,7 @@ mod tests {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
         let result = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars failed");
 
@@ -2158,7 +2218,7 @@ mod tests {
             .expect("second save_bars with skip");
 
         let fetched = provider
-            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end())
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch_bars");
         assert_eq!(fetched.len(), 2);
@@ -2342,7 +2402,7 @@ mod tests {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars from timestamp table");
         assert_eq!(bars.len(), 2);
@@ -2365,7 +2425,7 @@ mod tests {
             .expect("save_bars failed");
 
         let result = provider
-            .fetch_bars("000001", "4h", fetch_all_start(), fetch_all_end())
+            .fetch_bars("000001", "4h", fetch_all_start(), fetch_all_end(), "qfq")
             .await
             .expect("fetch_bars with unknown timeframe should not error");
         assert!(!result.is_empty());
@@ -2380,9 +2440,1001 @@ mod tests {
         let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
         let end = chrono::DateTime::from_timestamp(4_000_000_000, 0).expect("valid end");
         let bars = provider
-            .fetch_bars("000001", "1d", start, end)
+            .fetch_bars("000001", "1d", start, end, "qfq")
             .await
             .expect("fetch_bars should not error");
         assert!(bars.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #345 — adjust mode (qfq/hfq/none) adversarial tests
+    //
+    // Contract under attack (plan §1.5):
+    //   fetch_bars(symbol, timeframe, start, end, adjust: &str)
+    //   adjust ∈ {"qfq","hfq","none"}; unknown values fall back to "qfq".
+    //   none → factor 1.0; hfq → factor = ratio (ratio = adjclose/close,
+    //   invalid rows → 1.0); qfq → factor = ratio / r_anchor where r_anchor is
+    //   the ratio of the LAST valid ratio row (no valid row → all 1.0).
+    //   Aggregation (1w/1M): scale first, then aggregate; qfq r_anchor is
+    //   computed at the daily layer.
+    // -----------------------------------------------------------------------
+
+    /// Field-wise comparison (Bar does not necessarily implement PartialEq).
+    /// Macro accepts an optional context message for diagnostics.
+    macro_rules! assert_bars_eq {
+        ($a:expr, $b:expr) => {
+            assert_bars_eq_impl($a, $b, "")
+        };
+        ($a:expr, $b:expr, $msg:expr) => {
+            assert_bars_eq_impl($a, $b, $msg)
+        };
+    }
+
+    fn assert_bars_eq_impl(a: &Bar, b: &Bar, msg: &str) {
+        assert!(
+            (a.time - b.time).num_milliseconds().abs() < 1,
+            "{msg}: time differs: {} vs {}",
+            a.time,
+            b.time
+        );
+        assert!(
+            (a.open - b.open).abs() < 1e-9,
+            "{msg}: open differs: {} vs {}",
+            a.open,
+            b.open
+        );
+        assert!(
+            (a.high - b.high).abs() < 1e-9,
+            "{msg}: high differs: {} vs {}",
+            a.high,
+            b.high
+        );
+        assert!(
+            (a.low - b.low).abs() < 1e-9,
+            "{msg}: low differs: {} vs {}",
+            a.low,
+            b.low
+        );
+        assert!(
+            (a.close - b.close).abs() < 1e-9,
+            "{msg}: close differs: {} vs {}",
+            a.close,
+            b.close
+        );
+        assert_eq!(
+            a.volume, b.volume,
+            "{msg}: volume differs: {} vs {}",
+            a.volume, b.volume
+        );
+    }
+
+    async fn fetch_adjust(provider: &DuckDbProvider, adjust: &str) -> Result<Vec<Bar>, DataError> {
+        provider
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), adjust)
+            .await
+    }
+
+    /// One explicit daily row: (date, open, high, low, close, adjclose, volume).
+    type DailyRowFixture = (&'static str, f64, f64, f64, f64, Option<f64>, f64);
+
+    /// Insert explicit daily rows. `adjclose: None` writes a SQL NULL, which
+    /// is the SZ300683-style hole the adjust logic must survive.
+    fn insert_daily_rows(conn: &duckdb::Connection, symbol: &str, rows: &[DailyRowFixture]) {
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO stock_daily
+                 (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .expect("prepare insert");
+        for (date, open, high, low, close, adjclose, volume) in rows {
+            stmt.execute(duckdb::params![
+                symbol, date, open, high, low, close, adjclose, volume, 0.0
+            ])
+            .expect("insert row");
+        }
+    }
+
+    /// Empty sequence — no rows in the range must yield an empty Vec for all
+    /// three modes, never a panic (nor a fabricated single bar).
+    #[tokio::test]
+    async fn fetch_bars_no_rows_returns_empty_for_all_adjust_modes() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+
+        for adjust in ["qfq", "hfq", "none"] {
+            let bars = provider
+                .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), adjust)
+                .await
+                .expect("fetch_bars should not error on an empty result");
+            assert!(
+                bars.is_empty(),
+                "adjust={adjust}: empty range must return empty bars, got {}",
+                bars.len()
+            );
+        }
+    }
+
+    /// Range that does not cover the stored rows — same empty-seq contract.
+    #[tokio::test]
+    async fn fetch_bars_range_without_rows_returns_empty_for_all_adjust_modes() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[("2026-07-06", 9.0, 12.0, 8.0, 10.0, Some(8.0), 100.0)],
+            );
+        }
+
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(1_000_000_000, 0).expect("valid end");
+        for adjust in ["qfq", "hfq", "none"] {
+            let bars = provider
+                .fetch_bars("000001", "1d", start, end, adjust)
+                .await
+                .expect("fetch_bars should not error");
+            assert!(
+                bars.is_empty(),
+                "adjust={adjust}: out-of-range must be empty"
+            );
+        }
+    }
+
+    /// Single-bar sequence: no notion of "latest" — qfq must normalize to
+    /// factor 1.0 (r_anchor == the bar itself), while hfq scales by ratio.
+    #[tokio::test]
+    async fn fetch_bars_single_bar_qfq_equals_none_but_hfq_scales() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                // (date, open, high, low, close, adjclose=15 → ratio 1.5, volume)
+                &[("2026-07-06", 9.0, 12.0, 8.0, 10.0, Some(15.0), 100.0)],
+            );
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+        let none = fetch_adjust(&provider, "none").await.expect("none fetch");
+
+        assert_eq!(qfq.len(), 1);
+        // qfq: r_anchor = 1.5 (only valid ratio) → factor = 1.5/1.5 = 1.0.
+        assert_eq!(qfq[0].close, 10.0, "single-bar qfq must be factor 1.0");
+        assert_eq!(qfq[0].open, 9.0);
+        // none: factor 1.0 everywhere.
+        assert_bars_eq!(&qfq[0], &none[0]);
+        // hfq: factor = 1.5 → every price scaled.
+        assert!((hfq[0].close - 15.0).abs() < 1e-9, "hfq single bar close");
+        assert!((hfq[0].open - 13.5).abs() < 1e-9, "hfq single bar open");
+        assert!((hfq[0].high - 18.0).abs() < 1e-9, "hfq single bar high");
+        assert!((hfq[0].low - 12.0).abs() < 1e-9, "hfq single bar low");
+        assert_eq!(hfq[0].volume, 100.0, "volume never scaled");
+    }
+
+    /// All rows close <= 0: every ratio is invalid, so all three modes must
+    /// degenerate to factor 1.0 with finite prices — never NaN/Inf.
+    #[tokio::test]
+    async fn fetch_bars_non_positive_close_three_modes_identical_and_finite() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    ("2026-07-06", 1.0, 2.0, -1.0, 0.0, Some(5.0), 100.0),
+                    ("2026-07-07", -4.0, -3.0, -6.0, -5.0, None, 200.0),
+                ],
+            );
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+        let none = fetch_adjust(&provider, "none").await.expect("none fetch");
+
+        assert_eq!(qfq.len(), 2);
+        for bars in [&qfq, &hfq, &none] {
+            for b in bars {
+                assert!(
+                    b.open.is_finite()
+                        && b.high.is_finite()
+                        && b.low.is_finite()
+                        && b.close.is_finite(),
+                    "non-finite price leaked: {b:?}"
+                );
+            }
+        }
+        assert_bars_eq!(&qfq[0], &none[0]);
+        assert_bars_eq!(&qfq[1], &none[1]);
+        assert_bars_eq!(&hfq[0], &none[0]);
+        assert_bars_eq!(&hfq[1], &none[1]);
+        // Unchanged (factor 1.0), close==0/‑5 preserved exactly.
+        assert_eq!(qfq[0].close, 0.0);
+        assert_eq!(qfq[1].close, -5.0);
+    }
+
+    /// All adjclose NULL (SZ300683-style): no valid ratio exists → qfq has no
+    /// anchor and must fall back to factor 1.0 for every row; the three modes
+    /// are then output-identical to the raw series.
+    #[tokio::test]
+    async fn fetch_bars_all_null_adjclose_three_modes_identical() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    ("2026-07-06", 9.0, 12.0, 8.0, 10.0, None, 100.0),
+                    ("2026-07-07", 19.0, 22.0, 18.0, 20.0, None, 200.0),
+                    ("2026-07-08", 29.0, 32.0, 28.0, 30.0, None, 300.0),
+                ],
+            );
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+        let none = fetch_adjust(&provider, "none").await.expect("none fetch");
+
+        assert_eq!(qfq.len(), 3);
+        for i in 0..3 {
+            assert_bars_eq!(&qfq[i], &none[i], &format!("row {i} qfq vs none"));
+            assert_bars_eq!(&hfq[i], &none[i], &format!("row {i} hfq vs none"));
+            assert!((none[i].close - [10.0, 20.0, 30.0][i]).abs() < 1e-9);
+        }
+    }
+
+    /// Trailing adjclose NULL: the qfq anchor must move forward to the last
+    /// VALID ratio row (pre-anchor rows scale, the anchor row and the NULL
+    /// tail both get factor 1.0). Anchoring on the raw last row instead would
+    /// scale row 2 by 0.9/1.0 = 0.9 → close 10.8 ≠ 12.0.
+    #[tokio::test]
+    async fn fetch_bars_tail_null_adjclose_qfq_anchor_moves_to_last_valid() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    // ratio 0.8
+                    ("2026-07-06", 9.0, 12.0, 8.0, 10.0, Some(8.0), 100.0),
+                    // ratio 0.9 — the LAST valid ratio → qfq anchor
+                    ("2026-07-07", 11.0, 13.0, 10.5, 12.0, Some(10.8), 200.0),
+                    // NULL tail — invalid ratio
+                    ("2026-07-08", 13.0, 14.0, 12.0, 14.0, None, 300.0),
+                ],
+            );
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+
+        assert_eq!(qfq.len(), 3);
+        // qfq factors: [0.8/0.9, 1.0, 1.0]
+        assert!(
+            (qfq[0].close - 10.0 * 0.8 / 0.9).abs() < 1e-9,
+            "pre-anchor close scaled"
+        );
+        assert_eq!(qfq[1].close, 12.0, "anchor row must be factor 1.0");
+        assert_eq!(
+            qfq[2].close, 14.0,
+            "NULL tail row must be factor 1.0, not scaled by 1.0/0.9"
+        );
+        assert_eq!(qfq[2].open, 13.0, "NULL tail open unchanged");
+        // hfq factors: [0.8, 0.9, 1.0] — independent of any anchor.
+        assert!((hfq[0].close - 8.0).abs() < 1e-9);
+        assert!((hfq[1].close - 10.8).abs() < 1e-9);
+        assert_eq!(hfq[2].close, 14.0);
+    }
+
+    /// Head-only adjclose NULL: the head invalid row stays factor 1.0 while
+    /// later rows normalize; with r_anchor == 1.0 the qfq and hfq outputs
+    /// coincide (both ≠ none).
+    #[tokio::test]
+    async fn fetch_bars_head_null_adjclose_qfq_normalizes_rest() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    ("2026-07-06", 9.0, 12.0, 8.0, 10.0, None, 100.0), // ratio invalid
+                    ("2026-07-07", 19.0, 22.0, 18.0, 20.0, Some(15.0), 200.0), // 0.75
+                    ("2026-07-08", 29.0, 32.0, 28.0, 30.0, Some(30.0), 300.0), // 1.0 → anchor
+                ],
+            );
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+        let none = fetch_adjust(&provider, "none").await.expect("none fetch");
+
+        assert_eq!(qfq.len(), 3);
+        // qfq factors: [1.0, 0.75, 1.0].
+        assert_eq!(qfq[0].close, 10.0, "head NULL row stays unscaled");
+        assert!(
+            (qfq[1].close - 15.0).abs() < 1e-9,
+            "middle row scaled by 0.75"
+        );
+        assert_eq!(qfq[2].close, 30.0, "anchor row is scaled to 1.0");
+        // hfq: factors [1.0, 0.75, 1.0] — identical to qfq because anchor == 1.0.
+        assert_bars_eq!(&qfq[0], &hfq[0]);
+        assert_bars_eq!(&qfq[1], &hfq[1]);
+        assert_bars_eq!(&qfq[2], &hfq[2]);
+        // ... but both differ from none on row 1.
+        assert!((none[1].close - 20.0).abs() < 1e-9);
+        assert!(
+            (qfq[1].close - none[1].close).abs() > 1e-3,
+            "qfq must differ from none"
+        );
+    }
+
+    /// Index-shape series (SH000001: adjclose == close, ratio == 1.0): all
+    /// three modes must be output-identical, and identical to the raw series.
+    #[tokio::test]
+    async fn fetch_bars_ratio_one_index_shape_three_modes_identical() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    (
+                        "2026-07-06",
+                        2990.0,
+                        3010.0,
+                        2980.0,
+                        3000.0,
+                        Some(3000.0),
+                        100.0,
+                    ),
+                    (
+                        "2026-07-07",
+                        3005.0,
+                        3020.0,
+                        2990.0,
+                        3010.0,
+                        Some(3010.0),
+                        200.0,
+                    ),
+                    (
+                        "2026-07-08",
+                        3015.0,
+                        3030.0,
+                        3002.0,
+                        3020.0,
+                        Some(3020.0),
+                        300.0,
+                    ),
+                ],
+            );
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+        let none = fetch_adjust(&provider, "none").await.expect("none fetch");
+
+        assert_eq!(qfq.len(), 3);
+        for i in 0..3 {
+            assert_bars_eq!(&qfq[i], &none[i], &format!("row {i} qfq vs none"));
+            assert_bars_eq!(&hfq[i], &none[i], &format!("row {i} hfq vs none"));
+            assert!(
+                (none[i].close - [3000.0, 3010.0, 3020.0][i]).abs() < 1e-9,
+                "raw close must pass through untouched"
+            );
+        }
+    }
+
+    /// Non-finite adjclose (NaN / +Inf) must invalidate the ratio, collapse to
+    /// factor 1.0, and never panic or leak non-finite prices.
+    #[tokio::test]
+    async fn fetch_bars_non_finite_adjclose_never_panics() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO stock_daily
+                     (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .expect("prepare insert");
+            stmt.execute(duckdb::params![
+                "000001",
+                "2026-07-06",
+                9.0,
+                12.0,
+                8.0,
+                10.0,
+                f64::NAN,
+                100.0,
+                0.0
+            ])
+            .expect("insert NaN adjclose");
+            stmt.execute(duckdb::params![
+                "000001",
+                "2026-07-07",
+                19.0,
+                22.0,
+                18.0,
+                20.0,
+                f64::INFINITY,
+                200.0,
+                0.0
+            ])
+            .expect("insert Inf adjclose");
+        }
+
+        let qfq = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let hfq = fetch_adjust(&provider, "hfq").await.expect("hfq fetch");
+        let none = fetch_adjust(&provider, "none").await.expect("none fetch");
+
+        assert_eq!(qfq.len(), 2);
+        for bars in [&qfq, &hfq, &none] {
+            for b in bars {
+                assert!(
+                    b.open.is_finite()
+                        && b.high.is_finite()
+                        && b.low.is_finite()
+                        && b.close.is_finite(),
+                    "non-finite price leaked from non-finite adjclose: {b:?}"
+                );
+            }
+        }
+        assert_bars_eq!(&qfq[0], &none[0]);
+        assert_bars_eq!(&hfq[1], &none[1]);
+        assert_eq!(qfq[0].close, 10.0);
+        assert_eq!(qfq[1].close, 20.0);
+    }
+
+    /// Unknown adjust values (including case variants, whitespace and
+    /// Unicode) must fall back to "qfq" — output identical to the explicit
+    /// "qfq" fetch. The fixture has ratio != 1.0 so a wrong fallback to
+    /// "none" (or a blanket factor 1.0) is caught.
+    #[rstest]
+    #[case("invalid")]
+    #[case("")]
+    #[case("QFQ")]
+    #[case("None")]
+    #[case("qFq")]
+    #[case(" none")]
+    #[case("hfq ")]
+    #[case("前复权")]
+    #[case("adjust")]
+    #[case("⚠️")]
+    #[tokio::test]
+    async fn fetch_bars_unknown_adjust_falls_back_to_qfq(#[case] adjust: &str) {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    ("2026-07-06", 9.0, 12.0, 8.0, 10.0, Some(8.0), 100.0), // ratio 0.8
+                    ("2026-07-07", 11.0, 13.0, 10.5, 12.0, Some(10.8), 200.0), // ratio 0.9
+                    ("2026-07-08", 13.0, 14.0, 12.0, 14.0, None, 300.0),
+                ],
+            );
+        }
+
+        let expected = fetch_adjust(&provider, "qfq").await.expect("qfq fetch");
+        let actual = provider
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), adjust)
+            .await
+            .unwrap_or_else(|e| panic!("unknown adjust {adjust:?} must not error: {e}"));
+
+        assert_eq!(expected.len(), actual.len(), "adjust={adjust:?}");
+        for (e, a) in expected.iter().zip(actual.iter()) {
+            assert_bars_eq!(e, a, &format!("adjust={adjust:?} must behave like qfq"));
+        }
+    }
+
+    /// Weekly aggregation qfq: scale first, then aggregate; the last weekly
+    /// close must equal the daily qfq close of the last valid row (anchor
+    /// invariance) while hfq/none differ. Hand-computed values from fixture
+    /// ratios [0.4, 0.5, 0.8, 2.0] (r_anchor = 2.0).
+    #[tokio::test]
+    async fn fetch_bars_weekly_three_modes_scale_before_aggregate() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    // week 1 (2026-07-06 Mon .. 07-09 Thu)
+                    ("2026-07-06", 20.0, 25.0, 8.0, 10.0, Some(4.0), 300.0), // 0.4
+                    ("2026-07-08", 11.0, 13.0, 10.5, 12.0, Some(6.0), 400.0), // 0.5
+                    ("2026-07-09", 13.0, 14.0, 12.0, 13.0, Some(10.4), 500.0), // 0.8
+                    // week 2 (2026-07-13 Mon) — last valid ratio → r_anchor
+                    ("2026-07-13", 14.0, 16.0, 13.0, 15.0, Some(30.0), 600.0), // 2.0
+                ],
+            );
+        }
+
+        let qfq = provider
+            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end(), "qfq")
+            .await
+            .expect("qfq weekly fetch");
+        let hfq = provider
+            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end(), "hfq")
+            .await
+            .expect("hfq weekly fetch");
+        let none = provider
+            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end(), "none")
+            .await
+            .expect("none weekly fetch");
+
+        assert_eq!(qfq.len(), 2, "two weeks → two weekly bars");
+        assert_eq!(hfq.len(), 2);
+        assert_eq!(none.len(), 2);
+
+        // qfq factors [0.2, 0.25, 0.4, 1.0]:
+        // W1 scaled extremes: high = MAX(5.0, 3.25, 5.6) = 5.6,
+        // low = MIN(1.6, 2.625, 4.8) = 1.6, open = FIRST = 4.0,
+        // close = LAST = 5.2. A "aggregate-then-scale" implementation would
+        // yield high 5.0 (= 25 * 0.2) instead — caught here.
+        assert!((qfq[0].open - 4.0).abs() < 1e-9, "qfq W1 open");
+        assert!(
+            (qfq[0].high - 5.6).abs() < 1e-9,
+            "qfq W1 high (scale-then-aggregate)"
+        );
+        assert!((qfq[0].low - 1.6).abs() < 1e-9, "qfq W1 low");
+        assert!((qfq[0].close - 5.2).abs() < 1e-9, "qfq W1 close");
+        assert_eq!(qfq[0].volume, 1200.0);
+        // W2 anchor: factor 1.0 → close 15 (latest = current price).
+        assert!(
+            (qfq[1].close - 15.0).abs() < 1e-9,
+            "qfq last weekly close == raw latest"
+        );
+        assert_eq!(qfq[1].volume, 600.0);
+
+        // hfq factors [0.4, 0.5, 0.8, 2.0]: W1 close = 10.4, W2 close = 30.
+        assert!((hfq[0].close - 10.4).abs() < 1e-9, "hfq W1 close");
+        assert!(
+            (hfq[1].close - 30.0).abs() < 1e-9,
+            "hfq W2 close differs from qfq"
+        );
+
+        // none: raw extremes; W1 close = 13.
+        assert!((none[0].close - 13.0).abs() < 1e-9, "none W1 close");
+        assert!((none[1].close - 15.0).abs() < 1e-9, "none W2 close");
+
+        // The three modes must be mutually distinguishable in the aggregate.
+        assert!(
+            (qfq[0].close - none[0].close).abs() > 1e-3,
+            "qfq ≠ none weekly"
+        );
+        assert!(
+            (hfq[0].close - none[0].close).abs() > 1e-3,
+            "hfq ≠ none weekly"
+        );
+    }
+
+    /// Contract-ambiguity probe (reported, not assumed): with a trailing NULL
+    /// adjclose row, plan §1.5 says invalid rows get factor 1.0 (daily) while
+    /// the aggregate SQL says scale ÷ r_anchor for every row (weekly). A
+    /// faithful double-formula implementation would scale the weekly last
+    /// close by 1.0/0.5 = 2.0 → 24, contradicting the "last valid bar close
+    /// unchanged" equivalence. This test pins the coherent reading: invalid
+    /// rows stay factor 1.0 on the aggregate path too.
+    #[tokio::test]
+    async fn fetch_bars_weekly_tail_null_adjclose_equals_daily_qfq() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    ("2026-07-06", 9.0, 12.0, 8.0, 10.0, Some(5.0), 100.0), // ratio 0.5 → anchor
+                    ("2026-07-07", 11.0, 13.0, 10.0, 12.0, None, 200.0),    // NULL tail
+                ],
+            );
+        }
+
+        let daily = provider
+            .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), "qfq")
+            .await
+            .expect("daily qfq fetch");
+        let weekly = provider
+            .fetch_bars("000001", "1w", fetch_all_start(), fetch_all_end(), "qfq")
+            .await
+            .expect("weekly qfq fetch");
+
+        assert_eq!(daily.len(), 2);
+        assert_eq!(weekly.len(), 1);
+        assert_eq!(daily[1].close, 12.0, "daily NULL tail stays factor 1.0");
+        assert!(
+            (weekly[0].close - daily[1].close).abs() < 1e-9,
+            "weekly last close must equal daily last close (got {} vs {}); \
+             the aggregate SQL must NOT divide the invalid-row fallback by r_anchor \
+             (plan §1.5: invalid rows factor 1.0, equivalence of last valid bar)",
+            weekly[0].close,
+            daily[1].close
+        );
+    }
+
+    /// Adversarial boundary: dropping the table must surface a DataError, not
+    /// a panic, for each adjust mode (error-path propagation).
+    #[tokio::test]
+    async fn fetch_bars_dropped_table_returns_error_not_panic() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch("DROP TABLE stock_daily")
+                .expect("drop table");
+        }
+
+        for adjust in ["qfq", "hfq", "none"] {
+            let result = provider
+                .fetch_bars("000001", "1d", fetch_all_start(), fetch_all_end(), adjust)
+                .await;
+            assert!(
+                result.is_err(),
+                "adjust={adjust}: dropped table must surface Err, got Ok"
+            );
+        }
+    }
+
+    /// Resource-exhaustion + linearity probe: 50k rows through qfq/hfq/none
+    /// must complete without OOM or panic, and qfq must finish in bounded
+    /// time (an O(n²) anchor search over 50k rows is ~2.5e9 steps and would
+    /// blow the 30s guard; the linear path takes well under 1s).
+    #[tokio::test]
+    async fn fetch_bars_50k_rows_three_modes_bounded_and_linear() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        const N: u32 = 50_000;
+
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            conn.execute_batch("BEGIN TRANSACTION").expect("begin");
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO stock_daily
+                     (symbol, trade_date, open, high, low, close, adjclose, volume, amount)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .expect("prepare bulk insert");
+            let base = chrono::NaiveDate::from_ymd_opt(2000, 1, 3).expect("valid date");
+            for i in 0..N {
+                let close = 10.0 + (i % 997) as f64;
+                let date = base + chrono::Duration::days(i as i64);
+                let adjclose: Option<f64> = if i % 3 == 0 { None } else { Some(close * 1.5) };
+                stmt.execute(duckdb::params![
+                    "000001",
+                    date.format("%Y-%m-%d").to_string(),
+                    close - 1.0,
+                    close + 1.0,
+                    close - 2.0,
+                    close,
+                    adjclose,
+                    100.0,
+                    0.0
+                ])
+                .expect("bulk insert row");
+            }
+            conn.execute_batch("COMMIT").expect("commit");
+        }
+
+        let last_raw_close = 10.0 + ((N - 1) % 997) as f64; // row N-1 has adjclose (N-1)%3 != 0
+
+        // 50k daily rows span ~137 years from 2000-01-03 — beyond the 4e9
+        // second (≈2096) fetch_all_end. Use a wider end so the range covers
+        // every inserted row.
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid epoch");
+        let end = chrono::DateTime::from_timestamp(6_000_000_000, 0).expect("valid end");
+
+        let t0 = std::time::Instant::now();
+        let qfq = provider
+            .fetch_bars("000001", "1d", start, end, "qfq")
+            .await
+            .expect("qfq 50k fetch");
+        let elapsed = t0.elapsed();
+
+        assert_eq!(qfq.len(), N as usize, "all rows returned");
+        assert!(
+            elapsed.as_secs() < 30,
+            "qfq over 50k rows took {elapsed:?} — an O(n²) anchor scan is suspected"
+        );
+        let last = qfq.last().expect("non-empty");
+        assert!(
+            (last.close - last_raw_close).abs() < 1e-9,
+            "last row (valid ratio) must be factor 1.0, got {} vs {}",
+            last.close,
+            last_raw_close
+        );
+        for b in qfq.iter() {
+            assert!(b.close.is_finite(), "non-finite close in 50k qfq output");
+        }
+
+        // Resource check: hfq and none over the same 50k rows also complete.
+        let hfq = provider
+            .fetch_bars("000001", "1d", start, end, "hfq")
+            .await
+            .expect("hfq 50k fetch");
+        let none = provider
+            .fetch_bars("000001", "1d", start, end, "none")
+            .await
+            .expect("none 50k fetch");
+        assert_eq!(hfq.len(), N as usize);
+        assert_eq!(none.len(), N as usize);
+        assert_eq!(
+            none.last().expect("last").close,
+            last_raw_close,
+            "none passes raw through"
+        );
+        assert!(
+            (hfq.last().expect("last").close - last_raw_close * 1.5).abs() < 1e-9,
+            "hfq last row scales by its own ratio"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #345 — requirement-acceptance tests (happy path, plan §4/§1.5).
+    // Adversarial coverage (edge/NULL/non-finite/50k/aggregate-edge) lives
+    // in the tests above; these verify the THREE-MODE NUMERIC CONTRACT on a
+    // clean, fully-valid series and the aggregation happy path.
+    //
+    // SZ002832 shape (first row ratio = 1.0, last row ratio ≈ 6.0123 with
+    // close 25.11 / adjclose 150.97): real-file verification is NOT a
+    // committed test (CI must not depend on /data/compass-data/parquet_data
+    // — ref #236); the same shape is reproduced with in-memory DuckDB
+    // fixture rows and hand-computed expectations.
+    // -----------------------------------------------------------------------
+
+    /// Given a fully-valid post-adjusted series (first day ratio 1.0, last
+    /// day ratio ≈ 6.0123 — SZ002832 shape), all three modes must yield the
+    /// plan §1.5 numeric contract:
+    /// - qfq: latest bar close == raw close (current price); earlier rows
+    ///   scale by ratio / r_anchor (r_anchor = 150.97 / 25.11);
+    /// - hfq: close == raw close × ratio (i.e. the adjclose value);
+    ///   the first day (ratio 1.0) stays untouched;
+    /// - none: raw OHLC passes through untouched.
+    /// Every mode scales open/high/low by the same factor as close; volume
+    /// is NEVER scaled.
+    #[tokio::test]
+    async fn fetch_bars_three_adjust_modes_happy_path_numeric_values() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "SZ002832",
+                &[
+                    // first day — ratio 1.0
+                    ("2026-07-06", 24.0, 25.5, 23.5, 25.11, Some(25.11), 1000.0),
+                    // ratio 2.0
+                    ("2026-07-07", 26.0, 28.0, 25.5, 27.0, Some(54.0), 2000.0),
+                    // last valid row — ratio = 150.97 / 25.11 ≈ 6.0123 → qfq anchor
+                    ("2026-07-08", 25.0, 26.0, 24.8, 25.11, Some(150.97), 3000.0),
+                ],
+            );
+        }
+
+        let r_anchor = 150.97 / 25.11; // ≈ 6.0123... (hand-computed per contract)
+        let start = fetch_all_start();
+        let end = fetch_all_end();
+
+        let qfq = provider
+            .fetch_bars("SZ002832", "1d", start, end, "qfq")
+            .await
+            .expect("qfq fetch");
+        let hfq = provider
+            .fetch_bars("SZ002832", "1d", start, end, "hfq")
+            .await
+            .expect("hfq fetch");
+        let none = provider
+            .fetch_bars("SZ002832", "1d", start, end, "none")
+            .await
+            .expect("none fetch");
+
+        assert_eq!(qfq.len(), 3, "qfq must return all three rows");
+        assert_eq!(hfq.len(), 3, "hfq must return all three rows");
+        assert_eq!(none.len(), 3, "none must return all three rows");
+
+        // --- qfq: latest bar close == raw close (current price) ---
+        assert!(
+            (qfq[2].close - 25.11).abs() < 1e-9,
+            "qfq latest bar must equal the raw close (current price), got {}",
+            qfq[2].close
+        );
+        // earlier rows scale by ratio / r_anchor
+        assert!(
+            (qfq[0].close - 25.11 * (1.0 / r_anchor)).abs() < 1e-9,
+            "qfq first-day close must scale by 1.0 / r_anchor (got {})",
+            qfq[0].close
+        );
+        assert!(
+            (qfq[1].close - 27.0 * (2.0 / r_anchor)).abs() < 1e-9,
+            "qfq second-day close must scale by 2.0 / r_anchor (got {})",
+            qfq[1].close
+        );
+        // open/high/low scale by the same factor as close (per bar)
+        assert!(
+            (qfq[0].open - 24.0 * (1.0 / r_anchor)).abs() < 1e-9,
+            "qfq day-1 open"
+        );
+        assert!(
+            (qfq[0].high - 25.5 * (1.0 / r_anchor)).abs() < 1e-9,
+            "qfq day-1 high"
+        );
+        assert!(
+            (qfq[0].low - 23.5 * (1.0 / r_anchor)).abs() < 1e-9,
+            "qfq day-1 low"
+        );
+        assert!(
+            (qfq[1].open - 26.0 * (2.0 / r_anchor)).abs() < 1e-9,
+            "qfq day-2 open"
+        );
+        assert!(
+            (qfq[1].high - 28.0 * (2.0 / r_anchor)).abs() < 1e-9,
+            "qfq day-2 high"
+        );
+        assert!(
+            (qfq[1].low - 25.5 * (2.0 / r_anchor)).abs() < 1e-9,
+            "qfq day-2 low"
+        );
+        // anchor bar itself: factor 1.0 → unchanged for all OHLC components
+        assert!(
+            (qfq[2].open - 25.0).abs() < 1e-9,
+            "qfq anchor open unchanged"
+        );
+        assert!(
+            (qfq[2].high - 26.0).abs() < 1e-9,
+            "qfq anchor high unchanged"
+        );
+        assert!((qfq[2].low - 24.8).abs() < 1e-9, "qfq anchor low unchanged");
+
+        // --- hfq: close == raw close × ratio (adjclose 口径) ---
+        // first day ratio = 1.0 → untouched values.
+        assert!(
+            (hfq[0].close - 25.11).abs() < 1e-9,
+            "hfq first-day close must stay at raw close (ratio 1.0)"
+        );
+        assert!(
+            (hfq[0].open - 24.0).abs() < 1e-9,
+            "hfq first-day open unchanged"
+        );
+        assert!(
+            (hfq[1].close - 54.0).abs() < 1e-9,
+            "hfq second-day close must equal its adjclose (54.0)"
+        );
+        assert!(
+            (hfq[1].open - 52.0).abs() < 1e-9,
+            "hfq second-day open = 26 × 2.0"
+        );
+        assert!(
+            (hfq[2].close - 150.97).abs() < 1e-9,
+            "hfq last close must equal its adjclose (150.97)"
+        );
+        assert!(
+            (hfq[2].open - 25.0 * r_anchor).abs() < 1e-9,
+            "hfq last open = raw open × ratio (≈150.31, got {})",
+            hfq[2].open
+        );
+
+        // --- none: raw OHLC untouched ---
+        assert_eq!(none[0].open, 24.0);
+        assert_eq!(none[0].high, 25.5);
+        assert_eq!(none[0].low, 23.5);
+        assert_eq!(none[0].close, 25.11);
+        assert_eq!(none[1].close, 27.0);
+        assert_eq!(none[2].close, 25.11);
+
+        // --- volume never scaled (all three modes, every row) ---
+        let expected_volumes = [1000.0, 2000.0, 3000.0];
+        for (bars, mode) in [(&qfq, "qfq"), (&hfq, "hfq"), (&none, "none")] {
+            for (i, b) in bars.iter().enumerate() {
+                assert_eq!(
+                    b.volume, expected_volumes[i],
+                    "{mode} row {i} volume must never scale"
+                );
+            }
+        }
+
+        // --- the three modes must be mutually distinguishable ---
+        assert!((qfq[1].close - none[1].close).abs() > 1e-3, "qfq ≠ none");
+        assert!((hfq[1].close - none[1].close).abs() > 1e-3, "hfq ≠ none");
+        assert!((qfq[1].close - hfq[1].close).abs() > 1e-3, "qfq ≠ hfq");
+    }
+
+    /// Given daily rows spanning two calendar months (June: 3 rows, ratios
+    /// 1.0/2.0/6.0; July: 1 row, ratio 7.0 → qfq anchor), the 1M aggregate
+    /// must scale BEFORE aggregating (plan §1.5) and the last monthly bar
+    /// must stay at the raw close of its last valid daily row.
+    ///
+    /// Discrimination: June high = MAX(12/7, 30/7, 12.0) = 12.0 under
+    /// scale-then-aggregate; an aggregate-then-scale implementation would
+    /// yield MAX(12, 15, 14) × 6/7 ≈ 12.857 — caught here. (The raw high is
+    /// on the middle row, whose factor is NOT the largest.)
+    #[tokio::test]
+    async fn fetch_bars_monthly_qfq_scales_before_aggregate_and_keeps_last_month_raw() {
+        let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory DuckDB");
+        {
+            let conn = provider.conn.lock().expect("mutex lock");
+            insert_daily_rows(
+                &conn,
+                "000001",
+                &[
+                    // 2026-06-03 — June, ratio 1.0
+                    ("2026-06-03", 10.0, 12.0, 9.0, 10.0, Some(10.0), 100.0),
+                    // 2026-06-05 — June, ratio 2.0 (owns the raw MAX high)
+                    ("2026-06-05", 11.0, 15.0, 10.0, 12.0, Some(24.0), 200.0),
+                    // 2026-06-26 — June, ratio 6.0 (last June row)
+                    ("2026-06-26", 13.0, 14.0, 12.0, 14.0, Some(84.0), 300.0),
+                    // 2026-07-02 — July, ratio 7.0 → qfq r_anchor
+                    ("2026-07-02", 15.0, 16.0, 14.0, 16.0, Some(112.0), 400.0),
+                ],
+            );
+        }
+
+        let qfq = provider
+            .fetch_bars("000001", "1M", fetch_all_start(), fetch_all_end(), "qfq")
+            .await
+            .expect("qfq monthly fetch");
+
+        assert_eq!(qfq.len(), 2, "June + July → two monthly bars");
+
+        // June: scale-then-aggregate with factors [1/7, 2/7, 6/7].
+        let june = &qfq[0];
+        assert!(
+            (june.open - 10.0 / 7.0).abs() < 1e-9,
+            "June open = FIRST scaled (10 × 1/7)"
+        );
+        assert!(
+            (june.high - 12.0).abs() < 1e-9,
+            "June high must be MAX(12/7, 30/7, 12.0) = 12.0 (scale-then-aggregate); \
+             an aggregate-then-scale path would yield ≈12.857"
+        );
+        assert!(
+            (june.low - 9.0 / 7.0).abs() < 1e-9,
+            "June low = MIN of scaled lows (9 × 1/7)"
+        );
+        assert!(
+            (june.close - 12.0).abs() < 1e-9,
+            "June close = LAST scaled (14 × 6/7)"
+        );
+        assert_eq!(june.volume, 600.0, "June volume = SUM (never scaled)");
+
+        // July (anchor row): factor 1.0 → raw close = current price.
+        let july = &qfq[1];
+        assert!(
+            (july.close - 16.0).abs() < 1e-9,
+            "last monthly bar close must stay at the raw close (anchor)"
+        );
+        assert!(
+            (july.open - 15.0).abs() < 1e-9,
+            "July open unchanged (factor 1.0)"
+        );
+        assert_eq!(july.volume, 400.0, "July volume = SUM (never scaled)");
+
+        // Cross-mode sanity on the same aggregate path: hfq/none must not
+        // collapse to qfq (plan §4: 三档互异).
+        let hfq = provider
+            .fetch_bars("000001", "1M", fetch_all_start(), fetch_all_end(), "hfq")
+            .await
+            .expect("hfq monthly fetch");
+        let none = provider
+            .fetch_bars("000001", "1M", fetch_all_start(), fetch_all_end(), "none")
+            .await
+            .expect("none monthly fetch");
+        assert_eq!(hfq.len(), 2);
+        assert_eq!(none.len(), 2);
+        assert!(
+            (hfq[0].close - 84.0).abs() < 1e-9,
+            "hfq June close = adjclose of the last June row (84.0)"
+        );
+        assert!(
+            (none[0].close - 14.0).abs() < 1e-9,
+            "none June close = raw last close (14.0)"
+        );
     }
 }

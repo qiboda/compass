@@ -85,6 +85,10 @@ default_symbol = "SZ000001"
 # 应用启动时显示的时间周期。
 # 默认值："1d"
 default_timeframe = "1d"
+
+# 应用启动时显示的复权方式（qfq=前复权 / hfq=后复权 / none=不复权）。
+# 默认值："qfq"；运行中切换不写回本文件（会话内状态）。
+default_adjust = "qfq"
 ```
 
 ## 默认值
@@ -101,6 +105,7 @@ default_timeframe = "1d"
 | `dolt` | `compass_data_dir` | `/data/compass-data/compass_data` |
 | `app` | `default_symbol` | `SZ000001` |
 | `app` | `default_timeframe` | `1d` |
+| `app` | `default_adjust` | `qfq` |
 | `llm` | `base_url` | `https://api.openai.com/v1` |
 | `llm` | `api_key` | `""`（空 = LLM 入口隐藏） |
 | `llm` | `model` | `gpt-4o-mini` |

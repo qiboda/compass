@@ -133,6 +133,20 @@ push 前按顺序执行：
 `compass-core` 中新增或修改的每个 `pub` 项 MUST 包含 `///` 文档注释。
 这由 `#![warn(missing_docs)]` 强制执行 — `cargo doc --no-deps` 必须无警告。
 
+### 编辑纪律
+
+（ref #345；edit 摩擦第 4 次复现的固化，前 3 次见 #336/#338/#342-343）
+
+同一文件多轮编辑或子代理并行落盘过的文件，`edit` 工具会报
+"file changed since it was read" / "edit requires reading first"——消除法：
+
+1. **编辑前必读最新版**（尤其子代理并行落盘过的文件），不要复用旧 read 结果。
+2. **单 turn 连续编辑 >10 次或同一文件 >5 次**：改用 `run_code` 脚本化编辑或
+   `write` 全量重写，避免 90 次 edit 撞 16 次 isError 的摩擦（ref #345 实测）。
+3. `old_string` 用函数签名级唯一锚点；替换含函数/测试声明的块时
+   `new_string` 必须完整保留声明（ref #336 误删函数头教训）。
+4. 结构性大改后立即 `read` 验证结果再继续。
+
 ## Git 分支
 
 **Feature-branch 工作流。** 大部分工作在 feature 分支上进行，通过 PR 合并。

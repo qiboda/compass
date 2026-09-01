@@ -19,7 +19,10 @@ tab.market: Market
 toolbar:
   fetch: Fetch
   loading: Loading...
-  adjust: Adj.
+  adjust:
+    qfq: QFQ
+    hfq: HFQ
+    none: None
   toggle_sidebar: Toggle sidebar
 
 sidebar:

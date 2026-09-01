@@ -429,7 +429,7 @@ mod tests {
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
         let panel = MarketPanel::new(id, state, &tokens);
-        (panel, SharedState::new("SZ000001", "1d"))
+        (panel, SharedState::new("SZ000001", "1d", "qfq"))
     }
 
     fn signals() -> (

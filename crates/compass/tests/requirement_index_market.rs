@@ -92,19 +92,32 @@ fn i18n_market_keys_zh_en_symmetric() {
 }
 
 #[test]
-fn toolbar_adjust_tag_has_index_hide_guard() {
-    // Plan T7: 前复权 Tag 对指数/板块隐藏 — the toolbar rendering must gate
-    // the adjust Tag on the current symbol's index/board nature instead of
-    // rendering it unconditionally.
+fn toolbar_adjust_dropdown_has_three_options_and_index_hide_guard() {
+    // Plan T7 + issue #345: 前复权 Tag → three-option Dropdown (qfq/hfq/none)
+    // — the toolbar must reference all three i18n option keys via a Dropdown
+    // with its own `id_salt("adjust")`, and the index/board hide guard must
+    // be preserved (当前标的 index_type 非空或 BK 前缀时隐藏).
     let src = read_rel("src/main.rs").expect("main.rs must exist");
-    // The Tag show call (toolbar.adjust) must be conditioned on index/board.
+    // Three i18n option keys are rendered as dropdown options.
+    for key in [
+        "toolbar.adjust.qfq",
+        "toolbar.adjust.hfq",
+        "toolbar.adjust.none",
+    ] {
+        assert!(
+            src.contains(key),
+            "toolbar adjust dropdown must reference the option key {key}"
+        );
+    }
+    // The control is a Dropdown (not a Tag) with its own id salt "adjust".
     assert!(
-        src.contains("toolbar.adjust"),
-        "toolbar adjust Tag must still exist for stocks"
+        src.contains("id_salt(\"adjust\")"),
+        "the adjust control must be a Dropdown with id_salt(\"adjust\")"
     );
+    // The hide guard must remain (plan T7).
     assert!(
         src.contains("index_type") || src.contains("BK"),
-        "the adjust Tag must be hidden when the symbol is an index/board \
+        "the adjust Dropdown must be hidden when the symbol is an index/board \
          (plan T7: 当前标的 index_type 非空或 BK 前缀时隐藏)"
     );
 }

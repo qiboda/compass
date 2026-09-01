@@ -421,7 +421,7 @@ mod tests {
         let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
         let (work_signal, _work_slot) = factory::create_signal_slot::<FetchRequest>();
         let (llm_signal, _llm_slot) = factory::create_signal_slot::<RunLlmRequest>();
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
         let mut logger_export_clicked = false;

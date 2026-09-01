@@ -50,7 +50,11 @@ pub(crate) fn build_compass_app_with_timeframe(
     // harness (ui_fixes_218 is the single construction point for kittest).
     rust_i18n::set_locale("zh");
     let config = AppConfig::default();
-    let shared_state = Arc::new(SharedState::new("SZ000001", default_timeframe));
+    let shared_state = Arc::new(SharedState::new(
+        "SZ000001",
+        default_timeframe,
+        &config.app.default_adjust,
+    ));
 
     let (work_signal, run_screener_signal, sepa_signal, index_signal, llm_signal, _backend_handle) =
         crate::backend::wire_backend(config, shared_state.clone(), egui_ctx, None);
@@ -97,6 +101,7 @@ pub(crate) fn build_compass_app_with_timeframe(
 
     let startup_symbol = shared_state.symbol.get();
     let timeframe_index = crate::timeframe_index_from_value(&shared_state.timeframe.get());
+    let adjust_index = crate::adjust_index_from_value(&shared_state.adjust.get());
 
     CompassApp {
         dock_state,
@@ -122,6 +127,9 @@ pub(crate) fn build_compass_app_with_timeframe(
         // derived from `shared_state.timeframe` via the shared
         // `timeframe_index_from_value` helper.
         timeframe_index,
+        // Mirrors the production constructor: adjust index from
+        // `shared_state.adjust` via the shared helper.
+        adjust_index,
         theme,
         dock_style,
         _backend_handle,

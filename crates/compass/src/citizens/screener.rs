@@ -1193,7 +1193,7 @@ mod tests {
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
         let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens, false);
-        (panel, SharedState::new("SZ000001", "1d"))
+        (panel, SharedState::new("SZ000001", "1d", "qfq"))
     }
 
     #[test]
@@ -1462,7 +1462,7 @@ mod tests {
         if let CondItem::Leaf(l) = &mut panel.builder_root[0] {
             l.params = LeafParams::MultiSelect(vec!["白酒".to_string()]);
         }
-        let shared = SharedState::new("SZ000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d", "qfq");
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
@@ -1542,7 +1542,7 @@ mod tests {
             params: LeafParams::UpDays { n: 3, min_pct: 0.0 },
             negated: false,
         }));
-        let shared = SharedState::new("SZ000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d", "qfq");
         let (run_signal, _run_slot) =
             egui_mobius::factory::create_signal_slot::<RunScreenerRequest>();
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
@@ -1719,7 +1719,7 @@ mod tests {
 
     #[test]
     fn dispatch_row_fetch_sets_symbol_and_triggers_fetch() {
-        let shared = SharedState::new("SZ000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d", "qfq");
         // The work slot must stay alive so the signal send succeeds.
         let (work_signal, _work_slot) = egui_mobius::factory::create_signal_slot::<FetchRequest>();
         let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
@@ -1735,7 +1735,7 @@ mod tests {
 
     #[test]
     fn dispatch_row_fetch_ignores_out_of_range_index() {
-        let shared = SharedState::new("SZ000001", "1d");
+        let shared = SharedState::new("SZ000001", "1d", "qfq");
         let (_, work_signal, _) = signals();
         let rows = vec![sample_row("SH600519", "贵州茅台", 200.0)];
 
@@ -2393,7 +2393,7 @@ mod tests {
             1,
             "single-member restore folds to a flat card"
         );
-        let shared_b = SharedState::new("SZ000001", "1d");
+        let shared_b = SharedState::new("SZ000001", "1d", "qfq");
         let (run_signal_b, work_signal_b, llm_signal_b) = builder_signals();
         let industries_b: Vec<String> = Vec::new();
         let boards_b: Vec<String> = Vec::new();
@@ -2450,7 +2450,7 @@ mod tests {
             ),
             other => panic!("expected a flat MA card, got {other:?}"),
         }
-        let shared_c = SharedState::new("SZ000001", "1d");
+        let shared_c = SharedState::new("SZ000001", "1d", "qfq");
         let (run_signal_c, work_signal_c, llm_signal_c) = builder_signals();
         let industries_c: Vec<String> = Vec::new();
         let boards_c: Vec<String> = Vec::new();
@@ -2598,7 +2598,7 @@ mod tests {
         let state = CitizenState::new();
         let tokens = ThemeTokens::dark();
         let panel = ScreenerPanel::new(id, state, None, Box::new(|_| {}), &tokens, llm_enabled);
-        (panel, SharedState::new("SZ000001", "1d"))
+        (panel, SharedState::new("SZ000001", "1d", "qfq"))
     }
 
     /// Harness with the Todo 6 `show` signature (llm_signal added last).

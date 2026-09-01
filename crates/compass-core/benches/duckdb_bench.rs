@@ -78,7 +78,7 @@ fn bench_cache_hit(c: &mut Criterion) {
         b.iter(|| {
             let result = rt.block_on(async {
                 provider
-                    .fetch_bars("000001.SZ", "1d", start, end)
+                    .fetch_bars("000001.SZ", "1d", start, end, "qfq")
                     .await
                     .expect("fetch_bars failed")
             });
@@ -100,7 +100,7 @@ fn bench_cache_miss(c: &mut Criterion) {
         b.iter(|| {
             let result = rt.block_on(async {
                 provider
-                    .fetch_bars("NONEXIST", "1d", start, end)
+                    .fetch_bars("NONEXIST", "1d", start, end, "qfq")
                     .await
                     .expect("fetch_bars failed")
             });

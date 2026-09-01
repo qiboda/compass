@@ -359,7 +359,7 @@ mod tests {
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
 
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -379,7 +379,7 @@ mod tests {
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
 
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -397,7 +397,7 @@ mod tests {
         let state = CitizenState::new();
         let mut citizen = ChartCitizen::new(id, state);
 
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         shared.bars.set(vec![
             make_bar(Utc::now(), 100.0, 105.0, 98.0, 103.0, 1000.0),
             make_bar(
@@ -456,7 +456,7 @@ mod tests {
         let start = Utc::now();
         let bars = series(start, 1.0, 20);
 
-        let shared = SharedState::new("000001", "1d");
+        let shared = SharedState::new("000001", "1d", "qfq");
         shared.bars.set(bars);
         let theme = CompassTheme::compass_dark();
 
@@ -508,7 +508,7 @@ mod tests {
         let bars_b = series(start, 101.0, 10);
         let theme = CompassTheme::compass_dark();
 
-        let shared_a = SharedState::new("600001", "1d");
+        let shared_a = SharedState::new("600001", "1d", "qfq");
         shared_a.bars.set(bars_a);
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
@@ -517,7 +517,7 @@ mod tests {
             harness.run();
         }
 
-        let shared_b = SharedState::new("600002", "1d");
+        let shared_b = SharedState::new("600002", "1d", "qfq");
         shared_b.bars.set(bars_b);
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {

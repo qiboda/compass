@@ -359,6 +359,9 @@ pub struct AppSection {
     #[serde(default = "default_timeframe")]
     /// Timeframe displayed on startup (e.g. "1d").
     pub default_timeframe: String,
+    #[serde(default = "default_adjust")]
+    /// Price adjustment mode displayed on startup: "qfq"/"hfq"/"none".
+    pub default_adjust: String,
 }
 
 impl Default for AppSection {
@@ -366,6 +369,7 @@ impl Default for AppSection {
         Self {
             default_symbol: default_symbol(),
             default_timeframe: default_timeframe(),
+            default_adjust: default_adjust(),
         }
     }
 }
@@ -375,6 +379,9 @@ fn default_symbol() -> String {
 }
 fn default_timeframe() -> String {
     "1d".into()
+}
+fn default_adjust() -> String {
+    "qfq".into()
 }
 fn default_theme() -> String {
     "compass_dark".into()
@@ -658,5 +665,56 @@ compass_data_dir = "/custom/compass"
         assert!(serialized.contains("600519"));
         let parsed: WatchlistConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(parsed.symbols, watchlist.symbols);
+    }
+
+    // -----------------------------------------------------------------------
+    // Issue #345 — `AppSection.default_adjust` serde contract:
+    //   `#[serde(default = "default_adjust")]`, `default_adjust() -> "qfq"`,
+    //   explicit values pass through untouched (validation happens at the UI
+    //   layer via `adjust_index_from_value`).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn appconfig_missing_default_adjust_falls_back_to_qfq() {
+        // Empty config: every field takes its default, including adjust.
+        let config: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(config.app.default_adjust, "qfq");
+
+        // Partial [app] section without default_adjust.
+        let config: AppConfig = toml::from_str(
+            r#"[app]
+default_symbol = "600519"
+default_timeframe = "1w"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.app.default_adjust, "qfq", "missing key must default");
+    }
+
+    #[test]
+    fn appconfig_explicit_default_adjust_passes_through() {
+        let config: AppConfig = toml::from_str(
+            r#"[app]
+default_symbol = "600519"
+default_adjust = "hfq"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.app.default_adjust, "hfq");
+    }
+
+    #[test]
+    fn appconfig_default_adjust_does_not_validate_unknown_values() {
+        // The serde layer only supplies the default; an unknown value is
+        // preserved as-is and must be handled by the UI mapping
+        // (adjust_index_from_value → 0/qfq). Assert the raw passthrough so a
+        // future "validation" layer cannot silently change the contract.
+        let config: AppConfig = toml::from_str(
+            r#"[app]
+default_adjust = "bogus_value"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.app.default_adjust, "bogus_value");
     }
 }

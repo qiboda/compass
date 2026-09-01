@@ -131,14 +131,15 @@ impl ParquetReader {
     }
 
     /// Fetch bars for a symbol and date range from the single Parquet file.
-    /// Bars are **forward-adjusted** (前复权): OHLC is scaled by
-    /// `factor_i = adjclose_i / close_i`, so the latest bar's price equals the
-    /// current market price.
+    /// Bars are adjusted per `adjust` (ref #345): `"qfq"` forward-adjusts
+    /// normalized against the last valid ratio, `"hfq"` scales by the raw
+    /// `adjclose_i / close_i`, `"none"` returns unadjusted prices.
     pub fn fetch_bars_blocking(
         &self,
         symbol: &str,
         range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
+        adjust: &str,
     ) -> Result<Vec<Bar>, DataError> {
         validate_symbol(symbol)?;
         if !self.daily_path.exists() {
@@ -180,10 +181,10 @@ impl ParquetReader {
             .collect::<Result<Vec<_>, duckdb::Error>>()
             .map_err(DataError::Database)?;
 
-        // Forward-adjust (ref #176): scale each bar by adjclose/close. Rows
-        // with NULL adjclose keep factor 1.0 (no scaling).
+        // Adjust per mode (ref #345): rows with NULL adjclose keep factor 1.0
+        // and never capture the forward anchor.
         let mut raw: Vec<RawBar> = Vec::with_capacity(rows.len());
-        let mut adjclose: Vec<f64> = Vec::with_capacity(rows.len());
+        let mut adjclose: Vec<Option<f64>> = Vec::with_capacity(rows.len());
         for (date_str, open, high, low, close, volume, adj) in rows {
             let Some(time) = date_str_to_utc(&date_str) else {
                 continue;
@@ -196,10 +197,14 @@ impl ParquetReader {
                 close,
                 volume,
             });
-            adjclose.push(adj.unwrap_or(close));
+            adjclose.push(adj);
         }
 
-        let bars = adjust_ohlc(&raw, &adjclose);
+        let bars = adjust_ohlc(
+            &raw,
+            &adjclose,
+            adjust.parse().expect("infallible AdjustMode parse"),
+        );
 
         if bars.is_empty() {
             return Err(DataError::NoData {
@@ -931,11 +936,13 @@ impl DataProvider for ParquetReader {
         _timeframe: &str,
         range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
+        adjust: &str,
     ) -> Result<Vec<Bar>, DataError> {
         let reader = self.clone_reader();
         let symbol = symbol.to_string();
+        let adjust = adjust.to_string();
         tokio::task::spawn_blocking(move || {
-            reader.fetch_bars_blocking(&symbol, range_start, range_end)
+            reader.fetch_bars_blocking(&symbol, range_start, range_end, &adjust)
         })
         .await
         .map_err(|e| DataError::Parse(format!("spawn_blocking panicked: {e}")))?
@@ -1091,7 +1098,7 @@ mod tests {
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
 
-        let result = reader.fetch_bars_blocking("SZ000001", start, end);
+        let result = reader.fetch_bars_blocking("SZ000001", start, end, "qfq");
         assert!(matches!(result, Err(DataError::NoData { .. })));
     }
 
@@ -1114,7 +1121,7 @@ mod tests {
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
 
         let bars = reader
-            .fetch_bars_blocking("SZ000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end, "qfq")
             .expect("fetch_bars_blocking failed");
 
         assert_eq!(bars.len(), 2);
@@ -1708,7 +1715,7 @@ mod tests {
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
         let bars = reader
-            .fetch_bars_blocking("SZ000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end, "qfq")
             .expect("fetch");
 
         assert_eq!(bars.len(), 3);
@@ -1749,7 +1756,7 @@ mod tests {
             Utc,
         );
         let bars = reader
-            .fetch_bars_blocking("SZ000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end, "qfq")
             .expect("fetch");
         assert_eq!(bars.len(), 2, "should only return Jan dates");
     }
@@ -1771,7 +1778,7 @@ mod tests {
 
         // Should only get SZ000001 rows, not SH600519
         let bars = reader
-            .fetch_bars_blocking("SZ000001", start, end)
+            .fetch_bars_blocking("SZ000001", start, end, "qfq")
             .expect("fetch");
         assert_eq!(bars.len(), 1);
         assert!((bars[0].close - 10.0).abs() < 0.01);
@@ -2025,7 +2032,7 @@ mod tests {
                 .unwrap(),
             Utc,
         );
-        let result = reader.fetch_bars_blocking("SZ000001", start, end);
+        let result = reader.fetch_bars_blocking("SZ000001", start, end, "qfq");
         assert!(
             matches!(result, Err(DataError::NoData { .. })),
             "zero results in date range should return NoData"
@@ -2041,7 +2048,7 @@ mod tests {
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
 
         // Empty string is invalid and should fail validate_symbol BEFORE any I/O
-        let result = reader.fetch_bars_blocking("", start, end);
+        let result = reader.fetch_bars_blocking("", start, end, "qfq");
         assert!(
             matches!(result, Err(DataError::NoData { .. })),
             "invalid symbol (empty) should be rejected by validate_symbol"
@@ -2126,7 +2133,7 @@ mod tests {
         let start = DateTime::from_timestamp(0, 0).unwrap();
         let end = DateTime::from_timestamp(4_000_000_000, 0).unwrap();
         let bars = reader
-            .fetch_bars("SZ000001", "1d", start, end)
+            .fetch_bars("SZ000001", "1d", start, end, "qfq")
             .await
             .expect("fetch");
         assert_eq!(bars.len(), 1);
