@@ -73,7 +73,7 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
 ## 布局结构
 
 ```
-┌─ 工具栏 (40px, Toolbar 组件)：[标的] [周期 1d|1w|1M] | [操作 Fetch] | [显示 侧栏/主题/语言] ┐
+┌─ 工具栏 (40px, Toolbar 组件)：[标的] [周期 1d|1w|1M 复权▾] | [操作 Fetch] | [显示 侧栏/主题/语言] ┐
 ├──────────┬──────────────────────────────────────────────────────────────┤
 │ Sidebar  │  DockArea（egui_dock，可拖拽/关/开标签页）                      │
 │ 240px    │  顶层 leaf：图表 | 大盘 | 东方SEPA；底层 leaf：日志 | 选股器      │
@@ -178,9 +178,10 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
   算点位 + 涨跌幅，结果写入 `shared_state.index_snapshot`（镜像 sepa_* 三件套状态）。
 - **状态**：loading spinner / error colored_label / 空态 EmptyState「暂无指数数据」
   （`index_daily.parquet` 缺失时，含刷新引导）；个别板块无数据 → 行内 `—`。
-- **前复权 Tag**：当前标的为指数/板块时**隐藏**（判断：符号带 `BK` 前缀或列于
-  `index_basic.parquet` 且 `index_type` 非空）——指数无复权，显示「前复权」是错误信息；
-  股票保持显示。
+- **复权 Dropdown（ref #345）**：工具栏「周期」组内三档下拉（前复权/后复权/不复权），
+  当前标的为指数/板块时**隐藏**（判断：符号带 `BK` 前缀或列于 `index_basic.parquet`
+  且 `index_type` 非空）——指数无复权概念，显示复权控件是错误信息；股票保持显示。
+  切换立即重载（与周期切换一致，last request wins），会话内不持久化。
 
 ## 交互规范
 
@@ -237,9 +238,11 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
   + mono 值（线色）；BOLL 单标签 + 三值 ` / ` 连接；MA/BOLL 组间 1px 竖分隔线；
   数值格式复用 vendored `format_price`（≥100→2 位、≥1→4 位、<1→6 位）；暖机
   显示 `—`；不消费输入事件。
-- **前复权 Tag**（工具栏「周期」组内）：非交互 `Tag`（`TagVariant::Custom` +
-  info 色）——K 线均为前复权价（fetch 层缩放），本迭代无模式切换开关；
-  **当前标的为指数/板块时隐藏**（epic #255：指数无复权，显示是错误信息），股票保持显示。
+- **复权 Dropdown（ref #345）**（工具栏「周期」组内）：`Dropdown` 三档
+  （前复权/后复权/不复权，`id_salt("adjust")`、宽 96px、32px 与周期 Segmented 同高）——
+  K 线价格按档位在 fetch 层缩放（qfq 前复权归一化后最新 bar=现价 / hfq 后复权 / none
+  原始价）；**当前标的为指数/板块时隐藏**（epic #255：指数无复权，显示是错误信息），
+  股票保持显示。
 
 ### 反馈状态
 
@@ -355,6 +358,7 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 2026-08-14 | LLM 自然语言入口（条件构建器 Card 内 + 第五通道 + seq 守卫） | `.dsh/designs/llm-screener-llm.md` | 已实现（ref #247） |
 | 2026-08-02 | v2 全局升级：compass-ui 组件库 + design token + theme 自主化 + 三栏布局（Sidebar/StatusBar）+ 字体内嵌 + Modal 三场景 + 快捷键（ref #119/#123-#131） | `.dsh/designs/gui-upgrade.md` | 已实现（与代码同步） |
 | 2026-08-04 | MA/BOLL 叠加层（MA5/10/60/120/250 + BOLL 20,2 共 8 线）+ 图例行（左上第二行 chip）+ 工具栏「前复权」Tag（ref #174/#177/#178） | `.dsh/designs/chart-ma-boll.md` | 已实现（与代码同步） |
+| 2026-09-01 | 工具栏「前复权」Tag → 复权方式三档 Dropdown（前复权/后复权/不复权，立即重载，指数隐藏）+ 修复 adjclose 后复权口径（ref #345） | `.dsh/designs/adjust-mode.md` | 已实现（与代码同步） |
 | 2026-08-09 | 新增组件使用规范权威文档 `.dsh/kb/design/ui-widgets.md`（24 组件 × 8 字段模板，与本文分工：本文管 token/布局/交互，组件文档管组件粒度用法） | `.dsh/designs/ui-widgets.md` | 已同步（与代码同步） |
 | 2026-08-09 | GUI 四问题修复：图表日期中文（x 轴紧凑 + 十字光标/tooltip 完整，fork 侧）、K 线切换立即重载 + index 对齐、选股器条件原子组 + 行距 sm、SEPA 表格垂直堆叠修复 + MultiSelect id_salt（ref #217/#218/#219/#220/#221） | `.dsh/designs/ui-fixes-chinese-date.md` + `.dsh/designs/ui-fixes-screener-layout.md` | 已实现（与代码同步） |
 | 2026-08-09 | 验收修复：数值列对齐、涨跌幅单一百分比、DataTable 横向滚动、Tag 换行渲染、Button 文字/loading 主题色、concept_name TRIM（ref #217 用户验收 6 项） | `.dsh/designs/ui-fixes-sepa-change-column.md` | 已实现（与代码同步） |

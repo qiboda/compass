@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS index_basic (
   - `index_daily.parquet`：`symbol, index_type, tradedate, open, high, low, close, volume, amount, adjclose`
     ——导出时 Dolt `trade_date` 重命名为 `tradedate`（对齐 `stock_daily.parquet` 列名），
     **`adjclose = close` 占位**（指数无复权概念，东财 `fqt=0` 不复权拉取；占位列使
-    `DuckDbProvider` 既有 7 列查询 / 前复权缩放（factor=1.0 恒等）/ 1w·1M 聚合零改动复用）。
+    `DuckDbProvider` 既有 7 列查询 / 复权缩放（ratio=1.0 → qfq/hfq/none 三档恒等）/
+    1w·1M 聚合零改动复用）。
   - `index_basic.parquet`：`symbol, name, name_en, index_type`。
   - **`name_en` / `stock_basic.industry_en`（epic #266）**：collectors 静态映射表
     `crates/compass-collectors/data/name_en_mapping.csv`（`section,key,value`：index 按 symbol /
@@ -277,17 +278,28 @@ ORDER BY grp_date
 
 子查询中的 `ORDER BY trade_date ASC` 保证 `FIRST`/`LAST` 按时间顺序返回每个时间桶中最早/最晚的值。只有 DuckDB 的 `stock_daily` 路径执行聚合；`ParquetReader`（直接 parquet 读取）始终返回日线数据。
 
-### 前复权（ref #176）
+### 复权方式三态（ref #345，取代 ref #176 前复权）
 
-`fetch_bars()` 三条路径（1d 内存表 / parquet 回退 / 1w·1M 聚合）**均返回前复权价**：
-`factor_i = adjclose_i / close_i`，`open/high/low/close × factor_i` 后写入
-`Bar`（volume 原样）。最新日 `adjclose == close` → factor=1.0，价格与现价一致。
+`fetch_bars()` 三条路径（1d 内存表 / parquet 回退 / 1w·1M 聚合）均支持**三档复权**，
+由 `adjust` 参数（`"qfq"/"hfq"/"none"`，未知值回退 `"qfq"`）选择；`open/high/low/close`
+按 `factor_i` 缩放后写入 `Bar`（volume 原样）：
 
+- **qfq 前复权**（默认，修正 ref #176 假设）：`factor_i = ratio_i / r_anchor`，
+  `ratio_i = adjclose_i / close_i`，`r_anchor` = 序列中**最后一个 ratio 有效行**的
+  ratio——最新 bar=现价。根因：Dolt `adjclose` 实为**后复权**口径（Tushare 源，
+  上市首日 ratio=1.0 锚点，如 SZ002832 单调递增至 ≈6.0123），ref #176 直接令
+  factor=ratio 会把前复权显示成后复权价（SEPA 面板 25.11 vs 图表 150.97）。
+- **hfq 后复权**：`factor_i = ratio_i`（adjclose 本身），无效行 factor=1.0。
+- **none 不复权**：`factor_i = 1.0`。
+- **无效 ratio**：close≤0 或 adjclose NULL/非有限/≤0 → factor=1.0，**且不参与锚点
+  计算**（尾部 NULL adjclose——如 SZ300683 2202 行——不会capture 锚点）。
 - **1w/1M 先缩放后聚合**：内层 SELECT 按日 factor 缩放 OHLC，外层再
   `FIRST(open)/MAX(high)/MIN(low)/LAST(close)/SUM(volume)`——保证除权日的
-  周/月线高低点准确（聚合后再缩放会失真）。
-- close≤0 或 adjclose 非有限时 factor 回落 1.0（不产生 inf/NaN）。
+  周/月线高低点准确（聚合后再缩放会失真）。qfq 的 `r_anchor` 在日线层（查询窗口
+  内）通过 anchor CTE 计算传入 SQL；聚合序列最后一根有效 bar 的 close 不变。
 - 指标（MA/BOLL）在缩放后的 adjusted 序列上实时计算；渲染层无感知。
+- 指数（adjclose==close 占位，ratio=1.0）三档结果恒等；SEPA 面板/选股器/回测
+  不经过 `fetch_bars`，不受影响（SEPA「最新价」保持 close 现实价）。
 
 ### 指数/板块数据读取：双 parquet 路由（epic #255）
 
@@ -527,6 +539,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 | 选股市值计算 | total_share × 最新 adjclose / × 最新 close ÷ 1e8 | `total_share × 最新 close ÷ 1e8`（亿元） | 最新日 adjclose == close（前复权锚点）；市值是现实世界值，用原始价 | adjclose 复权价会失真；单位显式 ÷1e8 与 GUI 亿元输入一致 |
 | SEPA 写回方式（ref #150） | REPLACE INTO / 两段式 DELETE + `dolt table import -a` | 两段式：先 `DELETE FROM <table> WHERE trade_date='<date>'` 清当日，再 append CSV | 幂等重跑核心——同日期重跑行数不增；无需 SQL 转义整行值；与 `dolt table import` 封装风格一致 | REPLACE INTO 需转义且与 import 管线不一致；破坏性最小（只清当日，保留其他日期） |
 | fetch_bars 前复权（ref #176） | 返回前复权价 / 返回原始价由 GUI 缩放 | 返回前复权价（`factor_i = adjclose_i / close_i`，1w/1M 先缩放后聚合） | 渲染层无感知、单点缩放避免多路径逻辑复制；最新日 factor 恒 1.0 与现价一致 | GUI 侧缩放需每调用方重复逻辑且周/月聚合难以正确处理除权日（先聚合后缩放会失真） |
+| fetch_bars 复权三态（ref #345，取代 #176 前复权） | 保持固定前复权 / 三档参数化 | `adjust` 参数三档：qfq=`ratio_i/r_anchor`（锚点=最后有效 ratio 行）、hfq=`ratio_i`、none=1.0；未知值回退 qfq | 修复 Dolt adjclose 后复权口径（ref #176 假设前复权致 SZ002832 显示 6 倍价）；前复权锚点=最后**有效** ratio（尾部 NULL 不 capture）；1w/1M 先缩放后聚合 + 日线层 anchor CTE；SEPA 面板 close 现实价不受影响 | 固定前复权无法表达用户后复权/不复权需求且口径错；GUI 侧缩放需多调用方重复逻辑（同 #176 排除项） |
 | SEPA 计算表列级 DDL（ref #150） | plan 模板列（ma60/ma120/ma250/atr20、return20/return60、volume_ratio_score/institution_score、hs300_trend 等）/ 按 SepaData 可得字段自定义 | 按 SepaData 字段自定义（见下） | `SepaRow` 只暴露五模块加权分 + `details` 子项分；MA/ATR/板块动量等原始值不进入 SepaData（不加 serde、不改 compass-strategy 的约束下不可得），列必须对齐实际可写值 | plan 模板列含不可得字段，强行写入只能填 NULL/占位，违背"不写表面表" |
 | technical_factor 列集（ref #150） | plan 模板（ma60/ma120/ma250/atr20/rs_score/vcp_score）/ 子项分 | `symbol, trade_date, structure_score, position_score, rs_score, vcp_score, breakout_score, update_date`，PK(symbol, trade_date) | 均线结构/价格位置/相对强度/VCP质量/突破确认为 `details.trend`/`details.pattern` 子项分，直接可得 | MA/ATR 原始值仅在 compass-strategy 内部，暴露需改引擎代码（本 todo 禁止） |
 | industry_factor 列集（ref #150） | plan 模板（concept_code/return20/return60/concept_amount）/ 概念名聚合 | `concept_name, trade_date, stock_count, gain_score, amount_score, diffusion_score, heat_score, news_score, update_date`，PK(concept_name, trade_date) | SepaData 仅暴露每股票 `themes`（概念名）与 theme 子项分，按概念名聚合可得板块热度汇总；concept_code 不进入 SepaData | 模板需 concept_code 与板块动量原始值，均不可得；聚合免二次计算（复用 run_sepa 输出） |
