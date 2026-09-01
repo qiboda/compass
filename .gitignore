@@ -19,3 +19,7 @@ __pycache__/
 
 # Saved output files (backtest results, exports) — not tracked
 saved/
+
+# DSH worktree session state files (per-session, never shared)
+.dsh-workspace-id
+.parent-session
