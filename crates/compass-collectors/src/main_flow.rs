@@ -1188,20 +1188,8 @@ mod tests {
     }
 
     fn setup_dolt(dir: &std::path::Path) {
-        for (key, val) in [
-            ("user.email", "admainflow@compass.local"),
-            ("user.name", "AdMainFlowTest"),
-        ] {
-            let out = std::process::Command::new("dolt")
-                .arg("config")
-                .arg("--global")
-                .arg("--add")
-                .arg(key)
-                .arg(val)
-                .output()
-                .expect("dolt config");
-            assert!(out.status.success(), "dolt config {key} failed");
-        }
+        // Identity is configured with `--local` inside the tempdir repo so a
+        // test run never rewrites the host's global dolt config (review MED-1).
         let out = std::process::Command::new("dolt")
             .arg("--data-dir")
             .arg(dir)
@@ -1213,6 +1201,21 @@ mod tests {
             "dolt init failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
+        for (key, val) in [
+            ("user.email", "admainflow@compass.local"),
+            ("user.name", "AdMainFlowTest"),
+        ] {
+            let out = std::process::Command::new("dolt")
+                .current_dir(dir)
+                .arg("config")
+                .arg("--local")
+                .arg("--add")
+                .arg(key)
+                .arg(val)
+                .output()
+                .expect("dolt config");
+            assert!(out.status.success(), "dolt config {key} failed");
+        }
     }
 
     fn dolt_sql(dir: &std::path::Path, sql: &str) {
