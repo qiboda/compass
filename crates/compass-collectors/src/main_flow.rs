@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
@@ -321,7 +321,7 @@ pub async fn run() -> Result<PathBuf> {
         return Ok(output_path);
     }
 
-    let symbols = backfill_symbols().await?;
+    let symbols = active_symbols(&today, &today).await?;
     let client = HttpClient::new()?;
     let mut throttle = Throttle::new(SINA_MIN_INTERVAL);
     let mut progress = Progress::new("main_flow", None, Some(output_path.clone()), "start")?;
@@ -376,7 +376,8 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
     let insert_sql = format!(
         "INSERT IGNORE INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS}) \
          SELECT symbol, trade_date, {INSERT_COLS} FROM _tmp_mf \
-         WHERE symbol IN (SELECT symbol FROM stock_basic)",
+         WHERE symbol IN (SELECT symbol FROM stock_basic) \
+           AND main_net_inflow IS NOT NULL",
     );
     import_replace_table(
         &path,
@@ -394,21 +395,58 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
 
 // ── Historical per-symbol backfill (issue #308, Sina lscjfb) ─────────────
 
-async fn backfill_symbols() -> Result<Vec<String>> {
+/// Active-symbol SQL: rows whose listing/cancellation dates overlap the
+/// requested window — never fetch delisted or not-yet-listed stocks. An
+/// empty `list_date` string is kept (Dolt `CAST('' AS DATE)` is NULL, so
+/// the plain `IS NULL OR CAST(...)` form would drop such rows; batch-1
+/// boundary test SH600002 locks this). `start`/`end` are pre-validated ISO
+/// dates by the callers (`backfill` parses them before use, `run` uses
+/// `today()`), so no quoting defence is needed here.
+fn active_symbols_sql(start: &str, end: &str) -> String {
+    format!(
+        "SELECT symbol FROM stock_basic \
+         WHERE (list_date IS NULL OR list_date = '' OR CAST(list_date AS DATE) <= '{end}') \
+           AND (delist_date IS NULL OR delist_date >= '{start}') \
+         ORDER BY symbol"
+    )
+}
+
+/// Parse `dolt sql -r csv` output of `active_symbols_sql` into a symbol
+/// list: skip the header line, blank lines and the literal `NULL` text
+/// (Dolt CSV's missing-value shape — a bare "filter empty" would leak the
+/// `NULL` text line in as a fetch target).
+fn parse_symbol_csv(out: &str) -> Vec<String> {
+    out.lines()
+        .skip(1)
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && *line != "NULL")
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Project `symbols` onto `active`, preserving input order and duplicates
+/// (exact match, no normalisation — the pre-#348 backfill never normalised
+/// symbols; `daima()` lowercases only the Sina query key).
+fn filter_active_symbols(symbols: &[String], active: &HashSet<String>) -> Vec<String> {
+    symbols
+        .iter()
+        .filter(|s| active.contains(*s))
+        .cloned()
+        .collect()
+}
+
+/// Active symbols for `[start, end]`: every stock listed on or before `end`
+/// and not delisted before `start` (at least one listed day in range).
+/// Without a Dolt repo (test/dev) the pre-#348 fallback `["SH600519"]` is
+/// kept so unit tests stay network-hermetic.
+async fn active_symbols(start: &str, end: &str) -> Result<Vec<String>> {
     let dir = crate::config::dolt_dir();
     if dir.join(".dolt").exists() {
-        let out =
-            crate::dolt::dolt_sql_csv("SELECT symbol FROM stock_basic ORDER BY symbol").await?;
-        let symbols: Vec<String> = out
-            .trim()
-            .lines()
-            .skip(1)
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
+        let out = crate::dolt::dolt_sql_csv(&active_symbols_sql(start, end)).await?;
+        let symbols = parse_symbol_csv(&out);
         if symbols.is_empty() {
             return Err(CollectError::InvalidInput(
-                "backfill: stock_basic contains no symbols".into(),
+                "active symbols: stock_basic contains no symbols".into(),
             ));
         }
         return Ok(symbols);
@@ -437,15 +475,29 @@ pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Res
         });
     }
 
+    let active = active_symbols(start, end).await?;
     let symbol_list = match symbols {
-        Some(s) => s.to_vec(),
-        None => backfill_symbols().await?,
+        Some([]) => {
+            // Empty request list is a caller mistake, not a window filter
+            // result: keep the original wording (QA nit for #348).
+            return Err(CollectError::InvalidInput(
+                "backfill: no symbols to fetch".to_string(),
+            ));
+        }
+        Some(s) => {
+            let active_set: HashSet<String> = active.iter().cloned().collect();
+            let filtered = filter_active_symbols(s, &active_set);
+            if filtered.is_empty() {
+                return Err(CollectError::InvalidInput(format!(
+                    "backfill: all {} requested symbols are outside the active window \
+                     in {start}..{end}",
+                    s.len()
+                )));
+            }
+            filtered
+        }
+        None => active,
     };
-    if symbol_list.is_empty() {
-        return Err(CollectError::InvalidInput(
-            "backfill: no symbols to fetch".into(),
-        ));
-    }
 
     let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}_backfill.csv"));
     let mut seen: HashMap<(String, String), FlowRecord> = HashMap::new();
@@ -1080,5 +1132,715 @@ mod tests {
                 "non-array page body must yield an empty window, got {value:?}"
             );
         }
+    }
+
+    // ── Adversarial: #348 active-symbol filtering + NULL-row guard ────────
+    //
+    // RED rationale (plan fix-mainflow-null-rows-filter #348): neither
+    // active_symbols_sql / parse_symbol_csv / filter_active_symbols /
+    // active_symbols exist yet — main_flow.rs:397 backfill_symbols() is the
+    // unfiltered predecessor. This batch therefore REDs as a compile-time
+    // "interface not landed yet" failure; the two runtime-behaviour tests
+    // (backfill all-inactive error message, import NULL-row guard) RED as
+    // assertion failures once the module compiles, because the current code
+    // still emits the misleading "no symbols to fetch" and imports NULL rows.
+    //
+    // Dolt-backed tests follow testing.md (dolt init with --data-dir on a
+    // self-contained tempdir; per-repo identity via `dolt config --local`
+    // with current_dir — the config subcommand rejects --data-dir) and skip
+    // gracefully when the dolt CLI is not on PATH (same policy as
+    // crates/compass-data/benches/dolt_bench.rs).
+
+    use std::collections::HashSet;
+
+    fn active_set(symbols: &[&str]) -> HashSet<String> {
+        symbols.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// RAII env override that restores prior values even on panic: a failing
+    /// assertion must not poison subsequent tests with a dead proxy or a
+    /// temp COMPASS_DATA_DIR.
+    struct EnvGuard(Vec<(String, Option<std::ffi::OsString>)>);
+
+    impl EnvGuard {
+        fn set(keys: &[(&str, &str)]) -> EnvGuard {
+            let saved: Vec<(String, Option<std::ffi::OsString>)> = keys
+                .iter()
+                .map(|(k, v)| {
+                    let prev = std::env::var_os(k);
+                    unsafe { std::env::set_var(k, v) };
+                    (k.to_string(), prev)
+                })
+                .collect();
+            EnvGuard(saved)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                unsafe {
+                    match v {
+                        Some(val) => std::env::set_var(k, val),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+    }
+
+    fn dolt_available() -> bool {
+        std::process::Command::new("dolt")
+            .arg("version")
+            .output()
+            .is_ok()
+    }
+
+    fn setup_dolt(dir: &std::path::Path) {
+        // `dolt init --name/--email` carries an explicit identity so clean CI
+        // runners (no global user.name/user.email) succeed without seeding the
+        // host's global dolt config (review MED-1). The `--local` config below
+        // mirrors that identity inside the tempdir repo, so a test run never
+        // rewrites the host's global dolt config and a future commit step works
+        // without touching host config. Note `dolt config` rejects the global
+        // `--data-dir` argument, hence `current_dir`.
+        const TEST_NAME: &str = "AdMainFlowTest";
+        const TEST_EMAIL: &str = "admainflow@compass.local";
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dir)
+            .arg("init")
+            .arg("--name")
+            .arg(TEST_NAME)
+            .arg("--email")
+            .arg(TEST_EMAIL)
+            .output()
+            .expect("dolt init");
+        assert!(
+            out.status.success(),
+            "dolt init failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for (key, val) in [("user.email", TEST_EMAIL), ("user.name", TEST_NAME)] {
+            let out = std::process::Command::new("dolt")
+                .current_dir(dir)
+                .arg("config")
+                .arg("--local")
+                .arg("--add")
+                .arg(key)
+                .arg(val)
+                .output()
+                .expect("dolt config");
+            assert!(
+                out.status.success(),
+                "dolt config {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    fn dolt_sql(dir: &std::path::Path, sql: &str) {
+        let out = std::process::Command::new("dolt")
+            .arg("--data-dir")
+            .arg(dir)
+            .arg("sql")
+            .arg("-q")
+            .arg(sql)
+            .output()
+            .expect("dolt sql");
+        assert!(
+            out.status.success(),
+            "dolt sql failed: {}\nsql: {sql}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn csv_last_cell(output: &str) -> String {
+        output
+            .trim()
+            .lines()
+            .last()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    }
+
+    // ── Contract 1: active_symbols_sql (pure) ─────────────────────────────
+
+    /// The varchar list_date values carry a ` HH:MM:SS` suffix, so a bare
+    /// lexicographic `list_date <= '<end>'` mis-ranks dates inside the same
+    /// year (e.g. '2026-08-19 00:00:00' vs '2026-08-28' string-compares
+    /// GREATER). The SQL must CAST list_date to DATE, quote both date
+    /// literals, AND-join the two boundary groups (parens are load-bearing:
+    /// OR binds looser than AND) and end in ORDER BY symbol.
+    #[test]
+    fn active_symbols_sql_casts_list_date_and_quotes_iso_dates() {
+        let sql = active_symbols_sql("2026-08-19", "2026-08-28");
+        let compact: String = sql.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("SELECTsymbolFROMstock_basic"),
+            "query must scan stock_basic: {sql}"
+        );
+        assert!(
+            compact.contains("list_dateISNULL"),
+            "NULL list_date rows must be included: {sql}"
+        );
+        assert!(
+            compact.contains("CAST(list_dateASDATE)<='2026-08-28'"),
+            "list_date (varchar, has time suffix) must be CAST to DATE — a bare \
+             lexicographic comparison is a date-ordering bug; end must be quoted: {sql}"
+        );
+        assert!(
+            compact.contains("delist_dateISNULL"),
+            "NULL delist_date rows must be included: {sql}"
+        );
+        assert!(
+            compact.contains("delist_date>='2026-08-19'"),
+            "delist_date must be bounded by the quoted start: {sql}"
+        );
+        assert!(
+            compact.contains(")AND("),
+            "the two boundary groups must be AND-joined as a unit (missing \
+             parens silently widen the filter to OR semantics): {sql}"
+        );
+        assert!(
+            compact.contains("ORDERBYsymbol"),
+            "output must be ordered by symbol: {sql}"
+        );
+    }
+
+    /// Single-day window (run()'s (today, today) anchor): both bounds must
+    /// still appear — a "same date" shortcut that drops one bound would make
+    /// the daily run collect delisted or not-yet-listed symbols.
+    #[test]
+    fn active_symbols_sql_single_day_window_bounds_both_sides() {
+        let sql = active_symbols_sql("2026-08-28", "2026-08-28");
+        let compact: String = sql.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("CAST(list_dateASDATE)<='2026-08-28'"),
+            "{sql}"
+        );
+        assert!(compact.contains("delist_date>='2026-08-28'"), "{sql}");
+    }
+
+    /// Parameter placement: list_date is bounded by END, delist_date by START.
+    /// A swapped implementation silently widens/narrows the active window.
+    #[test]
+    fn active_symbols_sql_uses_end_for_list_and_start_for_delist() {
+        let sql = active_symbols_sql("2026-08-05", "2026-08-28");
+        let compact: String = sql.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("CAST(list_dateASDATE)<='2026-08-28'"),
+            "list_date must be bounded by end: {sql}"
+        );
+        assert!(
+            compact.contains("delist_date>='2026-08-05'"),
+            "delist_date must be bounded by start: {sql}"
+        );
+    }
+
+    // ── Contract 3: filter_active_symbols (pure) ──────────────────────────
+
+    /// Input order + duplicates + active-set extras must not leak: the output
+    /// is a filtered PROJECTION of the input, not of the active set.
+    #[test]
+    fn filter_active_symbols_keeps_input_order_duplicates_and_ignores_extra() {
+        let input = vec![
+            "SH600519".to_string(),
+            "SZ000001".to_string(),
+            "SH600519".to_string(),
+            "BJ920000".to_string(),
+        ];
+        let active = active_set(&["SH600519", "SZ000001", "SH600000"]);
+        assert_eq!(
+            filter_active_symbols(&input, &active),
+            vec!["SH600519", "SZ000001", "SH600519"],
+            "input order and duplicates must survive; active-only symbols must not appear"
+        );
+    }
+
+    /// Empty sides: empty input → empty output; all-inactive input → empty
+    /// output (the caller then surfaces the plan's actionable error).
+    #[test]
+    fn filter_active_symbols_empty_input_or_all_inactive_is_empty() {
+        let active = active_set(&["SH600519"]);
+        assert!(filter_active_symbols(&[], &active).is_empty());
+        let inactive = vec!["SZ000001".to_string(), "BJ920000".to_string()];
+        assert!(filter_active_symbols(&inactive, &active).is_empty());
+    }
+
+    /// Case/whitespace semantics locked to the pre-#348 backfill: symbols are
+    /// used exactly as provided (no trim, no uppercase) — `daima()` lower-
+    /// cases only the Sina query key, never the symbol identity. A `contains`
+    /// on an unnormalised "sh600519" must NOT match "SH600519".
+    #[test]
+    fn filter_active_symbols_matches_exact_case_and_no_whitespace_normalization() {
+        let active = active_set(&["SH600519"]);
+        let stray = vec![
+            "sh600519".to_string(),
+            " SH600519".to_string(),
+            "SH600519 ".to_string(),
+        ];
+        assert!(
+            filter_active_symbols(&stray, &active).is_empty(),
+            "existing backfill never normalizes symbols — exact match is the #348 semantics"
+        );
+    }
+
+    /// Scale smoke (no wall-clock assertion): 50k symbols must neither panic
+    /// nor corrupt order/count — guards an accidental O(n²)/recursive shape
+    /// from silently degrading the 5.9k-symbol production query.
+    #[test]
+    fn filter_active_symbols_50k_symbols_keeps_shape_without_panic() {
+        let symbols: Vec<String> = (0..50_000).map(|i| format!("SH{i:06}")).collect();
+        let active: HashSet<String> = (0..50_000)
+            .step_by(2)
+            .map(|i| format!("SH{i:06}"))
+            .collect();
+        let out = filter_active_symbols(&symbols, &active);
+        assert_eq!(out.len(), 25_000);
+        assert_eq!(out[0], "SH000000");
+        assert_eq!(out[24_999], "SH049998");
+    }
+
+    // ── Contract 2: parse_symbol_csv (pure) ───────────────────────────────
+
+    /// Header "symbol" skipped, blank lines and the literal `NULL` text line
+    /// (Dolt CSV's missing-value shape) filtered — a bare "filter empty"
+    /// extraction lets `NULL` leak into the symbol list as a fetch target.
+    #[test]
+    fn parse_symbol_csv_skips_header_blank_and_null_text_lines() {
+        let out = "symbol\nSH600519\n\nSZ000001\nNULL\nBJ920000\n";
+        assert_eq!(
+            parse_symbol_csv(out),
+            vec!["SH600519", "SZ000001", "BJ920000"]
+        );
+    }
+
+    /// CRLF line endings (Windows CSV) and inline padding must both be
+    /// absorbed — data rows must arrive trimmed and de-CR'd.
+    #[test]
+    fn parse_symbol_csv_trims_crlf_and_inline_whitespace() {
+        let out = "symbol\r\n  SH600519  \r\nSZ000001\r\n";
+        assert_eq!(parse_symbol_csv(out), vec!["SH600519", "SZ000001"]);
+    }
+
+    /// Empty output and header-only output must both yield an empty symbol
+    /// list (never a spurious `[symbol]` or a panic); the final line without a
+    /// trailing newline must still be kept.
+    #[test]
+    fn parse_symbol_csv_empty_and_header_only_inputs() {
+        assert!(parse_symbol_csv("").is_empty());
+        assert!(parse_symbol_csv("symbol\n").is_empty());
+        assert_eq!(
+            parse_symbol_csv("symbol\nSH600519"),
+            vec!["SH600519"],
+            "final line without trailing newline must be kept"
+        );
+    }
+
+    // ── Contract 4/5: active_symbols + backfill error paths ───────────────
+
+    /// No `.dolt` (test/dev env) keeps the plan's SH600519 fallback — this is
+    /// the determinism anchor of the backfill error tests below.
+    #[tokio::test]
+    async fn active_symbols_falls_back_to_sh600519_without_dolt() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set(&[(
+            "COMPASS_DATA_DIR",
+            tmp.path().to_str().expect("utf8 temp path"),
+        )]);
+        assert_eq!(
+            active_symbols("2026-08-19", "2026-08-28").await.unwrap(),
+            vec!["SH600519".to_string()],
+            "plan #348: missing .dolt must keep the SH600519 fallback"
+        );
+    }
+
+    /// Some(s) fully filtered before the fetch loop: the error must surface
+    /// the cause (outside the active window), the window and the requested
+    /// count — and MUST NOT regress to the misleading "no symbols to fetch".
+    /// No .dolt forces the SH600519 fallback, so the three requested symbols
+    /// are all inactive; a dead local proxy makes a buggy implementation
+    /// (filtering after fetch) fail instantly instead of hitting Sina.
+    #[tokio::test]
+    async fn backfill_all_requested_inactive_errors_with_window_and_count() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
+            l.local_addr().expect("local addr").port()
+        };
+        let proxy = format!("http://127.0.0.1:{port}");
+        let _env = EnvGuard::set(&[
+            ("HTTPS_PROXY", &proxy),
+            ("https_proxy", &proxy),
+            ("HTTP_PROXY", &proxy),
+            ("http_proxy", &proxy),
+            ("ALL_PROXY", &proxy),
+            ("all_proxy", &proxy),
+            ("NO_PROXY", ""),
+            ("no_proxy", ""),
+            (
+                "COMPASS_DATA_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+            (
+                "COMPASS_CSV_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+        ]);
+
+        let symbols = vec![
+            "SZ000001".to_string(),
+            "SH600000".to_string(),
+            "BJ920000".to_string(),
+        ];
+        let err = backfill("2026-08-19", "2026-08-28", Some(&symbols))
+            .await
+            .expect_err("all-inactive symbols must be rejected");
+        assert!(
+            matches!(err, CollectError::InvalidInput(_)),
+            "must be InvalidInput, got {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("no symbols to fetch"),
+            "the misleading pre-#348 message must not come back: {msg}"
+        );
+        assert!(
+            msg.contains("outside the active window"),
+            "must explain the actual cause: {msg}"
+        );
+        assert!(
+            msg.contains("2026-08-19") && msg.contains("2026-08-28"),
+            "must name the window: {msg}"
+        );
+        assert!(
+            msg.contains("3 requested"),
+            "must name the requested count: {msg}"
+        );
+        let csv_file = tmp.path().join("RPT_MAIN_MONEY_FLOW_backfill.csv");
+        assert!(
+            !csv_file.exists(),
+            "the error must fire before any fetch/CSV write"
+        );
+    }
+
+    /// Injection-shaped date (`' OR '1'='1`): the backfill entry guard
+    /// (`NaiveDate::parse_from_str`, chrono rejects trailing input) must
+    /// reject it as InvalidDate before any Dolt/network/CSV access.
+    #[tokio::test]
+    async fn backfill_quote_shaped_start_rejected_before_any_io() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set(&[
+            (
+                "COMPASS_DATA_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+            (
+                "COMPASS_CSV_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+        ]);
+        let symbols = vec!["SH600519".to_string()];
+        let err = backfill("2026-08-28' OR '1'='1", "2026-08-28", Some(&symbols))
+            .await
+            .expect_err("a quote-shaped date must be rejected at the entry guard");
+        assert!(
+            matches!(err, CollectError::InvalidDate { ref label, .. } if label == "start"),
+            "must be InvalidDate for start, got {err:?}"
+        );
+    }
+
+    // ── Dolt-backed: real SQL semantics (testing.md tempdir pattern) ──────
+
+    /// Boundary rows against a REAL Dolt repo (decision 4 verbatim):
+    /// list_date NULL/''/==end/end+1, delist_date NULL/==start/start-1/end+1.
+    /// The assertion is the exact sorted result — a wrong cast, a < vs <=
+    /// off-by-one, or an ORDER BY omission all change this set.
+    #[tokio::test]
+    async fn active_symbols_dolt_query_respects_list_delist_boundaries() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        if !dolt_available() {
+            eprintln!("skip: dolt CLI not on PATH");
+            return;
+        }
+        setup_dolt(tmp.path());
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE stock_basic \
+             (symbol VARCHAR(20) PRIMARY KEY, list_date VARCHAR(20), delist_date DATE)",
+        );
+        dolt_sql(
+            tmp.path(),
+            "INSERT INTO stock_basic (symbol, list_date, delist_date) VALUES \
+             ('SH600001', NULL, NULL), \
+             ('SH600002', '', NULL), \
+             ('SH600003', '2026-08-19 00:00:00', NULL), \
+             ('SH600004', '2026-08-28 00:00:00', NULL), \
+             ('SH600005', '2026-08-29 00:00:00', NULL), \
+             ('SH600006', NULL, '2026-08-18'), \
+             ('SH600007', NULL, '2026-08-19'), \
+             ('SH600008', NULL, '2026-08-29'), \
+             ('SH600009', '2026-08-19 00:00:00', '2026-08-29')",
+        );
+        let _env = EnvGuard::set(&[(
+            "COMPASS_DATA_DIR",
+            tmp.path().to_str().expect("utf8 temp path"),
+        )]);
+        let got = active_symbols("2026-08-19", "2026-08-28")
+            .await
+            .expect("active query on seeded repo");
+        assert_eq!(
+            got,
+            vec![
+                "SH600001", "SH600002", "SH600003", "SH600004", "SH600007", "SH600008", "SH600009",
+            ],
+            "cast-on-list_date, empty-string list_date and inclusive delist \
+             bounds must each hold against real Dolt semantics"
+        );
+    }
+
+    /// Empty stock_basic (Dolt anomaly): active_symbols must Err (not return
+    /// an empty Ok that a caller would treat as no-op), and backfill(None)
+    /// must propagate the error before touching the fetch loop.
+    #[tokio::test]
+    async fn active_symbols_empty_repo_errors_and_backfill_none_propagates_it() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        if !dolt_available() {
+            eprintln!("skip: dolt CLI not on PATH");
+            return;
+        }
+        setup_dolt(tmp.path());
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE stock_basic \
+             (symbol VARCHAR(20) PRIMARY KEY, list_date VARCHAR(20), delist_date DATE)",
+        );
+        let _env = EnvGuard::set(&[
+            (
+                "COMPASS_DATA_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+            (
+                "COMPASS_CSV_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+        ]);
+
+        let err = active_symbols("2026-08-19", "2026-08-28")
+            .await
+            .expect_err("empty stock_basic must be an error, not Ok(empty)");
+        let msg = err.to_string();
+        assert!(matches!(err, CollectError::InvalidInput(_)), "got {err:?}");
+        assert!(
+            msg.contains("no symbols"),
+            "must name the empty source, got: {msg}"
+        );
+
+        let err2 = backfill("2026-08-19", "2026-08-28", None)
+            .await
+            .expect_err("None path must propagate the empty active-set error");
+        assert!(
+            matches!(err2, CollectError::InvalidInput(_)),
+            "None path must not silently no-op, got {err2:?}"
+        );
+    }
+
+    /// The import guard end-to-end: a CSV with (a) a valid row, (b) a NULL
+    /// main_net_inflow row for an in-stock_basic symbol, (c) a non-null row
+    /// for a symbol NOT in stock_basic. Only (a) may land in
+    /// capital_main_flow; NULL-inflow count must be 0. A text-only guard
+    /// (e.g. on the wrong branch or OR-joined) fails these assertions.
+    #[tokio::test]
+    async fn import_to_dolt_guard_blocks_null_and_unknown_rows() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        if !dolt_available() {
+            eprintln!("skip: dolt CLI not on PATH");
+            return;
+        }
+        setup_dolt(tmp.path());
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE stock_basic \
+             (symbol VARCHAR(20) PRIMARY KEY, list_date VARCHAR(20), delist_date DATE)",
+        );
+        dolt_sql(
+            tmp.path(),
+            "INSERT INTO stock_basic (symbol, list_date, delist_date) VALUES \
+             ('SH600519', NULL, NULL), ('SH600000', NULL, NULL)",
+        );
+        dolt_sql(
+            tmp.path(),
+            "CREATE TABLE data_updates (\
+             table_name VARCHAR(50) PRIMARY KEY, last_updated DATE, \
+             source VARCHAR(200), row_count BIGINT, last_report_date VARCHAR(30))",
+        );
+        let csv_path = tmp.path().join("main_flow.csv");
+        std::fs::write(
+            &csv_path,
+            "symbol,trade_date,main_net_inflow,main_net_inflow_rate,\
+             super_large_net,large_net,medium_net,small_net,update_date\n\
+             SH600519,2026-08-19,5,1,2,3,4,5,2026-09-02\n\
+             SH600000,2026-08-19,,1,1,1,1,1,2026-09-02\n\
+             SZ000001,2026-08-19,9,1,1,1,1,1,2026-09-02\n",
+        )
+        .unwrap();
+        let _env = EnvGuard::set(&[(
+            "COMPASS_DATA_DIR",
+            tmp.path().to_str().expect("utf8 temp path"),
+        )]);
+
+        let total = import_to_dolt(Some(&csv_path))
+            .await
+            .expect("import to temp dolt repo");
+        assert_eq!(
+            total, 1,
+            "only the valid in-stock_basic non-null row may be inserted"
+        );
+        let nulls = crate::dolt::dolt_sql_csv(
+            "SELECT COUNT(*) FROM capital_main_flow WHERE main_net_inflow IS NULL",
+        )
+        .await
+        .expect("count null rows");
+        assert_eq!(
+            csv_last_cell(&nulls),
+            "0",
+            "the #348 guard must prevent ANY NULL main_net_inflow row"
+        );
+        let rows =
+            crate::dolt::dolt_sql_csv("SELECT symbol FROM capital_main_flow ORDER BY symbol")
+                .await
+                .expect("list inserted rows");
+        assert_eq!(
+            csv_last_cell(&rows),
+            "SH600519",
+            "only the valid row survives the guard"
+        );
+    }
+
+    // ── Requirement acceptance: #348 active-symbol contract (batch 2) ─────
+    //
+    // 需求验收 RED（subagent_skwy_requirement_test，门禁第 4 步）。与批次 1
+    // （对抗性，c24260d）的分工：对抗性已深度覆盖 SQL 子串断言 / filter 顺序
+    // 重复空 / parse CSV header NULL CRLF / 无 .dolt fallback / Some 全不活跃
+    // Err 消息 / 注入形日期 / Dolt 边界行 / 空 repo 传播 / 导入守卫端到端。
+    // 本批次只补对抗性未锁定的需求验收差异点：
+    //   1. active_symbols_sql 的"完整形态"层——plan 契约是"不含换行的单条
+    //      SELECT ... ORDER BY symbol"；批次 1 只断言子串片段，未断言整串
+    //      无换行 / 开头结尾 / 引号只出现在两个日期字面量上。
+    //   2. backfill(Some) 部分命中（1 活跃 + 1 不活跃，不活跃在前）→ 必须
+    //      在 fetch 前过滤：只 fetch 活跃交集。批次 1 测的是"全部不活跃 →
+    //      Err"（错误路径）；这里是"部分活跃 → 进入 fetch 且只 fetch 过活的"
+    //      （happy path 的制造性验证）。制造方式：无 .dolt fallback 活跃集
+    //      固定 {SH600519}，请求 [SZ000001, SH600519]；死端口代理让 fetch
+    //      必然失败——若过滤未先发生（现状），失败 symbol 是 SZ000001；若
+    //      过滤生效，失败 symbol 必为 SH600519（错误是 BackfillSymbolFailed
+    //      而非 InvalidInput 也证明走入了 fetch 循环）。
+
+    /// Plan #348: active_symbols_sql must generate ONE single-line SELECT
+    /// (no newlines) starting at the stock_basic scan and ending with
+    /// ORDER BY symbol, with the dates quoted exactly once each. Batch 1
+    /// asserts the WHERE fragments; this locks the whole-string shape the
+    /// plan declares ("不含换行的单条 SELECT") — a multi-line formatting
+    /// regression or a trailing clause after ORDER BY breaks this test.
+    #[test]
+    fn active_symbols_sql_is_single_line_select_with_full_shape() {
+        let sql = active_symbols_sql("2026-08-19", "2026-08-28");
+        let trimmed = sql.trim();
+        assert!(
+            trimmed.starts_with("SELECT symbol FROM stock_basic WHERE"),
+            "must open with the stock_basic scan + WHERE head: {trimmed}"
+        );
+        assert!(
+            trimmed.ends_with("ORDER BY symbol"),
+            "plan: a single SELECT ... ORDER BY symbol — nothing may trail: {trimmed}"
+        );
+        assert!(
+            !trimmed.contains('\n') && !trimmed.contains('\r'),
+            "plan: single-line SELECT without newlines/CR: {trimmed}"
+        );
+        assert!(
+            trimmed.matches('\'').count() >= 4,
+            "the two quoted date literals carry one quote pair each; extra \
+             singles are reserved for the empty-string list_date literal \
+             (Dolt CAST('') is NULL — decision 4 keeps empty list_date rows, \
+             batch-1 boundary test SH600002): {trimmed}"
+        );
+        assert!(
+            trimmed.contains("'2026-08-19'") && trimmed.contains("'2026-08-28'"),
+            "both quoted date literals must appear: {trimmed}"
+        );
+    }
+
+    /// Some(list) partial-active intersection: [SZ000001 (inactive),
+    /// SH600519 (active fallback)] must be intersected BEFORE the fetch
+    /// loop — a dead local proxy turns the reached fetch into
+    /// BackfillSymbolFailed{symbol: SH600519}. A regression that fetches the
+    /// raw list first (or filters after fetch) fails on the FIRST requested
+    /// symbol (SZ000001) instead; a regression that rejects partial-active
+    /// lists errors as InvalidInput. Batch 1 covers the all-inactive Err
+    /// message depth (backfill_all_requested_inactive_errors_with_window_and_count);
+    /// this test locks the happy-path intersection behavior.
+    #[tokio::test]
+    async fn backfill_partial_active_reaches_fetch_loop_for_active_only() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
+            l.local_addr().expect("local addr").port()
+        };
+        let proxy = format!("http://127.0.0.1:{port}");
+        let _env = EnvGuard::set(&[
+            ("HTTPS_PROXY", &proxy),
+            ("https_proxy", &proxy),
+            ("HTTP_PROXY", &proxy),
+            ("http_proxy", &proxy),
+            ("ALL_PROXY", &proxy),
+            ("all_proxy", &proxy),
+            ("NO_PROXY", ""),
+            ("no_proxy", ""),
+            (
+                "COMPASS_DATA_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+            (
+                "COMPASS_CSV_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+        ]);
+
+        // No .dolt: active_symbols yields the plan's fallback {SH600519}.
+        // SZ000001 first, so the unfiltered (pre-#348) code path fails the
+        // fetch on SZ000001 and would expose an unfiltered list here.
+        let symbols = vec!["SZ000001".to_string(), "SH600519".to_string()];
+        let err = backfill("2026-08-19", "2026-08-28", Some(&symbols))
+            .await
+            .expect_err("dead proxy: the active intersection must reach the fetch loop");
+        match &err {
+            CollectError::BackfillSymbolFailed { symbol, .. } => {
+                assert_eq!(
+                    symbol.as_str(),
+                    "SH600519",
+                    "only the active intersection may be fetched — the inactive \
+                     SZ000001 must be filtered BEFORE the loop, got {err}"
+                );
+            }
+            other => panic!(
+                "a partial-active Some(list) must reach the fetch loop \
+                 (BackfillSymbolFailed via the dead proxy), got: {other:?}"
+            ),
+        }
+        let csv_file = tmp.path().join("RPT_MAIN_MONEY_FLOW_backfill.csv");
+        assert!(
+            !csv_file.exists(),
+            "no partial backfill CSV may be written on fetch failure"
+        );
     }
 }

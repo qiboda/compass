@@ -796,3 +796,25 @@
 - **验证**: 全量重建后 Python/DuckDB 查询 11 张 parquet 均与 Dolt 对齐。
 - **教训**: 增量导入必须假设“旧 parquet 可能缺失 Dolt 中早于锚点的历史行”；auto-heal 回补后
   受影响表不能只跑 `--since` 增量，应强制全量 export 或先做缺失检测。
+
+### [工具链] dolt 测试写入全局身份覆盖宿主 config（--global 污染）
+
+- **症状**: 运行 compass-collectors 的 dolt-backed 测试后，宿主机
+  `~/.dolt/config_global.json` 中 `user.email`/`user.name` 被改写为
+  `admainflow@compass.local`/`AdMainFlowTest`（review MED-1，issue #348 期间发现）；
+  此后宿主 dolt 提交以此测试身份署名。
+- **根因**: `crates/compass-collectors/src/main_flow.rs::setup_dolt()` 用
+  `dolt config --global --add` 写身份再 `dolt init`——每轮测试都覆写宿主全局
+  配置且不恢复（panic/中断同样残留）。
+- **排查路径**: `dolt config --global --list` 看全局键；`dolt log | grep Author: |
+  sort | uniq -c` 看数据仓库提交身份分布（本机历史仅 CI/Test/ReqEnTest 测试身份，
+  无真实身份基线）。`dolt config --local` 不支持全局参数
+  （`--data-dir` 会报错 "This command does not support global arguments"）。
+- **修复**: setup_dolt 改为 `dolt --data-dir <dir> init` 后、在仓库目录内
+  `dolt config --local --add`（`Command::current_dir(dir)`）；身份写入 tempdir
+  仓库 `.dolt/config.json`，宿主全局不再被触碰。验证：测试运行前后
+  `sha256sum ~/.dolt/config_global.json` 不变。
+- **验证**: `cargo test -p compass-collectors` 116 passed（含 3 个 dolt-backed）。
+- **教训**: 测试基建若要设 git/dolt 身份，一律用仓库级（--local）而非全局；
+  全局值被覆盖后无备份无法复原（本机默认身份已被多次测试运行覆盖），只能阻断
+  继续污染并在记录中说明。

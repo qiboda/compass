@@ -65,20 +65,25 @@ let provider = DuckDbProvider::new_in_memory().expect("failed to open in-memory 
 ```rust
 let tmp = tempfile::tempdir().expect("create temp dir");
 
-// Set identity for dolt init (uses git underneath)
-std::process::Command::new("dolt")
-    .arg("config").arg("--global").arg("--add")
-    .arg("user.email").arg("test@compass.local")
-    .output().expect("dolt config");
-std::process::Command::new("dolt")
-    .arg("config").arg("--global").arg("--add")
-    .arg("user.name").arg("Test")
-    .output().expect("dolt config");
-
-// Init and create schema
+// Init first (repo must exist for --local config)
 std::process::Command::new("dolt")
     .arg("--data-dir").arg(tmp.path())
     .arg("init").output().expect("dolt init");
+
+// Identity must be per-repo (`--local`): `dolt config` rejects the global
+// `--data-dir` argument, so run it with current_dir inside the repo
+// directory. Never use `--global` here — it overwrites the host's real
+// dolt identity and is not restored (review MED-1, issue #348).
+std::process::Command::new("dolt")
+    .current_dir(tmp.path())
+    .arg("config").arg("--local").arg("--add")
+    .arg("user.email").arg("test@compass.local")
+    .output().expect("dolt config");
+std::process::Command::new("dolt")
+    .current_dir(tmp.path())
+    .arg("config").arg("--local").arg("--add")
+    .arg("user.name").arg("Test")
+    .output().expect("dolt config");
 
 std::process::Command::new("dolt")
     .arg("--data-dir").arg(tmp.path())

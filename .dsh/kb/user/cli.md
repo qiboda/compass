@@ -267,8 +267,8 @@ Python `collectors/` 已在 epic #310 完成迁移并退役。它使用 `wreq`
 | `block-trade` | 大宗交易专用入口（`--start`/`--end`/`--years`/`--page-size`） |
 | `dragon` | 龙虎榜专用入口（`--start`/`--end`/`--page-size`） |
 | `institution-survey` | 机构调研专用入口（`--start-date`/`--page-size`） |
-| `main-flow` | 主力资金流专用入口（新浪 lscjfb 逐股窗口，无需参数） |
-| `main-flow-backfill --start D --end D [--symbols S,S]` | 主力资金流回补 |
+| `main-flow` | 主力资金流专用入口（新浪 lscjfb 逐股窗口，无需参数；只请求当日处于上市状态的股票，`stock_basic` list/delist 活跃区间过滤） |
+| `main-flow-backfill --start D --end D [--symbols S,S]` | 主力资金流回补（`--symbols` 与全量均只请求 [start,end] 内上市股；`--symbols` 被过滤清空时报 `outside the active window` 错误，退市股不再被请求） |
 | `fin-indicators` | 财务指标（`--years`/`--periods`/`--page-size`/`--incremental`） |
 | `balance-sheet` / `income` / `cash-flow` | 财务三表（同 fin-indicators 参数） |
 | `stock-basic` | 官网股票基本信息（`--output`/`--page-size`/`--max-pages`） |
@@ -349,7 +349,7 @@ config.toml**。
 **财务三表增量修订检测（issue #299）**：`cargo run -p compass-collectors -- fetch balance-sheet --incremental`（income/cash_flow 同理）改用 **UPDATE_DATE 时间锚点**——filter=`(UPDATE_DATE>='{anchor}')`，锚点 = `min(data_updates.last_updated, state.json last_update_date)`（查 `fin_balance_sheet`/`fin_income`/`fin_cash_flow` 各自的 data_updates 行）。**无 anchor（首跑/无 state/无 data_updates）时固定 `2020-01-01`** 走一次 UPDATE_DATE 全历史拉取，不回退 REPORT_DATE 枚举。增量模式忽略 `--years/--periods`。导入改 `import_replace_table(merge=True)` + **`INSERT ... ON DUPLICATE KEY UPDATE`**（SELECT 侧全列唯一别名 + ODKU 无前缀别名引用），同 `(symbol, report_date)` 修订行覆盖旧值、历史永不丢失；CSV 写入后按 `(SECURITY_CODE, REPORT_DATE)` keep-LAST 去重。state.json 记录 `last_report_date` + `last_update_date`（`total_rows`/`last_run`）。`compass-collectors sync` 已对三表默认 `run(incremental=True)`；手动全量枚举可运行不带 `--incremental` 的 fetch（仍 merge 导入）。**已知限制**：与 fin_indicators 相同——不做锚点前历史回补；fetch 与 import 应同日运行；API 下架/删除行不传播到 Dolt。
 
 SEPA 采集器说明：
-- `main_flow`：新浪 `MoneyFlow.ssl_qsfx_lscjfb` 逐股日频窗口（`daima=sh600519` 形式，num=20 只导 `trade_date > last_report_date` 的行）；字段映射 `main_net_inflow=r0_net+r1_net`、`main_net_inflow_rate=(r0_net+r1_net)/(r0+r1+r2+r3)×100`（百分数，除零→0）、r0_net/r1_net/r2_net/r3_net → super/large/medium/small、`trade_date=opendate`；按 (symbol, trade_date) merge 导入；0 新行删陈旧 CSV 且按交易日历判定为 no-op（#338）；逐股窗口建议在**盘后**运行（交易日数据发布前运行会 0 行并因日历含今日而失败，次日重跑可自愈）
+- `main_flow`：新浪 `MoneyFlow.ssl_qsfx_lscjfb` 逐股日频窗口（`daima=sh600519` 形式，num=20 只导 `trade_date > last_report_date` 的行）；字段映射 `main_net_inflow=r0_net+r1_net`、`main_net_inflow_rate=(r0_net+r1_net)/(r0+r1+r2+r3)×100`（百分数，除零→0）、r0_net/r1_net/r2_net/r3_net → super/large/medium/small、`trade_date=opendate`；按 (symbol, trade_date) merge 导入；0 新行删陈旧 CSV 且按交易日历判定为 no-op（#338）；采集目标按 `stock_basic` 活跃区间过滤（#348，退市股不再请求）、导入仅接受 `main_net_inflow` 非 NULL 行；逐股窗口建议在**盘后**运行（交易日数据发布前运行会 0 行并因日历含今日而失败，次日重跑可自愈）
 - `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
 - `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）

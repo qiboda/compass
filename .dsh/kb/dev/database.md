@@ -145,6 +145,22 @@ dolt status                            # 确认工作区干净、与 origin 同�
 后，流程必须在同一 session 内执行 `dolt commit` + `dolt push`（手动命令或
 内置到 CLI 的收尾步骤），不得只写数据不提交。
 
+### Dolt CLI 方言注意（#348 实测）
+
+dolt 与 git 命令族有若干方言差异，按 git 习惯直用会踩坑：
+
+- `dolt status` 不支持 `--short`（git 习惯会报 usage 错）——用 `dolt status`。
+- `dolt config` 不支持 `--data-dir`，且 `--local` 必须在仓库目录内
+  （`current_dir` 指向 repo）执行；写测试临时库身份时严禁 `--global`
+  （污染宿主 `~/.dolt/config_global.json`，见 toolchain.md 排查卡）。
+- `dolt sql -r csv` 输出语义：真 NULL = 空字段；字符串 "NULL" = 字面值
+  （无引号）；空串 = `""`。解析 CSV 需区分三者。
+- `dolt table import -c` 把 CSV 空字段导入为 NULL（MySQL 语义）。
+- `CAST('' AS DATE)` 返回 NULL（MySQL 语义）——日期 SQL 判断空串必须
+  显式 `col = ''`，不能依赖 `IS NULL OR CAST(...)<=x` 覆盖。
+- `dolt push` 到 dolthub 远程较慢（>60s 常见）：用后台 job + ≥300s 超时，
+  不要前台默认 60s 超时（会 SIGTERM 被杀）。
+
 ## Parquet / DuckDB 生成
 
 GUI 只读本地 Parquet（DuckDB 查询），数据管线命令在 `compass-data` bin：
