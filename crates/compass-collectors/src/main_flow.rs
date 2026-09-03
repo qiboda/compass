@@ -1655,4 +1655,123 @@ mod tests {
             "only the valid row survives the guard"
         );
     }
+
+    // ── Requirement acceptance: #348 active-symbol contract (batch 2) ─────
+    //
+    // 需求验收 RED（subagent_skwy_requirement_test，门禁第 4 步）。与批次 1
+    // （对抗性，c24260d）的分工：对抗性已深度覆盖 SQL 子串断言 / filter 顺序
+    // 重复空 / parse CSV header NULL CRLF / 无 .dolt fallback / Some 全不活跃
+    // Err 消息 / 注入形日期 / Dolt 边界行 / 空 repo 传播 / 导入守卫端到端。
+    // 本批次只补对抗性未锁定的需求验收差异点：
+    //   1. active_symbols_sql 的"完整形态"层——plan 契约是"不含换行的单条
+    //      SELECT ... ORDER BY symbol"；批次 1 只断言子串片段，未断言整串
+    //      无换行 / 开头结尾 / 引号只出现在两个日期字面量上。
+    //   2. backfill(Some) 部分命中（1 活跃 + 1 不活跃，不活跃在前）→ 必须
+    //      在 fetch 前过滤：只 fetch 活跃交集。批次 1 测的是"全部不活跃 →
+    //      Err"（错误路径）；这里是"部分活跃 → 进入 fetch 且只 fetch 过活的"
+    //      （happy path 的制造性验证）。制造方式：无 .dolt fallback 活跃集
+    //      固定 {SH600519}，请求 [SZ000001, SH600519]；死端口代理让 fetch
+    //      必然失败——若过滤未先发生（现状），失败 symbol 是 SZ000001；若
+    //      过滤生效，失败 symbol 必为 SH600519（错误是 BackfillSymbolFailed
+    //      而非 InvalidInput 也证明走入了 fetch 循环）。
+
+    /// Plan #348: active_symbols_sql must generate ONE single-line SELECT
+    /// (no newlines) starting at the stock_basic scan and ending with
+    /// ORDER BY symbol, with the dates quoted exactly once each. Batch 1
+    /// asserts the WHERE fragments; this locks the whole-string shape the
+    /// plan declares ("不含换行的单条 SELECT") — a multi-line formatting
+    /// regression or a trailing clause after ORDER BY breaks this test.
+    #[test]
+    fn active_symbols_sql_is_single_line_select_with_full_shape() {
+        let sql = active_symbols_sql("2026-08-19", "2026-08-28");
+        let trimmed = sql.trim();
+        assert!(
+            trimmed.starts_with("SELECT symbol FROM stock_basic WHERE"),
+            "must open with the stock_basic scan + WHERE head: {trimmed}"
+        );
+        assert!(
+            trimmed.ends_with("ORDER BY symbol"),
+            "plan: a single SELECT ... ORDER BY symbol — nothing may trail: {trimmed}"
+        );
+        assert!(
+            !trimmed.contains('\n') && !trimmed.contains('\r'),
+            "plan: single-line SELECT without newlines/CR: {trimmed}"
+        );
+        assert!(
+            trimmed.matches('\'').count() >= 4,
+            "the two quoted date literals carry one quote pair each; extra \
+             singles are reserved for the empty-string list_date literal \
+             (Dolt CAST('') is NULL — decision 4 keeps empty list_date rows, \
+             batch-1 boundary test SH600002): {trimmed}"
+        );
+        assert!(
+            trimmed.contains("'2026-08-19'") && trimmed.contains("'2026-08-28'"),
+            "both quoted date literals must appear: {trimmed}"
+        );
+    }
+
+    /// Some(list) partial-active intersection: [SZ000001 (inactive),
+    /// SH600519 (active fallback)] must be intersected BEFORE the fetch
+    /// loop — a dead local proxy turns the reached fetch into
+    /// BackfillSymbolFailed{symbol: SH600519}. A regression that fetches the
+    /// raw list first (or filters after fetch) fails on the FIRST requested
+    /// symbol (SZ000001) instead; a regression that rejects partial-active
+    /// lists errors as InvalidInput. Batch 1 covers the all-inactive Err
+    /// message depth (backfill_all_requested_inactive_errors_with_window_and_count);
+    /// this test locks the happy-path intersection behavior.
+    #[tokio::test]
+    async fn backfill_partial_active_reaches_fetch_loop_for_active_only() {
+        let _guard = crate::config::ENV_MUTEX.lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port");
+            l.local_addr().expect("local addr").port()
+        };
+        let proxy = format!("http://127.0.0.1:{port}");
+        let _env = EnvGuard::set(&[
+            ("HTTPS_PROXY", &proxy),
+            ("https_proxy", &proxy),
+            ("HTTP_PROXY", &proxy),
+            ("http_proxy", &proxy),
+            ("ALL_PROXY", &proxy),
+            ("all_proxy", &proxy),
+            ("NO_PROXY", ""),
+            ("no_proxy", ""),
+            (
+                "COMPASS_DATA_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+            (
+                "COMPASS_CSV_DIR",
+                tmp.path().to_str().expect("utf8 temp path"),
+            ),
+        ]);
+
+        // No .dolt: active_symbols yields the plan's fallback {SH600519}.
+        // SZ000001 first, so the unfiltered (pre-#348) code path fails the
+        // fetch on SZ000001 and would expose an unfiltered list here.
+        let symbols = vec!["SZ000001".to_string(), "SH600519".to_string()];
+        let err = backfill("2026-08-19", "2026-08-28", Some(&symbols))
+            .await
+            .expect_err("dead proxy: the active intersection must reach the fetch loop");
+        match &err {
+            CollectError::BackfillSymbolFailed { symbol, .. } => {
+                assert_eq!(
+                    symbol.as_str(),
+                    "SH600519",
+                    "only the active intersection may be fetched — the inactive \
+                     SZ000001 must be filtered BEFORE the loop, got {err}"
+                );
+            }
+            other => panic!(
+                "a partial-active Some(list) must reach the fetch loop \
+                 (BackfillSymbolFailed via the dead proxy), got: {other:?}"
+            ),
+        }
+        let csv_file = tmp.path().join("RPT_MAIN_MONEY_FLOW_backfill.csv");
+        assert!(
+            !csv_file.exists(),
+            "no partial backfill CSV may be written on fetch failure"
+        );
+    }
 }
