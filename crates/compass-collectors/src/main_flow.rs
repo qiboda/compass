@@ -1197,15 +1197,23 @@ mod tests {
     }
 
     fn setup_dolt(dir: &std::path::Path) {
-        // Identity is configured with `--local` inside the tempdir repo so a
-        // test run never rewrites the host's global dolt config (review MED-1).
-        // Tests never commit today; keeping per-repo identity means a future
-        // commit step works without touching host config. Note `dolt config`
-        // rejects the global `--data-dir` argument, hence `current_dir`.
+        // `dolt init --name/--email` carries an explicit identity so clean CI
+        // runners (no global user.name/user.email) succeed without seeding the
+        // host's global dolt config (review MED-1). The `--local` config below
+        // mirrors that identity inside the tempdir repo, so a test run never
+        // rewrites the host's global dolt config and a future commit step works
+        // without touching host config. Note `dolt config` rejects the global
+        // `--data-dir` argument, hence `current_dir`.
+        const TEST_NAME: &str = "AdMainFlowTest";
+        const TEST_EMAIL: &str = "admainflow@compass.local";
         let out = std::process::Command::new("dolt")
             .arg("--data-dir")
             .arg(dir)
             .arg("init")
+            .arg("--name")
+            .arg(TEST_NAME)
+            .arg("--email")
+            .arg(TEST_EMAIL)
             .output()
             .expect("dolt init");
         assert!(
@@ -1213,10 +1221,7 @@ mod tests {
             "dolt init failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        for (key, val) in [
-            ("user.email", "admainflow@compass.local"),
-            ("user.name", "AdMainFlowTest"),
-        ] {
+        for (key, val) in [("user.email", TEST_EMAIL), ("user.name", TEST_NAME)] {
             let out = std::process::Command::new("dolt")
                 .current_dir(dir)
                 .arg("config")
