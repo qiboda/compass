@@ -336,3 +336,31 @@
 - edit 工具摩擦连续第 4 条（#336/#338/#342-343/本条目）：**本轮已落实**为 process.md「编辑纪律」+ 脚本化建议——该趋势项待下次复盘确认是否关闭。
 - 「数值验证需外部权威对照」趋势形成（#338-340 rate 量纲抽样库内历史值、本条目官方除权事件）：验证准绳是「库内既有值/官方事件」，不是平台曲线。
 - 外部数据源可达性波动（#338 东财→新浪、本条目 push2his SSL 断→datacenter）：多源探测应并行短超时，单源失败快速切换不阻塞。
+
+## 2026-09-03 — ref #348 main_flow 活跃股过滤 + NULL 行守卫
+
+**What was done**: 修复 #348——main_flow 回补/采集按活跃区间过滤 symbol（active_symbols_sql/parse_symbol_csv/filter_active_symbols），import_to_dolt 追加 `AND main_net_inflow IS NOT NULL` 守卫，354 退市股不再进入请求带（含显式 --symbols 过滤 + 全过滤 Err 明确消息）。16 对抗性 + 2 需求验收测试 RED→GREEN（116+ 全绿），独立 QA 复核 PASS（5 条锁定契约核实），Dolt 清理 3042 行 NULL（131713 行）并 push，Parquet 重建行数一致，docs 同步 5 文件 + testing.md 模式修正 + toolchain 排查卡，9 commits。
+
+**User corrections**: 无纠正型消息（本 session trace 仅 2 条用户消息：worktree 启动指令与 "push"）。早前用户决策（plan 批准；Q1 过滤后为空 → Err 明确消息而非 "no symbols to fetch"；Q2 停牌占位 0 值行 → 仅记录边界不处理）支撑 review HIGH-2"测试提前锁定 Q1"裁定无效。
+
+**What went wrong**:
+1. edit 摩擦第 5 次复现："file changed since it was read"（main_flow.rs——子代理并行写测试期间未重读直接 edit）+ "edit requires reading first"（data-providers.md 未先 read）。
+2. dolt push origin main 前台 60s 超时 SIGTERM 被杀 → 后台重试 ~300s 成功（远程慢，默认超时不足）。
+3. `dolt status --short` 不支持（git 习惯误用）；`dolt config --local` 拒绝 `--data-dir`（探针实测，预期失败）；`which duckdb` 失败改走 python duckdb（复核时 1 次往返）；rm 对不存在路径 exit 74（trash-put 特性，已知环境）。
+4. 测试基建副作用：setup_dolt 曾用 `dolt config --global` 覆写宿主全局身份（review MED-1 抓出）——compass-data 另有 9 处同款残留。
+
+**Lessons learned**:
+1. 子代理并行写同一文件（RED 测试窗口）期间，主 agent 对该文件 edit 前必须 read 重读；收到 stale 拒绝即重读重试，不凭旧内容修改。
+2. dolt push 至 dolthub 远程慢（>60s 常见）：一律后台 job + ≥300s 超时，不用前台默认值。
+3. dolt CLI 方言（status 无 --short、config 无 --data-dir 需 current_dir、`CAST('' AS DATE)`=NULL、CSV 输出真 NULL=空字段）与 git/MySQL 直觉不同——已沉淀 database.md 方言速查。
+4. 测试基建不得写宿主全局状态（--global 身份配置）；临时库身份一律 init + current_dir + --local。
+
+**Process improvements**:
+- 已落实（随本 PR）：testing.md dolt 示例改 --global → init 前置 + current_dir + --local（MED-1）；toolchain.md 新增「dolt 测试 --global 污染宿主 config」排查卡；AGENTS.md 映射表「测试框架、测试模式」行补注——测试基建/模式变更必须核对 testing.md 示例一致性；database.md 新增「Dolt CLI 方言注意」小节。
+- proposed (ref #349)：compass-data 9 处同款 dolt config --global 迁移（cmdline 维护统一修复模式）。
+- 自动化盘点：dolt push 超时/方言为文档类固化；edit 纪律已随 #345 落实 process.md「编辑纪律」，本轮复现说明既有纪律执行层未锁死——本轮补 AGENTS.md 映射表注（针对测试基建盲区），执行层纪律不再新增机制。
+
+### Trends (last 10)
+- edit 工具摩擦连续第 5 条（#336/#338/#342-343/#345/本条目）且均与「同文件多轮编辑 + 子代理并行落盘」相关：#345 已落实 process.md 编辑纪律，本轮仍复现一次——纪律已入文档但执行仍靠模型自觉，趋势项继续开放。
+- 测试基建/模式变更的 doc-sync 盲区（#348 初轮漏同步 testing.md，MED-1 review 抓出）：映射表虽有「测试框架、测试模式→testing.md」但初轮未核对——已在映射表行补注强制核对，趋势项待下次复盘确认。
+- Dolt/测试基建宿主副作用首次系统处置（testing.md 警示 + toolchain 卡 + #349 批量迁移）：同类问题后续按此模式处理。

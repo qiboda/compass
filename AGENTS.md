@@ -416,7 +416,7 @@ master 只允许 docs/lint/typo/反思类提交直推；存在活跃 worktree �
 | 新增数据源、API 调用、schema 变更 | `.dsh/kb/design/data-providers.md` | `.dsh/kb/design/architecture.md`（如涉及管线变更） |
 | 线程、管线、库变更 | `.dsh/kb/design/architecture.md` | — |
 | 符号格式、timeframe 映射 | `.dsh/kb/design/symbols.md` | — |
-| 测试框架、测试模式 | `.dsh/kb/dev/testing.md` | — |
+| 测试框架、测试模式 | `.dsh/kb/dev/testing.md` | —（测试基建/模式变更——如 dolt 身份配置、tempdir 约定——必须核对 testing.md 示例与新实现一致，ref #348 教训：--global→--local 迁移初轮漏同步） |
 | 工作流、hook、约定 | `.dsh/kb/dev/process.md` | `AGENTS.md`（如项目级别） |
 | 新增 CLI 命令或 flag 变更 | `.dsh/kb/user/cli.md` | `.dsh/kb/dev/process.md`（调试章节） |
 | GUI 布局、控件变更 | `.dsh/kb/user/gui.md` | `.dsh/kb/design/ui.md`（布局/视觉/交互设计变更）+ `.dsh/kb/design/architecture.md`（如涉及线程变更） |
