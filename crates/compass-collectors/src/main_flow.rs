@@ -477,7 +477,7 @@ pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Res
 
     let active = active_symbols(start, end).await?;
     let symbol_list = match symbols {
-        Some(s) if s.is_empty() => {
+        Some([]) => {
             // Empty request list is a caller mistake, not a window filter
             // result: keep the original wording (QA nit for #348).
             return Err(CollectError::InvalidInput(
