@@ -1145,9 +1145,11 @@ mod tests {
     // assertion failures once the module compiles, because the current code
     // still emits the misleading "no symbols to fetch" and imports NULL rows.
     //
-    // Dolt-backed tests follow testing.md (dolt init + --data-dir on a
-    // self-contained tempdir) and skip gracefully when the dolt CLI is not on
-    // PATH (same policy as crates/compass-data/benches/dolt_bench.rs).
+    // Dolt-backed tests follow testing.md (dolt init with --data-dir on a
+    // self-contained tempdir; per-repo identity via `dolt config --local`
+    // with current_dir — the config subcommand rejects --data-dir) and skip
+    // gracefully when the dolt CLI is not on PATH (same policy as
+    // crates/compass-data/benches/dolt_bench.rs).
 
     use std::collections::HashSet;
 
@@ -1197,6 +1199,9 @@ mod tests {
     fn setup_dolt(dir: &std::path::Path) {
         // Identity is configured with `--local` inside the tempdir repo so a
         // test run never rewrites the host's global dolt config (review MED-1).
+        // Tests never commit today; keeping per-repo identity means a future
+        // commit step works without touching host config. Note `dolt config`
+        // rejects the global `--data-dir` argument, hence `current_dir`.
         let out = std::process::Command::new("dolt")
             .arg("--data-dir")
             .arg(dir)
@@ -1221,7 +1226,11 @@ mod tests {
                 .arg(val)
                 .output()
                 .expect("dolt config");
-            assert!(out.status.success(), "dolt config {key} failed");
+            assert!(
+                out.status.success(),
+                "dolt config {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
     }
 
