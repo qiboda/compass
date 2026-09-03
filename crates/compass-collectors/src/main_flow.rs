@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
@@ -321,7 +321,7 @@ pub async fn run() -> Result<PathBuf> {
         return Ok(output_path);
     }
 
-    let symbols = backfill_symbols().await?;
+    let symbols = active_symbols(&today, &today).await?;
     let client = HttpClient::new()?;
     let mut throttle = Throttle::new(SINA_MIN_INTERVAL);
     let mut progress = Progress::new("main_flow", None, Some(output_path.clone()), "start")?;
@@ -376,7 +376,8 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
     let insert_sql = format!(
         "INSERT IGNORE INTO {DOLT_TABLE} (symbol, trade_date, {INSERT_COLS}) \
          SELECT symbol, trade_date, {INSERT_COLS} FROM _tmp_mf \
-         WHERE symbol IN (SELECT symbol FROM stock_basic)",
+         WHERE symbol IN (SELECT symbol FROM stock_basic) \
+           AND main_net_inflow IS NOT NULL",
     );
     import_replace_table(
         &path,
@@ -394,21 +395,58 @@ pub async fn import_to_dolt(csv_path: Option<&Path>) -> Result<u64> {
 
 // ── Historical per-symbol backfill (issue #308, Sina lscjfb) ─────────────
 
-async fn backfill_symbols() -> Result<Vec<String>> {
+/// Active-symbol SQL: rows whose listing/cancellation dates overlap the
+/// requested window — never fetch delisted or not-yet-listed stocks. An
+/// empty `list_date` string is kept (Dolt `CAST('' AS DATE)` is NULL, so
+/// the plain `IS NULL OR CAST(...)` form would drop such rows; batch-1
+/// boundary test SH600002 locks this). `start`/`end` are pre-validated ISO
+/// dates by the callers (`backfill` parses them before use, `run` uses
+/// `today()`), so no quoting defence is needed here.
+fn active_symbols_sql(start: &str, end: &str) -> String {
+    format!(
+        "SELECT symbol FROM stock_basic \
+         WHERE (list_date IS NULL OR list_date = '' OR CAST(list_date AS DATE) <= '{end}') \
+           AND (delist_date IS NULL OR delist_date >= '{start}') \
+         ORDER BY symbol"
+    )
+}
+
+/// Parse `dolt sql -r csv` output of `active_symbols_sql` into a symbol
+/// list: skip the header line, blank lines and the literal `NULL` text
+/// (Dolt CSV's missing-value shape — a bare "filter empty" would leak the
+/// `NULL` text line in as a fetch target).
+fn parse_symbol_csv(out: &str) -> Vec<String> {
+    out.lines()
+        .skip(1)
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && *line != "NULL")
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Project `symbols` onto `active`, preserving input order and duplicates
+/// (exact match, no normalisation — the pre-#348 backfill never normalised
+/// symbols; `daima()` lowercases only the Sina query key).
+fn filter_active_symbols(symbols: &[String], active: &HashSet<String>) -> Vec<String> {
+    symbols
+        .iter()
+        .filter(|s| active.contains(*s))
+        .cloned()
+        .collect()
+}
+
+/// Active symbols for `[start, end]`: every stock listed on or before `end`
+/// and not delisted before `start` (at least one listed day in range).
+/// Without a Dolt repo (test/dev) the pre-#348 fallback `["SH600519"]` is
+/// kept so unit tests stay network-hermetic.
+async fn active_symbols(start: &str, end: &str) -> Result<Vec<String>> {
     let dir = crate::config::dolt_dir();
     if dir.join(".dolt").exists() {
-        let out =
-            crate::dolt::dolt_sql_csv("SELECT symbol FROM stock_basic ORDER BY symbol").await?;
-        let symbols: Vec<String> = out
-            .trim()
-            .lines()
-            .skip(1)
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
+        let out = crate::dolt::dolt_sql_csv(&active_symbols_sql(start, end)).await?;
+        let symbols = parse_symbol_csv(&out);
         if symbols.is_empty() {
             return Err(CollectError::InvalidInput(
-                "backfill: stock_basic contains no symbols".into(),
+                "active symbols: stock_basic contains no symbols".into(),
             ));
         }
         return Ok(symbols);
@@ -437,15 +475,22 @@ pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Res
         });
     }
 
+    let active = active_symbols(start, end).await?;
     let symbol_list = match symbols {
-        Some(s) => s.to_vec(),
-        None => backfill_symbols().await?,
+        Some(s) => {
+            let active_set: HashSet<String> = active.iter().cloned().collect();
+            let filtered = filter_active_symbols(s, &active_set);
+            if filtered.is_empty() {
+                return Err(CollectError::InvalidInput(format!(
+                    "backfill: all {} requested symbols are outside the active window \
+                     in {start}..{end}",
+                    s.len()
+                )));
+            }
+            filtered
+        }
+        None => active,
     };
-    if symbol_list.is_empty() {
-        return Err(CollectError::InvalidInput(
-            "backfill: no symbols to fetch".into(),
-        ));
-    }
 
     let output_path: PathBuf = csv_dir()?.join(format!("{REPORT_NAME}_backfill.csv"));
     let mut seen: HashMap<(String, String), FlowRecord> = HashMap::new();
