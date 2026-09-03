@@ -818,3 +818,26 @@
 - **教训**: 测试基建若要设 git/dolt 身份，一律用仓库级（--local）而非全局；
   全局值被覆盖后无备份无法复原（本机默认身份已被多次测试运行覆盖），只能阻断
   继续污染并在记录中说明。
+
+### [Git] 工作区 `core.bare = true` 导致主工作区 git 命令全部失效（工具误写 .git/config）
+
+- **症状**: 主工作区 `/data/codes/compass` 执行 `git status` / `git commit` / `git push`
+  报 `fatal: this operation must be run in a work tree`；但 `git log` 正常，
+  `.worktrees/*` 下各 worktree 的 `git status` 正常。
+- **根因**: `.git/config` 的 `[core]` 段被写入 `bare = true`——git 认为该仓库是
+  「裸仓库」（只有对象库、无工作树），拒绝一切需要工作树的命令；只有只读元数据
+  命令（log/show）可用。config 修改时间当日（21:36），且文件内混入
+  `[beads] role = maintainer`、`vscode-merge-base`、`opencode` 等条目——
+  判定为某个工具（beads/opencode/vscode 插件）改配置时误写。
+- **排查路径**:
+  1. 报错文案直接指向裸仓库语义：`git rev-parse --is-bare-repository` → `true`
+  2. `cat .git/config` 看 `[core]` 段的 `bare` 标志；`stat .git/config` 看修改时间
+     定位可疑写入时刻
+  3. 对照验证 worktree 不受影响（linked worktree 有独立 gitdir 配置）
+- **修复**: `git config core.bare false`（或编辑 `.git/config` 删掉该行）。
+  只改标志位，不动对象/引用/提交历史，零风险。
+- **验证**: `git status` → `nothing to commit, working tree clean`；
+  `git rev-parse --is-bare-repository` → `false`；`git log` 正常。
+- **教训**: 主工作区 git 命令突然全挂、但 log 正常时，先查 `core.bare` 再怀疑
+  hook/权限；第三方工具改过 `.git/config`（vscode/beads/opencode 等）后应
+  用 `git config --list --show-origin` 巡检核心标志位（bare/core.bare）。
