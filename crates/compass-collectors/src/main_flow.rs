@@ -477,6 +477,13 @@ pub async fn backfill(start: &str, end: &str, symbols: Option<&[String]>) -> Res
 
     let active = active_symbols(start, end).await?;
     let symbol_list = match symbols {
+        Some(s) if s.is_empty() => {
+            // Empty request list is a caller mistake, not a window filter
+            // result: keep the original wording (QA nit for #348).
+            return Err(CollectError::InvalidInput(
+                "backfill: no symbols to fetch".to_string(),
+            ));
+        }
         Some(s) => {
             let active_set: HashSet<String> = active.iter().cloned().collect();
             let filtered = filter_active_symbols(s, &active_set);
