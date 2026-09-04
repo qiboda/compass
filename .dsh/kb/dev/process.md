@@ -425,6 +425,24 @@ CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save + 分组缓存**策略�
 保持 rust-cache 默认 `add-rust-environment-hash-key`——cargo.lock 变化时
 内置 restoreKey 前缀匹配仍能复用旧缓存增量编译。
 
+**失效缓存自动清理（ref #353）**：rustc 工具链升级（`dtolnay/rust-toolchain@v1`
+的 stable 未锁定）时 envHash 变化 → 旧 key 永不命中 → 在 10GB 配额内堆积
+（历史实例：9/3 rustc 1.98.0→1.98.1 后两个旧 key 共 ~8.9GB 只能手动删）。
+`ci.yml` 新增 `prune-caches` job（仅 master、`needs: [rust, bench-check]`、
+`continue-on-error: true`、`permissions: {contents: read, actions: write}`）：
+
+- 执行 `scripts/prune-actions-caches.sh`：列出仓库全部缓存 → 按组
+  （key 第一个 `-` 前 token = job 前缀）保留 `created_at` 最新一份、
+  删除其余 → 每个 group 稳态恰好 1 份，key 变化后旧 key 自动被清
+- 只处理 `ref == refs/heads/master` 的缓存（与 save-if 对称——非 master
+  分支从未参与 save、不触碰）；其余分支/未知状态绝不删除
+- 失败语义：list 失败 → 立即退出且零 DELETE（未知状态绝不删）；
+  DELETE 失败 → 打印错误继续、最终非零（job 有 `continue-on-error` 兜底）
+- 本地/CI 均可用：`DRY_RUN=1` 演练看会删什么；`GITHUB_REPOSITORY`
+  注入 owner/repo（缺省 `qiboda/compass`）
+- 配套测试：`scripts/tests/prune-actions-caches-test.sh`（验收 41 断言）、
+  `scripts/tests/prune-actions-caches-adversarial-test.sh`（对抗 84 断言）
+
 历史：`572e688` 曾用 `save-if: true`（分支自缓存提速），因短命分支孤儿缓存浪费回退为仅 master save（`d55eead`, ref #89）。
 
 ## Config

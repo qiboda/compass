@@ -73,3 +73,26 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold clang
       - run: cargo bench --no-run
 
+  prune-caches:
+    name: Prune stale CI caches (master only)
+    # rust-cache 仅允许 master 保存缓存（save-if）；rustc/toolchain 升级导致
+    # envHash 变化后旧 key 永不命中，这里按 job 分组保留最新一份、删除其余。
+    # 与 save-if 对称：只在 master 清理，其它分支的缓存（若有）不触碰。
+    if: github.ref == 'refs/heads/master'
+    needs: [rust, bench-check]
+    runs-on: ubuntu-latest
+    # 删除缓存需 actions: write（默认 GITHUB_TOKEN 仅 contents: read）
+    permissions:
+      contents: read
+      actions: write
+    # 清理失败不影响 CI 结果（缓存管理问题不外溢为构建失败）
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/prune-actions-caches.sh
+      - name: "Dry-run: show what would be pruned"
+        run: DRY_RUN=1 bash scripts/prune-actions-caches.sh
+      - name: Prune stale caches
+        run: bash scripts/prune-actions-caches.sh
+
