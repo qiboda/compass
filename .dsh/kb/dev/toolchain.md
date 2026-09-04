@@ -865,3 +865,12 @@
   institution_survey 338373/09-04；index_daily 529834/09-04；index_basic 120。
 - **教训**: auto-heal 回补必须复用 daily 路径的第三方兜底（Tencent）与 proxy 健康策略；
   任何新增 backfill 路径都要先验证 EastMoney 不可达时仍能完成。
+
+## [GitHub Actions] actions/checkout sparse-checkout 传文件路径在 cone mode 下报错（ref #353）
+
+- **症状**: CI 中 `actions/checkout@v7` 步骤失败，日志 `fatal: 'scripts/prune-actions-caches.sh' is not a directory; to treat it as a directory anyway, rerun with --skip-checks`（rc=128）；job 被 `continue-on-error: true` 掩盖成绿色 → 后续步骤从未执行，功能静默失效且零告警。
+- **根因**: actions/checkout 的 `sparse-checkout-cone-mode` 默认 `true`（action.yml），cone mode 下 `git sparse-checkout set` 只接受**目录**清单，传已跟踪**文件**路径直接 die（git >= 2.37 的 sanitize_paths）；旧版 git 则会当成目录规则检出 → 文件也不会出现。
+- **排查路径**: 查 actions/checkout README「Fetch only a single file」示例（显式要求 `sparse-checkout-cone-mode: false`）；本地用同版本 git 复现 `git sparse-checkout set <file>`；不要在 `paths-ignore: '**.md'` + `continue-on-error` 组合下依赖 job 状态判断功能是否生效。
+- **修复**: 二选一——`sparse-checkout: scripts/`（目录，cone mode 合法）；或 `sparse-checkout: scripts/prune-actions-caches.sh` + `sparse-checkout-cone-mode: false`。
+- **验证**: checkout 步骤成功 + 后续步骤实际执行；不要在 dry-run 输出为空时假定"无 stale 可删"（真实时间戳若被拒绝格式同样输出空——见 testing.md fixture fidelity 原则）。
+- **教训**: CI 配置变更除 YAML 语法校验外必须做行为验证——查阅上游 action 文档/源码或本地复现；`continue-on-error` 不允许作为"功能生效"的替代信号。

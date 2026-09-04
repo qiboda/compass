@@ -364,3 +364,32 @@
 - edit 工具摩擦连续第 5 条（#336/#338/#342-343/#345/本条目）且均与「同文件多轮编辑 + 子代理并行落盘」相关：#345 已落实 process.md 编辑纪律，本轮仍复现一次——纪律已入文档但执行仍靠模型自觉，趋势项继续开放。
 - 测试基建/模式变更的 doc-sync 盲区（#348 初轮漏同步 testing.md，MED-1 review 抓出）：映射表虽有「测试框架、测试模式→testing.md」但初轮未核对——已在映射表行补注强制核对，趋势项待下次复盘确认。
 - Dolt/测试基建宿主副作用首次系统处置（testing.md 警示 + toolchain 卡 + #349 批量迁移）：同类问题后续按此模式处理。
+
+## 2026-09-04 — ref #353 CI 缓存自动清理（prune-actions-caches）
+
+**What was done**: 实现 master-only 的失效 rust-cache 自动清理（`scripts/prune-actions-caches.sh` + ci.yml `prune-caches` job + 两套测试【验收 43 断言 / 对抗 102 场景】+ process.md/testing.md 文档），经 5 角度审查后修复 2 个 P0（真实时间戳小数秒 regex、sparse-checkout cone mode）并新增回归测试（commit 24b805b + b253330）。
+
+**User corrections** (if any): 无直接纠正——用户全程为提问/确认/指令（U0「策略记得不是改成只缓存主分支了吗」与 U5「没有复用旧的吗」为疑问、U1「旧的删掉」为批准、U6「如果cache missing了…提前删掉caches」为需求、U30「push」为指令），无行为纠偏。
+
+**What went wrong**:
+1. 两套测试全绿（41+84 断言）但生产静默零删除：fixture 全部用整秒时间戳（`2026-01-01T00:00:00Z`），真实 GitHub caches API 返回微秒小数秒（`2026-09-03T15:53:48.535638000Z`）→ `ok_entry` 正则拒绝所有真实条目 → `select_deletions` 恒空 → 目标场景（rustc 升级清旧 key）静默失效 rc=0。5 个独立审查中 3 个抓到同一缺陷（QA/通用/目标符合）。
+2. DRY_RUN 冒烟输出空 rc=0 被误判为"无 stale（正确）"——当时每组恰 1 份，空输出无法区分"无 stale"与"全部 skip"；验证输入未构造区分性案例（如含 stale 的合成真实格式）。
+3. ci.yml `sparse-checkout: scripts/prune-actions-caches.sh` 文件路径：cone mode（默认 true）下 git 报 `is not a directory`，checkout 必败，被 `continue-on-error: true` 掩盖成绿色 → CI 中功能 100% 不生效且零告警。只做 YAML 语法校验未做行为验证。
+4. 编辑摩擦（各 1 次返工）：B11 edit 首次失败（file changed since read）重读重试；`|| key=""` 写在命令替换子 shell 内无效改 `|| true`；chmod +x 后权限异常改 755。
+5. R1 fixture id 从 0 开始：引入 `id >= 1` 契约后测试初红——契约变更未同步审计既有 fixture/generator。
+
+**Lessons learned**:
+1. fixture 必须取样真实外部 API 响应（live capture）或至少覆盖其真实形状（字段精度/时间戳格式）；"oracle 与实现互恰"不证明与真实数据一致——测试绿 ≠ 正确。
+2. 冒烟/验证输入必须能区分"无事发生（正确）"与"功能失效（静默）"：当前状态恰好无 stale 时的空输出不是有效证据。
+3. CI 配置变更除语法校验外必须做行为验证：查阅上游 action README/源码（sparse-checkout-cone-mode 默认 true 仅文档载明），或本地复现同版本命令行为。
+4. `continue-on-error` 掩盖 job 内一切失败——容忍失败与可见性必须同时设计（dry-run 日志、失败 annotation）。
+5. 契约变更时审计全部既有 fixture/generator（引入 id>=1 后必须查 id 起点为 0 的生成器）。
+
+**Process improvements**:
+- 已落实（随 b253330）：S17/B11（小数秒）、I5b（id>=1）、I9d/e（空输入）、M10（非法 repo）、M11（缺 total_count）回归测试；ci.yml sparse-checkout 目录化 + 两套件接入 job（先测后执行）+ `timeout-minutes: 10`；脚本 chmod 755。
+- 已落实（随本反思 commit）：testing.md「脚本自测」补 fixture fidelity 原则；toolchain.md 新增「actions/checkout sparse-checkout cone mode 拒绝文件路径」排查卡。
+- 自动化盘点：验证环节（真实 API 拉取+合成对照）已固化 S17/B11 为回归测试，无新增手工环节。
+
+### Trends (last 10)
+- fixture/验证与真实场景脱节首次系统出现（#353）：此前 #345/#348 为"测试与实现一致性"教训，无"真实数据形状"维度——新趋势项，已用回归测试+文档固化。
+- edit 摩擦趋势（#336/#338/#342-343/#345/本轮 1 次复现）：process.md 编辑纪律已存在，执行层仍靠自觉；本轮仅 1 次且立即重读解决，量级低，继续观察。

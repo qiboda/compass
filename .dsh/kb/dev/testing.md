@@ -170,6 +170,13 @@ let range = db.get_stored_range("SZ000001").await?;
 
 ### 脚本自测（scripts/tests/，ref #151）
 
+**fixture fidelity 原则（ref #353 教训）**：脚本自测的 fixture 必须取样自真实
+外部 API 响应（live capture），或至少覆盖其真实形状（字段精度、时间戳格式、
+大小写等）——"测试全绿"只证明实现与 fixture/fixture 派生的 oracle 一致，
+不证明与真实数据一致。ref #353 曾因 fixture 全用整秒时间戳而生产（GitHub
+caches API 返回微秒小数秒 `2026-09-03T15:53:48.535638000Z`）静默零删除，
+125 断言全绿未拦截。
+
 - `test-update-database.sh`：`bash -n` + **mock cargo/dolt**（PATH 前置假命令，
   日志记录调用参数）断言 7 步流水线调用顺序、Dolt `add` 限定表、失败非零退出、
   preflight 分支；数据目录用 `SEPA_COMPASS_DATA_DIR` 等 env 覆盖指向临时目录
