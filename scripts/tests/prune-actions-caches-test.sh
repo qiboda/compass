@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Requirement acceptance tests (RED phase) — issue #353 (qiboda/compass)
+# Requirement acceptance tests — issue #353 (qiboda/compass)
 #   "ci: 自动清理失效 rust-cache 缓存"
-# Target (NOT YET IMPLEMENTED — RED today): scripts/prune-actions-caches.sh
+# Target: scripts/prune-actions-caches.sh (implemented in 24b805b; this suite
+# runs against it — S17 is a regression guard added after multi-reviewer QA
+# found the real caches API returns fractional-second timestamps).
 # Location: scripts/tests/ (project shell-test convention — pairs with the
 # target script; precedents: scripts/tests/test-update-database.sh 及
 # check-coverage 等脚本配对的 *-test.sh / *-adversarial.sh)。
@@ -419,7 +421,7 @@ fi
 echo "== [S15] DELETE 失败继续：id 1 失败，id 3 仍删除，最终非零退出 =="
 m15_log="$TEST_TMP/s15_gh.log"
 m15_out="$TEST_TMP/s15_out.txt"
-env PATH="$FAKE_BIN:$PATH" FAKE_GH_FAIL_ID=1 \
+env PATH="$FAKE_BIN:$PATH" DRY_RUN= FAKE_GH_FAIL_ID=1 \
     FAKE_GH_LOG="$m15_log" FAKE_GH_RESPONSE_FILE="$TEST_TMP/fixture_main.json" \
     bash "$SCRIPT" >"$m15_out" 2>"$TEST_TMP/s15_err.txt"; rc=$?
 assert_nonzero "S15 最终退出码非零" "$rc"
@@ -441,6 +443,19 @@ s16_out="$(PATH="$FAKE_BIN:$PATH" DRY_RUN=1 \
     2>"$TEST_TMP/s16.err")"; rc=$?
 assert_zero "S16 严格模式下 source+select 退出码 0" "$rc"
 assert_eq "S16 严格模式输出与 S04 一致" $'11\n21' "$s16_out"
+
+# ----------------------------------------------------------------------------
+# S17 — real GitHub API timestamp fidelity (regression; added after QA review
+#       finding F1): the caches API returns created_at with microsecond
+#       fractional seconds, e.g. 2026-09-03T15:53:48.535638000Z. The ISO
+#       validation must accept them — a whole-seconds-only regex rejects every
+#       real caches entry, silently turning the prune into a no-op.
+# ----------------------------------------------------------------------------
+echo "== [S17] 真实 API 时间戳（小数秒微秒精度）fidelity =="
+JSON_FRACTIONAL='[{"id":1,"ref":"refs/heads/master","key":"rust-rust-Linux-x64-0b9fd15e-8c853480","created_at":"2026-09-01T15:53:48.535638000Z","size_in_bytes":8900000000},{"id":2,"ref":"refs/heads/master","key":"rust-rust-Linux-x64-6ff13d87-8c853480","created_at":"2026-09-03T15:53:48.535638000Z","size_in_bytes":8900000000}]'
+out="$(run_select "$JSON_FRACTIONAL" fractional)"; rc=$?
+assert_zero "S17 小数秒时间戳 select_deletions 退出码 0" "$rc"
+assert_eq "S17 小数秒时间戳仅删 stale 旧份 id 1（最新 id 2 保留）" "1" "$out"
 
 # ----------------------------------------------------------------------------
 echo ""

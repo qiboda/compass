@@ -183,6 +183,12 @@ let range = db.get_stored_range("SZ000001").await?;
   顺序、`--fmt --check`）+ 对抗（18 项：命令静默弱化、默认漂移、recipe 集合恰
   9 个、性能、无 justfile 区分性）。只读操作（`just -n`/`--list`/`--fmt --check`），
   禁 cargo 重型命令。手动运行：`bash scripts/tests/justfile-test.sh`
+- `prune-actions-caches-test.sh` / `prune-actions-caches-adversarial-test.sh`
+  （ref #353）：CI 缓存清理脚本的自测——验收（43 断言：S01–S17，分组保留
+  最新/tie-break/非 master 忽略/DRY_RUN/分页/DELETE 失败续删/真实小数秒时间戳）
+  + 对抗（102 场景：B/I/M/R 系列，非法输入/畸形 JSON/空输入/非法 repo/
+  缺 total_count/2000 条性能/独立 python3 oracle 交叉验证）；fake gh 注入
+  PATH 前置沙箱，两套件已接入 `prune-caches` job（先测后执行）。
 
 ### append/import-compass 增量 merge 防漂移测试（ref #298）
 

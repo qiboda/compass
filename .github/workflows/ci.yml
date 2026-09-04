@@ -81,6 +81,7 @@ jobs:
     if: github.ref == 'refs/heads/master'
     needs: [rust, bench-check]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # 删除缓存需 actions: write（默认 GITHUB_TOKEN 仅 contents: read）
     permissions:
       contents: read
@@ -90,7 +91,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: scripts/prune-actions-caches.sh
+          # cone mode 下 sparse-checkout 只接受目录列表（文件路径会报 "is not a
+          # directory"），取 scripts/ 目录覆盖脚本与测试套件
+          sparse-checkout: scripts/
+      - name: Run acceptance test suite
+        run: bash scripts/tests/prune-actions-caches-test.sh
+      - name: Run adversarial test suite
+        run: bash scripts/tests/prune-actions-caches-adversarial-test.sh
       - name: "Dry-run: show what would be pruned"
         run: DRY_RUN=1 bash scripts/prune-actions-caches.sh
       - name: Prune stale caches

@@ -47,11 +47,27 @@
 # NOTE on contract extensions asserted here (flagged for the implementer):
 #   * malformed top-level JSON / non-array JSON -> select_deletions must exit
 #     non-zero (explicit failure; silently swallowing malformed data would
-#     mask real API problems and is treated as a defect).
+#     mask real API problems and is treated as a defect). This includes
+#     EMPTY / whitespace-only input: jq treats it as "no program output"
+#     with rc=0, so the caller must guard the empty-string case itself.
 #   * per-entry malformed data (missing/non-numeric id, absent or null
 #     ref/key/created_at, non-ISO created_at, non-object elements) -> the
 #     entry is SKIPPED: it must never be deleted and must never displace the
 #     legitimate newest entry of its group. No unknown id may be deleted.
+#     id must be an integer >= 1: negative/zero ids are malformed too
+#     (a negative id with the newest created_at must never win the group
+#     competition and displace the legitimate newest entry).
+#   * created_at accepts ISO-8601 with optional fractional seconds: the real
+#     GitHub caches API returns microsecond precision, e.g.
+#     2026-09-03T15:53:48.535638000Z. A whole-seconds-only regex rejects
+#     every real cache entry and silently turns the prune into a no-op.
+#   * main: a GITHUB_REPOSITORY value that is not a single "owner/repo"
+#     (no slash, empty owner or repo, extra slashes) -> exit non-zero with
+#     zero gh invocations.
+#   * main: a list response that is not a well-formed object with a numeric
+#     total_count (missing total_count / non-numeric) -> exit non-zero with
+#     zero DELETEs. Never silently fall back to 0 (that would stop after
+#     page 1 and under-collect).
 #
 # =============================================================================
 set -uo pipefail
@@ -100,6 +116,7 @@ plan_cases() {
   B8 edge_key_without_dash_whole_token
   B9 edge_large_ids_near_2p53
   B10 edge_output_ascending_not_group_order
+  B11 edge_created_at_fractional_seconds
   I1 invalid_missing_created_at_skipped
   I2 invalid_missing_id_skipped
   I3 invalid_missing_ref_skipped
@@ -120,6 +137,8 @@ plan_cases() {
   M7 main_dry_run_truthy_zero_and_false
   M8 main_repo_parse_and_default_owner_repo
   M9 main_delete_output_format_normal_mode
+  M10 main_invalid_repo_rejected
+  M11 main_missing_total_count_aborts
   R1 perf_2000_entries_200_groups_sorted
   R2 oracle_python_crosscheck
   R3 resource_infinite_pagination_guard
@@ -477,6 +496,16 @@ call_select "$TMP/b10.json"
 assert_eq "output ascending (2 before 100) despite group order" "2
 100" "$CALL_OUT"
 
+echo ""
+echo "== B11 edge_created_at_fractional_seconds =="
+# GitHub Actions caches API returns microsecond-precision timestamps, e.g.
+# 2026-09-03T15:53:48.535638000Z (regression F1: a whole-seconds-only ISO
+# regex rejects every real cache entry -> silent no-op in production).
+echo '[{"id":1,"ref":"refs/heads/master","key":"rust-a","created_at":"2026-09-01T15:53:48.535638000Z"},{"id":2,"ref":"refs/heads/master","key":"rust-b","created_at":"2026-09-03T15:53:48.535638000Z"}]' > "$TMP/b11.json"
+call_select "$TMP/b11.json"
+assert_eq "fractional-second created_at accepted; stale id 1 deleted" "1" "$CALL_OUT"
+assert_eq "fractional seconds -> exit 0" "0" "$CALL_RC"
+
 # ===========================================================================
 # B. Invalid input
 # ===========================================================================
@@ -526,6 +555,13 @@ call_select "$TMP/i5.json"
 # id "abc" / 1.5 / true are not integer ids -> skipped; 13 vs 14 -> delete 13.
 assert_sorted_uniq_numeric "non-numeric ids never reach the output" "$CALL_OUT"
 assert_eq "only the valid rust-y pair is evaluated (delete id 13)" "13" "$CALL_OUT"
+# id <= 0 are malformed too: they must be skipped, never win their group
+# (a negative id with the newest created_at must NOT displace the legitimate
+# newest entry — regression from code review).
+echo '[{"id":-5,"ref":"refs/heads/master","key":"rust-z","created_at":"2026-01-03T00:00:00Z"},{"id":0,"ref":"refs/heads/master","key":"rust-z","created_at":"2026-01-03T00:00:00Z"},{"id":1,"ref":"refs/heads/master","key":"rust-z","created_at":"2026-01-01T00:00:00Z"},{"id":2,"ref":"refs/heads/master","key":"rust-z","created_at":"2026-01-02T00:00:00Z"}]' > "$TMP/i5b.json"
+call_select "$TMP/i5b.json"
+assert_sorted_uniq_numeric "negative/zero ids: output safe" "$CALL_OUT"
+assert_eq "negative/zero ids skipped; legitimate newest (2) kept -> delete 1" "1" "$CALL_OUT"
 
 echo ""
 echo "== I6 invalid_duplicate_ids_single_delete =="
@@ -602,6 +638,22 @@ if [ "$CALL_RC" != "0" ]; then
 else
     FAIL "non-array top-level JSON silently accepted (rc=0) — must fail loudly"
 fi
+# Empty / whitespace-only JSON is malformed top-level data too. jq treats it
+# as "no program output" with rc=0 — skipping the type check entirely — so
+# the caller must guard the empty case itself (regression from code review).
+for badge in 9d 9e; do
+    if [ "$badge" = 9d ]; then
+        printf '%s' '' > "$TMP/i$badge.json"
+    else
+        printf '%s' '   ' > "$TMP/i$badge.json"
+    fi
+    call_select "$TMP/i$badge.json"
+    if [ "$CALL_RC" != "0" ]; then
+        PASS "i$badge empty/blank JSON -> non-zero exit (rc=$CALL_RC)"
+    else
+        FAIL "i$badge empty/blank JSON silently accepted (rc=0) — must fail loudly"
+    fi
+done
 
 echo ""
 echo "== I10 invalid_json_non_object_elements =="
@@ -804,6 +856,46 @@ MAIN_ENV="" call_main "$SM"
 assert_eq "normal mode prints [DELETE] <id> <key>" "[DELETE] 1 rust-Linux-x64-0000" "$CALL_OUT"
 assert_eq "normal mode exit 0" "0" "$CALL_RC"
 
+echo ""
+echo "== M10 main_invalid_repo_rejected =="
+# GITHUB_REPOSITORY values that are not a single "owner/repo" must fail
+# BEFORE any gh invocation (defensive: fail-closed on bad config).
+for bad in "acme" "/repo" "owner/" "a/b/c" "owner//repo"; do
+    SM="$(new_scenario "m10-${bad//\//-}")"
+    gen_pages "$SM" 1 1 0 rust
+    MAIN_ENV="GITHUB_REPOSITORY=$bad" call_main "$SM"
+    if [ "$CALL_RC" != "0" ]; then
+        PASS "GITHUB_REPOSITORY=$bad rejected (rc=$CALL_RC)"
+    else
+        FAIL "GITHUB_REPOSITORY=$bad accepted (must exit non-zero)"
+    fi
+    if [ -s "$SM/gh.log" ]; then
+        FAIL "GITHUB_REPOSITORY=$bad still invoked gh: $(head -n1 "$SM/gh.log")"
+    else
+        PASS "GITHUB_REPOSITORY=$bad -> zero gh invocations"
+    fi
+done
+
+echo ""
+echo "== M11 main_missing_total_count_aborts =="
+# A list response without a numeric total_count must abort before any DELETE:
+# silently falling back to 0 would stop after page 1 and under-collect
+# (regression from QA review F3).
+SM="$(new_scenario m11)"
+gen_pages "$SM" 1 1 0 rust
+printf '%s' '{"actions_caches":[{"id":1,"ref":"refs/heads/master","key":"rust-Linux-x64-0000","created_at":"2026-01-01T00:00:00Z"}]}' > "$SM/page-1.json"
+MAIN_ENV="" call_main "$SM"
+if [ "$CALL_RC" != "0" ]; then
+    PASS "list response without total_count aborts (rc=$CALL_RC)"
+else
+    FAIL "missing total_count accepted (rc=0) — must abort non-zero"
+fi
+if grep -q 'actions/caches/1' "$SM/gh.log" 2>/dev/null; then
+    FAIL "DELETE was issued despite missing total_count"
+else
+    PASS "missing total_count -> zero DELETE invocations"
+fi
+
 # ===========================================================================
 # D. Performance / resource exhaustion / state
 # ===========================================================================
@@ -818,7 +910,7 @@ base = datetime(2026, 1, 1, 0, 0, 0)
 for g in range(200):
     for i in range(10):
         ct = base + timedelta(days=g * 3, hours=i)
-        out.append({"id": g * 10000 + i, "ref": "refs/heads/master",
+        out.append({"id": g * 10000 + i + 1, "ref": "refs/heads/master",
                     "key": f"g{g:03d}-runner-linux-{i:04x}",
                     "created_at": ct.strftime("%Y-%m-%dT%H:%M:%SZ")})
 # large ids (below 2^53, exact in jq doubles) in one extra group of 2
@@ -865,13 +957,14 @@ echo "== R2 oracle_python_crosscheck =="
 # the shell implementation and the oracle is a finding.
 cat > "$TMP/oracle.py" <<'PY'
 import json, re, sys
-ISO = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$')
+ISO = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$')
 data = json.load(open(sys.argv[1]))
 groups = {}
 for e in data:
     if e.get("ref") != "refs/heads/master":
         continue
-    if type(e.get("id")) is not int or type(e.get("key")) is not str \
+    if type(e.get("id")) is not int or e.get("id") < 1 \
+       or type(e.get("key")) is not str \
        or type(e.get("created_at")) is not str or not ISO.match(e["created_at"]):
         continue
     tok = e["key"].split("-", 1)[0]

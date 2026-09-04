@@ -432,16 +432,25 @@ CI 的 `Swatinem/rust-cache@v2` 采用**仅 master save + 分组缓存**策略�
 `continue-on-error: true`、`permissions: {contents: read, actions: write}`）：
 
 - 执行 `scripts/prune-actions-caches.sh`：列出仓库全部缓存 → 按组
-  （key 第一个 `-` 前 token = job 前缀）保留 `created_at` 最新一份、
-  删除其余 → 每个 group 稳态恰好 1 份，key 变化后旧 key 自动被清
+  （key 第一个 `-` 前 token = job 前缀，bench-check 的组为 `bench`）保留
+  `created_at` 最新一份、删除其余 → 每个 group 稳态恰好 1 份，key 变化后
+  旧 key 自动被清（LRU 需 7 天，配额压力等不了——本 job 在 miss 发生后
+  下一次 master push 即清理）
 - 只处理 `ref == refs/heads/master` 的缓存（与 save-if 对称——非 master
   分支从未参与 save、不触碰）；其余分支/未知状态绝不删除
 - 失败语义：list 失败 → 立即退出且零 DELETE（未知状态绝不删）；
+  list 响应缺 `total_count` → 同样零 DELETE 退出（不静默回退）；
   DELETE 失败 → 打印错误继续、最终非零（job 有 `continue-on-error` 兜底）
+- **前置条件**：仓库 Settings → Actions → General → Workflow permissions
+  必须允许 write（否则 `actions: write` 被强制只读，list 即 403 → 零删除）；
+  首次 master run 后检查 dry-run 步骤日志无 403
+- **`on.push.paths-ignore: '**.md'`**：纯文档 commit 不触发 CI（含
+  prune-caches）；文档不产生新缓存，清理时机由非文档 push 驱动，无影响
+- 两套测试已接入 CI（prune-caches job 内先测后执行）
 - 本地/CI 均可用：`DRY_RUN=1` 演练看会删什么；`GITHUB_REPOSITORY`
   注入 owner/repo（缺省 `qiboda/compass`）
-- 配套测试：`scripts/tests/prune-actions-caches-test.sh`（验收 41 断言）、
-  `scripts/tests/prune-actions-caches-adversarial-test.sh`（对抗 84 断言）
+- 配套测试：`scripts/tests/prune-actions-caches-test.sh`（验收 43 断言）、
+  `scripts/tests/prune-actions-caches-adversarial-test.sh`（对抗 102 场景）
 
 历史：`572e688` 曾用 `save-if: true`（分支自缓存提速），因短命分支孤儿缓存浪费回退为仅 master save（`d55eead`, ref #89）。
 
