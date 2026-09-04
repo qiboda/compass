@@ -841,3 +841,27 @@
 - **教训**: 主工作区 git 命令突然全挂、但 log 正常时，先查 `core.bare` 再怀疑
   hook/权限；第三方工具改过 `.git/config`（vscode/beads/opencode 等）后应
   用 `git config --list --show-origin` 巡检核心标志位（bare/core.bare）。
+
+### [compass-collectors] index_daily auto-heal backfill 无 Tencent 兜底/无 bad-proxy 删除（issue #354）
+
+- **症状**: 2026-09-04 跑 `scripts/update-database.sh` step 2 `compass-collectors sync`，
+  auto-heal 回补 index_daily 时两次失败：
+  1. `FAILED ths kline 881101/2026: Some(Http(... ProxyConnect ... 101.251.204.174:8080 ...))`
+     → `error: invalid input: index_daily backfill failed for THS BK881101 year 2026`；
+  2. `COMPASS_PROXY_DISABLE=1` 后 THS 直连成功，但官方指数
+     `push2his.eastmoney.com / 91.push2his.eastmoney.com` 全部 `client error (SendRequest)`，
+     → `error: invalid input: index_daily backfill failed for official SH000001`。
+- **根因**:
+  - `crates/compass-collectors/src/index_daily.rs::backfill()`（约 line 1080-1140）对官方指数只调
+    `fetch_kline()`（EastMoney），**没有 daily `run()`（约 line 852-931）那套 Tencent fallback**；
+  - `fetch_ths_kline()`（约 line 346-388）失败后也不 `delete_proxy`/强制直连下一跳，
+    池内一个坏代理可导致两次尝试全失败（直连其实可用）。
+- **处理（本次临时 fallback）**: 完整刷新改为
+  `COMPASS_AUTO_HEAL=0 COMPASS_PROXY_DISABLE=1 cargo run --bin compass-collectors -- sync`
+  （跳过 auto-heal，走 daily 路径，官方指数靠 Tencent 兜底）+ 手动 Dolt commit/push +
+  全量 `import-compass` 11 表。Dolt/Parquet 已验证全部一致；未 export DuckDB。
+- **验证**: 2026-09-04 数据 Dolt=Parquet：stock_basic 5910；fin_* 132126/4546/4530/4686（report 06-30）；
+  capital_main_flow 142823/09-04；dragon_list 7469/09-04；block_trade 20641/09-04；
+  institution_survey 338373/09-04；index_daily 529834/09-04；index_basic 120。
+- **教训**: auto-heal 回补必须复用 daily 路径的第三方兜底（Tencent）与 proxy 健康策略；
+  任何新增 backfill 路径都要先验证 EastMoney 不可达时仍能完成。
