@@ -71,6 +71,7 @@ impl LoggerPanel {
         let mut chart_action = None;
         let mut toasts = compass_ui::widgets::toast::ToastManager::new(*theme.tokens());
         let mut watchlist_action = None;
+        let mut sidebar_toggle_requested = false;
         let mut ctx = EditorCtx {
             state,
             theme: &theme,
@@ -89,6 +90,7 @@ impl LoggerPanel {
             toasts: &mut toasts,
             stock_list: &[],
             watchlist_action: &mut watchlist_action,
+            sidebar_toggle_requested: &mut sidebar_toggle_requested,
         };
         let mut frame = crate::editor::EditorFrame {
             sidebar_visible: false,

@@ -215,7 +215,7 @@ impl ChartCitizen {
     /// chart state (`chart_options.crosshair.*`, `config.show_volume`,
     /// `config.show_ohlc_info`) — the theme re-application every frame only
     /// touches colors, so these flags survive.
-    fn display_options_menu(&mut self, ui: &mut egui::Ui) {
+    fn display_options_menu(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
         let crosshair_visible = self.chart.chart_options.crosshair.vert_line_visible
             && self.chart.chart_options.crosshair.horz_line_visible;
         let volume = self.chart.config.show_volume;
@@ -248,6 +248,14 @@ impl ChartCitizen {
                     .changed()
                 {
                     self.chart.config_mut().show_ohlc_info = legend;
+                }
+                ui.separator();
+                // Design §8.2 mouse entry: a toggle request the owner
+                // (TabViewer) applies to the per-kind sidebar map after
+                // the frame — the same map the N key writes.
+                if ui.button(t!("editor.toggle_sidebar")).clicked() {
+                    *ctx.sidebar_toggle_requested = true;
+                    ui.close();
                 }
                 ui.separator();
                 ui.label(egui::RichText::new(t!("editor.chart_display.n_hint")).weak());
@@ -518,7 +526,7 @@ impl EditorView for ChartCitizen {
                     *ctx.chart_action = Some(ChartHeaderAction::Fetch);
                 }
 
-                self.display_options_menu(ui);
+                self.display_options_menu(ui, ctx);
             });
         });
     }

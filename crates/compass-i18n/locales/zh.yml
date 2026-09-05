@@ -67,6 +67,7 @@ editor:
   watchlist: 自选
   add: 添加编辑器
   add_none: 全部编辑器已打开
+  toggle_sidebar: 显示/隐藏侧栏
 
 workspace:
   chart: 图表

@@ -138,6 +138,16 @@ pub(crate) fn build_compass_app_with_timeframe(
         startup_modal_shown: false,
         language: "zh".to_string(),
         layout_fp: None,
+        sidebar_visibility: crate::editor::EDITOR_REGISTRY
+            .iter()
+            .filter_map(|d| {
+                d.layout
+                    .sidebar
+                    .as_ref()
+                    .map(|s| (d.kind, s.default_visible))
+            })
+            .collect(),
+        last_interacted_kind: None,
     }
 }
 
@@ -180,6 +190,7 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
                 .iter()
                 .find(|d| d.kind == EditorKind::Chart)
                 .expect("chart descriptor");
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -198,6 +209,7 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
                 toasts: &mut toasts,
                 stock_list: &[],
                 watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             let mut frame = EditorFrame {
                 sidebar_visible: true,

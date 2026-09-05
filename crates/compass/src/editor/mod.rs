@@ -700,6 +700,11 @@ pub struct EditorCtx<'a> {
     /// editor writes at most one action per frame during render; the owner
     /// fetches/adds/opens the removal modal after `show_inside` returns.
     pub watchlist_action: &'a mut Option<WatchlistAction>,
+    /// Out-param channel for the sidebar toggle (design §8.2 mouse entry):
+    /// the Display Options menu of a sidebar-having editor writes the click
+    /// during render; the owner (TabViewer) flips the per-kind visibility
+    /// map after `show_inside` returns — same pattern as `chart_action`.
+    pub sidebar_toggle_requested: &'a mut bool,
 }
 
 /// Bundle of the five citizen-trigger signals (design §4.2 `EditorSignals`).

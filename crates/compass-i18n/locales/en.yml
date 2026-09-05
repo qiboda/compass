@@ -69,6 +69,7 @@ editor:
   watchlist: Watchlist
   add: Add editor
   add_none: All editors open
+  toggle_sidebar: Show/hide sidebar
 
 workspace:
   chart: Chart

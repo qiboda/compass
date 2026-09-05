@@ -216,6 +216,7 @@ impl SepaPanel {
         let mut logger_export_clicked = false;
         let mut toasts = compass_ui::widgets::toast::ToastManager::new(*theme.tokens());
         let mut watchlist_action = None;
+        let mut sidebar_toggle_requested = false;
         let mut ctx = EditorCtx {
             state: shared_state,
             theme: &theme,
@@ -234,6 +235,7 @@ impl SepaPanel {
             toasts: &mut toasts,
             stock_list: &[],
             watchlist_action: &mut watchlist_action,
+            sidebar_toggle_requested: &mut sidebar_toggle_requested,
         };
         let mut frame = crate::editor::EditorFrame {
             sidebar_visible: false,

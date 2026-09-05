@@ -219,6 +219,16 @@ fn main() -> eframe::Result {
                 startup_modal_shown: false,
                 language: normalize_language(&config.app.language).to_string(),
                 layout_fp,
+                sidebar_visibility: crate::editor::EDITOR_REGISTRY
+                    .iter()
+                    .filter_map(|d| {
+                        d.layout
+                            .sidebar
+                            .as_ref()
+                            .map(|s| (d.kind, s.default_visible))
+                    })
+                    .collect(),
+                last_interacted_kind: None,
             }))
         }),
     )
@@ -806,11 +816,10 @@ fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bo
     };
 
     // dock_version: missing or not equal to 2 → structural fallback. The
-    // TOML integer is an i64; u32::try_from guards the wrap-around case
-    // (e.g. 4294967298 would truncate to 2, review 41e74cc0 P3-3).
-    if section.dock_version.and_then(|v| u32::try_from(v).ok())
-        != Some(crate::editor::DOCK_TOPOLOGY_VERSION)
-    {
+    // wrap-around guard lives at parse time (`layout_section_from_doc`
+    // converts the i64 with `try_from`, review 41e74cc0 P3-3) — the field
+    // is already a validated u32 here.
+    if section.dock_version != Some(crate::editor::DOCK_TOPOLOGY_VERSION) {
         tracing::warn!(
             version = ?section.dock_version,
             expected = crate::editor::DOCK_TOPOLOGY_VERSION,
@@ -1212,6 +1221,13 @@ struct CompassApp {
     /// against `layout_fingerprint` detects dock edits (egui_dock 0.21 has
     /// no layout-change event) and persists once per edit burst.
     layout_fp: Option<String>,
+    /// Per-kind sidebar visibility (design §8.2): the N key flips entries
+    /// here; seeded from `EDITOR_REGISTRY` defaults (Q4 — Chart/Screener
+    /// `default_visible = true`). Session-only, never persisted.
+    sidebar_visibility: std::collections::HashMap<crate::editor::EditorKind, bool>,
+    /// Kind of the most recently clicked tab button (design §8.2 ②) — the
+    /// N-key fallback when `focused_leaf()` is `None`.
+    last_interacted_kind: Option<crate::editor::EditorKind>,
 }
 
 impl eframe::App for CompassApp {
@@ -1284,6 +1300,8 @@ impl eframe::App for CompassApp {
                         logger_export_clicked: &mut logger_export_clicked,
                         chart_action: &mut chart_action,
                         watchlist_action: &mut watchlist_action,
+                        sidebar_visibility: &mut self.sidebar_visibility,
+                        last_interacted_kind: &mut self.last_interacted_kind,
                     },
                 );
 
@@ -1444,15 +1462,17 @@ impl CompassApp {
     /// selection, `Ctrl+K` focuses the sidebar search and `1/2/3` switch the
     /// timeframe.
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
-        // Guard: plain keys (digits, `/`) must not fire while a text widget has
-        // focus — typing a symbol like "601318" would otherwise flip the
-        // timeframe under the user's fingers. Ctrl-combos stay active.
+        // Guard: plain keys (digits, `/`, `N`) must not fire while a text
+        // widget has focus — typing a symbol like "601318" would otherwise
+        // flip the timeframe under the user's fingers. Ctrl-combos stay
+        // active.
         let editing_text = ui.ctx().memory(|m| m.focused().is_some());
-        let (slash, ctrl_enter, ctrl_k, num1, num2, num3) = ui.ctx().input(|i| {
+        let (slash, ctrl_enter, ctrl_k, n_pressed, num1, num2, num3) = ui.ctx().input(|i| {
             (
                 i.key_pressed(egui::Key::Slash) && !editing_text,
                 i.key_pressed(egui::Key::Enter) && i.modifiers.command,
                 i.key_pressed(egui::Key::K) && i.modifiers.command,
+                i.key_pressed(egui::Key::N) && !editing_text,
                 i.key_pressed(egui::Key::Num1) && !editing_text,
                 i.key_pressed(egui::Key::Num2) && !editing_text,
                 i.key_pressed(egui::Key::Num3) && !editing_text,
@@ -1468,15 +1488,70 @@ impl CompassApp {
             ui.ctx()
                 .memory_mut(|m| m.request_focus(crate::editor::WatchlistEditor::search_input_id()));
         }
-        if num1 {
-            self.set_timeframe(0);
+        // N: sidebar toggle for the active editor (design §8.2). No-op for
+        // kinds without a registered Sidebar; long-press repeat is allowed
+        // (toggle semantics, design §8.1 known trade-off).
+        if n_pressed {
+            self.toggle_sidebar_for_focused_editor();
         }
-        if num2 {
-            self.set_timeframe(1);
+        // 1/2/3 (timeframe) is scoped to the Chart workspace (plan §7.1):
+        // in Screener/SEPA the digits do nothing (their meaning is
+        // workspace-specific; the design §7.1 上下文隔离 contract).
+        let chart_workspace_active = self
+            .workspaces
+            .all
+            .get(self.workspaces.active)
+            .is_some_and(|w| w.id == crate::editor::WorkspaceId::Chart);
+        if chart_workspace_active {
+            if num1 {
+                self.set_timeframe(0);
+            }
+            if num2 {
+                self.set_timeframe(1);
+            }
+            if num3 {
+                self.set_timeframe(2);
+            }
         }
-        if num3 {
-            self.set_timeframe(2);
+    }
+
+    /// N-key sidebar toggle target (design §8.2): the focused leaf's active
+    /// tab first — egui_dock `focused_leaf()` is the same source the tab-bar
+    /// highlight uses — then the last clicked tab button as fallback.
+    fn toggle_sidebar_for_focused_editor(&mut self) {
+        let Some(kind) = self.focused_editor_kind() else {
+            return;
+        };
+        let Some(sidebar) = crate::editor::EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == kind)
+            .and_then(|d| d.layout.sidebar.as_ref())
+        else {
+            // No registered Sidebar → silent no-op (design §8.2).
+            return;
+        };
+        let current = self
+            .sidebar_visibility
+            .get(&kind)
+            .copied()
+            .unwrap_or(sidebar.default_visible);
+        self.sidebar_visibility.insert(kind, !current);
+    }
+
+    /// Resolve the "active editor" for the N key (design §8.2): the active
+    /// tab of egui_dock's focused leaf, falling back to the last clicked
+    /// tab-button kind.
+    fn focused_editor_kind(&self) -> Option<crate::editor::EditorKind> {
+        let ws = self.workspaces.all.get(self.workspaces.active)?;
+        let screen = ws.layouts.get(ws.active_screen)?;
+        let tree = screen.dock_state.main_surface();
+        if let Some(node) = tree.focused_leaf()
+            && let Ok(leaf) = tree.leaf(node)
+            && let Some(tab) = leaf.tabs.get(leaf.active.0)
+        {
+            return Some(tab.kind());
         }
+        self.last_interacted_kind
     }
 
     fn set_timeframe(&mut self, idx: usize) {
@@ -1998,6 +2073,7 @@ mod tests {
                 .iter()
                 .find(|d| d.kind == EditorKind::Chart)
                 .expect("chart descriptor must exist");
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2016,6 +2092,7 @@ mod tests {
                 toasts: &mut toasts,
                 stock_list: &app.stock_list,
                 watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             let sidebar_visible = desc
                 .layout
@@ -2617,6 +2694,12 @@ default_timeframe = "1w"
     /// file appears with the *new* active workspace.
     #[test]
     fn layout_workspace_switch_saves_section_immediately() {
+        // Lock order must be LANG_LOCK → HOME_LOCK (as in the other
+        // combined tests, e.g. theme_dropdown_switch_persists_*): the
+        // reverse would deadlock the parallel test runner.
+        let _lock = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
@@ -2624,9 +2707,6 @@ default_timeframe = "1w"
             std::env::set_var("HOME", tmp.path());
         }
 
-        let _lock = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app = build_compass_app(egui::Context::default());
         let mut harness = sized_harness(app);
         harness.run_steps(3);
@@ -3258,6 +3338,7 @@ default_timeframe = "1w"
             let mut logger_export_clicked = false;
             let mut toasts = ToastManager::new(*app.theme.tokens());
             let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -3276,6 +3357,7 @@ default_timeframe = "1w"
                 toasts: &mut toasts,
                 stock_list: &app.stock_list,
                 watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             let sidebar_visible = desc
                 .layout
@@ -3298,6 +3380,7 @@ default_timeframe = "1w"
             let mut logger_export_clicked = false;
             let mut toasts = ToastManager::new(*app.theme.tokens());
             let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -3316,6 +3399,7 @@ default_timeframe = "1w"
                 toasts: &mut toasts,
                 stock_list: &app.stock_list,
                 watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             // SEPA registers no sidebar (design §6) — the 280px detail panel
             // stays an in-body right pane, so no left panel is created.
@@ -3336,6 +3420,7 @@ default_timeframe = "1w"
             let mut logger_export_clicked = false;
             let mut toasts = ToastManager::new(*app.theme.tokens());
             let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -3354,6 +3439,7 @@ default_timeframe = "1w"
                 toasts: &mut toasts,
                 stock_list: &app.stock_list,
                 watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             // Market registers no sidebar (design §6).
             let mut frame = EditorFrame {
@@ -3384,6 +3470,7 @@ default_timeframe = "1w"
             let mut chart_action = None;
             let mut logger_export_clicked = false;
             let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -3402,6 +3489,7 @@ default_timeframe = "1w"
                 toasts: &mut toasts,
                 stock_list: &app.stock_list,
                 watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             let mut frame = EditorFrame {
                 sidebar_visible: false,
@@ -3422,6 +3510,7 @@ default_timeframe = "1w"
             let mut chart_action = None;
             let mut toasts = ToastManager::new(*app.theme.tokens());
             let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -3440,6 +3529,7 @@ default_timeframe = "1w"
                 toasts: &mut toasts,
                 stock_list: &app.stock_list,
                 watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
             };
             let mut frame = EditorFrame {
                 sidebar_visible: false,
@@ -3998,8 +4088,6 @@ default_timeframe = "1w"
             egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
 
         harness.step();
-        harness.step();
-        harness.step();
     }
 
     // ======================================================================
@@ -4147,6 +4235,8 @@ default_timeframe = "1w"
             logger_export_clicked: &mut logger_export_clicked,
             chart_action: &mut chart_action,
             watchlist_action: &mut watchlist_action,
+            sidebar_visibility: &mut std::collections::HashMap::new(),
+            last_interacted_kind: &mut None,
         };
 
         let mut harness = egui_kittest::Harness::builder()
@@ -4563,7 +4653,6 @@ default_timeframe = "1w"
         assert!(harness.state().modal.is_open());
         harness.get_by_label(&tr("modal.remove.confirm")).click();
         harness.step();
-        harness.step();
 
         assert!(
             harness.state().shared_state.watchlist.get().is_empty(),
@@ -4940,6 +5029,7 @@ default_timeframe = "1w"
                 let mut chart_action = None;
                 let mut logger_export_clicked = false;
                 let mut toasts = ToastManager::new(*app.theme.tokens());
+                let mut sidebar_toggle_requested = false;
                 let mut ctx = EditorCtx {
                     state: &app.shared_state,
                     theme: &app.theme,
@@ -4958,6 +5048,7 @@ default_timeframe = "1w"
                     toasts: &mut toasts,
                     stock_list: &app.stock_list,
                     watchlist_action,
+                    sidebar_toggle_requested: &mut sidebar_toggle_requested,
                 };
                 // The Ctrl+K shortcut (plan §4.6, migrated) requests this id;
                 // the salt chain must land on the rendered search input.
@@ -5022,6 +5113,100 @@ default_timeframe = "1w"
         harness.key_press(egui::Key::Num1);
         harness.step();
         assert_eq!(harness.state().timeframe_index, 0);
+    }
+
+    /// N key (design §8.2): toggles the Chart editor sidebar at the render
+    /// level — the chart-settings titles appear/disappear; a second press
+    /// restores. Seeds from `default_visible = true` (arbitration Q4).
+    #[test]
+    fn n_key_toggles_chart_sidebar_visually() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Default-visible (Q4): chart settings sidebar is on screen.
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.title"));
+
+        harness.key_press(egui::Key::N);
+        harness.run_steps(3);
+        // `get_all_by_label` panics on an empty result — the non-panicking
+        // `query_all_by_label` drives an absence assertion.
+        assert!(
+            harness
+                .query_all_by_label(&tr("editor.chart_sidebar.title"))
+                .next()
+                .is_none(),
+            "N must hide the Chart sidebar"
+        );
+
+        harness.key_press(egui::Key::N);
+        harness.run_steps(3);
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.title"));
+    }
+
+    /// N key no-op path (design §8.2): kinds without a registered Sidebar
+    /// (Sepa/Market/Logger/Watchlist) never touch the visibility map.
+    #[test]
+    fn n_key_noop_for_non_sidebar_kinds() {
+        let app = build_compass_app(egui::Context::default());
+        let mut app = app;
+
+        // Default chart workspace: focused leaf = Chart main leaf
+        // (focus_main_leaf) — a toggle flips the seeded default.
+        assert_eq!(
+            app.focused_editor_kind(),
+            Some(crate::editor::EditorKind::Chart)
+        );
+        app.toggle_sidebar_for_focused_editor();
+        assert!(!app.sidebar_visibility[&crate::editor::EditorKind::Chart]);
+        app.toggle_sidebar_for_focused_editor();
+        assert!(app.sidebar_visibility[&crate::editor::EditorKind::Chart]);
+
+        // Sepa workspace: no Sidebar registered → the map stays untouched.
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert_eq!(
+            app.focused_editor_kind(),
+            Some(crate::editor::EditorKind::Sepa)
+        );
+        app.toggle_sidebar_for_focused_editor();
+        assert!(
+            !app.sidebar_visibility
+                .contains_key(&crate::editor::EditorKind::Sepa),
+            "no-sidebar kinds must be a silent no-op"
+        );
+    }
+
+    /// 1/2/3 timeframe shortcuts are scoped to the Chart workspace (plan
+    /// §7.1): in the Screener workspace the digits do nothing — the
+    /// timeframe index must stay put.
+    #[test]
+    fn digit_keys_noop_outside_chart_workspace() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        harness.get_by_label(&seg_label).click_accesskit();
+        harness.run_steps(3);
+
+        let before = harness.state().timeframe_index;
+        harness.key_press(egui::Key::Num2);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().timeframe_index,
+            before,
+            "1/2/3 must no-op outside the Chart workspace (plan §7.1)"
+        );
     }
 
     #[test]

@@ -134,6 +134,13 @@ pub struct TabViewer<'a> {
     /// Out-param: watchlist editor action (fetch/add/delete-request modal)
     /// consumed by the owner after `show_inside` returns.
     pub watchlist_action: &'a mut Option<WatchlistAction>,
+    /// Per-kind sidebar visibility state (design §8.2): the N key flips this
+    /// map at the app level; rendering consults it *after* the descriptor
+    /// default (arbitration Q4 — Chart/Screener default-visible).
+    pub sidebar_visibility: &'a mut std::collections::HashMap<EditorKind, bool>,
+    /// Kind of the last clicked tab-button — the N-key fallback target when
+    /// egui_dock's `focused_leaf()` is `None` (design §8.2 ②).
+    pub last_interacted_kind: &'a mut Option<EditorKind>,
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
@@ -160,14 +167,18 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             .iter()
             .find(|d| d.kind == kind)
             .expect("descriptor must exist in EDITOR_REGISTRY");
-        // Sidebar visibility derives from the registered layout (arbitration
-        // Q4: Chart/Screener default-visible; Sepa/Market/Logger/Watchlist
-        // register None so this is false for them).
-        let sidebar_visible = desc
-            .layout
-            .sidebar
-            .as_ref()
-            .is_some_and(|s| s.default_visible);
+        // Sidebar visibility: the N-key state (design §8.2) wins over the
+        // registered default (arbitration Q4: Chart/Screener default-
+        // visible; Sepa/Market/Logger/Watchlist register None → false).
+        let sidebar_visible = match desc.layout.sidebar.as_ref() {
+            Some(s) => self
+                .sidebar_visibility
+                .get(&kind)
+                .copied()
+                .unwrap_or(s.default_visible),
+            None => false,
+        };
+        let mut sidebar_toggle_requested = false;
         let mut ctx = EditorCtx {
             state: self.shared_state,
             theme: self.theme,
@@ -180,12 +191,25 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             toasts: self.toasts,
             stock_list: self.stock_list,
             watchlist_action: self.watchlist_action,
+            sidebar_toggle_requested: &mut sidebar_toggle_requested,
         };
         let mut frame = EditorFrame { sidebar_visible };
         frame.show(ui, desc, self.editors.get_mut(kind), &mut ctx);
+        // Design §8.2 mouse entry: the Display Options menu request flips
+        // the same per-kind map the N key writes (a request, not a state —
+        // the editor never needs to know the current visibility).
+        if sidebar_toggle_requested {
+            self.sidebar_visibility.insert(kind, !sidebar_visible);
+        }
     }
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
+        // Record the interaction for the N-key fallback target (design §8.2
+        // ②): clicking a tab title is the "active editor" signal when
+        // egui_dock's focused-leaf chain has not been engaged yet.
+        if response.clicked() {
+            *self.last_interacted_kind = Some(tab.kind());
+        }
         // Skips activate for non-citizen kinds (Watchlist, plan §4.6) — an
         // unregistered id would silently deactivate every citizen.
         if response.clicked()
@@ -417,6 +441,8 @@ mod tests {
             logger_export_clicked: &mut logger_export_clicked,
             chart_action: &mut chart_action,
             watchlist_action: &mut watchlist_action,
+            sidebar_visibility: &mut std::collections::HashMap::new(),
+            last_interacted_kind: &mut None,
         };
 
         for (kind, title) in [
