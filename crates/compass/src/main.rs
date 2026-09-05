@@ -147,11 +147,12 @@ fn main() -> eframe::Result {
             boards.sort();
             boards.dedup();
 
-            // Create initial workspaces (three default layouts, design §5):
-            // the inline dock tree that used to live here now comes from
-            // `Workspaces::default()` (plan §3.1 — the layout builder
-            // belongs in editor/, not main).
-            let workspaces = crate::editor::Workspaces::default();
+            // Recreate workspaces from the persisted `[layout]` section
+            // (design §9.1/§9.2): corrupted/missing config falls back to
+            // `Workspaces::default()` so startup never blocks (the config
+            // must never prevent launching, aligns with `load_config`).
+            let (workspaces, layout_fell_back) = resolve_workspaces(&config.layout);
+            let layout_fp = layout_fingerprint(&workspaces);
 
             let theme_tokens = *theme.tokens();
             let stock_picker = StockPicker::new(
@@ -162,6 +163,14 @@ fn main() -> eframe::Result {
             let dock_style = compass_ui::dock_style::dock_style(theme.tokens());
 
             let startup_symbol = shared_state.symbol.get();
+
+            let mut toast = ToastManager::new(theme_tokens);
+            if layout_fell_back {
+                // The [layout] section was present but unusable — tell the
+                // user the defaults took over instead of silently losing
+                // their arrangement (design §9.2 recovery UX).
+                toast.push(ToastLevel::Info, t!("layout.fallback"));
+            }
 
             Ok(Box::new(CompassApp {
                 workspaces,
@@ -191,7 +200,7 @@ fn main() -> eframe::Result {
                 theme,
                 dock_style,
                 _backend_handle,
-                toast: ToastManager::new(theme_tokens),
+                toast,
                 modal: Modal::new(theme_tokens),
                 file_dialog: FileDialog::new(),
                 last_error: None,
@@ -209,6 +218,7 @@ fn main() -> eframe::Result {
                 delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
                 startup_modal_shown: false,
                 language: normalize_language(&config.app.language).to_string(),
+                layout_fp,
             }))
         }),
     )
@@ -268,6 +278,14 @@ struct FullConfig {
     watchlist: WatchlistConfig,
     #[serde(default)]
     llm: LlmSection,
+    /// Picked out manually — see [`layout_section_from_doc`]: toml 0.8's
+    /// serde deserializer cannot map the *nested* `[[layout.workspaces]]`
+    /// array-of-tables into a `Vec` field (a known limitation; only
+    /// top-level arrays of tables deserialize), so the section is extracted
+    /// from the raw `toml::Value` in [`load_config`]. `#[serde(skip)]`
+    /// keeps the derive path silent and the field defaulted until then.
+    #[serde(skip)]
+    layout: LayoutSection,
 }
 
 /// The `[screener]` config section — dual-format (issue #246).
@@ -361,6 +379,44 @@ impl LlmSection {
     }
 }
 
+/// The `[layout]` config section (design §9.1 / plan §6.1): workspace layout
+/// persistence. Only `Deserialize` is derived — the save path writes the
+/// section by hand as a `toml::Value` table (mirrors [`ScreenerSection`]).
+#[derive(Deserialize, Default)]
+struct LayoutSection {
+    /// Active workspace id string (`"chart"` | `"screener"` | `"sepa"`).
+    #[serde(default)]
+    active_workspace: Option<String>,
+    /// Topology format version (design §9.1): `!= 2` → fall back to
+    /// `Workspaces::default()`. Missing together with an empty `workspaces`
+    /// list = first run (no `[layout]` yet), which stays silent.
+    #[serde(default)]
+    dock_version: Option<u32>,
+    /// One table per workspace (v1: one workspace = one screen; the array
+    /// shape is the multi-screen reservation, lock-in D3).
+    #[serde(default)]
+    workspaces: Vec<WorkspaceLayoutSection>,
+}
+
+/// One `[[layout.workspaces]]` table (design §9.1).
+#[derive(Deserialize, Default)]
+struct WorkspaceLayoutSection {
+    /// `WorkspaceId::as_str()`, e.g. `"chart"`.
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    active_screen: usize,
+    /// v2 topology JSON string (`DockTopology`, design §9.1 schema).
+    #[serde(default)]
+    dock: Option<String>,
+    /// Reserved (design §9.1): fixed-width panel widths. Split ratios live
+    /// in the dock topology; body-internal panes (e.g. SEPA detail 280px)
+    /// are not layout state. Kept so the config shape is stable.
+    #[serde(default)]
+    #[allow(dead_code)] // reserved: no consumer until fixed-width panels land
+    tab_widths: Option<Vec<f32>>,
+}
+
 /// Normalize a raw config language value to the two supported codes ("zh" /
 /// "en"), falling back to "zh" for anything else — including the empty string
 /// produced by `AppConfig::default()` on a parse failure (derive `Default`
@@ -385,22 +441,44 @@ fn load_config() -> FullConfig {
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
 
     match std::fs::read_to_string(&config_path) {
-        Ok(contents) => match toml::from_str(&contents) {
-            Ok(mut cfg) => {
-                tracing::info!(path = %config_path.display(), "config loaded");
-                migrate_legacy_config(&mut cfg, &config_path, &contents);
-                cfg
-            }
-            Err(e) => {
-                tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
-                FullConfig {
-                    app: AppConfig::default(),
-                    screener: ScreenerSection::default(),
-                    watchlist: WatchlistConfig::default(),
-                    llm: LlmSection::default(),
+        Ok(contents) => {
+            // Parse the raw document first so `[layout]` survives: its
+            // nested `[[layout.workspaces]]` array-of-tables cannot be
+            // deserialized into a `Vec` field by toml 0.8's serde
+            // integration (see `layout_section_from_doc`), while the
+            // document-level `Value` keeps them intact.
+            let doc: toml::Value = match toml::from_str(&contents) {
+                Ok(doc) => doc,
+                Err(e) => {
+                    tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
+                    return FullConfig {
+                        app: AppConfig::default(),
+                        screener: ScreenerSection::default(),
+                        watchlist: WatchlistConfig::default(),
+                        llm: LlmSection::default(),
+                        layout: LayoutSection::default(),
+                    };
+                }
+            };
+            match toml::Value::try_into::<FullConfig>(doc.clone()) {
+                Ok(mut cfg) => {
+                    cfg.layout = layout_section_from_doc(&doc);
+                    tracing::info!(path = %config_path.display(), "config loaded");
+                    migrate_legacy_config(&mut cfg, &config_path, &contents);
+                    cfg
+                }
+                Err(e) => {
+                    tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
+                    FullConfig {
+                        app: AppConfig::default(),
+                        screener: ScreenerSection::default(),
+                        watchlist: WatchlistConfig::default(),
+                        llm: LlmSection::default(),
+                        layout: LayoutSection::default(),
+                    }
                 }
             }
-        },
+        }
         Err(e) => {
             tracing::warn!(path = %config_path.display(), error = %e, "config file not found, using defaults");
             FullConfig {
@@ -408,8 +486,42 @@ fn load_config() -> FullConfig {
                 screener: ScreenerSection::default(),
                 watchlist: WatchlistConfig::default(),
                 llm: LlmSection::default(),
+                layout: LayoutSection::default(),
             }
         }
+    }
+}
+
+/// Extract the `[layout]` section from a parsed TOML document (design §9.1).
+/// Manual because toml 0.8's serde deserializer cannot map a *nested*
+/// `[[layout.workspaces]]` array-of-tables into a `Vec<…>` field through
+/// `toml::from_str` — but the document-level `toml::Value` model preserves
+/// them as `Value::Array` of tables, which convert one by one. Mirrors the
+/// hand-built [`save_layout_config`] side. A malformed entry is dropped
+/// (the caller's `resolve_workspaces` then sees a partial list and falls
+/// back to the default layouts).
+fn layout_section_from_doc(doc: &toml::Value) -> LayoutSection {
+    let Some(section) = doc.get("layout").and_then(|v| v.as_table()) else {
+        return LayoutSection::default();
+    };
+    LayoutSection {
+        active_workspace: section
+            .get("active_workspace")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        dock_version: section
+            .get("dock_version")
+            .and_then(|v| v.as_integer())
+            .map(|i| i as u32),
+        workspaces: section
+            .get("workspaces")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.clone().try_into::<WorkspaceLayoutSection>().ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -654,6 +766,200 @@ fn save_theme_config(theme: &str) -> Result<(), String> {
     std::fs::write(&config_path, serialized)
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
+
+/// Resolve the `[layout]` section into the [`Workspaces`] container
+/// (design §9.1/§9.2). Returns `(workspaces, fell_back)`.
+///
+/// Corruption — version mismatch (`dock_version != 2`), unknown workspace
+/// id, duplicate/partial workspace list, bad topology JSON, invalid
+/// topology (fraction out of range / empty leaf / duplicate kind) or an
+/// unknown `active_workspace` — falls back to `Workspaces::default()` with
+/// a warning; the config must never prevent startup (aligns with
+/// `load_config`). A missing `[layout]` section (first run) also returns
+/// the defaults but stays silent (`fell_back = false`).
+fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bool) {
+    use crate::editor::{WorkspaceId, dock_state_from_topology};
+
+    const EXPECTED_IDS: [WorkspaceId; 3] =
+        [WorkspaceId::Chart, WorkspaceId::Screener, WorkspaceId::Sepa];
+
+    let first_run = section.active_workspace.is_none()
+        && section.dock_version.is_none()
+        && section.workspaces.is_empty();
+    if first_run {
+        return (crate::editor::Workspaces::default(), false);
+    }
+
+    let fallback = || {
+        tracing::warn!("[layout] corrupted, using default layouts");
+        (crate::editor::Workspaces::default(), true)
+    };
+
+    if section.dock_version != Some(crate::editor::DOCK_TOPOLOGY_VERSION) {
+        tracing::warn!(
+            version = ?section.dock_version,
+            expected = crate::editor::DOCK_TOPOLOGY_VERSION,
+            "[layout] dock_version mismatch, using default layouts"
+        );
+        return fallback();
+    }
+
+    // The stored list must contain exactly the three known workspaces — a
+    // partial or reordered list is treated as corrupted (design §9.1).
+    let mut ids: Vec<WorkspaceId> = Vec::new();
+    for ws in &section.workspaces {
+        let Some(id) = WorkspaceId::from_str(&ws.id) else {
+            tracing::warn!(id = %ws.id, "[layout] unknown workspace id, using default layouts");
+            return fallback();
+        };
+        ids.push(id);
+    }
+    let mut sorted = ids.clone();
+    sorted.sort_by_key(|id| id.as_str());
+    sorted.dedup();
+    if ids.len() != EXPECTED_IDS.len() || sorted.len() != EXPECTED_IDS.len() {
+        tracing::warn!(
+            count = ids.len(),
+            "[layout] workspace list incomplete/duplicated, using default layouts"
+        );
+        return fallback();
+    }
+
+    let mut all = Vec::new();
+    let mut active = None;
+    for (i, ws) in section.workspaces.iter().enumerate() {
+        let id = WorkspaceId::from_str(&ws.id).expect("validated above");
+        if !EXPECTED_IDS.contains(&id) {
+            tracing::warn!(id = ?id, "[layout] unexpected workspace, using default layouts");
+            return fallback();
+        }
+        if Some(ws.id.as_str()) == section.active_workspace.as_deref() {
+            active = Some(i);
+        }
+        let dock_state = match ws.dock.as_deref() {
+            Some(json) => {
+                let topo = match serde_json::from_str::<crate::editor::DockTopology>(json) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!(id = %ws.id, error = %e, "[layout] bad dock topology JSON, using default layouts");
+                        return fallback();
+                    }
+                };
+                if let Err(e) = topo.validate() {
+                    tracing::warn!(id = %ws.id, error = %e, "[layout] invalid dock topology, using default layouts");
+                    return fallback();
+                }
+                dock_state_from_topology(&topo)
+            }
+            None => {
+                tracing::warn!(id = %ws.id, "[layout] missing dock entry, using default layouts");
+                return fallback();
+            }
+        };
+        all.push(crate::editor::Workspace {
+            id,
+            layouts: vec![crate::editor::ScreenLayout {
+                dock_state,
+                active_tab: None,
+            }],
+            active_screen: ws.active_screen,
+        });
+    }
+    let Some(active_idx) = active else {
+        tracing::warn!(
+            active = ?section.active_workspace,
+            "[layout] active_workspace unknown, using default layouts"
+        );
+        return fallback();
+    };
+    (
+        crate::editor::Workspaces {
+            all,
+            active: active_idx,
+        },
+        false,
+    )
+}
+
+/// Persist the `[layout]` section of config.toml (design §9.2): read-modify-
+/// write, mirrors [`save_theme_config`]; `dock` entries are v2 topology JSON
+/// strings (design §9.1). A workspace whose tree fails to extract (degenerate
+/// empty state) is skipped rather than persisted — the load side treats a
+/// missing `dock` as corrupted and falls back to the default layout.
+fn save_layout_config(workspaces: &crate::editor::Workspaces) -> Result<(), String> {
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    let mut doc = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents
+            .parse::<toml::Value>()
+            .map_err(|e| format!("failed to parse config.toml: {e}"))?,
+        Err(_) => toml::Value::Table(Default::default()),
+    };
+
+    let mut layout = toml::map::Map::new();
+    let active_id = workspaces
+        .all
+        .get(workspaces.active)
+        .map(|w| w.id.as_str())
+        .unwrap_or("chart");
+    layout.insert(
+        "active_workspace".to_string(),
+        toml::Value::String(active_id.to_string()),
+    );
+    layout.insert(
+        "dock_version".to_string(),
+        toml::Value::Integer(crate::editor::DOCK_TOPOLOGY_VERSION as i64),
+    );
+    let mut ws_array = Vec::new();
+    for ws in &workspaces.all {
+        let mut t = toml::map::Map::new();
+        t.insert(
+            "id".to_string(),
+            toml::Value::String(ws.id.as_str().to_string()),
+        );
+        t.insert(
+            "active_screen".to_string(),
+            toml::Value::Integer(ws.active_screen as i64),
+        );
+        if let Some(topo) = ws
+            .layouts
+            .get(ws.active_screen)
+            .and_then(|s| crate::editor::extract_topology(&s.dock_state))
+        {
+            let json = serde_json::to_string(&topo)
+                .map_err(|e| format!("failed to serialize layout topology: {e}"))?;
+            t.insert("dock".to_string(), toml::Value::String(json));
+        }
+        ws_array.push(toml::Value::Table(t));
+    }
+    layout.insert("workspaces".to_string(), toml::Value::Array(ws_array));
+    doc.as_table_mut()
+        .expect("value is a table")
+        .insert("layout".to_string(), toml::Value::Table(layout));
+
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&config_path, serialized)
+        .map_err(|e| format!("failed to write config.toml: {e}"))
+}
+
+/// Fingerprint of the active workspace topology (design §9.2): egui_dock
+/// 0.21.1's `show_inside` returns `()` — there is no layout-change event
+/// (the plan's `DockStateChange` was a pre-0.21 assumption; A1 correction),
+/// so a frame-end string compare detects edits (drag/close/move). The
+/// serialization is topology-only and tiny.
+fn layout_fingerprint(workspaces: &crate::editor::Workspaces) -> Option<String> {
+    let active = workspaces.all.get(workspaces.active)?;
+    let screen = active.layouts.get(active.active_screen)?;
+    crate::editor::extract_topology(&screen.dock_state)
+        .map(|t| serde_json::to_string(&t).expect("topology serializes"))
+}
+
 ///
 /// The UI crate stays free of business-crate dependencies; the binary adapts
 /// its own row type through projection functions.
@@ -852,6 +1158,10 @@ struct CompassApp {
     /// Current UI language (`"zh"` | `"en"`), mirroring the process-global
     /// rust-i18n locale so the toolbar dropdown can render the selection.
     language: String,
+    /// Last persisted layout fingerprint (design §9.2): a frame-end compare
+    /// against `layout_fingerprint` detects dock edits (egui_dock 0.21 has
+    /// no layout-change event) and persists once per edit burst.
+    layout_fp: Option<String>,
 }
 
 impl eframe::App for CompassApp {
@@ -900,13 +1210,13 @@ impl eframe::App for CompassApp {
             // workspace hold methods the tree in memory; phase 4 persists it.
             let active = self.workspaces.active;
             let active_screen = self.workspaces.all[active].active_screen;
+            // The salt keys on the stable workspace id (phase-4 persistence:
+            // config load can reorder the vector, so indices are not stable
+            // identifiers — review 26b1a84c P3-4).
+            let dock_id = self.workspaces.all[active].id;
             let dock = &mut self.workspaces.all[active].layouts[active_screen].dock_state;
-            // Phase-4 note (review 26b1a84c P3-4): the salt keys on
-            // workspace/screen *indices* — fine while phase 3 keeps a fixed
-            // set, but config loading may reorder vectors; switch to stable
-            // ids (WorkspaceId) when persistence lands.
             DockArea::new(dock)
-                .id(egui::Id::new(("compass-dock", active, active_screen)))
+                .id(egui::Id::new(("compass-dock", dock_id)))
                 .style(self.dock_style.clone())
                 .show_inside(
                     ui,
@@ -940,6 +1250,20 @@ impl eframe::App for CompassApp {
             // modal) after the dock render, same channel pattern.
             if let Some(action) = watchlist_action {
                 self.handle_watchlist_action(action, ui.ctx().input(|i| i.time));
+            }
+
+            // Phase 4 (design §9.2): unprompted dock edits (drag/close/move)
+            // have no change event in egui_dock 0.21 — a frame-end compare of
+            // the active topology fingerprint persists once per edit burst.
+            // The workspace *switches* save immediately (see
+            // `switch_workspace`), so only the in-place edit path lands here.
+            if let Some(fp) = layout_fingerprint(&self.workspaces)
+                && self.layout_fp.as_deref() != Some(fp.as_str())
+            {
+                self.layout_fp = Some(fp);
+                if let Err(e) = save_layout_config(&self.workspaces) {
+                    tracing::warn!(error = %e, "failed to save layout config");
+                }
             }
 
             self.toast.render(ui.ctx());
@@ -1489,6 +1813,12 @@ impl CompassApp {
     fn switch_workspace(&mut self, idx: usize, ctx: &egui::Context) {
         if idx < self.workspaces.all.len() && idx != self.workspaces.active {
             self.workspaces.switch(self.workspaces.all[idx].id);
+            // Phase 4 (design §9.2): switching triggers an immediate save —
+            // the new active workspace is what the next launch restores.
+            if let Err(e) = save_layout_config(&self.workspaces) {
+                tracing::warn!(error = %e, "failed to save layout config on workspace switch");
+            }
+            self.layout_fp = layout_fingerprint(&self.workspaces);
             ctx.request_repaint();
         }
     }
@@ -1967,6 +2297,166 @@ default_timeframe = "1w"
             config.app.app.default_symbol,
             AppConfig::default().app.default_symbol
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 4 (design §9.1/§9.2): `[layout]` persistence — resolve/
+    // fingerprint/save round-trip. The config must never block startup:
+    // every corruption path falls back to the default layouts.
+    // ------------------------------------------------------------------
+
+    fn todays_layout_toml(ws: &crate::editor::Workspaces) -> String {
+        let mut doc = toml::map::Map::new();
+        let mut layout = toml::map::Map::new();
+        layout.insert(
+            "active_workspace".to_string(),
+            toml::Value::String("chart".to_string()),
+        );
+        layout.insert("dock_version".to_string(), toml::Value::Integer(2));
+        let mut arr = Vec::new();
+        for w in &ws.all {
+            let mut t = toml::map::Map::new();
+            t.insert(
+                "id".to_string(),
+                toml::Value::String(w.id.as_str().to_string()),
+            );
+            t.insert(
+                "active_screen".to_string(),
+                toml::Value::Integer(w.active_screen as i64),
+            );
+            let topo =
+                crate::editor::extract_topology(&w.layouts[w.active_screen].dock_state).unwrap();
+            t.insert(
+                "dock".to_string(),
+                toml::Value::String(serde_json::to_string(&topo).unwrap()),
+            );
+            arr.push(toml::Value::Table(t));
+        }
+        layout.insert("workspaces".to_string(), toml::Value::Array(arr));
+        doc.insert("layout".to_string(), toml::Value::Table(layout));
+        toml::to_string(&toml::Value::Table(doc)).unwrap()
+    }
+
+    fn parse_layout_section(text: &str) -> crate::LayoutSection {
+        // Through the document-value path (matches `load_config`): the
+        // nested `[[layout.workspaces]]` array-of-tables does not survive a
+        // direct `toml::from_str::<LayoutSection>` (toml 0.8 limitation).
+        let doc: toml::Value = toml::from_str(text).unwrap();
+        crate::layout_section_from_doc(&doc)
+    }
+
+    #[test]
+    fn resolve_workspaces_missing_section_returns_defaults_silently() {
+        let (ws, fell_back) = crate::resolve_workspaces(&crate::LayoutSection::default());
+        assert_eq!(ws.all.len(), 3);
+        assert_eq!(ws.active, 0);
+        assert!(!fell_back, "first run must not warn");
+    }
+
+    #[test]
+    fn resolve_workspaces_roundtrips_saved_layout() {
+        // save_layout_config → parse back → resolve must restore the exact
+        // topology (dirs/fractions/tab sequences) and workspace order.
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let default = crate::editor::Workspaces::default();
+        let res = crate::save_layout_config(&default);
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        res.expect("save_layout_config must succeed");
+        let text = std::fs::read_to_string(tmp.path().join(".config/compass/config.toml")).unwrap();
+        let section: crate::LayoutSection = parse_layout_section(&text);
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        assert!(!fell_back, "saved layout must resolve cleanly");
+        assert_eq!(restored.all.len(), default.all.len());
+        for (a, b) in default.all.iter().zip(restored.all.iter()) {
+            assert_eq!(a.id, b.id);
+            let ta =
+                crate::editor::extract_topology(&a.layouts[a.active_screen].dock_state).unwrap();
+            let tb =
+                crate::editor::extract_topology(&b.layouts[b.active_screen].dock_state).unwrap();
+            assert_eq!(ta, tb, "topology must survive the config round-trip");
+        }
+    }
+
+    #[test]
+    fn resolve_workspaces_version_mismatch_falls_back() {
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.dock_version = Some(99);
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back);
+        assert_eq!(ws.active, 0);
+        assert_eq!(ws.all.len(), 3);
+    }
+
+    #[test]
+    fn resolve_workspaces_corrupt_dock_json_falls_back() {
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.workspaces[0].dock = Some(r#"{"root":{"split":{"tabs":[]}}}"#.to_string());
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "bad dock JSON must fall back");
+        assert_eq!(ws.active, 0);
+    }
+
+    #[test]
+    fn resolve_workspaces_bad_fraction_and_unknown_id_fall_back() {
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        // Invalid fraction (NaN is unrepresentable in TOML; use 2.0).
+        section.workspaces[0].dock = Some(
+            r#"{"root":{"split":{"dir":"vertical","fraction":2.0,
+                 "a":{"leaf":{"tabs":["watchlist"]}},"b":{"leaf":{"tabs":["chart"]}}}}}"#
+                .to_string(),
+        );
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "out-of-range fraction must fall back");
+
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.workspaces[0].id = "bogus".to_string();
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "unknown workspace id must fall back");
+
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.active_workspace = Some("bogus".to_string());
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "unknown active_workspace must fall back");
+    }
+
+    #[test]
+    fn layout_fingerprint_changes_after_dock_edit() {
+        // The frame-end save trigger (design §9.2): a topology edit changes
+        // the fingerprint; a no-op leaves it unchanged.
+        let mut ws = crate::editor::Workspaces::default();
+        let fp0 = crate::layout_fingerprint(&ws).expect("default fingerprint");
+        assert_eq!(crate::layout_fingerprint(&ws).unwrap(), fp0, "stable");
+
+        // Simulate the ⋮ 添加编辑器 re-open path: add a Screener tab to the
+        // active (chart) workspace — the topology must change.
+        let idx = ws.active;
+        let screen = ws.all[idx].active_screen;
+        ws.all[idx].layouts[screen]
+            .dock_state
+            .push_to_focused_leaf(crate::tabs::Tab::new(crate::editor::EditorKind::Screener));
+        let fp1 = crate::layout_fingerprint(&ws).expect("edited fingerprint");
+        assert_ne!(fp0, fp1, "adding a tab must change the fingerprint");
     }
 
     #[test]
@@ -5016,6 +5506,7 @@ default_timeframe = "1w"
                 symbols: vec!["000001".to_string()],
             },
             llm: LlmSection::default(),
+            layout: crate::LayoutSection::default(),
         };
         // The parent of the config path is a regular file → create_dir_all /
         // write must fail.

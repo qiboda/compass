@@ -210,7 +210,7 @@ pub static EDITOR_REGISTRY: [EditorDescriptor; 6] = [
 // ---------------------------------------------------------------------------
 
 /// Workspace identifier — persisted as `"chart"` / `"screener"` / `"sepa"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceId {
     Chart,
@@ -236,6 +236,27 @@ impl WorkspaceId {
             Self::Chart => egui_phosphor::regular::CHART_LINE,
             Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
             Self::Sepa => egui_phosphor::regular::GAUGE,
+        }
+    }
+
+    /// Stable config string (`[layout] active_workspace` / `[[layout.
+    /// workspaces]] id`, design §9.1) — matches the serde snake_case names.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Chart => "chart",
+            Self::Screener => "screener",
+            Self::Sepa => "sepa",
+        }
+    }
+
+    /// Parse a config string back into a [`WorkspaceId`]; `None` for unknown
+    /// ids (the caller then falls back to the default layout, design §9.1).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "chart" => Some(Self::Chart),
+            "screener" => Some(Self::Screener),
+            "sepa" => Some(Self::Sepa),
+            _ => None,
         }
     }
 }
@@ -394,6 +415,221 @@ fn focus_main_leaf(tree: &mut egui_dock::Tree<Tab>, kind: EditorKind) {
         // Record the invariant so a future caller cannot silently regress
         // to the logger-focus bug (review 28e54c4f P3-4).
         debug_assert!(false, "focus_main_leaf: kind {kind:?} missing from layout");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dock topology persistence (design §9.1, dock_version = 2)
+// ---------------------------------------------------------------------------
+
+/// Topology format version (design §9.1): single source of truth lives in
+/// the TOML `[layout] dock_version` key. `!= 2` (missing/older/future)
+/// falls back to `Workspaces::default()` with a warning — v1 (egui_dock
+/// native `DockState<Tab>` JSON) was never released, so there is no
+/// migration code. Bump this whenever the JSON shape changes.
+pub const DOCK_TOPOLOGY_VERSION: u32 = 2;
+
+/// Serialized dock topology (design §9.1): a recursive split/leaf tree
+/// carrying only split direction, the a-side fractional share and leaf tab
+/// sequences. No egui types inside — this deliberately sidesteps
+/// egui_dock#197 (`Rect::NOTHING` = ±inf serializes as `null`, at
+/// `dock_state/tree/node/mod.rs:145`, breaking any direct `DockState`
+/// round-trip; https://github.com/anhosh/egui_dock/issues/197, still
+/// unfixed in 0.21.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DockTopology {
+    pub root: DockNode,
+}
+
+/// Recursive topology node. Externally tagged by serde, so `Split`
+/// serializes as `{"split":{"dir":..,"fraction":..,"a":..,"b":..}}` and
+/// `Leaf` as `{"leaf":{"tabs":[..]}}` (design §9.1 schema — `lowercase`
+/// because the design pins the tag names in lowercase).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockNode {
+    Split {
+        dir: DockDir,
+        fraction: f32,
+        a: Box<DockNode>,
+        b: Box<DockNode>,
+    },
+    Leaf {
+        tabs: Vec<EditorKind>,
+    },
+}
+
+/// Split orientation (design §9.1): `Horizontal` = a left / b right,
+/// `Vertical` = a top / b bottom; `fraction` is always the **a-side** share
+/// — the same semantics as egui_dock `Split{fraction}` ("fraction taken by
+/// the top child", `node/split.rs:14`; verified against the renderer
+/// `dock_area/show/mod.rs`), so rebuild needs no complement transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DockDir {
+    Horizontal,
+    Vertical,
+}
+
+impl DockTopology {
+    /// Validate a parsed topology (design §9.1): every fraction strictly
+    /// inside `(0.0, 1.0)` and finite (egui_dock drags never produce real
+    /// 0/1; NaN/out-of-range = corrupted), every leaf non-empty (`Node::Empty`
+    /// is a closed/deleted intermediate state — never persisted), and no
+    /// duplicate editor kind within a workspace (each kind has exactly one
+    /// editor instance, design §4.5; a duplicated tab would render the same
+    /// instance twice into clashing ids).
+    pub fn validate(&self) -> Result<(), String> {
+        fn walk(node: &DockNode, kinds: &mut Vec<EditorKind>) -> Result<(), String> {
+            match node {
+                DockNode::Leaf { tabs } => {
+                    if tabs.is_empty() {
+                        return Err("empty leaf in topology".to_string());
+                    }
+                    kinds.extend(tabs.iter().copied());
+                    Ok(())
+                }
+                DockNode::Split {
+                    dir: _,
+                    fraction,
+                    a,
+                    b,
+                } => {
+                    if !fraction.is_finite() || !(0.0 < *fraction && *fraction < 1.0) {
+                        return Err(format!("fraction out of range (0,1): {fraction}"));
+                    }
+                    walk(a, kinds)?;
+                    walk(b, kinds)
+                }
+            }
+        }
+        let mut kinds = Vec::new();
+        walk(&self.root, &mut kinds)?;
+        let mut seen = std::collections::HashSet::new();
+        if let Some(dup) = kinds.iter().find(|k| !seen.insert(**k)) {
+            return Err(format!("duplicate editor kind in topology: {dup:?}"));
+        }
+        Ok(())
+    }
+}
+
+/// Extract the visual topology of the main surface (design §9.1): only
+/// split directions, fractions and leaf tab sequences are kept; runtime
+/// state (rects, viewports, focus, active tab) is deliberately dropped.
+/// Returns `None` when the tree is a degenerate empty/Empty state — the
+/// caller then skips saving rather than persisting an unusable topology.
+pub fn extract_topology(dock_state: &DockState<Tab>) -> Option<DockTopology> {
+    let tree = dock_state
+        .get_surface(egui_dock::SurfaceIndex::main())?
+        .node_tree()?;
+    let root = tree.root_node()?;
+    extract_node(tree, egui_dock::NodeIndex::root(), root).map(|root| DockTopology { root })
+}
+
+fn extract_node(
+    tree: &egui_dock::Tree<Tab>,
+    idx: egui_dock::NodeIndex,
+    node: &egui_dock::Node<Tab>,
+) -> Option<DockNode> {
+    match node {
+        egui_dock::Node::Empty => None,
+        egui_dock::Node::Leaf(leaf) => {
+            let tabs = leaf.tabs.iter().map(|t| t.kind()).collect::<Vec<_>>();
+            if tabs.is_empty() {
+                None
+            } else {
+                Some(DockNode::Leaf { tabs })
+            }
+        }
+        egui_dock::Node::Horizontal(split) => {
+            let a = extract_node(tree, idx.left(), &tree[idx.left()])?;
+            let b = extract_node(tree, idx.right(), &tree[idx.right()])?;
+            Some(DockNode::Split {
+                dir: DockDir::Horizontal,
+                fraction: split.fraction,
+                a: Box::new(a),
+                b: Box::new(b),
+            })
+        }
+        egui_dock::Node::Vertical(split) => {
+            let a = extract_node(tree, idx.left(), &tree[idx.left()])?;
+            let b = extract_node(tree, idx.right(), &tree[idx.right()])?;
+            Some(DockNode::Split {
+                dir: DockDir::Vertical,
+                fraction: split.fraction,
+                a: Box::new(a),
+                b: Box::new(b),
+            })
+        }
+    }
+}
+
+/// Rebuild a `DockState` from a persisted topology (design §9.1): mirrors
+/// egui_dock's forward split construction — the a-side tab sequence is
+/// seeded into the leaf first, then `split_right`/`split_below` attach the
+/// b-side as a new leaf with the fraction interpreted as the **a-side**
+/// share (verified: `Tree::split` keeps `old` in the a slot for
+/// `Split::Right`/`Split::Below`, `tree/mod.rs` around :497-527). The
+/// rebuilt arena differs from a user-dragged one but is visually
+/// identical; runtime state starts fresh (`active_tab` = None, design §9.1:
+/// "切回 workspace 即重建" semantics).
+pub fn dock_state_from_topology(topo: &DockTopology) -> DockState<Tab> {
+    let mut dock = DockState::new(Vec::new());
+    grow_node(&mut dock, egui_dock::NodeIndex::root(), &topo.root);
+    dock
+}
+
+/// Grow the tree from `idx`: the leaf at `idx` must currently exist (it is
+/// seeded with the *a-side* tab sequence beforehand by the split step), and
+/// after splitting the recursion continues into both children — each of
+/// which holds exactly its own subtree's pre-order tab sequence.
+fn grow_node(dock: &mut DockState<Tab>, idx: egui_dock::NodeIndex, node: &DockNode) {
+    let tree = dock.main_surface_mut();
+    match node {
+        DockNode::Leaf { tabs } => {
+            // The leaf is already seeded with exactly these tabs; setting
+            // them again makes the invariant airtight (cheap).
+            let leaf = tree.leaf_mut(idx).expect("grow_node: leaf position");
+            leaf.tabs = tabs.iter().map(|k| Tab::new(*k)).collect();
+        }
+        DockNode::Split {
+            dir,
+            fraction,
+            a,
+            b,
+        } => {
+            let a_tabs = preorder_kinds(a);
+            let b_tabs = preorder_kinds(b);
+            let leaf = tree
+                .leaf_mut(idx)
+                .expect("grow_node: split position is a leaf");
+            leaf.tabs = a_tabs.iter().map(|k| Tab::new(*k)).collect();
+            let b_tabs = b_tabs.into_iter().map(Tab::new).collect();
+            match dir {
+                DockDir::Horizontal => {
+                    tree.split_right(idx, *fraction, b_tabs);
+                }
+                DockDir::Vertical => {
+                    tree.split_below(idx, *fraction, b_tabs);
+                }
+            }
+            grow_node(dock, idx.left(), a);
+            grow_node(dock, idx.right(), b);
+        }
+    }
+}
+
+/// Pre-order kind sequence of a node: for a split this is a's sequence
+/// followed by b's — exactly the order leaves appear visually (left/top
+/// first) and the order `extract_topology` emits.
+fn preorder_kinds(node: &DockNode) -> Vec<EditorKind> {
+    match node {
+        DockNode::Leaf { tabs } => tabs.clone(),
+        DockNode::Split { a, b, .. } => {
+            let mut out = preorder_kinds(a);
+            out.extend(preorder_kinds(b));
+            out
+        }
     }
 }
 
@@ -1115,10 +1351,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // ScreenLayout(→ DockState<Tab>) serde round-trip：阶段 4 布局持久化
-    // 的类型层前置。树形态复刻 main.rs:156-174（Chart+Market+Sepa 顶层，
-    // root 下 split Logger 0.75 / Screener 0.5）——未来提取到
-    // default_layout 后该形态必可持久化。
+    // ScreenLayout / topology persistence（设计 §9.1）：树形态复刻
+    // 旧内联布局（Chart+Market+Sepa 顶层，root 下 split Logger 0.75 /
+    // Screener 0.5）——直接 DockState serde 因上游 #197 弃用，持久化
+    // 走 DockTopology 提取/重建（见下方 topology_* 测试组）。
     // ------------------------------------------------------------------
 
     fn chart_engineered_layout() -> ScreenLayout {
@@ -1147,26 +1383,140 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Dock topology (design §9.1, dock_version=2): the phase-4 persistence
+    // contract. The direct `DockState<Tab>` serde path is *deliberately*
+    // abandoned (egui_dock#197: `Rect::NOTHING` = ±inf serializes as null;
+    // still unfixed in 0.21.1) — persistence goes through `DockTopology`,
+    // which carries only dir/fraction/tabs.
+    // ------------------------------------------------------------------
+
     #[test]
-    #[ignore = "egui_dock#197 upstream bug: Rect::NOTHING(±inf) serialized as null by serde_json; \
-                phase 4 fix via custom topology serde or dock upgrade, then un-ignore"]
-    fn screen_layout_serde_roundtrip_preserves_tree() {
-        // 往返字节等价 = 树结构 + split 比例 + tab 身份全部无损。
-        // 已知上游阻塞：egui_dock 0.20.1 + serde_json 下 DockState<Tab>
-        // round-trip 崩溃（invalid type: null, expected f32）——新节点 rect
-        // 初始为 Rect::NOTHING(±∞)，serde_json 将其序列化为 null。
-        // 上游同源: https://github.com/anhosh/egui_dock/issues/197
-        // 阶段 4 修复路径（二选一，届时评估）:
-        //   ① 升级 egui_dock（需查上游修复版本与 egui 兼容性）
-        //   ② ScreenLayout 自定义 serde 仅持久化拓扑（rect/viewport 为运行期缓存）
-        // 修复后移除 #[ignore] 恢复本测试。
-        let original = chart_engineered_layout();
-        let json = serde_json::to_string(&original).unwrap();
-        let parsed: ScreenLayout = serde_json::from_str(&json).unwrap();
+    fn topology_default_layouts_roundtrip_preserves_structure() {
+        // extract → rebuild → extract must be exactly equal for all three
+        // default layouts: split directions, fractions (a-side share) and
+        // leaf tab sequences are lossless.
+        for id in [WorkspaceId::Chart, WorkspaceId::Screener, WorkspaceId::Sepa] {
+            let dock = Workspaces::default_layout(id);
+            let topo = extract_topology(&dock)
+                .unwrap_or_else(|| panic!("default {id:?} layout must extract"));
+            assert!(
+                topo.validate().is_ok(),
+                "default {id:?} topology must validate: {:?}",
+                topo.validate()
+            );
+            let rebuilt = dock_state_from_topology(&topo);
+            let topo2 = extract_topology(&rebuilt)
+                .unwrap_or_else(|| panic!("rebuilt {id:?} layout must extract"));
+            assert_eq!(topo, topo2, "topology round-trip lost structure for {id:?}");
+        }
+    }
+
+    #[test]
+    fn topology_chart_matches_design_schema_example() {
+        // The Chart default tree must serialize exactly into the shape the
+        // design §9.1 example documents (external tag + field names +
+        // snake_case dir + a-side fraction), pinning the persisted schema.
+        let dock = Workspaces::default_layout(WorkspaceId::Chart);
+        let topo = extract_topology(&dock).expect("chart layout");
+        let json = serde_json::to_string(&topo).expect("chart topology serializes");
+        let expected: DockTopology = serde_json::from_str(
+            r#"{"root":{"split":{"dir":"vertical","fraction":0.75,
+                  "a":{"split":{"dir":"horizontal","fraction":0.25,
+                       "a":{"leaf":{"tabs":["watchlist"]}},
+                       "b":{"leaf":{"tabs":["chart"]}}}},
+                  "b":{"leaf":{"tabs":["logger"]}}}}}"#,
+        )
+        .expect("design §9.1 example parses");
+        assert_eq!(topo, expected);
         assert_eq!(
-            serde_json::to_string(&parsed).unwrap(),
+            serde_json::to_string(&expected).unwrap(),
             json,
-            "ScreenLayout round-trip 不保真：树/fraction 在持久化中丢失 → 阶段 4 无法恢复布局"
+            "serialized shape must match the design §9.1 example exactly"
+        );
+    }
+
+    #[test]
+    fn topology_validation_rejects_bad_fraction() {
+        // (0.0, 1.0) exclusive: 0/1 endpoints (egui_dock drags never produce
+        // real ones), NaN and out-of-range values are all corrupted.
+        for bad in [0.0, 1.0, -0.1, 1.5, f32::NAN, f32::INFINITY] {
+            let topo = DockTopology {
+                root: DockNode::Split {
+                    dir: DockDir::Vertical,
+                    fraction: bad,
+                    a: Box::new(DockNode::Leaf {
+                        tabs: vec![EditorKind::Chart],
+                    }),
+                    b: Box::new(DockNode::Leaf {
+                        tabs: vec![EditorKind::Logger],
+                    }),
+                },
+            };
+            assert!(topo.validate().is_err(), "fraction {bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn topology_validation_rejects_empty_leaf_and_duplicate_kinds() {
+        let empty_leaf = DockTopology {
+            root: DockNode::Leaf { tabs: vec![] },
+        };
+        assert!(
+            empty_leaf.validate().is_err(),
+            "empty leaf must be rejected (Node::Empty intermediate state)"
+        );
+
+        let dup = DockTopology {
+            root: DockNode::Split {
+                dir: DockDir::Vertical,
+                fraction: 0.5,
+                a: Box::new(DockNode::Leaf {
+                    tabs: vec![EditorKind::Chart],
+                }),
+                b: Box::new(DockNode::Leaf {
+                    tabs: vec![EditorKind::Chart],
+                }),
+            },
+        };
+        assert!(
+            dup.validate().is_err(),
+            "duplicate editor kind must be rejected (one instance per kind, design §4.5)"
+        );
+    }
+
+    #[test]
+    fn topology_corrupt_json_errors_not_panics() {
+        // Corrupted [layout] dock strings must be a serde Err — never a
+        // panic on the startup path (design §9.1: fall back to defaults).
+        assert!(serde_json::from_str::<DockTopology>("").is_err());
+        assert!(serde_json::from_str::<DockTopology>(r#"{"root":null}"#).is_err());
+        assert!(
+            serde_json::from_str::<DockTopology>(r#"{"root":{"split":{"tabs":[]}}}"#).is_err(),
+            "split without dir/fraction must Err"
+        );
+        assert!(
+            serde_json::from_str::<DockTopology>(r#"{"root":{"leaf":{"tabs":["bogus"]}}}"#)
+                .is_err(),
+            "unknown EditorKind string must Err"
+        );
+    }
+
+    #[test]
+    fn topology_rebuild_handles_engineered_layout() {
+        // The historical inline layout (Chart/Market/Sepa top + Logger 0.75
+        // + Screener 0.5 below) round-trips through the topology path — the
+        // guard that used to be `screen_layout_serde_roundtrip_preserves_tree`.
+        // (Direct `DockState<Tab>` serde stays off the persistence path:
+        // egui_dock#197, https://github.com/anhosh/egui_dock/issues/197.)
+        let original = chart_engineered_layout();
+        let topo = extract_topology(&original.dock_state).expect("engineered layout");
+        topo.validate().expect("engineered topology valid");
+        let rebuilt = dock_state_from_topology(&topo);
+        let topo2 = extract_topology(&rebuilt).expect("rebuilt engineered layout");
+        assert_eq!(
+            topo, topo2,
+            "topology round-trip 不保真：树/fraction/tab 序列在持久化中丢失 → 阶段 4 无法恢复布局"
         );
     }
 

@@ -73,6 +73,9 @@ workspace:
   screener: 选股
   sepa: SEPA复盘
 
+layout:
+  fallback: 布局配置无效，已恢复默认布局
+
 statusbar:
   loading: 加载中…
   source: "本地数据源 · %{count} 只"

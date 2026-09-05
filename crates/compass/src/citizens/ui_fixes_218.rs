@@ -137,6 +137,7 @@ pub(crate) fn build_compass_app_with_timeframe(
         delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
         startup_modal_shown: false,
         language: "zh".to_string(),
+        layout_fp: None,
     }
 }
 

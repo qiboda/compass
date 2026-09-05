@@ -75,6 +75,9 @@ workspace:
   screener: Screener
   sepa: SEPA Review
 
+layout:
+  fallback: Layout config invalid; default layout restored
+
 statusbar:
   loading: Loading...
   source: "Local data · %{count} symbols"
