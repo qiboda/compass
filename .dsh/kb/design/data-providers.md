@@ -180,14 +180,15 @@ CREATE TABLE IF NOT EXISTS index_basic (
   （JSONP 包装，`data` 字段 `;` 分隔），年循环 2007→当前年、空年提前终止；
   7 字段列序为 `日期,开,高,低,收,量,额`（与东财 `开,收,高,低` **不同**，解析时重排为
   东财序再复用 `_kline_records`）。同花顺段受 #277 连续失败快速终止保护。
-- **腾讯回退（issue #278/#286）**：官方指数优先东财 push2his；东财失败/empty 时自动切腾讯
+- **腾讯主源 + 东财备用（issue #278/#286 起步；issue #354 反向）**：官方指数优先腾讯
   `web.ifzq.gtimg.cn/appstock/app/newfqkline/get`（count≤2000，end 日期反向分页拉全历史；
   day 行 11 字段，index 8 为成交额（万元），采集时 ×10000 转为元；缺失/畸形金额降级为 0；
-  受 #277 连续失败快速终止保护）。行业板块只走同花顺。
+  受 #277 连续失败快速终止保护）；腾讯失败/empty 时自动切东财 push2his
+  （daily `run()` / `backfill()` / `probe_official()` 三路径同序）。行业板块只走同花顺。
 - **增量**：盘后 `data_updates.last_report_date` 短路跳过；K 线按 symbol 的
   `MAX(trade_date)` 真增量（issue #292）——THS 行业只拉 MAX 年份→今年（MAX 为
-  12-31 时从次年启动）并过滤 `<= MAX` 旧行；官方指数东财 `beg=MAX+1`、腾讯增量
-  翻页遇 `<= MAX` 行即停；新 symbol 自动补全量历史；周末/停牌无新行按成功 no-op
+  12-31 时从次年启动）并过滤 `<= MAX` 旧行；官方指数腾讯增量
+  翻页遇 `<= MAX` 行即停（主源）、东财 `beg=MAX+1`（备用）；新 symbol 自动补全量历史；周末/停牌无新行按成功 no-op
   处理，不触发 fast-fail。
 - **Parquet 布局**：
   - `index_daily.parquet`：`symbol, index_type, tradedate, open, high, low, close, volume, amount, adjclose`
@@ -456,8 +457,7 @@ Rust 采集器（`crates/compass-collectors`）对东财/THS/交易所官网的 
   `fetch_paginated(..., pool=...)`。
 - 接入面：东财 datacenter（balance_sheet / cash_flow / income / fin_indicators /
   block_trade / dragon / institution_survey）、sina lscjfb（main_flow，直连不经
-  proxy_pool）、push2his + THS +
-  腾讯兜底（index_daily）、三大交易所官网（stock_basic_official）。
+  proxy_pool）、腾讯主源 + push2his 备用 + THS（index_daily）、三大交易所官网（stock_basic_official）。
 - `crates/compass-collectors/src/freeproxy.rs`：freeproxy JSON 快照灌库；
   `crates/compass-collectors/src/keepalive.rs`：后台常驻喂源循环（**仅 freeproxy
   json 单源** + 本地 `/tmp/freeproxy.json` 快照兜底——realtime 源依赖 Python
@@ -599,6 +599,7 @@ compass_data_dir = "/data/compass-data/compass_data"
 | main_flow backfill 单股重试（issue #342） | 逐股无重试直取 / **每 symbol 重试 3 次指数退避（2s/4s）** | `retry_sina_backfill` 泛型 runner（退避 `backoff×(1<<attempt)`，与每日 `fetch_symbol_window` 的 `2u64<<attempt` 同公式）；耗尽后整批 strict abort，错误携带 symbol/attempts（`BackfillSymbolFailed`），不写部分 CSV | 与每日路径重试语义一致；瞬时连接错误（2026-08-30 auto-heal bj920837 实证）不再中断整批 `update-database.sh`；strict abort 保证失败可定位、无半成品 | 无限重试或仅 WARN 跳过会掩盖真实断源或留下部分数据 |
 | --since 增量 merge 历史校验（issue #343） | merge 前不检查历史 / **双向 EXCEPT 校验 Dolt `< since` vs parquet `< since`** | `incremental_history_matches`：Dolt 侧 `{date_col}<'{since}'` 经 `run_dolt_sql_parquet` 导出临时 parquet，DuckDB 内存双向 EXCEPT 计数，任一非 0 → 降级 `recover_full_export`（`pre_merge_backup` + 无过滤全量导出 + verify_row_count）；检查必须先于 `<500B` tiny-data skip；merge SQL 外层 `SELECT * EXCLUDE (priority, rn)` | 旧 parquet 可能缺失早于 since 的历史（#343 实证 capital_main_flow Dolt 118097/parquet 49885、institution_survey 325959/325756、财务三表各差 ~2-46 行），行数守卫无法检出；纯历史回补（新增切片 <500B）会被 tiny-data skip 漏掉；`priority`/`rn` 内部列泄漏会毒化后续 merge（先触发 Binder fallback 静默全量） | 全量重导放弃增量性能；仅行数守卫无法发现值过期/孤儿行；检查放在 skip 之后则 auto-heal 纯历史回补场景永远漏检 |
 | main_flow 活跃股过滤与 NULL 行守卫（issue #348） | 全量请求 stock_basic 全部 5908 股（含 354 退市股）/ **按 list_date/delist_date 活跃区间过滤 + 导入 NULL 守卫** | `run()` 与 `backfill()` 共用 `active_symbols(start,end)`：SQL `(list_date IS NULL OR list_date = '' OR CAST(list_date AS DATE) <= end) AND (delist_date IS NULL OR delist_date >= start)`（`.dolt` 缺失时 fallback `["SH600519"]`），显式 `--symbols` 与活跃集交集（保序精确匹配不归一化），交集为空 → Err 含窗口与数量、先于网络/CSV；`import_to_dolt` 追加 `AND main_net_inflow IS NOT NULL`；存量 3042 行 NULL 脏数据已 DELETE 并重建 Parquet | 退市股每次 run/backfill 无效请求（#342 严格失败模式下其一异常即中断整批 auto-heal）；#339 前 EastMoney 全市场截面空值写入残留 NULL 行（Sina 时代不再产生）；Dolt 2.3.1 实测 `CAST('' AS DATE)`=NULL 故 SQL 须显式 `list_date = ''`（空串上市股不被误排） | 退市后历史缺口保守接受（宁可缺数据不要失真，记录为已知边界）；停牌全 0 占位行不在 scope（#339 字段映射口径不变）；run() 调用点接线无行为级测试锁定（记录缺口，另开 issue 跟进） |
+| 官方指数源序（issue #354，取代 #278/#286 的东财优先） | 东财 push2his 优先 + 腾讯兜底 / **腾讯主源 + 东财备用** | 腾讯优先、东财备用，daily `run()`/`backfill()`/`probe_official()` 三路径同序（`decide_official` 纯决策函数统一）；增量窗口任一源应答（含空行）即路径成功，非增量无行即失败，双不可达失败；`SOURCE` 改 `Tencent kline + EastMoney fallback + THS industry kline` | 2026-09-04 实证：东财 push2his 在本环境整体不可达（`client error (SendRequest)`，`curl` 亦 000），`backfill()` 无 Tencent 兜底 → auto-heal 硬失败 `index_daily backfill failed for official SH000001`；腾讯 `web.ifzq.gtimg.cn` 可达；决策 7：只要腾讯成功，任何路径不得因东财不可达失败 | 东财优先让 daily/backfill 依赖故障源，且 backfill 空结果直接 abort；THS 坏代理删除未纳入（决策 6，另行跟进） |
 
 > 注：#306/#308 决策中的 `collectors/main.py sync` 已随 epic #310 迁移为
 > `compass-collectors sync`；`keepalive 实现`/`代理注入粒度` 等历史决策中的 Python
