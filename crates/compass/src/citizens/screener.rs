@@ -259,7 +259,7 @@ impl EditorView for ScreenerPanel {
             }
             if Button::new(
                 &self.form_tokens(),
-                compass_i18n::t!("screener.builder.clear_tooltip"),
+                compass_i18n::t!("screener.builder.clear_action"),
             )
             .size(ButtonSize::Md)
             .show(ui)
@@ -272,6 +272,16 @@ impl EditorView for ScreenerPanel {
     }
 
     /// Body: the results table (6-column semantics unchanged, plan §4.2).
+    ///
+    /// Frame-order note (reviewer P2-1): the old combined `show` consumed the
+    /// LLM result *before* rendering the condition builder, so a merged filter
+    /// card was visible in the same frame. Here `EditorFrame` renders
+    /// header → sidebar (builder) → body, and `consume_llm_result` runs in
+    /// `body`, i.e. after the builder — a freshly merged card appears one
+    /// frame later. This is covered by the `llm_repaint_ctx` keep-alive
+    /// (≤200 ms), and consume must stay in `body` because `sidebar` can be
+    /// hidden by the N key in phase 5 (consume must not depend on sidebar
+    /// visibility). Revisit when EditorCtx converges in phase 3.
     fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
         self.consume_llm_result(ctx.state);
         self.results_area(ui, ctx.state, ctx.signals.work);

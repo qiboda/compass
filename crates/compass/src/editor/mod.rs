@@ -407,6 +407,12 @@ impl EditorFrame {
     ///
     /// Panel order matters inside `show_inside`: top header first, then the
     /// sidebar (if any), then the central body.
+    ///
+    /// Panel ids are salted with `desc.kind`: several editors can render in
+    /// the same frame (e.g. the default workspace has Chart and Screener
+    /// leaves side by side), so a fixed id would clash — egui would draw the
+    /// 🔥 overlap warning in debug builds and, worse, share `PanelState`
+    /// (sidebar widths cross-talking between editors, reviewer P1-1).
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -414,14 +420,14 @@ impl EditorFrame {
         editor: &mut impl EditorView,
         ctx: &mut EditorCtx<'_>,
     ) {
-        egui::Panel::top("editor_header").show(ui, |ui| {
+        egui::Panel::top(egui::Id::new(("editor_header", desc.kind))).show(ui, |ui| {
             editor.header(ui, ctx);
         });
 
         let sidebar = desc.layout.sidebar.as_ref();
         if let Some(side) = sidebar.filter(|_| self.sidebar_visible) {
             let range = egui::Rangef::new(side.width_range.0, side.width_range.1);
-            egui::Panel::left("editor_sidebar")
+            egui::Panel::left(egui::Id::new(("editor_sidebar", desc.kind)))
                 .default_size(side.default_width)
                 .size_range(range)
                 .resizable(true)

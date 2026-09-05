@@ -2465,7 +2465,7 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
-        let _ = harness.get_by_label(&tr("screener.builder.card_title"));
+        harness.get_by_label(&tr("screener.builder.card_title"));
     }
 
     /// The screener header (plan §4.2) shows the result count label; the
@@ -2479,7 +2479,7 @@ default_timeframe = "1w"
         app.shared_state.screener_total.set(3);
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
-        let _ = harness.get_by_label("共 3 只");
+        harness.get_by_label("共 3 只");
     }
 
     /// The body renders the results table with its column headers once rows
@@ -2503,27 +2503,84 @@ default_timeframe = "1w"
             }]);
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
-        let _ = harness.get_by_label(&tr("screener.table.code"));
+        harness.get_by_label(&tr("screener.table.code"));
     }
 
-    /// The sidebar run button (plan §4.2) fires the run path: loading is set
-    /// synchronously before the signal send (same semantics as the old
-    /// combined `show`).
+    /// The sidebar run button (plan §4.2) is intentionally *not* asserted for
+    /// the loading transition here: `run_filter` sends through the real
+    /// wire_backend dispatcher, whose async consumer may flip
+    /// `screener_loading` back to false (error path) before the assert runs —
+    /// a race (reviewer P2-3). The synchronous loading-before-send semantics
+    /// are covered race-free in `screener.rs` mod tests
+    /// (`filter_button_click_sets_loading`, isolated signal slot).
     #[test]
-    fn render_screener_run_button_triggers_loading() {
+    fn render_screener_sidebar_run_button_is_queryable() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
-        harness.get_by_label(&tr("screener.filter")).click();
+        harness.get_by_label(&tr("screener.filter"));
+        harness.get_by_label(&tr("screener.builder.clear_action"));
+    }
+
+    /// The header ⋮ menu (plan §4.2) clears results and the count; the menu
+    /// itself must be openable and its action queryable (design §11 group D).
+    #[test]
+    fn render_screener_header_menu_clears_results() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .screener_result
+            .set(vec![compass_types::ScreenerRow {
+                industry_en: None,
+                symbol: "SH600519".to_string(),
+                name: "贵州茅台".to_string(),
+                latest_price: 10.0,
+                change_20d: 5.0,
+                market_cap: 200.0,
+                industry: "银行".to_string(),
+            }]);
+        app.shared_state.screener_total.set(3);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness
+            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.screener_header.clear_results"))
+            .click();
         harness.step();
         drop(harness);
         assert!(
-            app.shared_state.screener_loading.get(),
-            "run button must set screener_loading before sending the signal"
+            app.shared_state.screener_result.get().is_empty(),
+            "⋮ clear-results must empty the result list"
         );
+        assert_eq!(
+            app.shared_state.screener_total.get(),
+            0,
+            "⋮ clear-results must reset the count label"
+        );
+    }
+
+    /// The header shows the running chip (spinner + weak text) while
+    /// `screener_loading` is set (plan §4.2 — header state feedback).
+    #[test]
+    fn render_screener_header_shows_running_chip() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.screener_loading.set(true);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        // `step` not `run`: the spinner requests repaint every frame and
+        // would blow the max_steps budget.
+        harness.step();
+        harness.get_by_label(&tr("editor.screener_header.running"));
     }
 
     /// The watchlist sidebar toggle was removed from the toolbar with the

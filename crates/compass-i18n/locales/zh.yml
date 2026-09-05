@@ -172,6 +172,7 @@ screener:
     empty_desc: 点击「添加条件」构建筛选，或直接筛选查看全市场
     empty_group: 空分组
     clear_tooltip: 清空条件
+    clear_action: 清空
     delete_tooltip: 删除条件
     negate_tooltip: 取反（排除）
     unknown_shape: 高级条件
