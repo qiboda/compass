@@ -18,7 +18,7 @@ use compass_core::model::AppConfig;
 use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::StockPicker;
 use compass_ui::widgets::toast::ToastManager;
-use egui_citizen::{CitizenId, Dispatcher};
+use egui_citizen::{CitizenId, Registry};
 
 use egui_kittest::kittest::Queryable;
 
@@ -62,7 +62,7 @@ pub(crate) fn build_compass_app_with_timeframe(
     let (work_signal, run_screener_signal, sepa_signal, index_signal, llm_signal, _backend_handle) =
         crate::backend::wire_backend(config, shared_state.clone(), egui_ctx, None);
 
-    let mut dispatcher = Dispatcher::new();
+    let mut dispatcher = Registry::new();
     let registered = crate::dispatcher::register_citizens(&mut dispatcher);
 
     let theme = CompassTheme::compass_dark();

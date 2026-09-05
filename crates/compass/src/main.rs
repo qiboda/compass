@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use egui_citizen::{CitizenId, Dispatcher};
+use egui_citizen::{CitizenId, Registry};
 use egui_dock::DockArea;
 use egui_file_dialog::FileDialog;
 use serde::Deserialize;
@@ -108,7 +108,7 @@ fn main() -> eframe::Result {
             );
 
             // Register citizens
-            let mut dispatcher = Dispatcher::new();
+            let mut dispatcher = Registry::new();
             let registered = dispatcher::register_citizens(&mut dispatcher);
 
             // The theme drives the citizen panel styling (screener components
@@ -804,7 +804,7 @@ struct CompassApp {
     /// per-citizen fields (design §4.5; includes the WatchlistEditor,
     /// which is not a citizen, plan §4.6).
     editors: crate::editor::EditorInstances,
-    dispatcher: Dispatcher,
+    dispatcher: Registry,
     run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
     sepa_signal: egui_mobius::signals::Signal<messages::RunSepaRequest>,
     index_signal: egui_mobius::signals::Signal<messages::RunIndexSnapshotRequest>,
@@ -1595,7 +1595,7 @@ mod tests {
     use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
-    use egui_citizen::{CitizenId, Dispatcher};
+    use egui_citizen::{CitizenId, Registry};
 
     /// Chart-editor-header render closure (`Harness::new_ui`), replaying the
     /// timeframe/adjust/fetch actions through `chart_action` (plan §4.1).
@@ -1754,7 +1754,7 @@ mod tests {
 
     #[test]
     fn citizens_register_and_activate() {
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let registered = crate::dispatcher::register_citizens(&mut dispatcher);
 
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
@@ -3363,7 +3363,7 @@ default_timeframe = "1w"
         use egui_mobius::factory;
 
         let tokens = compass_ui::tokens::ThemeTokens::dark();
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let registered = register_citizens(&mut dispatcher);
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
         let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);

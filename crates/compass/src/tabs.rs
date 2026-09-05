@@ -7,7 +7,7 @@
 //! across the dock layout. Rendering delegates to
 //! [`EditorInstances::get_mut`] + [`EditorFrame`] (design §4.2/§4.5).
 
-use egui_citizen::{CitizenId, Dispatcher};
+use egui_citizen::{CitizenId, Registry};
 use serde::{Deserialize, Serialize};
 
 use crate::editor::{
@@ -65,7 +65,7 @@ impl EditorKind {
 /// The payload switched from `TabKind` to `EditorKind` (plan A3 — phase 3
 /// deleted the transition enum) so dock trees can carry
 /// `EditorKind::Watchlist` leaves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Tab {
     kind: EditorKind,
 }
@@ -117,7 +117,7 @@ use crate::theme::CompassTheme;
 /// stay as explicit fields per plan §5.2's preferred fallback — they are
 /// owner channels written during render and consumed after `show_inside`.
 pub struct TabViewer<'a> {
-    pub dispatcher: &'a mut Dispatcher,
+    pub dispatcher: &'a mut Registry,
     /// All editor instances — the single dispatch container (design §4.5).
     pub editors: &'a mut EditorInstances,
     pub shared_state: &'a SharedState,
@@ -145,6 +145,12 @@ pub struct TabViewer<'a> {
 
 impl egui_dock::TabViewer for TabViewer<'_> {
     type Tab = Tab;
+
+    fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+        // egui_dock 0.21 requires a unique per-tree tab id; kind is unique per
+        // tree (one instance per EditorKind per workspace) and Tab is Hash.
+        egui::Id::new(*tab)
+    }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         format!("{} {}", tab.kind.icon(), t!(tab.title())).into()
@@ -187,7 +193,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
         if response.clicked()
             && let Some(cid) = tab.citizen_id()
         {
-            self.dispatcher.activate(&cid);
+            self.dispatcher.activate(cid);
         }
     }
 }
@@ -350,7 +356,7 @@ mod tests {
         use egui_dock::TabViewer as _;
         use egui_mobius::factory;
 
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let registered = register_citizens(&mut dispatcher);
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
         let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
