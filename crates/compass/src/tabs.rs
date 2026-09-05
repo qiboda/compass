@@ -46,7 +46,6 @@ pub const LOGGER_ID: &str = "logger";
 pub const SCREENER_ID: &str = "screener";
 pub const SEPA_ID: &str = "sepa";
 pub const MARKET_ID: &str = "market";
-pub const WATCHLIST_ID: &str = "watchlist";
 
 // ---------------------------------------------------------------------------
 // TabKind — enum of dockable panel types
@@ -126,14 +125,20 @@ impl EditorKind {
     /// The [`CitizenId`] this editor kind maps to in the dispatcher
     /// (one-hot activation; 1:1 link kept until the citizen layer lands —
     /// friction F6, removed in phase 2).
-    pub fn citizen_id(&self) -> CitizenId {
+    ///
+    /// `None` for kinds that are NOT 1:1 citizens — plan §4.6: the watchlist
+    /// has no registered citizen (it is not a one-hot member); `on_tab_button`
+    /// skips activate for it. Never fabricate an id for an unregistered
+    /// citizen: `Dispatcher::activate` silently deactivates everything when
+    /// the id matches nothing (egui_citizen dispatcher.rs:96-108).
+    pub fn citizen_id(&self) -> Option<CitizenId> {
         match self {
-            Self::Chart => CitizenId::new(CHART_ID),
-            Self::Logger => CitizenId::new(LOGGER_ID),
-            Self::Screener => CitizenId::new(SCREENER_ID),
-            Self::Sepa => CitizenId::new(SEPA_ID),
-            Self::Market => CitizenId::new(MARKET_ID),
-            Self::Watchlist => CitizenId::new(WATCHLIST_ID),
+            Self::Chart => Some(CitizenId::new(CHART_ID)),
+            Self::Logger => Some(CitizenId::new(LOGGER_ID)),
+            Self::Screener => Some(CitizenId::new(SCREENER_ID)),
+            Self::Sepa => Some(CitizenId::new(SEPA_ID)),
+            Self::Market => Some(CitizenId::new(MARKET_ID)),
+            Self::Watchlist => None,
         }
     }
 }
@@ -177,8 +182,9 @@ impl Tab {
         self.kind.icon()
     }
 
-    /// The [`CitizenId`] this tab maps to in the dispatcher.
-    pub fn citizen_id(&self) -> CitizenId {
+    /// The [`CitizenId`] this tab maps to in the dispatcher, if it is a
+    /// 1:1 citizen (`None` for non-citizen kinds like Watchlist, plan §4.6).
+    pub fn citizen_id(&self) -> Option<CitizenId> {
         self.kind.citizen_id()
     }
 }
@@ -255,8 +261,12 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     }
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
-        if response.clicked() {
-            self.dispatcher.activate(&tab.citizen_id());
+        // Skips activate for non-citizen kinds (Watchlist, plan §4.6) — an
+        // unregistered id would silently deactivate every citizen.
+        if response.clicked()
+            && let Some(cid) = tab.citizen_id()
+        {
+            self.dispatcher.activate(&cid);
         }
     }
 }
@@ -376,6 +386,49 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // EditorKind::citizen_id — plan §4.0/§4.6 contract: Option<CitizenId>
+    // (5 one-hot kinds → Some, Watchlist → None; tab activation skips None)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn editor_kind_citizen_id_contract_five_one_hot_kinds_some() {
+        // Each one-hot kind must return Some (registered citizen).
+        let cases = [
+            (EditorKind::Chart, CitizenId::new(CHART_ID)),
+            (EditorKind::Logger, CitizenId::new(LOGGER_ID)),
+            (EditorKind::Screener, CitizenId::new(SCREENER_ID)),
+            (EditorKind::Sepa, CitizenId::new(SEPA_ID)),
+            (EditorKind::Market, CitizenId::new(MARKET_ID)),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(kind.citizen_id(), Some(expected), "{kind:?} must be Some");
+        }
+    }
+
+    #[test]
+    fn editor_kind_watchlist_citizen_id_is_none() {
+        // plan §4.6: watchlist is NOT a 1:1 citizen. Fabricating an id
+        // would make Dispatcher::activate silently deactivate every
+        // registered citizen (egui_citizen dispatcher.rs:96-108).
+        assert_eq!(EditorKind::Watchlist.citizen_id(), None);
+    }
+
+    #[test]
+    fn editor_kind_citizen_id_matches_tabkind_identity() {
+        // Migration guard: EditorKind must keep the exact TabKind citizen
+        // mapping (a drift here flips tab activation semantics).
+        for (editor, legacy) in [
+            (EditorKind::Chart, TabKind::Chart),
+            (EditorKind::Logger, TabKind::Logger),
+            (EditorKind::Screener, TabKind::Screener),
+            (EditorKind::Sepa, TabKind::Sepa),
+            (EditorKind::Market, TabKind::Market),
+        ] {
+            assert_eq!(editor.citizen_id(), Some(legacy.citizen_id()));
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Tab::new / Tab::title / Tab::citizen_id
     // ------------------------------------------------------------------
 
@@ -387,7 +440,7 @@ mod tests {
         compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Chart);
         assert_eq!(tr(tab.title()), "图表");
-        assert_eq!(tab.citizen_id(), CitizenId::new(CHART_ID));
+        assert_eq!(tab.citizen_id(), Some(CitizenId::new(CHART_ID)));
     }
 
     #[test]
@@ -398,7 +451,7 @@ mod tests {
         compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Logger);
         assert_eq!(tr(tab.title()), "日志");
-        assert_eq!(tab.citizen_id(), CitizenId::new(LOGGER_ID));
+        assert_eq!(tab.citizen_id(), Some(CitizenId::new(LOGGER_ID)));
     }
 
     #[test]
@@ -409,7 +462,7 @@ mod tests {
         compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Screener);
         assert_eq!(tr(tab.title()), "选股器");
-        assert_eq!(tab.citizen_id(), CitizenId::new(SCREENER_ID));
+        assert_eq!(tab.citizen_id(), Some(CitizenId::new(SCREENER_ID)));
     }
 
     #[test]
@@ -420,7 +473,7 @@ mod tests {
         compass_i18n::set_locale("zh");
         let tab = Tab::new(TabKind::Sepa);
         assert_eq!(tr(tab.title()), "东方SEPA");
-        assert_eq!(tab.citizen_id(), CitizenId::new(SEPA_ID));
+        assert_eq!(tab.citizen_id(), Some(CitizenId::new(SEPA_ID)));
     }
 
     #[test]
