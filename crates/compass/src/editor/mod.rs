@@ -148,10 +148,15 @@ pub static EDITOR_REGISTRY: [EditorDescriptor; 6] = [
         icon: egui_phosphor::regular::FUNNEL_SIMPLE,
         layout: EditorLayout {
             header: HeaderLayout,
+            // Independent sidebar spec (2026-09-05 designer ruling, P1-3):
+            // the condition-builder cards are atomic groups (ref #220,
+            // label+control never wraps) whose widest leaf (`Momentum`)
+            // needs ~470px; min = 470 + 16px panel padding = 486. Default
+            // 500 is the first GROUP_ALIGNMENT_WIDTHS test anchor.
             sidebar: Some(SidebarLayout {
                 default_visible: true,
-                default_width: 240.0,
-                width_range: (200.0, 320.0),
+                default_width: 500.0,
+                width_range: (486.0, 640.0),
             }),
             toolbar: None,
         },
@@ -602,18 +607,31 @@ mod tests {
     }
 
     #[test]
-    fn chart_and_screener_sidebar_spec_follows_contract() {
+    fn chart_sidebar_spec_follows_contract() {
         // Design §4.1: default 240.0 / 200.0..=320.0 — aligned with
         // main.rs:905-913 (pre-migration).
-        for kind in [EditorKind::Chart, EditorKind::Screener] {
-            let desc = EDITOR_REGISTRY
-                .iter()
-                .find(|d| d.kind == kind)
-                .expect("kind in registry");
-            let sb = desc.layout.sidebar.expect("sidebar registered");
-            assert_eq!(sb.default_width, 240.0);
-            assert_eq!(sb.width_range, (200.0, 320.0));
-        }
+        let desc = EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == EditorKind::Chart)
+            .expect("chart in registry");
+        let sb = desc.layout.sidebar.expect("sidebar registered");
+        assert_eq!(sb.default_width, 240.0);
+        assert_eq!(sb.width_range, (200.0, 320.0));
+    }
+
+    #[test]
+    fn screener_sidebar_spec_is_independent() {
+        // 2026-09-05 designer ruling (reviewer P1-3): the screener sidebar is
+        // decoupled from the chart spec — condition cards need ≥486px
+        // (widest `Momentum` leaf ≈470px + 16px panel padding), default 500px
+        // is the first GROUP_ALIGNMENT_WIDTHS anchor.
+        let desc = EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == EditorKind::Screener)
+            .expect("screener in registry");
+        let sb = desc.layout.sidebar.expect("sidebar registered");
+        assert_eq!(sb.default_width, 500.0);
+        assert_eq!(sb.width_range, (486.0, 640.0));
     }
 
     // ------------------------------------------------------------------
