@@ -16,8 +16,14 @@
 //! - the toolbar adjust Tag (前复权) is hidden for index/board symbols
 //!   (plan T7) — asserted via the source guard that gates the Tag
 //!
-//! RED vs current code: no Market variant, no market citizen, no i18n keys,
-//! and the adjust Tag renders unconditionally — all assertions below fail.
+//! [migrated, 41923b0/12901bb]: the whole plan surface has landed — the
+//! market tab is `EditorKind::Market` (TabKind deleted), the adjust control
+//! moved into the Chart editor header (chart.rs), and the active i18n key is
+//! the nested `editor.market`. The assertions below were retargeted to the
+//! migrated surface; this file is now a migration guard. The legacy flat
+//! `tab.market` keys (zh.yml:15 / en.yml:17) carry no code reference and are
+//! kept only to avoid breaking third-party consumers — see the policy under
+//! `requirement_editor_architecture.rs` (双风格 yml).
 
 use std::path::{Path, PathBuf};
 
@@ -84,8 +90,14 @@ fn i18n_market_keys_zh_en_symmetric() {
     // Plan T6: index.* i18n 命名空间 zh/en 对称.
     let zh = read_rel("../compass-i18n/locales/zh.yml").expect("compass-i18n zh.yml must exist");
     let en = read_rel("../compass-i18n/locales/en.yml").expect("compass-i18n en.yml must exist");
-    assert!(zh.contains("tab.market:"), "zh.yml must define tab.market");
-    assert!(en.contains("tab.market:"), "en.yml must define tab.market");
+    assert!(
+        zh.contains("  market:"),
+        "zh.yml must define the nested editor.market key (editor: → market:)"
+    );
+    assert!(
+        en.contains("  market:"),
+        "en.yml must define the nested editor.market key (editor: → market:)"
+    );
     assert!(
         zh.lines().any(|l| l.trim_start().starts_with("index:")),
         "zh.yml must define the index.* namespace"

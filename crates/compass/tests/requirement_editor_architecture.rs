@@ -268,7 +268,7 @@ fn chart_workspace_tree_watchlist_left_chart_main_logger_bottom() {
     );
     assert!(
         src.contains("0.75"),
-        "split 比例 0.75 契约（Watchlist/Logger 默认比例，plan A2）"
+        "split 比例契约（plan A2：Watchlist 25% 左 / Chart 主区 75% / Logger 底 25%，split_below fraction = 上/主区子份额）"
     );
     assert!(
         src.contains("Watchlist") && src.contains("Logger"),

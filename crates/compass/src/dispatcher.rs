@@ -131,16 +131,16 @@ mod tests {
         let registered = register_citizens(&mut dispatcher);
 
         let chart_state = dispatcher
-            .get(&CitizenId::new(CHART_ID))
+            .get(CitizenId::new(CHART_ID))
             .expect("chart citizen should be registered");
         let logger_state = dispatcher
-            .get(&CitizenId::new(LOGGER_ID))
+            .get(CitizenId::new(LOGGER_ID))
             .expect("logger citizen should be registered");
         let screener_state = dispatcher
-            .get(&CitizenId::new(SCREENER_ID))
+            .get(CitizenId::new(SCREENER_ID))
             .expect("screener citizen should be registered");
         let sepa_state = dispatcher
-            .get(&CitizenId::new(SEPA_ID))
+            .get(CitizenId::new(SEPA_ID))
             .expect("sepa citizen should be registered");
 
         // Chart is active (one-hot), logger is inactive.

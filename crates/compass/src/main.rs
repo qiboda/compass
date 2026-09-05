@@ -901,6 +901,10 @@ impl eframe::App for CompassApp {
             let active = self.workspaces.active;
             let active_screen = self.workspaces.all[active].active_screen;
             let dock = &mut self.workspaces.all[active].layouts[active_screen].dock_state;
+            // Phase-4 note (review 26b1a84c P3-4): the salt keys on
+            // workspace/screen *indices* — fine while phase 3 keeps a fixed
+            // set, but config loading may reorder vectors; switch to stable
+            // ids (WorkspaceId) when persistence lands.
             DockArea::new(dock)
                 .id(egui::Id::new(("compass-dock", active, active_screen)))
                 .style(self.dock_style.clone())
@@ -2267,6 +2271,26 @@ default_timeframe = "1w"
                 .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Screener))
                 .is_some(),
             "the add-editor menu must re-open the Screener tab on the Chart workspace"
+        );
+        // Landing-leaf guard (review 26b1a84c P2-1): the position-independent
+        // find_tab above still passes when the tab lands in the bottom Logger
+        // leaf (a leftover dock focus). default_layout now re-focuses the
+        // Chart main leaf, so Screener must live in a different leaf than
+        // Logger (same NodeIndex == same leaf).
+        let dock = &harness.state().workspaces.all[active].layouts[screen].dock_state;
+        let tree = dock
+            .get_surface(egui_dock::SurfaceIndex::main())
+            .and_then(|s| s.node_tree())
+            .expect("main surface tree");
+        let (screener_leaf, _) = tree
+            .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Screener))
+            .expect("screener tab present");
+        let (logger_leaf, _) = tree
+            .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Logger))
+            .expect("logger tab present");
+        assert_ne!(
+            screener_leaf, logger_leaf,
+            "add_editor must drop the new tab into the main leaf, not the Logger bottom leaf"
         );
     }
 
