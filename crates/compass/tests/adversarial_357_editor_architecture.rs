@@ -52,7 +52,8 @@
 //!
 //! ## RED / GREEN
 //!   Current tree: every test FAILS (assertion), i.e. RED.
-//!   After phase 0: only `phase0_manifest_enables_egui_dock_serde` passes.
+//!   After phase 0: `phase0_manifest_enables_egui_dock_serde` +
+//!   `tabkind_serde_snake_case_guard` pass (round 2).
 //!   After phase 2f: the three sidebar tests pass.
 //!   After phase 3/4.0: the layout-extraction tests pass.
 
@@ -192,17 +193,24 @@ fn phase2f_render_sidebar_function_removed() {
 // ---------------------------------------------------------------------------
 
 /// RED: #357 — phase 1/3 — the initial dock layout is no longer built inline
-/// in `main.rs` (extracted to `Workspaces::default_layout(id)`).
+/// RED: #357 — phase 3 — initial `DockState` construction leaves main.rs
+/// (extracted to `Workspaces::default_layout(id)`).
 ///
 /// Contract: `main.rs:156-174` (DockState::new + split_below(root, ...))
 /// physically leaves main.rs; the app mounts the active workspace's
 /// dock_state (plan §5.1). A leftover inline construction in main.rs means
 /// workspace switching can never mount per-workspace layouts.
 ///
-/// Expected GREEN: none of `DockState::new(` / `split_below(` /
+/// Phase note (plan §3.1): phase 1 ONLY extracts `default_layout(id)` as a
+/// pure function — "main.rs 仍用旧的内联 DockState，直到阶段 3 切换".
+/// Therefore this guard stays RED through phase 2 and flips GREEN at
+/// phase 3 (workspace container mounts active dock_state). Name was
+/// corrected from phase1_3 → phase3 to match plan §3.1/§5.1 semantics.
+///
+/// Expected GREEN (phase 3+): none of `DockState::new(` / `split_below(` /
 /// `split_left(` / `split_right(` appear in main.rs.
 #[test]
-fn phase1_3_inline_default_layout_extracted() {
+fn phase3_dock_state_construction_leaves_main() {
     let src = main_src();
     for needle in [
         "DockState::new(",
@@ -236,4 +244,75 @@ fn phase40_tab_kind_payload_switched() {
          EditorKind (plan §4.0); the TabKind↔CitizenId 1:1 hard coupling \
          (friction F6) survives otherwise."
     );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.0 A1 前置 — TabKind serde 字符串稳定性守卫（mutation 防护）
+// ---------------------------------------------------------------------------
+
+/// Recursively collect `*.rs` files under `dir`.
+fn collect_rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_files(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// RED: #357 — phase 4.0 A1 — wherever `TabKind` lives, its serde must keep
+/// `#[serde(rename_all = "snake_case")]` + `Serialize`/`Deserialize`.
+///
+/// Contract: persisted tab kind strings must stay stable ("chart",
+/// "screener", …) across the TabKind→EditorKind migration (plan §4.0 A1).
+/// This cannot be a compile-level check from an integration test (compass is
+/// bin-only), so it is a source guard: it scans `src/` for the `TabKind`
+/// enum and asserts the snake_case attribute + derives ride along anywhere
+/// it moves. If a future phase deletes `TabKind` entirely (payload fully
+/// switched to `EditorKind`), the string contract moves to
+/// `editor/mod.rs`'s `editor_kind_serde_exact_snake_case_strings` unit test
+/// and this guard vacates (no object to guard — pass).
+///
+/// Expected GREEN now: tabs.rs keeps `rename_all = "snake_case"` + serde
+/// derives (already true at 8a5ea19+phase-1 landing).
+#[test]
+fn tabkind_serde_snake_case_guard() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rust_files(&src_dir, &mut files);
+    assert!(!files.is_empty(), "no .rs files under src/?!");
+
+    let mut saw_tabkind = false;
+    for file in &files {
+        let src = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("read {}: {e}", file.display()));
+        if !src.contains("pub enum TabKind") {
+            continue;
+        }
+        saw_tabkind = true;
+        assert!(
+            src.contains("rename_all = \"snake_case\""),
+            "RED: `pub enum TabKind` in {} has no `#[serde(rename_all = \
+             \"snake_case\")]` — persisted tab kind strings are not stable \
+             (plan §4.0 A1), layouts saved before the migration stop loading",
+            file.display()
+        );
+        let has_serde_derives = src
+            .lines()
+            .filter(|l| l.contains("derive("))
+            .any(|l| l.contains("Serialize") && l.contains("Deserialize"));
+        assert!(
+            has_serde_derives,
+            "RED: `pub enum TabKind` in {} lost Serialize/Deserialize derives",
+            file.display()
+        );
+    }
+    // TabKind removed entirely → contract vacates (EditorKind strings are
+    // pinned by unit tests inside editor/mod.rs).
+    let _ = saw_tabkind;
 }

@@ -30,6 +30,7 @@ use crate::citizens::logger::LoggerPanel;
 use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
+use crate::editor::EditorKind;
 use crate::messages::{
     FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
 };
@@ -45,6 +46,7 @@ pub const LOGGER_ID: &str = "logger";
 pub const SCREENER_ID: &str = "screener";
 pub const SEPA_ID: &str = "sepa";
 pub const MARKET_ID: &str = "market";
+pub const WATCHLIST_ID: &str = "watchlist";
 
 // ---------------------------------------------------------------------------
 // TabKind — enum of dockable panel types
@@ -52,8 +54,11 @@ pub const MARKET_ID: &str = "market";
 
 /// Identifies which kind of panel a tab represents.
 ///
-/// Maps 1:1 to citizen IDs — each variant has a fixed [`CitizenId`] that
-/// the dispatcher uses for one-hot activation tracking.
+/// Transition enum (plan A3): the `Tab` payload switches to [`EditorKind`]
+/// in phase 1; `TabKind` survives until phase 2 close (F6 hard-coupling
+/// removal), kept for the legacy `TabKind → EditorKind` mapping and the
+/// pre-migration unit tests. It does NOT carry a `Watchlist` variant —
+/// watchlist exists only as `EditorKind::Watchlist`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TabKind {
@@ -64,6 +69,7 @@ pub enum TabKind {
     Market,
 }
 
+#[allow(dead_code)] // transition enum: title/icon/citizen_id kept for legacy tests until phase 2
 impl TabKind {
     /// i18n key of the tab's display title. The rendering consumer
     /// ([`Tab::title`] via the egui_dock `TabViewer`) resolves it via `t!()`
@@ -101,27 +107,74 @@ impl TabKind {
     }
 }
 
+/// Phase-1 mapping: every legacy `TabKind` maps to its `EditorKind`
+/// (plan §3.1 / A3). `Watchlist` has no `TabKind` — it is constructed
+/// directly as `EditorKind::Watchlist`.
+impl From<TabKind> for EditorKind {
+    fn from(value: TabKind) -> Self {
+        match value {
+            TabKind::Chart => Self::Chart,
+            TabKind::Logger => Self::Logger,
+            TabKind::Screener => Self::Screener,
+            TabKind::Sepa => Self::Sepa,
+            TabKind::Market => Self::Market,
+        }
+    }
+}
+
+impl EditorKind {
+    /// The [`CitizenId`] this editor kind maps to in the dispatcher
+    /// (one-hot activation; 1:1 link kept until the citizen layer lands —
+    /// friction F6, removed in phase 2).
+    pub fn citizen_id(&self) -> CitizenId {
+        match self {
+            Self::Chart => CitizenId::new(CHART_ID),
+            Self::Logger => CitizenId::new(LOGGER_ID),
+            Self::Screener => CitizenId::new(SCREENER_ID),
+            Self::Sepa => CitizenId::new(SEPA_ID),
+            Self::Market => CitizenId::new(MARKET_ID),
+            Self::Watchlist => CitizenId::new(WATCHLIST_ID),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Tab — wraps TabKind for egui_dock
+// Tab — wraps EditorKind for egui_dock
 // ---------------------------------------------------------------------------
 
-/// A dockable tab carrying its [`TabKind`].
+/// A dockable tab carrying its [`EditorKind`].
 ///
 /// Used as `DockState<Tab>` and `TabViewer::Tab = Tab` in egui_dock.
+/// The payload switched from `TabKind` in phase 1 (plan A3) so dock trees
+/// can carry `EditorKind::Watchlist` leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tab {
-    kind: TabKind,
+    kind: EditorKind,
 }
 
 impl Tab {
-    /// Create a tab of the given kind.
-    pub fn new(kind: TabKind) -> Self {
-        Self { kind }
+    /// Create a tab of the given kind. Accepts both `EditorKind` directly
+    /// and the transition `TabKind` (via `From<TabKind> for EditorKind`),
+    /// so legacy call sites compile unchanged until phase 2.
+    pub fn new(kind: impl Into<EditorKind>) -> Self {
+        Self { kind: kind.into() }
     }
 
-    /// Human-readable title for the tab bar.
+    /// The [`EditorKind`] this tab carries.
+    #[allow(dead_code)] // consumed by editor/unit tests today; phase 2 dispatch
+    pub fn kind(&self) -> EditorKind {
+        self.kind
+    }
+
+    /// i18n key of the tab's display title (`editor.*` key tree).
     pub fn title(&self) -> &'static str {
-        self.kind.title()
+        self.kind.title_key()
+    }
+
+    /// Phosphor icon glyph shown next to the tab title.
+    #[allow(dead_code)] // kept for parity with title(); phase 2 chrome uses it
+    pub fn icon(&self) -> &'static str {
+        self.kind.icon()
     }
 
     /// The [`CitizenId`] this tab maps to in the dispatcher.
@@ -170,12 +223,12 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.kind {
-            TabKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
-            TabKind::Logger => {
+            EditorKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
+            EditorKind::Logger => {
                 *self.logger_export_clicked =
                     self.logger.show(ui, self.shared_state, self.theme.tokens());
             }
-            TabKind::Screener => self.screener.show(
+            EditorKind::Screener => self.screener.show(
                 ui,
                 self.shared_state,
                 self.run_screener_signal,
@@ -184,13 +237,19 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                 self.screener_boards,
                 self.llm_signal,
             ),
-            TabKind::Sepa => {
+            EditorKind::Sepa => {
                 self.sepa
                     .show(ui, self.shared_state, self.sepa_signal, self.work_signal);
             }
-            TabKind::Market => {
+            EditorKind::Market => {
                 self.market
                     .show(ui, self.shared_state, self.index_signal, self.work_signal);
+            }
+            // Phase-1 placeholder: the Outliner-style watchlist editor lands
+            // in phase 2f (plan §4.6); its leaf only becomes reachable once
+            // the workspaces tie in (phase 3).
+            EditorKind::Watchlist => {
+                ui.label(t!("editor.watchlist"));
             }
         }
     }
@@ -276,7 +335,9 @@ mod tests {
     #[test]
     fn tab_title_delegates_to_key_constant() {
         let tab = Tab::new(TabKind::Chart);
-        assert_eq!(tab.title(), "tab.chart");
+        // Phase 1: Tab payload is EditorKind — title key is the `editor.*`
+        // tree (display value unchanged: tab.chart == editor.chart == 图表).
+        assert_eq!(tab.title(), "editor.chart");
     }
 
     #[test]

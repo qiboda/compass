@@ -12,29 +12,35 @@
 //! 因此本文件采用该先例的 **source-contract 模式**：读 crate 源码 / i18n
 //! 字典文本，断言 plan/design 声明的**接口契约字符串**存在。
 //!
-//! - 当前（阶段 0 未实现）: 全部断言 FAIL → **RED 证据**；
-//! - 实现落地后: 断言 GREEN，且作为「实现确实按契约命名/落地」的守卫。
+//! - 当前（阶段 0 已落地 SHA 8a5ea19）: 阶段 0 / editor.*+workspace.*
+//!   i18n 相关断言 GREEN；后续阶段断言保持 RED → 作为「对应阶段未落地」
+//!   守卫；阶段落地后按其状态重新委派复核。
 //! - 本文件自身**编译恒绿**——不引用任何未存在的符号，不阻塞其余测试编译。
 //!
 //! 字符串断言与契约措辞**逐字一致**（testing.md ref #265 自验可信度要求：
 //! ① fixture/契约逐字一致；② 关键断言 mutation 验证——本文件断言均为
 //! 「契约标识符存在性」，实现若改名/漏改即失败，mutation 有效）。
 //!
-//! ## DEFERRED（接口落地后携带 SHA 重新委派，见代理报告）
+//! ## DEFERRED 状态（阶段 1 落地更新 —— 映射骨架已落地）
 //!
-//! 下列**强编译/行为级**测试无法在接口存在前编译，已作为模板登记在文件
-//! 尾部的 `deferred_templates` 注释块。约定：首个可编译接口 commit
-//! （plan §2.3 —— 阶段 0）后，主 agent 携带该 SHA 重新委派本角色将模板
-//! 落地到 `src/editor/` 的 `#[cfg(test)] mod tests` 与 kittest 集成测试：
-//! ① EditorKind serde round-trip；② EDITOR_REGISTRY 完整性单测；
-//! ③ default_layout 三树结构（DockState 节点遍历）；④ Workspaces::switch
-//! 纯逻辑单测；⑤ DockState<Tab> JSON round-trip + 损坏回退不 panic；
-//! ⑥ workspace 切换 kittest；⑦ N 键 kittest（焦点守卫/无 sidebar no-op/
-//! 默认可见）；⑧ 1/2/3 上下文隔离 kittest。
+//! 模板 ①②（EditorKind serde / EDITOR_REGISTRY 完整性）+ 阶段 1 映射骨架
+//! 已落地（`src/editor/mod.rs`：default_layout 三树 + 结构单测 + switch
+//! 边界单测；`src/tabs.rs`：From<TabKind> 映射 + Tab 载荷 EditorKind +
+//! TabViewer 6 分支），**不再保持 DEFERRED**。
 //!
-//! RED vs current code: 无 editor 模块、无 EditorKind/EditorLayout/注册表/
-//! Workspaces/ScreenLayout、无 [layout] 配置节、无 N 键路由、无 editor.* /
-//! workspace.* i18n 键 — 以下全部断言 FAIL。
+//! 仍保持 DEFERRED（逐一触发条件见文件尾部模板块，随阶段推进更新）:
+//! ④ Workspaces::switch 保存 mark 语义（当前仅翻转 active index）→ 阶段 3
+//! 接线；⑤ DockState<Tab> JSON round-trip + 损坏回退 → 阶段 4（load 路径；
+//! 注意: round-trip 测试当前 `#[ignore]`——egui_dock#197 上游 bug
+//! （Rect::NOTHING ±∞ → serde_json null），见 editor/mod.rs 测试注释，
+//! 阶段 4 修复后取消 ignore 恢复）；⑥⑦⑧ kittest → 阶段 3/5。
+//!
+//! RED vs current code（阶段 1 后）: 阶段 0/1 契约（EditorKind /
+//! EDITOR_REGISTRY / Workspaces / ScreenLayout / default_layout 三树 /
+//! From 映射 / editor.* + workspace.* i18n 键）已存在且相关断言 GREEN；
+//! EditorView impl（阶段 2 逐编辑器）、N 键路由（阶段 5）、[layout] 配置节
+//! （阶段 4）、workspace 切换 UI（阶段 3）仍缺失 —— 其余断言保持 RED
+//! 直至对应阶段落地。
 
 use std::path::{Path, PathBuf};
 
@@ -123,9 +129,13 @@ fn tab_kind_to_editor_kind_mapping_contract() {
     // plan §3.1 + A3: 阶段 1 为 `impl From<TabKind> for EditorKind`（5 变体全映射，
     // Watchlist 不经 From）；阶段 2 收尾 TabKind 删除、Tab 载荷切为 EditorKind。
     // 两形态任一满足即通过（A3 过渡语义，F4 记录）；全部源码范围检索。
+    // 限定：From<TabKind> 全 src 检索（跨文件可能）；Tab 载荷形态必须落在
+    // tabs.rs（EditorDescriptor 的 `kind: EditorKind` 字段不构成映射证据，
+    // 避免阶段 1 漏写 From 时假阳性，review P2-1）。
     let all = read_all_src();
+    let tabs = read_rel(TABS_SRC).unwrap_or_default();
     let transitions_ok =
-        all.contains("From<TabKind> for EditorKind") || all.contains("kind: EditorKind");
+        all.contains("From<TabKind> for EditorKind") || tabs.contains("kind: EditorKind");
     assert!(
         transitions_ok,
         "TabKind→EditorKind 映射缺失：既无 From<TabKind>（阶段 1 形态）也无 Tab 载荷 EditorKind（阶段 2+ 形态，plan A3）"
@@ -137,10 +147,10 @@ fn tab_serde_derives_for_persistence() {
     // plan §2.1 阶段 0: `tabs.rs` 的 `Tab`/`TabKind` 补 `Serialize, Deserialize`
     // derive（设计 §11 组 C：DockState<Tab> 需可直接序列化）。
     let tabs = read_rel(TABS_SRC).expect("src/tabs.rs must exist");
-    let editor = read_editor_mod().unwrap_or_default();
     assert!(
-        tabs.contains("Serialize") || editor.contains("Serialize"),
-        "Tab/TabKind 必须 derive Serialize/Deserialize（plan 阶段 0 / 设计 §11 组 C）"
+        tabs.contains("Serialize, Deserialize"),
+        "Tab/TabKind 必须 derive Serialize/Deserialize（plan 阶段 0 / 设计 §11 组 C）——\
+         editor/mod.rs 中的 Serialize derive 不构成 Tab 持久化证据，必须限定 tabs.rs（review P2-2）"
     );
 }
 
@@ -639,48 +649,51 @@ fn i18n_layout_namespace_zh_en_symmetric() {
 }
 
 // ===========================================================================
-// DEFERRED 强编译/行为级测试模板（接口落地后携带 SHA 重新委派落地）
+// DEFERRED 强编译/行为级测试模板（状态随阶段推进更新）
 // ===========================================================================
 //
-// 以下测试**当前不编译**（引用未落地接口），作为模板登记。模板 ①-⑤ 落地到
-// `src/editor/mod.rs` 之 `#[cfg(test)] mod tests`；⑥-⑧ 落地到 kittest 集成
-// 测试（Harness::new_eframe + build_compass_app）。模板代码以注释保留：
+// 模板 ①② 已 LANDED（SHA 8a5ea19 阶段 0 后）—— 见 `src/editor/mod.rs`
+// `#[cfg(test)] mod tests`（Phase 0 unit tests）：registry_has_exactly_six_
+// entries_with_distinct_kinds / registry_header_always_present /
+// registry_sidebar_only_chart_and_screener / registry_toolbar_none_for_all /
+// registry_title_keys_and_icons_nonempty / registry_title_keys_exist_in_i18n /
+// chart_and_screener_sidebar_spec_follows_contract /
+// editor_kind_serde_roundtrip / editor_kind_unknown_string_errors_not_panics /
+// editor_kind_serde_exact_snake_case_strings（二轮补）/ editor_kind_title_key_
+// precise_i18n_keys（二轮补）/ editor_kind_icon_precise_glyphs（二轮补）/
+// workspace_id_serde_roundtrip / default_layout_signature_contract。
 //
-// 模板① EditorKind serde round-trip + 未知字符串回退（设计 §11 组 A）:
-//   for k in [EditorKind::Chart, Screener, Sepa, Market, Logger, Watchlist] {
-//       let s = serde_json::to_string(&k).unwrap();
-//       assert_eq!(k, serde_json::from_str::<EditorKind>(&s).unwrap());
-//   }
-//   assert_eq!(serde_json::to_string(&EditorKind::Watchlist).unwrap(), "\"watchlist\"");
-//   损坏输入: serde_json::from_str::<EditorKind>("\"bogus\"") 报错而非 panic。
+// 以下模板仍 DEFERRED（引用未落地接口，无法编译）—— 触发条件随对应阶段
+// commit 更新：
 //
-// 模板② EDITOR_REGISTRY 完整性单测:
-//   恰 6 条、kind 两两不同、title_key/icon 非空、layout.header 恒在、
-//   title_key 经 LANG_LOCK 串行模式（tabs.rs:210-217 先例）在 i18n 字典存在。
-//
-// 模板③ default_layout 三树结构（DockState 节点遍历）:
+// 模板③ default_layout 三树结构（DockState 节点遍历）
+//   触发条件：阶段 1 commit（`Workspaces::default_layout` 当前仍
+//   `unimplemented!()`，editor/mod.rs:248-251）。
 //   图表: split_left(Watchlist 左, 0.75) + split_below(Logger, 0.75)；
 //   选股: Screener 主 + split_below(Logger, 0.75)；
 //   SEPA: [Sepa, Market] 主 leaf + split_below(Logger, 0.75)。
 //   遍历 API: dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
 //   → node_tree 递归断言 split 方向/fraction/leaf tab 序列。
 //
-// 模板④ Workspaces::switch 纯逻辑单测: active index 变化 + 保存触发 mark。
+// 模板④ Workspaces::switch 纯逻辑单测
+//   触发条件：阶段 1（保存当前 DockState 到内存 + 脏标记落地）或阶段 3
+//   （switch 接 UI）；当前仅翻转 active index（editor/mod.rs:240-244），
+//   保存/标记语义不可测。
+//   断言: active index 变化 + 保存触发 mark。
 //
-// 模板⑤ DockState<Tab> JSON round-trip: 三默认树 to_string→from_str→递归断言
-//   节点结构/tab kind 序列/宽度相等；损坏 JSON / 缺 dock 键 →
-//   default_layout 回退 + 不 panic（设计 §11 组 C）。
+// 模板⑤ DockState<Tab> JSON round-trip + 损坏回退
+//   触发条件：阶段 4 load 路径（`[layout]` 反序列化 → 回退 defaults）；
+//   前置已满足：`egui_dock` serde feature 已开启（Cargo.toml，对抗测试
+//   phase0_manifest_enables_egui_dock_serde 已 GREEN）、Tab/TabKind 已
+//   derive serde。
+//   断言: 三默认树 to_string→from_str→递归节点/tab kind 序列/宽度相等；
+//   损坏 JSON / 缺 dock 键 → default_layout 回退 + 不 panic。
 //
-// 模板⑥ workspace 切换 kittest（设计 §11 组 B）:
-//   Harness::new_eframe(build_compass_app) 后点击 Topbar Segmented「选股」→
-//   断言「选股器」编辑器 header 存在、（chart 特有控件如 Fetch 消失）；
-//   再点「SEPA 复盘」→ 断言 SEPA header 存在与 [东方SEPA|大盘] 双 tab 相邻。
+// 模板⑥ workspace 切换 kittest（设计 §11 组 B）
+//   触发条件：阶段 3（Workspaces 接入 UI，Topbar Segmented 生效）。
 //
-// 模板⑦ N 键 kittest（设计 §11 组 D）:
-//   Chart 发 Key::N → sidebar（指标参数 label）出现/消失；type_text 聚焦后
-//   发 N → 状态不变（焦点守卫）；Logger 发 N → 无状态变化；header 右端
-//   Display Options ⋮ 可查询；默认布局下 Chart sidebar 默认可见（Q4）。
+// 模板⑦ N 键 kittest（设计 §11 组 D）
+//   触发条件：阶段 5（N 键路由 handle_shortcuts 落地）。
 //
-// 模板⑧ 1/2/3 上下文隔离 kittest（plan §7.1）:
-//   Chart workspace 内 key_press(Num1) → timeframe 变化；切换到选股/SEPA
-//   workspace 后再发 Num1 → timeframe 不变（上下文隔离断言）。
+// 模板⑧ 1/2/3 上下文隔离 kittest（plan §7.1）
+//   触发条件：阶段 5（workspace 上下文判定落地）。
