@@ -67,6 +67,8 @@ editor:
     reset_sort: Reset sort
   logger: Log
   watchlist: Watchlist
+  add: Add editor
+  add_none: All editors open
 
 workspace:
   chart: Chart

@@ -16,6 +16,7 @@ use compass_types::{Filter, ScreenerQuery};
 use compass_ui::widgets::dropdown::Dropdown;
 use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
+use compass_ui::widgets::segmented::Segmented;
 use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
 use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use compass_ui::widgets::toolbar::Toolbar;
@@ -1324,78 +1325,139 @@ impl CompassApp {
 
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         let tokens = *self.theme.tokens();
+        let mut switch_to: Option<usize> = None;
+        let mut add_kind: Option<crate::editor::EditorKind> = None;
 
         Toolbar::new(&tokens).show(ui, |tb, ui| {
-            // Group A — 标的: symbol picker (merged stock + index/board list).
+            // Group 1 — workspace switcher (design §7.1 左段): Segmented of
+            // the three built-in workspaces, icon + localized name. Clicking
+            // a segment mounts that workspace's dock tree (switch handled
+            // after the toolbar render — no repaint mid-frame).
+            tb.group(ui, |ui| {
+                let options: Vec<String> = self
+                    .workspaces
+                    .all
+                    .iter()
+                    .map(|w| format!("{} {}", w.id.icon(), t!(w.id.title_key())))
+                    .collect();
+                if let Some(idx) = Segmented::new(&tokens, options)
+                    .selected(self.workspaces.active)
+                    .show(ui)
+                {
+                    switch_to = Some(idx);
+                }
+            });
+
+            // Group 2 — 标的: symbol picker (merged stock + index/board list).
             tb.group(ui, |ui| {
                 let response = self.stock_picker.show(ui, &self.picker_list);
                 self.symbol_input_id = Some(response.id);
             });
 
-            // Group D — 显示: theme dropdown (chart controls moved to the
-            // chart editor header in phase 2a; the language switch follows
-            // to the Topbar in phase 3).
+            // Group 3 — right-hand end (design §7.1 / Q2): ⋮ add editor,
+            // then theme + language dropdowns. Right-to-left layout so the
+            // first added item sits rightmost (theme/language outer edge).
             tb.group(ui, |ui| {
-                let theme_idx = CompassTheme::all_names()
-                    .iter()
-                    .position(|n| *n == self.theme.name())
-                    .unwrap_or(0);
-                if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
-                    .id_salt("theme")
-                    .selected(theme_idx)
-                    .width(140.0)
-                    .show(ui)
-                {
-                    let name = CompassTheme::all_names()[idx];
-                    if name != self.theme.name() {
-                        self.theme = CompassTheme::from_config(name);
-                        if let Err(e) = save_theme_config(name) {
-                            tracing::warn!(error = %e, "failed to save theme config");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Theme dropdown: unchanged behavior (save + toast),
+                    // only its position moved here in phase 3.
+                    let theme_idx = CompassTheme::all_names()
+                        .iter()
+                        .position(|n| *n == self.theme.name())
+                        .unwrap_or(0);
+                    if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
+                        .id_salt("theme")
+                        .selected(theme_idx)
+                        .width(140.0)
+                        .show(ui)
+                    {
+                        let name = CompassTheme::all_names()[idx];
+                        if name != self.theme.name() {
+                            self.theme = CompassTheme::from_config(name);
+                            if let Err(e) = save_theme_config(name) {
+                                tracing::warn!(error = %e, "failed to save theme config");
+                            }
+                            let tokens = *self.theme.tokens();
+                            self.dock_style = compass_ui::dock_style::dock_style(&tokens);
+                            // Stored stateful widgets copy tokens at construction;
+                            // refresh them so the theme switch applies everywhere.
+                            self.stock_picker.set_tokens(tokens);
+                            self.toast.set_tokens(tokens);
+                            self.modal.set_tokens(tokens);
+                            self.editors.screener.set_tokens(tokens);
+                            self.editors.sepa.set_tokens(tokens);
+                            self.editors.market.set_tokens(tokens);
+                            self.toast
+                                .push(ToastLevel::Info, t!("toast.theme_switched"));
                         }
-                        let tokens = *self.theme.tokens();
-                        self.dock_style = compass_ui::dock_style::dock_style(&tokens);
-                        // Stored stateful widgets copy tokens at construction;
-                        // refresh them so the theme switch applies everywhere.
-                        self.stock_picker.set_tokens(tokens);
-                        self.toast.set_tokens(tokens);
-                        self.modal.set_tokens(tokens);
-                        self.editors.screener.set_tokens(tokens);
-                        self.editors.sepa.set_tokens(tokens);
-                        self.editors.market.set_tokens(tokens);
-                        self.toast
-                            .push(ToastLevel::Info, t!("toast.theme_switched"));
                     }
-                }
 
-                // Language dropdown: native-name options (中文/English), not
-                // keyed — the option strings are the visible labels in both
-                // locales. Switching applies the process-global locale
-                // immediately; the window title stays the English brand.
-                let lang_options = ["中文", "English"];
-                let lang_idx = if self.language == "en" { 1 } else { 0 };
-                if let Some(idx) = Dropdown::new(&tokens, lang_options.to_vec())
-                    .id_salt("language")
-                    .selected(lang_idx)
-                    .width(76.0)
-                    .show(ui)
-                {
-                    let new_lang = if idx == 1 { "en" } else { "zh" };
-                    if new_lang != self.language {
-                        self.language = new_lang.to_string();
-                        compass_i18n::set_locale(new_lang);
-                        ui.ctx().request_repaint();
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
-                            "Compass — Stock Chart".to_string(),
-                        ));
-                        self.toast
-                            .push(ToastLevel::Info, t!("toast.language_switched"));
-                        if let Err(e) = save_language_config(new_lang) {
-                            tracing::warn!(error = %e, "failed to save language config");
+                    // Language dropdown: native-name options (中文/English),
+                    // not keyed — the option strings are the visible labels
+                    // in both locales. Switching applies the process-global
+                    // locale immediately; the window title stays the English
+                    // brand.
+                    let lang_options = ["中文", "English"];
+                    let lang_idx = if self.language == "en" { 1 } else { 0 };
+                    if let Some(idx) = Dropdown::new(&tokens, lang_options.to_vec())
+                        .id_salt("language")
+                        .selected(lang_idx)
+                        .width(76.0)
+                        .show(ui)
+                    {
+                        let new_lang = if idx == 1 { "en" } else { "zh" };
+                        if new_lang != self.language {
+                            self.language = new_lang.to_string();
+                            compass_i18n::set_locale(new_lang);
+                            ui.ctx().request_repaint();
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
+                                "Compass — Stock Chart".to_string(),
+                            ));
+                            self.toast
+                                .push(ToastLevel::Info, t!("toast.language_switched"));
+                            if let Err(e) = save_language_config(new_lang) {
+                                tracing::warn!(error = %e, "failed to save language config");
+                            }
                         }
                     }
-                }
+
+                    // ⋮ 添加编辑器: registered kinds not on the active
+                    // screen — the re-open path for closed tabs (design
+                    // §7.1). Clicking schedules the add; applied after the
+                    // toolbar render.
+                    let visible = self.workspaces.visible_kinds(self.workspaces.active);
+                    let missing: Vec<_> = crate::editor::EDITOR_REGISTRY
+                        .iter()
+                        .filter(|d| !visible.contains(&d.kind))
+                        .collect();
+                    let menu = ui.menu_button(
+                        egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
+                        |ui| {
+                            for desc in &missing {
+                                if ui
+                                    .button(format!("{} {}", desc.icon, t!(desc.title_key)))
+                                    .clicked()
+                                {
+                                    add_kind = Some(desc.kind);
+                                    ui.close();
+                                }
+                            }
+                            if missing.is_empty() {
+                                ui.weak(t!("editor.add_none"));
+                            }
+                        },
+                    );
+                    menu.response.on_hover_text(t!("editor.add"));
+                });
             });
         });
+
+        if let Some(idx) = switch_to {
+            self.switch_workspace(idx, ui.ctx());
+        }
+        if let Some(kind) = add_kind {
+            self.add_editor(kind);
+        }
 
         // Push error toast only on None→Some transition (not every frame)
         let current_err = self.shared_state.error.get();
@@ -1413,6 +1475,28 @@ impl CompassApp {
                 .push(ToastLevel::Success, t!("toast.fetch_success"));
         }
         self.last_loading = current_loading;
+    }
+
+    /// Switch the active workspace (design §7.1): the index change lives in
+    /// `Workspaces::switch`; a repaint requests the new tree mount. No toast
+    /// — the layout change is its own feedback (design §7.1, distinguishing
+    /// from the theme/language write-back info toasts).
+    fn switch_workspace(&mut self, idx: usize, ctx: &egui::Context) {
+        if idx < self.workspaces.all.len() && idx != self.workspaces.active {
+            self.workspaces.switch(self.workspaces.all[idx].id);
+            ctx.request_repaint();
+        }
+    }
+
+    /// Add an editor tab to the active workspace (design §7.1 ⋮ 添加编辑器):
+    /// the re-open path for closed editors. The tab lands in the dock's
+    /// first leaf (egui_dock `push_to_first_leaf`); editor instances are
+    /// global, so the reopened state is just the instance itself.
+    fn add_editor(&mut self, kind: crate::editor::EditorKind) {
+        let active = self.workspaces.active;
+        let screen = self.workspaces.all[active].active_screen;
+        let dock = &mut self.workspaces.all[active].layouts[screen].dock_state;
+        dock.push_to_first_leaf(crate::tabs::Tab::new(kind));
     }
 }
 
@@ -2102,6 +2186,86 @@ default_timeframe = "1w"
         assert_eq!(app.timeframe_index, 1);
     }
 
+    /// Full-app workspace switching (design §7.1 / plan §5.3): clicking the
+    /// Segmented segment mounts that workspace's dock tree — the screener
+    /// condition builder appears, chart-only chrome disappears; SEPA recap
+    /// mounts the SEPA header (Q1: Sepa/Market moved out of Chart).
+    #[test]
+    fn toolbar_workspace_switch_mounts_target_workspace() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Chart workspace (default): chart sidebar settings visible.
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.title"));
+
+        // Switch to the Screener workspace via the Topbar segment.
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        let seg = harness.get_by_label(&seg_label);
+        seg.click_accesskit();
+        harness.run_steps(3);
+        let _ = harness.get_by_label(&tr("screener.builder.card_title"));
+
+        // Switch to the SEPA-recap workspace: SEPA header appears
+        // (no-data state without a snapshot), chart chrome gone. Use the
+        // accesskit click: the pointer click route is unreliable under the
+        // eframe harness for some widgets (verified during 3-phase work).
+        let sepa_label = format!("{} {}", egui_phosphor::regular::GAUGE, tr("workspace.sepa"));
+        harness.get_by_label(&sepa_label).click_accesskit();
+        harness.run_steps(3);
+        let _ = harness.get_by_label(&tr("sepa.no_data"));
+    }
+
+    /// The ⋮ add-editor menu lists kinds absent from the active screen
+    /// (design §7.1 "重开" entry): on the default Chart workspace the
+    /// Screener/Sepa/Market entries appear; clicking Screener adds it as
+    /// a tab (reachable via its condition-builder title after a run).
+    #[test]
+    fn toolbar_add_editor_menu_lists_missing_kinds() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
+        // Display Options); the topbar one renders first.
+        harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
+            .click_accesskit();
+        harness.run_steps(3);
+        // The menu renders each missing kind as "icon + title_key"; the
+        // editor content itself is not a leaf's active tab yet, so the
+        // assertion is on the dock tree composition (tab titles carry no
+        // AccessKit label — testing.md boundary).
+        let screener_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("editor.screener")
+        );
+        harness.get_by_label(&screener_label).click_accesskit();
+        harness.run_steps(3);
+        let active = harness.state().workspaces.active;
+        let screen = harness.state().workspaces.all[active].active_screen;
+        assert!(
+            harness.state().workspaces.all[active].layouts[screen]
+                .dock_state
+                .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Screener))
+                .is_some(),
+            "the add-editor menu must re-open the Screener tab on the Chart workspace"
+        );
+    }
+
     /// The adjust Dropdown must NOT render when the current symbol is an
     /// index/board (plan §1/design §4): a BK-prefixed board code and an
     /// index_list entry with a non-empty index_type both hide the control;
@@ -2667,8 +2831,12 @@ default_timeframe = "1w"
             }));
         let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
         harness.run();
+        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
+        // Display Options); the topbar one renders first.
         harness
-            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
             .click();
         harness.run();
         harness
@@ -2776,8 +2944,12 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
         let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
         harness.run();
+        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
+        // Display Options); the topbar one renders first.
         harness
-            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
             .click();
         harness.run();
         harness
@@ -2934,8 +3106,12 @@ default_timeframe = "1w"
         app.shared_state.screener_total.set(3);
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
+        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
+        // Display Options); the topbar one renders first.
         harness
-            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
             .click();
         harness.run();
         harness
@@ -2966,8 +3142,12 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
+        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
+        // Display Options); the topbar one renders first.
         harness
-            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
             .click();
         harness.run();
         harness

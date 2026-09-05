@@ -221,6 +221,28 @@ pub enum WorkspaceId {
     Sepa,
 }
 
+impl WorkspaceId {
+    /// i18n key of the workspace name — the Topbar Segmented segment label
+    /// (design §7.1: 图表/选股/SEPA复盘).
+    pub fn title_key(&self) -> &'static str {
+        match self {
+            Self::Chart => "workspace.chart",
+            Self::Screener => "workspace.screener",
+            Self::Sepa => "workspace.sepa",
+        }
+    }
+
+    /// Segmented segment icon (design §7.1: CHART_LINE / FUNNEL_SIMPLE /
+    /// GAUGE — the same glyphs as the default editor of each workspace).
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Chart => egui_phosphor::regular::CHART_LINE,
+            Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
+            Self::Sepa => egui_phosphor::regular::GAUGE,
+        }
+    }
+}
+
 /// bScreen 类比: one screen = one area tree (egui_dock vertex graph).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenLayout {
@@ -248,6 +270,31 @@ pub struct Workspaces {
 }
 
 impl Workspaces {
+    /// Editor kinds currently present in workspace `idx`'s active screen
+    /// (design §7.1): the Topbar `⋮ 添加编辑器` menu lists only registered
+    /// kinds absent from this set — the "re-open a closed tab" entry.
+    pub fn visible_kinds(&self, idx: usize) -> Vec<EditorKind> {
+        self.all
+            .get(idx)
+            .and_then(|w| w.layouts.get(w.active_screen))
+            .map(|screen| {
+                screen
+                    .dock_state
+                    .iter_surfaces()
+                    .flat_map(|s| s.node_tree().into_iter().flat_map(|t| t.tabs()))
+                    .map(|t| t.kind())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether every registered kind is on screen (menu shows nothing then —
+    /// all editors already reachable).
+    pub fn all_kinds_visible(&self, idx: usize) -> bool {
+        let visible = self.visible_kinds(idx);
+        EDITOR_REGISTRY.iter().all(|d| visible.contains(&d.kind))
+    }
+
     /// Default three-workspace container (design §5). Each workspace holds
     /// exactly one screen layout (lock-in D3) built from [`Self::default_layout`].
     /// Used by the production constructor and as the corrupted-config

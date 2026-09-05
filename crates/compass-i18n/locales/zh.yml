@@ -65,6 +65,8 @@ editor:
     reset_sort: 重置排序
   logger: 日志
   watchlist: 自选
+  add: 添加编辑器
+  add_none: 全部编辑器已打开
 
 workspace:
   chart: 图表

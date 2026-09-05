@@ -403,11 +403,15 @@ fn workspace_switch_function_contract() {
 fn topbar_embeds_workspace_switcher_keys() {
     // 设计 §7.1: Topbar 左 = workspace Segmented 3 段（键 workspace.chart/
     // workspace.screener/workspace.sepa）；中=标的选择器；最右=主题/语言（Q2）。
+    // 键绑定落在 WorkspaceId::title_key()（editor 模块），Topbar 经
+    // `w.id.title_key()` 使用——两个源文件的并集含三个键即可。
     let main = read_rel(MAIN_SRC).expect("src/main.rs must exist");
+    let editor_src = read_editor_mod().expect("editor 模块必须存在");
+    let key_binding_src = format!("{main}\n{editor_src}");
     assert!(
-        main.contains("workspace.chart")
-            && main.contains("workspace.screener")
-            && main.contains("workspace.sepa"),
+        key_binding_src.contains("workspace.chart")
+            && key_binding_src.contains("workspace.screener")
+            && key_binding_src.contains("workspace.sepa"),
         "Topbar workspace 切换器必须使用 workspace.* i18n 键（设计 §7.1）"
     );
     assert!(
