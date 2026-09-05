@@ -35,6 +35,24 @@ sidebar:
 
 editor:
   chart: Chart
+  chart_indicators:
+    on: MA/BOLL Show
+    off: MA/BOLL Hide
+  chart_display:
+    label: Display Options
+    crosshair: Crosshair
+    volume: Volume
+    legend: Legend
+    n_hint: Press N to toggle sidebar
+  chart_sidebar:
+    title: Chart Settings
+    ma_periods: MA Periods
+    boll_period: BOLL Period
+    boll_std: BOLL StdDev
+    candle_style: Candle Style
+    candle_filled: Filled
+    candle_hollow: Hollow
+    volume: Volume
   screener: Screener
   sepa: East SEPA
   market: Market

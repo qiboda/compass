@@ -28,6 +28,9 @@ use crate::citizens::logger::LoggerPanel;
 use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
+use crate::editor::{
+    ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
+};
 use crate::state::SharedState;
 use crate::stock_projection;
 use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
@@ -186,12 +189,37 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app(egui::Context::default());
     {
+        let mut chart_action = None;
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            app.render_toolbar(ui);
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Chart)
+                .expect("chart descriptor");
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+            };
+            let mut frame = EditorFrame {
+                sidebar_visible: true,
+            };
+            frame.show(ui, desc, &mut app.chart, &mut ctx);
         });
         harness.run();
         harness.get_by_label("1w").click();
         harness.step();
+        drop(harness);
+        if let Some(ChartHeaderAction::Timeframe(idx)) = chart_action {
+            app.set_timeframe(idx);
+        }
     }
     assert_eq!(
         app.shared_state.timeframe.get(),

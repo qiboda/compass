@@ -13,12 +13,9 @@ use compass_core::data::symbol::{
 };
 use compass_core::model::{AppConfig, IndexBasic, WatchlistConfig};
 use compass_types::{Filter, ScreenerQuery};
-use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
 use compass_ui::widgets::dropdown::Dropdown;
-use compass_ui::widgets::icon_button::IconButton;
 use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
-use compass_ui::widgets::segmented::Segmented;
 use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
 use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
 use compass_ui::widgets::toast::{ToastLevel, ToastManager};
@@ -920,6 +917,7 @@ impl eframe::App for CompassApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             let mut logger_export_clicked = false;
+            let mut chart_action: Option<crate::editor::ChartHeaderAction> = None;
             DockArea::new(&mut self.dock_state)
                 .style(self.dock_style.clone())
                 .show_inside(
@@ -941,8 +939,19 @@ impl eframe::App for CompassApp {
                         shared_state: &self.shared_state,
                         theme: &self.theme,
                         logger_export_clicked: &mut logger_export_clicked,
+                        index_list: &self.index_list,
+                        chart_action: &mut chart_action,
                     },
                 );
+
+            // Consume the chart header action (timeframe/adjust/fetch) after
+            // the dock render, mirroring the logger export out-param flow.
+            match chart_action {
+                Some(crate::editor::ChartHeaderAction::Timeframe(idx)) => self.set_timeframe(idx),
+                Some(crate::editor::ChartHeaderAction::Adjust(idx)) => self.set_adjust(idx),
+                Some(crate::editor::ChartHeaderAction::Fetch) => self.fetch_bars(),
+                None => {}
+            }
 
             self.toast.render(ui.ctx());
             self.modal.show(ui.ctx());
@@ -1205,18 +1214,6 @@ impl CompassApp {
         self.stock_picker.selected_exchange = exchange;
     }
 
-    /// Whether `symbol` is an index/board (epic #255 C4): BK-prefixed board
-    /// codes or any symbol listed in index_basic.parquet. Drives the 前复权
-    /// tag hide guard — indexes are not adjusted (fqt=0), so showing the tag
-    /// would be wrong information.
-    fn is_index_or_board(&self, symbol: &str) -> bool {
-        parse_explicit_prefix(symbol).0 == "BK"
-            || self
-                .index_list
-                .iter()
-                .any(|i| i.symbol == symbol && !i.index_type.is_empty())
-    }
-
     /// Left watchlist sidebar: search row + the "自选" group backed by
     /// `SharedState.watchlist` (design §6.2). Add inserts the current symbol;
     /// delete requests open a danger confirm modal before removal.
@@ -1397,7 +1394,6 @@ impl CompassApp {
 
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         let tokens = *self.theme.tokens();
-        let loading = self.shared_state.loading.get();
 
         Toolbar::new(&tokens).show(ui, |tb, ui| {
             // Group A — 标的: symbol picker (merged stock + index/board list).
@@ -1406,65 +1402,10 @@ impl CompassApp {
                 self.symbol_input_id = Some(response.id);
             });
 
-            // Group B — 周期: segmented 1d/1w/1M + 复权方式 dropdown. The
-            // adjust control is hidden when the current symbol is an
-            // index/board (指数不复权 — plan T7); stocks keep it.
+            // Group D — 显示: theme dropdown (chart controls moved to the
+            // chart editor header in phase 2a; the language switch follows
+            // to the Topbar in phase 3).
             tb.group(ui, |ui| {
-                if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
-                    .selected(self.timeframe_index)
-                    .show(ui)
-                {
-                    self.set_timeframe(idx);
-                }
-                let current_symbol = self.shared_state.symbol.get();
-                let is_index = self.is_index_or_board(&current_symbol);
-                if !is_index
-                    && let Some(idx) = Dropdown::new(
-                        &tokens,
-                        [
-                            t!("toolbar.adjust.qfq"),
-                            t!("toolbar.adjust.hfq"),
-                            t!("toolbar.adjust.none"),
-                        ],
-                    )
-                    .id_salt("adjust")
-                    .selected(self.adjust_index)
-                    .width(96.0)
-                    .show(ui)
-                {
-                    self.set_adjust(idx);
-                }
-            });
-
-            // Group C — 操作: primary Fetch button with loading state.
-            tb.group(ui, |ui| {
-                let fetch_label = if loading {
-                    t!("toolbar.loading")
-                } else {
-                    t!("toolbar.fetch")
-                };
-                let fetch_clicked = Button::new(&tokens, fetch_label)
-                    .variant(ButtonVariant::Primary)
-                    .size(ButtonSize::Lg)
-                    .icon(egui_phosphor::regular::DOWNLOAD_SIMPLE)
-                    .min_width(104.0)
-                    .loading(loading)
-                    .show(ui)
-                    .clicked();
-                if fetch_clicked && !loading {
-                    self.fetch_bars();
-                }
-            });
-
-            // Group D — 显示: sidebar toggle + theme dropdown.
-            tb.group(ui, |ui| {
-                let toggle_sidebar = t!("toolbar.toggle_sidebar");
-                if IconButton::new(&tokens, egui_phosphor::regular::SIDEBAR_SIMPLE)
-                    .tooltip(&toggle_sidebar)
-                    .show(ui)
-                {
-                    self.sidebar_visible = !self.sidebar_visible;
-                }
                 let theme_idx = CompassTheme::all_names()
                     .iter()
                     .position(|n| *n == self.theme.name())
@@ -1560,7 +1501,7 @@ fn timeframe_label(idx: usize) -> &'static str {
 /// [`timeframe_label`] — keep the two matches in sync. Unknown values fall
 /// back to 0 ("1d") so the toolbar selection and the chart never disagree
 /// even with an unexpected configured timeframe.
-fn timeframe_index_from_value(value: &str) -> usize {
+pub(crate) fn timeframe_index_from_value(value: &str) -> usize {
     match value {
         "1w" => 1,
         "1M" => 2,
@@ -1584,7 +1525,7 @@ fn adjust_value(idx: usize) -> &'static str {
 /// [`adjust_value`] — keep the two matches in sync. Unknown values fall back
 /// to 0 ("qfq") so a stale/typo'd configured mode never yields an index
 /// outside the Dropdown options.
-fn adjust_index_from_value(value: &str) -> usize {
+pub(crate) fn adjust_index_from_value(value: &str) -> usize {
     match value {
         "hfq" => 1,
         "none" => 2,
@@ -1626,16 +1567,55 @@ mod tests {
 
     use crate::build_industry_names;
 
+    use crate::CompassApp;
     use crate::adjust_index_from_value;
     use crate::adjust_value;
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
+    use crate::editor::{
+        ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
+    };
     use crate::latest_quote;
     use crate::state::SharedState;
     use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
     use egui_citizen::{CitizenId, Dispatcher};
+
+    /// Chart-editor-header render closure (`Harness::new_ui`), replaying the
+    /// timeframe/adjust/fetch actions through `chart_action` (plan §4.1).
+    fn chart_header_harness_ui<'a>(
+        app: &'a mut CompassApp,
+        chart_action: &'a mut Option<ChartHeaderAction>,
+    ) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Chart)
+                .expect("chart descriptor must exist");
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action,
+            };
+            let sidebar_visible = desc
+                .layout
+                .sidebar
+                .as_ref()
+                .map(|s| s.default_visible)
+                .unwrap_or(false);
+            let mut frame = EditorFrame { sidebar_visible };
+            frame.show(ui, desc, &mut app.chart, &mut ctx);
+        }
+    }
 
     // ── data-name locale maps (epic #266 B3) ────────────────────────────
 
@@ -2120,7 +2100,7 @@ default_timeframe = "1w"
     // --- render_toolbar kittest tests ---
 
     #[test]
-    fn render_toolbar_renders_segmented_and_theme_dropdown() {
+    fn render_toolbar_renders_theme_dropdown() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2129,23 +2109,23 @@ default_timeframe = "1w"
             app.render_toolbar(ui);
         });
 
-        let _ = harness.get_by_label("1d");
         let _ = harness.get_by_label_contains("compass_dark");
     }
 
     /// Contract upgrade (issue #345): the static 前复权 Tag becomes a
-    /// three-option Dropdown. Assert the trigger renders the current mode
-    /// (default qfq) and that all three option labels (前复权/后复权/不复权)
-    /// are present once the popup is open.
+    /// three-option Dropdown — now rendered in the chart header (plan §4.1).
+    /// Assert the trigger renders the current mode (default qfq) and that
+    /// all three option labels (前复权/后复权/不复权) are present once the
+    /// popup is open.
     #[test]
-    fn render_toolbar_renders_adjusted_price_tag() {
+    fn render_chart_header_renders_adjusted_price_tag() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
-        let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            app.render_toolbar(ui);
-        });
+        let mut chart_action = None;
+        let mut harness =
+            egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
         harness.run();
 
         // Trigger shows the current selection (qfq → 前复权 + caret glyph).
@@ -2161,19 +2141,23 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn render_toolbar_timeframe_switch_changes_index() {
+    fn render_chart_header_timeframe_switch_changes_index() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             harness.get_by_label("1w").click();
             harness.step();
+            drop(harness);
+            if let Some(ChartHeaderAction::Timeframe(idx)) = chart_action {
+                app.set_timeframe(idx);
+            }
         }
 
         assert_eq!(app.timeframe_index, 1);
@@ -2193,9 +2177,9 @@ default_timeframe = "1w"
         // BK-prefixed board code → control hidden.
         app.shared_state.symbol.set("BK0001".to_string());
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             assert!(
                 harness
@@ -2214,9 +2198,9 @@ default_timeframe = "1w"
         )];
         app.shared_state.symbol.set("SH000001".to_string());
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             assert!(
                 harness
@@ -2232,9 +2216,9 @@ default_timeframe = "1w"
         // click → this assertion is RED against the pre-implementation UI.
         app.shared_state.symbol.set("SZ000001".to_string());
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             assert!(
                 harness
@@ -2263,9 +2247,9 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
 
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             harness
                 .get_by_label_contains(&tr("toolbar.adjust.qfq"))
@@ -2273,6 +2257,10 @@ default_timeframe = "1w"
             harness.run();
             harness.get_by_label(&tr("toolbar.adjust.hfq")).click();
             harness.step();
+            drop(harness);
+            if let Some(ChartHeaderAction::Adjust(idx)) = chart_action {
+                app.set_adjust(idx);
+            }
         }
 
         assert_eq!(app.adjust_index, 1, "hfq must map to dropdown index 1");
@@ -2351,16 +2339,16 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn render_toolbar_fetch_sets_loading() {
+    fn render_chart_header_fetch_sets_loading() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             let fetch_label = format!(
                 "{} {}",
@@ -2369,6 +2357,10 @@ default_timeframe = "1w"
             );
             harness.get_by_label(&fetch_label).click();
             harness.step();
+            drop(harness);
+            if let Some(ChartHeaderAction::Fetch) = chart_action {
+                app.fetch_bars();
+            }
         }
 
         assert!(
@@ -2377,25 +2369,77 @@ default_timeframe = "1w"
         );
     }
 
+    /// The chart sidebar must render by default (Q4) — the MA/BOLL parameter
+    /// labels are queryable in the header harness frame.
     #[test]
-    fn render_toolbar_sidebar_toggle_flips_visibility() {
+    fn render_chart_header_sidebar_visible_by_default() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
+        let mut chart_action = None;
+        let mut harness =
+            egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
+        harness.run();
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.ma_periods"));
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.candle_style"));
+    }
 
+    /// The header indicator dropdown toggles the MA/BOLL overlay visibility
+    /// (design §6 指标切换 Dropdown).
+    #[test]
+    fn render_chart_header_indicator_dropdown_toggles_visibility() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        assert!(app.chart.indicator_visible(), "default: overlay visible");
+
+        {
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
+            harness.run();
+            // Open the indicator dropdown and pick "隐藏".
+            harness
+                .get_by_label_contains(&tr("editor.chart_indicators.on"))
+                .click();
+            harness.run();
+            harness
+                .get_by_label(&tr("editor.chart_indicators.off"))
+                .click();
+            harness.step();
+        }
+
+        assert!(
+            !app.chart.indicator_visible(),
+            "overlay must be hidden after selecting 隐藏"
+        );
+    }
+
+    /// The watchlist sidebar toggle was removed from the toolbar with the
+    /// sidebar semantics (plan §4.1 — Group D 侧栏开关随 Chart sidebar 语义
+    /// 迁走; the watchlist left panel itself moves in phase 2f). No toolbar
+    /// control flips `sidebar_visible` anymore.
+    #[test]
+    fn render_toolbar_no_sidebar_toggle_control() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
                 app.render_toolbar(ui);
             });
             harness.run();
-            harness
-                .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
-                .click();
-            harness.step();
+            assert!(
+                harness
+                    .query_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
+                    .is_none(),
+                "toolbar must no longer render a sidebar toggle (moved to chart)"
+            );
         }
-
-        assert!(!app.sidebar_visible, "toggle must hide the sidebar");
+        assert!(app.sidebar_visible, "watchlist panel unchanged for now");
     }
 
     #[test]
@@ -2587,6 +2631,7 @@ default_timeframe = "1w"
         let mut dock_state =
             DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
         let mut logger_export_clicked = false;
+        let mut chart_action = None;
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
             chart: &mut chart,
@@ -2604,6 +2649,8 @@ default_timeframe = "1w"
             shared_state: &shared,
             theme: &theme,
             logger_export_clicked: &mut logger_export_clicked,
+            index_list: &[],
+            chart_action: &mut chart_action,
         };
 
         let mut harness = egui_kittest::Harness::builder()
@@ -2761,42 +2808,11 @@ default_timeframe = "1w"
         });
     }
 
-    #[test]
-    fn sidebar_toggle_hides_and_reshows_sidebar() {
-        let _guard = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        // Dismiss the startup data-missing modal so its backdrop stops
-        // blocking clicks (the 100 ms fade completes within one 0.25 s step
-        // of egui virtual time).
-        harness.get_by_label(&tr("modal.startup.confirm")).click();
-        harness.step();
-        harness.step();
-        assert!(!harness.state().modal.is_open());
-
-        harness
-            .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
-            .click();
-        harness.step();
-        assert!(
-            harness
-                .query_all_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()))
-                .next()
-                .is_none(),
-            "sidebar must be hidden after toggle click"
-        );
-
-        harness
-            .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
-            .click();
-        harness.step();
-        let _ =
-            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
-    }
+    // NOTE (phase 2a): `sidebar_toggle_hides_and_reshows_sidebar` is removed
+    // — the toolbar sidebar toggle control left with Group D (plan §4.1). The
+    // watchlist left panel itself migrates into `WatchlistEditor` in phase 2f,
+    // which restores its own visibility toggle (N-key semantics, phase 5).
+    // Its absence is asserted by `render_toolbar_no_sidebar_toggle_control`.
 
     #[test]
     fn sidebar_empty_state_shows_when_no_stock_list() {
@@ -5223,20 +5239,15 @@ breakout = { days = 120 }
         }
 
         let mut app = build_compass_app(egui::Context::default());
-        let fetch_zh = format!(
-            "{} {}",
-            egui_phosphor::regular::DOWNLOAD_SIMPLE,
-            tr("toolbar.fetch")
-        );
-        let fetch_en = format!("{} {}", egui_phosphor::regular::DOWNLOAD_SIMPLE, "Fetch");
 
         // Interact via a new_ui harness rendering the toolbar — the same
         // pattern as the theme-dropdown test, where kittest pointer clicks
         // reliably open the Area popup and select an option.
-        // The toolbar spans Groups A–D; the language dropdown (Group D,
-        // rightmost) must fit on-screen for the trigger click to register —
-        // the default 800×600 `new_ui` harness clips it since #232 widened
-        // the Fetch button (min_width 104).
+        // The toolbar spans Groups A + D; the language dropdown (Group D,
+        // rightmost) must fit on-screen for the trigger click to register.
+        // (The Fetch button moved to the chart header in phase 2a, so its
+        // label is no longer a toolbar re-paint witness — the locale assert
+        // below covers the immediate UI re-render contract.)
         let mut harness = egui_kittest::Harness::builder()
             .with_size([1440.0, 900.0])
             .build_ui(|ui| {
@@ -5255,7 +5266,6 @@ breakout = { days = 120 }
             "en",
             "selecting English must switch the process-global locale"
         );
-        let _ = harness.get_by_label(&fetch_en);
 
         let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
         assert!(
@@ -5276,7 +5286,6 @@ breakout = { days = 120 }
             "zh",
             "selecting 中文 must switch the locale back"
         );
-        let _ = harness.get_by_label(&fetch_zh);
 
         if let Some(h) = saved_home {
             unsafe {

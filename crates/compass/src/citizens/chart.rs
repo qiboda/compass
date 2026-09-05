@@ -1,12 +1,17 @@
 use crate::citizens::indicators::MaBollIndicator;
+use crate::editor::{ChartHeaderAction, EditorCtx, EditorKind, EditorView, is_index_or_board};
 use crate::state::SharedState;
 use crate::theme::CompassTheme;
+use crate::{adjust_index_from_value, timeframe_index_from_value};
 use compass_i18n::t;
+use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
+use compass_ui::widgets::dropdown::Dropdown;
 use compass_ui::widgets::empty_state::EmptyState;
+use compass_ui::widgets::segmented::Segmented;
 use egui::Color32;
 use egui_charts::ChartType;
 use egui_charts::model::BarData;
-use egui_charts::studies::{IndicatorRegistry, IndicatorValue};
+use egui_charts::studies::{Indicator as _, IndicatorRegistry, IndicatorValue};
 use egui_charts::widget::Chart;
 use egui_citizen::{Citizen, CitizenId, CitizenState};
 
@@ -23,6 +28,17 @@ pub struct ChartCitizen {
     chart: Chart,
     /// MA/BOLL overlay indicator registry, computed from the current bars.
     registry: IndicatorRegistry,
+    /// Parameter/visibility source for the MA/BOLL overlay. The registry
+    /// entry is a clone of this; sidebar edits land here and flag
+    /// `indicator_params_dirty` so the registry entry is replaced before the
+    /// next calculation (the vendored `Indicator` trait has no downcast —
+    /// plan §4.7).
+    ma_boll: MaBollIndicator,
+    /// Set when a sidebar edit changed `ma_boll`; the next body render
+    /// rebuilds the registry entry and forces a recalculation.
+    indicator_params_dirty: bool,
+    /// Candle style toggle (design §6 图层设置).
+    candle_style: CandleStyle,
     /// Fingerprint of the bars the registry was last computed for:
     /// (symbol, bar count, first bar time, last bar time, last close bits).
     /// The last-close guard catches price revisions inside an unchanged
@@ -30,6 +46,25 @@ pub struct ChartCitizen {
     /// every price while keeping the count and first/last timestamps the
     /// same — so a re-fetch cannot serve stale overlay values.
     cache_key: Option<(String, usize, i64, i64, u64)>,
+}
+
+/// Candle rendering style exposed to the chart sidebar (design §6 图层设置:
+/// K 线样式). Maps onto the vendored [`ChartType`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandleStyle {
+    /// Solid-filled bodies (historical default).
+    Filled,
+    /// Hollow bullish bodies, filled bearish bodies (`ChartType::HollowCandles`).
+    Hollow,
+}
+
+impl CandleStyle {
+    fn to_chart_type(self) -> ChartType {
+        match self {
+            Self::Filled => ChartType::Candles,
+            Self::Hollow => ChartType::HollowCandles,
+        }
+    }
 }
 
 impl Citizen for ChartCitizen {
@@ -59,28 +94,65 @@ impl ChartCitizen {
         chart.set_chart_type(ChartType::Candles);
         chart.set_visible_bars(100);
         chart.set_timeframe_label("1d");
+        let ma_boll = MaBollIndicator::new();
         let mut registry = IndicatorRegistry::new();
-        registry.add(Box::new(MaBollIndicator::new()));
+        registry.add(Box::new(ma_boll.clone()));
         Self {
             citizen_id,
             citizen_state,
             chart,
             registry,
+            ma_boll,
+            indicator_params_dirty: false,
+            candle_style: CandleStyle::Filled,
             cache_key: None,
         }
     }
 
-    /// Renders the chart panel with the given theme.
-    ///
-    /// Applies `app_theme` chart colors (candles, grid, crosshair) each
-    /// frame, reads `bars` from shared state, and delegates rendering to
-    /// the egui-charts widget — or an empty-state guide when no bars exist.
+    /// Replace the registry entry with the current `ma_boll` parameter set
+    /// and force a recalculation (see [`Self::indicator_params_dirty`]).
+    fn rebuild_indicator_registry(&mut self) {
+        self.registry = IndicatorRegistry::new();
+        self.registry.add(Box::new(self.ma_boll.clone()));
+        self.cache_key = None;
+        self.indicator_params_dirty = false;
+    }
+
+    /// Toggle the MA/BOLL overlay visibility (header indicator dropdown).
+    fn set_indicator_visible(&mut self, visible: bool) {
+        self.ma_boll.set_visible(visible);
+        self.indicator_params_dirty = true;
+    }
+
+    /// Whether the MA/BOLL overlay is currently visible (kittest door for
+    /// the header indicator dropdown state).
+    #[allow(dead_code)] // kittest door — consumed only under cfg(test)
+    pub fn indicator_visible(&self) -> bool {
+        self.ma_boll.is_visible()
+    }
+
+    /// Core chart rendering (the `body` of the editor — see
+    /// [`EditorView::body`]). Applies `app_theme` chart colors (candles,
+    /// grid, crosshair) each frame, reads `bars` from shared state, and
+    /// delegates rendering to the egui-charts widget — or an empty-state
+    /// guide when no bars exist.
     ///
     /// The MA/BOLL overlay is recomputed only when the bar series fingerprint
     /// (symbol, bar count, first/last bar timestamps, last close) changes,
     /// and its colors are re-applied from the theme every frame. A custom
     /// second legend row is painted over the chart's top-left corner.
-    pub fn show(&mut self, ui: &mut egui::Ui, state: &SharedState, app_theme: &CompassTheme) {
+    fn render_chart_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &SharedState,
+        app_theme: &CompassTheme,
+    ) {
+        // A sidebar parameter edit rebuilds the registry entry before any
+        // calculation so the overlay reflects the new periods/lines.
+        if self.indicator_params_dirty {
+            self.rebuild_indicator_registry();
+        }
+
         app_theme.apply_to_chart(&mut self.chart);
         self.chart.set_symbol(&state.symbol.get());
 
@@ -136,6 +208,53 @@ impl ChartCitizen {
             .chart
             .show_with_indicators(ui, None, Some(&self.registry));
         self.draw_indicator_legend(ui, response, app_theme.tokens());
+    }
+
+    /// Display Options ⋮ menu (design §6): crosshair / volume / legend
+    /// toggles plus the N-key hint. All three toggle live on vendored
+    /// chart state (`chart_options.crosshair.*`, `config.show_volume`,
+    /// `config.show_ohlc_info`) — the theme re-application every frame only
+    /// touches colors, so these flags survive.
+    fn display_options_menu(&mut self, ui: &mut egui::Ui) {
+        let crosshair_visible = self.chart.chart_options.crosshair.vert_line_visible
+            && self.chart.chart_options.crosshair.horz_line_visible;
+        let volume = self.chart.config.show_volume;
+        let legend = self.chart.config.show_ohlc_info;
+
+        let mut crosshair_visible = crosshair_visible;
+        let mut volume = volume;
+        let mut legend = legend;
+
+        ui.menu_button(
+            egui::RichText::new(format!(
+                "{} {}",
+                egui_phosphor::regular::DOTS_THREE_VERTICAL,
+                t!("editor.chart_display.label")
+            )),
+            |ui| {
+                if ui
+                    .checkbox(&mut crosshair_visible, t!("editor.chart_display.crosshair"))
+                    .changed()
+                {
+                    self.chart.chart_options.crosshair.vert_line_visible = crosshair_visible;
+                    self.chart.chart_options.crosshair.horz_line_visible = crosshair_visible;
+                }
+                if ui
+                    .checkbox(&mut volume, t!("editor.chart_display.volume"))
+                    .changed()
+                {
+                    self.chart.config_mut().show_volume = volume;
+                }
+                if ui
+                    .checkbox(&mut legend, t!("editor.chart_display.legend"))
+                    .changed()
+                {
+                    self.chart.config_mut().show_ohlc_info = legend;
+                }
+                ui.separator();
+                ui.label(egui::RichText::new(t!("editor.chart_display.n_hint")).weak());
+            },
+        );
     }
 
     /// Paints the static MA/BOLL legend row below the vendored OHLC legend.
@@ -312,6 +431,189 @@ impl ChartCitizen {
     }
 }
 
+// ---------------------------------------------------------------------------
+// EditorView — chart editor as a first-class editor (plan §4.1 / design §6)
+// ---------------------------------------------------------------------------
+
+impl EditorView for ChartCitizen {
+    fn kind(&self) -> EditorKind {
+        EditorKind::Chart
+    }
+
+    /// Header: Mode Toggle 组 (period segmented + adjust dropdown) →
+    /// indicator dropdown → right end: Fetch + Display Options ⋮ menu.
+    /// App-level actions (timeframe/adjust/fetch) go through the
+    /// `chart_action` out-param; everything else mutates this instance.
+    fn header(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        let tokens = *ctx.theme.tokens();
+        ui.horizontal(|ui| {
+            // Mode Toggle — period segmented (1d/1w/1M).
+            let tf_index = timeframe_index_from_value(&ctx.state.timeframe.get());
+            if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
+                .selected(tf_index)
+                .show(ui)
+            {
+                *ctx.chart_action = Some(ChartHeaderAction::Timeframe(idx));
+            }
+
+            // Adjust dropdown (hidden for indexes/boards — design §6).
+            let current_symbol = ctx.state.symbol.get();
+            if !is_index_or_board(ctx.index_list, &current_symbol)
+                && let Some(idx) = Dropdown::new(
+                    &tokens,
+                    [
+                        t!("toolbar.adjust.qfq"),
+                        t!("toolbar.adjust.hfq"),
+                        t!("toolbar.adjust.none"),
+                    ],
+                )
+                .id_salt("adjust")
+                .selected(adjust_index_from_value(&ctx.state.adjust.get()))
+                .width(96.0)
+                .show(ui)
+            {
+                *ctx.chart_action = Some(ChartHeaderAction::Adjust(idx));
+            }
+
+            // Indicator dropdown — MA/BOLL on/off (parameters live in the
+            // sidebar, design §6 header comment "参数入口").
+            let indicator_visible = self.ma_boll.is_visible();
+            let on_label = t!("editor.chart_indicators.on");
+            let off_label = t!("editor.chart_indicators.off");
+            if let Some(sel) = Dropdown::new(&tokens, [on_label.clone(), off_label.clone()])
+                .id_salt("indicators")
+                .selected(if indicator_visible { 0 } else { 1 })
+                .width(120.0)
+                .show(ui)
+            {
+                let new_visible = sel == 0;
+                if new_visible != indicator_visible {
+                    self.set_indicator_visible(new_visible);
+                }
+            }
+
+            // Right end: Fetch (Primary + loading) + Display Options ⋮ menu.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let loading = ctx.state.loading.get();
+                let fetch_label = if loading {
+                    t!("toolbar.loading")
+                } else {
+                    t!("toolbar.fetch")
+                };
+                let fetch_clicked = Button::new(&tokens, fetch_label)
+                    .variant(ButtonVariant::Primary)
+                    .size(ButtonSize::Lg)
+                    .icon(egui_phosphor::regular::DOWNLOAD_SIMPLE)
+                    .min_width(104.0)
+                    .loading(loading)
+                    .show(ui)
+                    .clicked();
+                if fetch_clicked && !loading {
+                    *ctx.chart_action = Some(ChartHeaderAction::Fetch);
+                }
+
+                self.display_options_menu(ui);
+            });
+        });
+    }
+
+    /// Sidebar: indicator parameters (MA periods, BOLL) + layer settings
+    /// (candle style, volume sub-switch). Default-visible (Q4).
+    fn sidebar(&mut self, ui: &mut egui::Ui, _ctx: &mut EditorCtx<'_>) {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(t!("editor.chart_sidebar.title")).strong());
+        ui.add_space(4.0);
+
+        // — Indicator parameters —
+        ui.label(t!("editor.chart_sidebar.ma_periods"));
+        for i in 0..5 {
+            let mut period = self.ma_boll.ma_periods()[i];
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label(format!("MA{}", period));
+                changed |= ui
+                    .add(egui::DragValue::new(&mut period).range(2..=500))
+                    .changed();
+            });
+            if changed {
+                self.ma_boll.set_ma_period(i, period);
+                self.indicator_params_dirty = true;
+            }
+        }
+        let mut boll_period = self.ma_boll.boll_period();
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(t!("editor.chart_sidebar.boll_period"));
+            changed |= ui
+                .add(egui::DragValue::new(&mut boll_period).range(2..=500))
+                .changed();
+        });
+        if changed {
+            self.ma_boll.set_boll_period(boll_period);
+            self.indicator_params_dirty = true;
+        }
+        let mut boll_std = self.ma_boll.boll_std();
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(t!("editor.chart_sidebar.boll_std"));
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut boll_std)
+                        .range(0.1..=10.0)
+                        .speed(0.1),
+                )
+                .changed();
+        });
+        if changed {
+            self.ma_boll.set_boll_std(boll_std);
+            self.indicator_params_dirty = true;
+        }
+
+        ui.separator();
+
+        // — Layer settings —
+        ui.label(t!("editor.chart_sidebar.candle_style"));
+        ui.horizontal(|ui| {
+            let mut style = self.candle_style;
+            if ui
+                .radio_value(
+                    &mut style,
+                    CandleStyle::Filled,
+                    t!("editor.chart_sidebar.candle_filled"),
+                )
+                .changed()
+            {
+                self.candle_style = CandleStyle::Filled;
+                self.chart
+                    .set_chart_type(CandleStyle::Filled.to_chart_type());
+            }
+            if ui
+                .radio_value(
+                    &mut style,
+                    CandleStyle::Hollow,
+                    t!("editor.chart_sidebar.candle_hollow"),
+                )
+                .changed()
+            {
+                self.candle_style = CandleStyle::Hollow;
+                self.chart
+                    .set_chart_type(CandleStyle::Hollow.to_chart_type());
+            }
+        });
+        let mut volume = self.chart.config.show_volume;
+        if ui
+            .checkbox(&mut volume, t!("editor.chart_sidebar.volume"))
+            .changed()
+        {
+            self.chart.config_mut().show_volume = volume;
+        }
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        self.render_chart_body(ui, ctx.state, ctx.theme);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,7 +665,7 @@ mod tests {
         let theme = CompassTheme::compass_dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            citizen.show(ui, &shared, &theme);
+            citizen.render_chart_body(ui, &shared, &theme);
         });
         harness.run();
         let _ = harness.get_by_label(&tr("chart.empty_title"));
@@ -383,7 +685,7 @@ mod tests {
         let theme = CompassTheme::compass_dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            citizen.show(ui, &shared, &theme);
+            citizen.render_chart_body(ui, &shared, &theme);
         });
         harness.run();
     }
@@ -413,7 +715,7 @@ mod tests {
         let theme = CompassTheme::compass_dark();
 
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            citizen.show(ui, &shared, &theme);
+            citizen.render_chart_body(ui, &shared, &theme);
         });
         harness.run();
         assert!(
@@ -462,7 +764,7 @@ mod tests {
 
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                citizen.show(ui, &shared, &theme);
+                citizen.render_chart_body(ui, &shared, &theme);
             });
             harness.run();
         }
@@ -512,7 +814,7 @@ mod tests {
         shared_a.bars.set(bars_a);
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                citizen.show(ui, &shared_a, &theme);
+                citizen.render_chart_body(ui, &shared_a, &theme);
             });
             harness.run();
         }
@@ -521,7 +823,7 @@ mod tests {
         shared_b.bars.set(bars_b);
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                citizen.show(ui, &shared_b, &theme);
+                citizen.render_chart_body(ui, &shared_b, &theme);
             });
             harness.run();
         }

@@ -26,8 +26,15 @@
 #![allow(dead_code)]
 
 use egui_dock::DockState;
+use egui_mobius::signals::Signal;
 use serde::{Deserialize, Serialize};
 
+use compass_core::data::symbol::parse_explicit_prefix;
+use compass_core::model::IndexBasic;
+
+use crate::messages::{
+    FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
+};
 use crate::state::SharedState;
 use crate::tabs::Tab;
 use crate::theme::CompassTheme;
@@ -255,7 +262,7 @@ impl Workspaces {
     /// - Screener: Screener main + Logger bottom (Q5).
     /// - Sepa: [Sepa, Market] single main leaf + Logger bottom (Q1/Q5).
     pub fn default_layout(id: WorkspaceId) -> DockState<Tab> {
-        let dock = match id {
+        match id {
             WorkspaceId::Chart => {
                 let mut d = DockState::new(vec![Tab::new(EditorKind::Chart)]);
                 if let Some(surface) = d.get_surface_mut(egui_dock::SurfaceIndex::main())
@@ -303,8 +310,7 @@ impl Workspaces {
                 }
                 d
             }
-        };
-        dock
+        }
     }
 }
 
@@ -331,16 +337,68 @@ pub trait EditorView {
 pub struct EditorCtx<'a> {
     pub state: &'a SharedState,
     pub theme: &'a CompassTheme,
+    /// Signal bundle — every App-level trigger an editor needs to fire
+    /// (work/screener/sepa/index/llm). Charts use `work` to refetch;
+    /// phase 3 converges the tab-viewer field set onto this struct.
+    pub signals: &'a EditorSignals<'a>,
+    /// Index list backing the 前复权 hide guard (design/plan §4.1:
+    /// `is_index_or_board` logic moves with the control into the chart).
+    pub index_list: &'a [IndexBasic],
+    /// Out-param channel for App-level chart header actions (timeframe /
+    /// adjust / fetch). The editor writes the action during render; the
+    /// owner consumes it after `show_inside` returns — same pattern as the
+    /// existing `logger_export_clicked` out-param (design §4.2 "按需并入").
+    pub chart_action: &'a mut Option<ChartHeaderAction>,
+}
+
+/// Bundle of the five citizen-trigger signals (design §4.2 `EditorSignals`).
+pub struct EditorSignals<'a> {
+    pub work: &'a Signal<FetchRequest>,
+    pub screener: &'a Signal<RunScreenerRequest>,
+    pub sepa: &'a Signal<RunSepaRequest>,
+    pub index: &'a Signal<RunIndexSnapshotRequest>,
+    pub llm: &'a Signal<RunLlmRequest>,
+}
+
+/// App-level action an editor header can request. Only actions that must be
+/// handled by the App owner live here; purely internal editor state (indicator
+/// visibility, display options, candle style, MA/BOLL parameters) stays
+/// inside the editor instance and never crosses this channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartHeaderAction {
+    /// Switch the period (0="1d", 1="1w", 2="1M").
+    Timeframe(usize),
+    /// Switch the price adjustment mode (0="qfq", 1="hfq", 2="none").
+    Adjust(usize),
+    /// Fetch the current symbol (loading state handled by the owner).
+    Fetch,
+}
+
+/// Whether `symbol` is an index/board (epic #255 C4): BK-prefixed board
+/// codes or any symbol listed in index_basic.parquet. Drives the 前复权
+/// tag hide guard — indexes are not adjusted (fqt=0), so showing the tag
+/// would be wrong information. Migrated out of `CompassApp` with the
+/// control (plan §4.1).
+pub fn is_index_or_board(index_list: &[IndexBasic], symbol: &str) -> bool {
+    parse_explicit_prefix(symbol).0 == "BK"
+        || index_list
+            .iter()
+            .any(|i| i.symbol == symbol && !i.index_type.is_empty())
 }
 
 /// Runtime chrome wrapper (ARegion 类比): Header bar + (Sidebar | body)
-/// split, unified N-key visibility, width drag, Display Options slot.
-/// Implementation lands with the phase-2 editor migrations (design §4.3).
+/// split. The header renders into a top panel; the sidebar is a left panel
+/// shown only when the `EditorLayout` registers one (and its `sidebar_visible`
+/// flag is set); the body fills the remainder.
 pub struct EditorFrame {
     pub sidebar_visible: bool,
 }
 
 impl EditorFrame {
+    /// Renders one editor with its unified chrome.
+    ///
+    /// Panel order matters inside `show_inside`: top header first, then the
+    /// sidebar (if any), then the central body.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -348,8 +406,25 @@ impl EditorFrame {
         editor: &mut impl EditorView,
         ctx: &mut EditorCtx<'_>,
     ) {
-        let _ = (ui, desc, editor, ctx);
-        unimplemented!("phase 2: EditorFrame chrome wrapper")
+        egui::Panel::top("editor_header").show(ui, |ui| {
+            editor.header(ui, ctx);
+        });
+
+        let sidebar = desc.layout.sidebar.as_ref();
+        if let Some(side) = sidebar.filter(|_| self.sidebar_visible) {
+            let range = egui::Rangef::new(side.width_range.0, side.width_range.1);
+            egui::Panel::left("editor_sidebar")
+                .default_size(side.default_width)
+                .size_range(range)
+                .resizable(true)
+                .show(ui, |ui| {
+                    editor.sidebar(ui, ctx);
+                });
+        }
+
+        egui::CentralPanel::default().show(ui, |ui| {
+            editor.body(ui, ctx);
+        });
     }
 }
 

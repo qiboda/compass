@@ -76,10 +76,10 @@ fn read_all_src() -> String {
                 let p = entry.path();
                 if p.is_dir() {
                     walk(&p, out);
-                } else if p.extension().is_some_and(|e| e == "rs") {
-                    if let Ok(s) = std::fs::read_to_string(&p) {
-                        out.push_str(&s);
-                    }
+                } else if p.extension().is_some_and(|e| e == "rs")
+                    && let Ok(s) = std::fs::read_to_string(&p)
+                {
+                    out.push_str(&s);
                 }
             }
         }

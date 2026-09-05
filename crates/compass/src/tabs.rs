@@ -30,11 +30,14 @@ use crate::citizens::logger::LoggerPanel;
 use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
-use crate::editor::EditorKind;
+use crate::editor::{
+    ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
+};
 use crate::messages::{
     FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
 };
 use crate::state::SharedState;
+use compass_core::model::IndexBasic;
 use compass_i18n::t;
 
 // ---------------------------------------------------------------------------
@@ -218,6 +221,12 @@ pub struct TabViewer<'a> {
     pub theme: &'a CompassTheme,
     /// Out-param: set to `true` when the logger export button was clicked.
     pub logger_export_clicked: &'a mut bool,
+    /// Index list backing the chart header's 前复权 hide guard (plan §4.1 —
+    /// the control moved out of the toolbar; `is_index_or_board` moved too).
+    pub index_list: &'a [IndexBasic],
+    /// Out-param: chart header action (timeframe/adjust/fetch) consumed by
+    /// the owner after `show_inside` returns.
+    pub chart_action: &'a mut Option<ChartHeaderAction>,
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
@@ -229,7 +238,33 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab.kind {
-            EditorKind::Chart => self.chart.show(ui, self.shared_state, self.theme),
+            EditorKind::Chart => {
+                let desc = EDITOR_REGISTRY
+                    .iter()
+                    .find(|d| d.kind == EditorKind::Chart)
+                    .expect("chart descriptor must exist in EDITOR_REGISTRY");
+                let sidebar_visible = desc
+                    .layout
+                    .sidebar
+                    .as_ref()
+                    .map(|s| s.default_visible)
+                    .unwrap_or(false);
+                let mut ctx = EditorCtx {
+                    state: self.shared_state,
+                    theme: self.theme,
+                    signals: &EditorSignals {
+                        work: self.work_signal,
+                        screener: self.run_screener_signal,
+                        sepa: self.sepa_signal,
+                        index: self.index_signal,
+                        llm: self.llm_signal,
+                    },
+                    index_list: self.index_list,
+                    chart_action: self.chart_action,
+                };
+                let mut frame = EditorFrame { sidebar_visible };
+                frame.show(ui, desc, self.chart, &mut ctx);
+            }
             EditorKind::Logger => {
                 *self.logger_export_clicked =
                     self.logger.show(ui, self.shared_state, self.theme.tokens());
@@ -541,6 +576,7 @@ mod tests {
         let theme = CompassTheme::compass_dark();
 
         let mut logger_export_clicked = false;
+        let mut chart_action = None;
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
             chart: &mut chart,
@@ -558,6 +594,8 @@ mod tests {
             shared_state: &shared,
             theme: &theme,
             logger_export_clicked: &mut logger_export_clicked,
+            index_list: &[],
+            chart_action: &mut chart_action,
         };
 
         for (kind, title) in [

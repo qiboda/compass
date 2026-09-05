@@ -33,6 +33,24 @@ sidebar:
 
 editor:
   chart: 图表
+  chart_indicators:
+    on: MA/BOLL 显示
+    off: MA/BOLL 隐藏
+  chart_display:
+    label: 显示选项
+    crosshair: 十字准线
+    volume: 成交量
+    legend: 图例
+    n_hint: 按 N 显示/隐藏侧栏
+  chart_sidebar:
+    title: 图表设置
+    ma_periods: MA 周期
+    boll_period: BOLL 周期
+    boll_std: BOLL 标准差
+    candle_style: K 线样式
+    candle_filled: 实心
+    candle_hollow: 空心
+    volume: 成交量
   screener: 选股器
   sepa: 东方SEPA
   market: 大盘
