@@ -30,83 +30,13 @@ pub const SEPA_ID: &str = "sepa";
 pub const MARKET_ID: &str = "market";
 
 // ---------------------------------------------------------------------------
-// TabKind — enum of dockable panel types
+// EditorKind — citizen mapping (F6 hard coupling)
 // ---------------------------------------------------------------------------
-
-/// Identifies which kind of panel a tab represents.
-///
-/// Transition enum (plan A3): the `Tab` payload switches to [`EditorKind`]
-/// in phase 1; `TabKind` survives until phase 2 close (F6 hard-coupling
-/// removal), kept for the legacy `TabKind → EditorKind` mapping and the
-/// pre-migration unit tests. It does NOT carry a `Watchlist` variant —
-/// watchlist exists only as `EditorKind::Watchlist`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TabKind {
-    Chart,
-    Logger,
-    Screener,
-    Sepa,
-    Market,
-}
-
-#[allow(dead_code)] // transition enum: title/icon/citizen_id kept for legacy tests until phase 2
-impl TabKind {
-    /// i18n key of the tab's display title. The rendering consumer
-    /// ([`Tab::title`] via the egui_dock `TabViewer`) resolves it via `t!()`
-    /// so a live locale switch updates the dock tabs (issue #222, plan T5
-    /// Metis M2).
-    pub fn title(&self) -> &'static str {
-        match self {
-            Self::Chart => "tab.chart",
-            Self::Logger => "tab.logger",
-            Self::Screener => "tab.screener",
-            Self::Sepa => "tab.sepa",
-            Self::Market => "tab.market",
-        }
-    }
-
-    /// Phosphor icon glyph shown next to the tab title (design doc §Q2).
-    pub fn icon(&self) -> &'static str {
-        match self {
-            Self::Chart => egui_phosphor::regular::CHART_LINE,
-            Self::Logger => egui_phosphor::regular::TERMINAL,
-            Self::Screener => egui_phosphor::regular::FUNNEL_SIMPLE,
-            Self::Sepa => egui_phosphor::regular::GAUGE,
-            Self::Market => egui_phosphor::regular::TREND_UP,
-        }
-    }
-
-    pub fn citizen_id(&self) -> CitizenId {
-        match self {
-            Self::Chart => CitizenId::new(CHART_ID),
-            Self::Logger => CitizenId::new(LOGGER_ID),
-            Self::Screener => CitizenId::new(SCREENER_ID),
-            Self::Sepa => CitizenId::new(SEPA_ID),
-            Self::Market => CitizenId::new(MARKET_ID),
-        }
-    }
-}
-
-/// Phase-1 mapping: every legacy `TabKind` maps to its `EditorKind`
-/// (plan §3.1 / A3). `Watchlist` has no `TabKind` — it is constructed
-/// directly as `EditorKind::Watchlist`.
-impl From<TabKind> for EditorKind {
-    fn from(value: TabKind) -> Self {
-        match value {
-            TabKind::Chart => Self::Chart,
-            TabKind::Logger => Self::Logger,
-            TabKind::Screener => Self::Screener,
-            TabKind::Sepa => Self::Sepa,
-            TabKind::Market => Self::Market,
-        }
-    }
-}
 
 impl EditorKind {
     /// The [`CitizenId`] this editor kind maps to in the dispatcher
-    /// (one-hot activation; 1:1 link kept until the citizen layer lands —
-    /// friction F6, removed in phase 2).
+    /// (one-hot activation; the 1:1 link replaced the `TabKind`-to-citizen
+    /// hard coupling, friction F6, removed in phase 3).
     ///
     /// `None` for kinds that are NOT 1:1 citizens — plan §4.6: the watchlist
     /// has no registered citizen (it is not a one-hot member); `on_tab_button`
@@ -132,17 +62,16 @@ impl EditorKind {
 /// A dockable tab carrying its [`EditorKind`].
 ///
 /// Used as `DockState<Tab>` and `TabViewer::Tab = Tab` in egui_dock.
-/// The payload switched from `TabKind` in phase 1 (plan A3) so dock trees
-/// can carry `EditorKind::Watchlist` leaves.
+/// The payload switched from `TabKind` to `EditorKind` (plan A3 — phase 3
+/// deleted the transition enum) so dock trees can carry
+/// `EditorKind::Watchlist` leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tab {
     kind: EditorKind,
 }
 
 impl Tab {
-    /// Create a tab of the given kind. Accepts both `EditorKind` directly
-    /// and the transition `TabKind` (via `From<TabKind> for EditorKind`),
-    /// so legacy call sites compile unchanged until phase 2.
+    /// Create a tab of the given kind.
     pub fn new(kind: impl Into<EditorKind>) -> Self {
         Self { kind: kind.into() }
     }
@@ -264,7 +193,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
 }
 
 // ===========================================================================
-// Tests — ref #79 (pure-logic TabKind + Tab, no TabViewer rendering)
+// Tests — ref #79 (pure-logic Tab + EditorKind, no TabViewer rendering)
 // ===========================================================================
 
 #[cfg(test)]
@@ -280,102 +209,27 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // TabKind::title
+    // Tab::title via EditorKind
     // ------------------------------------------------------------------
 
-    #[test]
-    fn tab_kind_chart_title() {
-        let _guard = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        compass_i18n::set_locale("zh");
-        assert_eq!(tr(TabKind::Chart.title()), "图表");
-    }
-
-    #[test]
-    fn tab_kind_logger_title() {
-        let _guard = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        compass_i18n::set_locale("zh");
-        assert_eq!(tr(TabKind::Logger.title()), "日志");
-    }
-
-    #[test]
-    fn tab_kind_screener_title() {
-        let _guard = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        compass_i18n::set_locale("zh");
-        assert_eq!(tr(TabKind::Screener.title()), "选股器");
-    }
-
-    #[test]
-    fn tab_kind_sepa_title() {
-        let _guard = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        compass_i18n::set_locale("zh");
-        assert_eq!(tr(TabKind::Sepa.title()), "东方SEPA");
-    }
-
     // ------------------------------------------------------------------
-    // #222 i18n (T5): `TabKind::title()` returns KEY CONSTANTS ("tab.chart"
-    // etc.), not display text — the rendering consumer (TabViewer::title)
-    // resolves them via t!() so a live locale switch updates the dock tabs.
-    // RED now: title() still returns the zh literal.
+    // #222 i18n (T5): `EditorKind::title_key()` returns KEY CONSTANTS
+    // ("editor.chart" etc.), not display text — the rendering consumer
+    // (TabViewer::title) resolves them via t!() so a live locale switch
+    // updates the dock tabs.
     // ------------------------------------------------------------------
-
-    #[test]
-    fn tab_kind_titles_are_key_constants() {
-        assert_eq!(TabKind::Chart.title(), "tab.chart");
-        assert_eq!(TabKind::Logger.title(), "tab.logger");
-        assert_eq!(TabKind::Screener.title(), "tab.screener");
-        assert_eq!(TabKind::Sepa.title(), "tab.sepa");
-    }
 
     #[test]
     fn tab_title_delegates_to_key_constant() {
-        let tab = Tab::new(TabKind::Chart);
-        // Phase 1: Tab payload is EditorKind — title key is the `editor.*`
-        // tree (display value unchanged: tab.chart == editor.chart == 图表).
+        let tab = Tab::new(EditorKind::Chart);
+        // Tab payload is EditorKind — the title key is the `editor.*` tree
+        // (display value unchanged: tab.chart == editor.chart == 图表).
         assert_eq!(tab.title(), "editor.chart");
     }
 
-    #[test]
-    fn tab_kind_icons_are_phosphor_glyphs() {
-        assert_eq!(TabKind::Chart.icon(), egui_phosphor::regular::CHART_LINE);
-        assert_eq!(TabKind::Logger.icon(), egui_phosphor::regular::TERMINAL);
-        assert_eq!(
-            TabKind::Screener.icon(),
-            egui_phosphor::regular::FUNNEL_SIMPLE
-        );
-        assert_eq!(TabKind::Sepa.icon(), egui_phosphor::regular::GAUGE);
-    }
-
     // ------------------------------------------------------------------
-    // TabKind::citizen_id
+    // EditorKind::citizen_id
     // ------------------------------------------------------------------
-
-    #[test]
-    fn tab_kind_chart_citizen_id() {
-        assert_eq!(TabKind::Chart.citizen_id(), CitizenId::new(CHART_ID));
-    }
-
-    #[test]
-    fn tab_kind_logger_citizen_id() {
-        assert_eq!(TabKind::Logger.citizen_id(), CitizenId::new(LOGGER_ID));
-    }
-
-    #[test]
-    fn tab_kind_screener_citizen_id() {
-        assert_eq!(TabKind::Screener.citizen_id(), CitizenId::new(SCREENER_ID));
-    }
-
-    #[test]
-    fn tab_kind_sepa_citizen_id() {
-        assert_eq!(TabKind::Sepa.citizen_id(), CitizenId::new(SEPA_ID));
-    }
 
     // ------------------------------------------------------------------
     // EditorKind::citizen_id — plan §4.0/§4.6 contract: Option<CitizenId>
@@ -405,21 +259,6 @@ mod tests {
         assert_eq!(EditorKind::Watchlist.citizen_id(), None);
     }
 
-    #[test]
-    fn editor_kind_citizen_id_matches_tabkind_identity() {
-        // Migration guard: EditorKind must keep the exact TabKind citizen
-        // mapping (a drift here flips tab activation semantics).
-        for (editor, legacy) in [
-            (EditorKind::Chart, TabKind::Chart),
-            (EditorKind::Logger, TabKind::Logger),
-            (EditorKind::Screener, TabKind::Screener),
-            (EditorKind::Sepa, TabKind::Sepa),
-            (EditorKind::Market, TabKind::Market),
-        ] {
-            assert_eq!(editor.citizen_id(), Some(legacy.citizen_id()));
-        }
-    }
-
     // ------------------------------------------------------------------
     // Tab::new / Tab::title / Tab::citizen_id
     // ------------------------------------------------------------------
@@ -430,7 +269,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         compass_i18n::set_locale("zh");
-        let tab = Tab::new(TabKind::Chart);
+        let tab = Tab::new(EditorKind::Chart);
         assert_eq!(tr(tab.title()), "图表");
         assert_eq!(tab.citizen_id(), Some(CitizenId::new(CHART_ID)));
     }
@@ -441,7 +280,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         compass_i18n::set_locale("zh");
-        let tab = Tab::new(TabKind::Logger);
+        let tab = Tab::new(EditorKind::Logger);
         assert_eq!(tr(tab.title()), "日志");
         assert_eq!(tab.citizen_id(), Some(CitizenId::new(LOGGER_ID)));
     }
@@ -452,7 +291,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         compass_i18n::set_locale("zh");
-        let tab = Tab::new(TabKind::Screener);
+        let tab = Tab::new(EditorKind::Screener);
         assert_eq!(tr(tab.title()), "选股器");
         assert_eq!(tab.citizen_id(), Some(CitizenId::new(SCREENER_ID)));
     }
@@ -463,20 +302,23 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         compass_i18n::set_locale("zh");
-        let tab = Tab::new(TabKind::Sepa);
+        let tab = Tab::new(EditorKind::Sepa);
         assert_eq!(tr(tab.title()), "东方SEPA");
         assert_eq!(tab.citizen_id(), Some(CitizenId::new(SEPA_ID)));
     }
 
     #[test]
     fn tab_same_kind_are_equal() {
-        assert_eq!(Tab::new(TabKind::Chart), Tab::new(TabKind::Chart));
-        assert_eq!(Tab::new(TabKind::Logger), Tab::new(TabKind::Logger));
-        assert_eq!(Tab::new(TabKind::Screener), Tab::new(TabKind::Screener));
-        assert_eq!(Tab::new(TabKind::Sepa), Tab::new(TabKind::Sepa));
-        assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Logger));
-        assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Screener));
-        assert_ne!(Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa));
+        assert_eq!(Tab::new(EditorKind::Chart), Tab::new(EditorKind::Chart));
+        assert_eq!(Tab::new(EditorKind::Logger), Tab::new(EditorKind::Logger));
+        assert_eq!(
+            Tab::new(EditorKind::Screener),
+            Tab::new(EditorKind::Screener)
+        );
+        assert_eq!(Tab::new(EditorKind::Sepa), Tab::new(EditorKind::Sepa));
+        assert_ne!(Tab::new(EditorKind::Chart), Tab::new(EditorKind::Logger));
+        assert_ne!(Tab::new(EditorKind::Chart), Tab::new(EditorKind::Screener));
+        assert_ne!(Tab::new(EditorKind::Chart), Tab::new(EditorKind::Sepa));
     }
 
     // ------------------------------------------------------------------
@@ -574,11 +416,11 @@ mod tests {
         };
 
         for (kind, title) in [
-            (TabKind::Chart, tr("tab.chart")),
-            (TabKind::Logger, tr("tab.logger")),
-            (TabKind::Screener, tr("tab.screener")),
-            (TabKind::Sepa, tr("tab.sepa")),
-            (TabKind::Market, tr("tab.market")),
+            (EditorKind::Chart, tr("editor.chart")),
+            (EditorKind::Logger, tr("editor.logger")),
+            (EditorKind::Screener, tr("editor.screener")),
+            (EditorKind::Sepa, tr("editor.sepa")),
+            (EditorKind::Market, tr("editor.market")),
         ] {
             let mut tab = Tab::new(kind);
             let text = viewer.title(&mut tab).text().to_string();

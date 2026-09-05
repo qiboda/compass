@@ -1040,24 +1040,6 @@ mod tests {
     // 迁移后「变脸」（chart↔screener 级错乱），mutation 防护。
     // ------------------------------------------------------------------
 
-    #[test]
-    fn tabkind_to_editor_kind_identity_mapping_preserved() {
-        use crate::tabs::TabKind;
-        for (legacy, editor) in [
-            (TabKind::Chart, EditorKind::Chart),
-            (TabKind::Logger, EditorKind::Logger),
-            (TabKind::Screener, EditorKind::Screener),
-            (TabKind::Sepa, EditorKind::Sepa),
-            (TabKind::Market, EditorKind::Market),
-        ] {
-            assert_eq!(
-                Tab::new(legacy).kind(),
-                editor,
-                "legacy TabKind {legacy:?} 迁移后身份改变（From 映射错位）"
-            );
-        }
-    }
-
     // ------------------------------------------------------------------
     // Workspaces::switch 边界（设计 §4.4/§9.2 语义承诺：target 不在 all
     // → no-op（active 不变、绝不 panic）；存在 → active = 该 id 在 all 中

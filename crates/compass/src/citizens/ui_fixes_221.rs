@@ -17,7 +17,8 @@ use egui_kittest::kittest::Queryable;
 
 use super::ui_fixes_218::{LANG_LOCK, build_compass_app_with_stocks, sized_harness};
 use crate::CompassApp;
-use crate::tabs::{Tab, TabKind};
+use crate::editor::EditorKind;
+use crate::tabs::Tab;
 
 /// Key-resolution test helper (plan T4): resolves a key through the shared
 /// compass-i18n dictionary.
@@ -188,7 +189,7 @@ fn activate_sepa_tab(app: &mut CompassApp) {
     let screen = app.workspaces.all[active].active_screen;
     let dock = &mut app.workspaces.all[active].layouts[screen].dock_state;
     let path = dock
-        .find_tab(&Tab::new(TabKind::Sepa))
+        .find_tab(&Tab::new(EditorKind::Sepa))
         .expect("SEPA tab exists in the sepa workspace dock tree");
     dock.set_active_tab(path).expect("activate SEPA tab");
 }
