@@ -829,6 +829,15 @@
   命令（log/show）可用。config 修改时间当日（21:36），且文件内混入
   `[beads] role = maintainer`、`vscode-merge-base`、`opencode` 等条目——
   判定为某个工具（beads/opencode/vscode 插件）改配置时误写。
+- **2026-09-05 复发证据与最可能来源**: worktree `fix-index-daily-tencent-default`
+  完成后再次出现 `bare = true`。排查排除：git 自身 `worktree add/remove`
+  （临时仓库实验均不写 `core.bare`）、DSH worktree 脚本（无 config 操作）、
+  全部 DSH session 日志（无 `git config core.bare` 命令）。已知外部 bug 高度匹配：
+  Claude Code 的 worktree isolation / EnterWorktree/ExitWorktree 工具会把父仓库
+  `core.bare` 置为 true 且退出时恢复失败（GitHub issues #58345、#51930、#45201、
+  #69802）；OpenCode 也有相关 bare-repo worktree 修复（PR #41963）。本地装有
+  opencode/beads/Hermes，未能捕获精确写入进程；未来建议用 inotify/守护定时巡检
+  `.git/config` 的 `core.bare` 定位写入者。
 - **排查路径**:
   1. 报错文案直接指向裸仓库语义：`git rev-parse --is-bare-repository` → `true`
   2. `cat .git/config` 看 `[core]` 段的 `bare` 标志；`stat .git/config` 看修改时间
