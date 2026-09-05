@@ -2486,6 +2486,36 @@ default_timeframe = "1w"
         }
     }
 
+    fn market_editor_harness_ui<'a>(app: &'a mut CompassApp) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Market)
+                .expect("market descriptor must exist");
+            let mut chart_action = None;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+            };
+            // Market registers no sidebar (design §6).
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.market, &mut ctx);
+        }
+    }
+
     /// The sepa header (plan §4.3): count label 「共 N 行 · 日期」 + TOP-N
     /// segmented + refresh button — all three queryable at once.
     #[test]
@@ -2597,6 +2627,67 @@ default_timeframe = "1w"
         harness.run();
         harness
             .get_by_label(&tr("editor.sepa_header.reset_sort"))
+            .click();
+        harness.step();
+        drop(harness);
+    }
+
+    /// The market header (plan §4.4): count label 「共 N 个 · 日期」 +
+    /// [行业板块 | 官方指数] segmented + refresh button — all queryable at
+    /// once (the old toolbar controls moved into the header).
+    #[test]
+    fn render_market_header_exposes_count_segment_and_refresh() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .index_snapshot
+            .set(Some(compass_types::IndexSnapshot {
+                rows: vec![compass_types::IndexRow {
+                    symbol: "SH000001".to_string(),
+                    name: "上证指数".to_string(),
+                    name_en: None,
+                    index_type: "official".to_string(),
+                    change_pct: 0.82,
+                    latest: 3200.0,
+                    amount: 123_456_789.0,
+                }],
+                date: "2026-08-13".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
+        harness.run();
+        // Hardcoded interpolated output (SEPA kittest precedent) — the tr()
+        // helper cannot carry interpolation args.
+        harness.get_by_label("共 1 个 · 2026-08-13");
+        harness.get_by_label(&tr("index.segment.industry"));
+        harness.get_by_label(&tr("index.segment.official"));
+        // Icon-prefixed button label: "{icon} {text}" (chart Fetch precedent).
+        let refresh_label = format!(
+            "{} {}",
+            egui_phosphor::regular::ARROW_CLOCKWISE,
+            tr("index.refresh")
+        );
+        harness.get_by_label(&refresh_label);
+    }
+
+    /// The ⋮ menu offers reset-sort (designer ruling 2026-09-05); the exact
+    /// sort-state restoration is asserted in market.rs mod tests (the
+    /// `DataTable` field is private), here we only prove reachability.
+    #[test]
+    fn render_market_header_menu_offers_reset_sort() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
+        harness.run();
+        harness
+            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.market_header.reset_sort"))
             .click();
         harness.step();
         drop(harness);

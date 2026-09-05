@@ -61,6 +61,8 @@ editor:
   sepa_header:
     reset_sort: 重置排序
   market: 大盘
+  market_header:
+    reset_sort: 重置排序
   logger: 日志
   watchlist: 自选
 

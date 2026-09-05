@@ -312,7 +312,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     .layout
                     .sidebar
                     .as_ref()
-                    .map_or(false, |s| s.default_visible);
+                    .is_some_and(|s| s.default_visible);
                 let mut ctx = EditorCtx {
                     state: self.shared_state,
                     theme: self.theme,
@@ -332,8 +332,35 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                 frame.show(ui, desc, self.sepa, &mut ctx);
             }
             EditorKind::Market => {
-                self.market
-                    .show(ui, self.shared_state, self.index_signal, self.work_signal);
+                let desc = EDITOR_REGISTRY
+                    .iter()
+                    .find(|d| d.kind == EditorKind::Market)
+                    .expect("market descriptor must exist in EDITOR_REGISTRY");
+                // Derived from the descriptor like the Chart/Screener branches:
+                // Market registers `sidebar: None`, so this stays false until
+                // a sidebar is actually registered (2c review P3-5 pattern).
+                let sidebar_visible = desc
+                    .layout
+                    .sidebar
+                    .as_ref()
+                    .is_some_and(|s| s.default_visible);
+                let mut ctx = EditorCtx {
+                    state: self.shared_state,
+                    theme: self.theme,
+                    signals: &EditorSignals {
+                        work: self.work_signal,
+                        screener: self.run_screener_signal,
+                        sepa: self.sepa_signal,
+                        index: self.index_signal,
+                        llm: self.llm_signal,
+                    },
+                    index_list: self.index_list,
+                    chart_action: self.chart_action,
+                    screener_industries: self.screener_industries,
+                    screener_boards: self.screener_boards,
+                };
+                let mut frame = EditorFrame { sidebar_visible };
+                frame.show(ui, desc, self.market, &mut ctx);
             }
             // Phase-1 placeholder: the Outliner-style watchlist editor lands
             // in phase 2f (plan §4.6); its leaf only becomes reachable once

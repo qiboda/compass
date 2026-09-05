@@ -63,6 +63,8 @@ editor:
   sepa_header:
     reset_sort: Reset sort
   market: Market
+  market_header:
+    reset_sort: Reset sort
   logger: Log
   watchlist: Watchlist
 

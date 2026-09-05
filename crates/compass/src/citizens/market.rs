@@ -20,6 +20,7 @@ use compass_ui::widgets::data_table::{ColumnSpec, DataCell, DataTable};
 use compass_ui::widgets::empty_state::EmptyState;
 use compass_ui::widgets::segmented::Segmented;
 
+use crate::editor::{EditorCtx, EditorKind, EditorView};
 use crate::messages::{FetchRequest, RunIndexSnapshotRequest};
 use crate::state::SharedState;
 
@@ -127,7 +128,20 @@ impl MarketPanel {
         }
     }
 
+    /// Restore the business default order: change percent descending (板块
+    /// 轮动视角 — the state `new()` establishes). Header clicks persist the
+    /// order via `DataTable::toggle_sort` and a re-run (`set_rows`) never
+    /// resets it, so this is the only explicit re-entry point (designer
+    /// ruling 2026-09-05, design §6 Market row).
+    fn reset_sort(&mut self) {
+        self.table.set_sort(CHANGE_COLUMN, true);
+        self.table.set_descending_default(CHANGE_COLUMN, true);
+    }
+
     /// Render the panel: core-index card + toolbar + ranking table.
+    /// (old combined signature — replaced below by `EditorView`, kept as a
+    /// test-only stand-in for the kittest harnesses).
+    #[cfg(test)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -135,22 +149,42 @@ impl MarketPanel {
         index_signal: &Signal<RunIndexSnapshotRequest>,
         work_signal: &Signal<FetchRequest>,
     ) {
-        let snapshot = shared_state.index_snapshot.get();
-        ui.vertical(|ui| {
-            self.core_index_card(ui, shared_state, snapshot.as_ref(), work_signal);
-
-            ui.add_space(self.tokens.spacing.sm);
-            self.toolbar(ui, shared_state, index_signal);
-
-            ui.add_space(self.tokens.spacing.md);
-            self.results_area(
-                ui,
-                shared_state,
-                index_signal,
-                work_signal,
-                snapshot.as_ref(),
-            );
-        });
+        // Test-only stand-in for the old combined render (plan §4.4): the
+        // production path now renders header + body through `EditorFrame`;
+        // this keeps the old signature so existing kittest harnesses stay
+        // untouched. The screener/sepa/llm signals are dummies — Market
+        // never fires them (same pattern as 2b/2c).
+        let theme = crate::theme::CompassTheme::compass_dark();
+        let (screener_signal, _screener_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunScreenerRequest>();
+        let (sepa_signal, _sepa_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunSepaRequest>();
+        let (llm_signal, _llm_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunLlmRequest>();
+        let mut chart_action = None;
+        let mut ctx = EditorCtx {
+            state: shared_state,
+            theme: &theme,
+            signals: &crate::editor::EditorSignals {
+                work: work_signal,
+                screener: &screener_signal,
+                sepa: &sepa_signal,
+                index: index_signal,
+                llm: &llm_signal,
+            },
+            index_list: &[],
+            chart_action: &mut chart_action,
+            screener_industries: &[],
+            screener_boards: &[],
+        };
+        let mut frame = crate::editor::EditorFrame {
+            sidebar_visible: false,
+        };
+        let desc = crate::editor::EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == EditorKind::Market)
+            .expect("market descriptor must exist in EDITOR_REGISTRY");
+        frame.show(ui, desc, self, &mut ctx);
     }
 
     /// Core-index card (design ①): the six whitelist indexes, each rendered
@@ -235,66 +269,6 @@ impl MarketPanel {
                             &r.symbol,
                         );
                     }
-                }
-            });
-        });
-    }
-
-    /// Toolbar (design ②): count label + Segmented filter + refresh button.
-    /// Refresh is purely manual — no auto-refresh (SEPA precedent).
-    fn toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        shared_state: &SharedState,
-        index_signal: &Signal<RunIndexSnapshotRequest>,
-    ) {
-        let tokens = self.tokens;
-        let c = &tokens.color;
-        let loading = shared_state.index_snapshot_loading.get();
-        let count_text = match shared_state.index_snapshot.get() {
-            Some(snap) if !snap.rows.is_empty() => {
-                compass_i18n::t!("index.count", count = snap.rows.len(), date = snap.date)
-                    .into_owned()
-            }
-            _ => compass_i18n::t!("index.no_data").into_owned(),
-        };
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(count_text)
-                    .size(tokens.typography.caption)
-                    .color(c.text_secondary),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if Button::new(
-                    &tokens,
-                    if loading {
-                        compass_i18n::t!("index.computing")
-                    } else {
-                        compass_i18n::t!("index.refresh")
-                    },
-                )
-                .variant(ButtonVariant::Primary)
-                .size(ButtonSize::Md)
-                .icon(egui_phosphor::regular::ARROW_CLOCKWISE)
-                .min_width(96.0)
-                .loading(loading)
-                .show(ui)
-                .clicked()
-                {
-                    self.trigger_refresh(shared_state, index_signal);
-                }
-                ui.add_space(tokens.spacing.md);
-                if let Some(idx) = Segmented::new(
-                    &tokens,
-                    [
-                        compass_i18n::t!("index.segment.industry"),
-                        compass_i18n::t!("index.segment.official"),
-                    ],
-                )
-                .selected(self.segment)
-                .show(ui)
-                {
-                    self.segment = idx;
                 }
             });
         });
@@ -413,6 +387,101 @@ impl MarketPanel {
     }
 }
 
+impl EditorView for MarketPanel {
+    fn kind(&self) -> EditorKind {
+        EditorKind::Market
+    }
+
+    /// Header (design §6 Market row / plan §4.4): count label + Segmented
+    /// [industry | official] + manual refresh (Primary + spinner, no
+    /// auto-refresh — SEPA precedent) + right-end ⋮ menu (reset-sort,
+    /// designer ruling 2026-09-05). The old `toolbar` moved in place.
+    fn header(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        let tokens = self.tokens;
+        let c = &tokens.color;
+        let shared_state = ctx.state;
+        let loading = shared_state.index_snapshot_loading.get();
+        let count_text = match shared_state.index_snapshot.get() {
+            Some(snap) if !snap.rows.is_empty() => {
+                compass_i18n::t!("index.count", count = snap.rows.len(), date = snap.date)
+                    .into_owned()
+            }
+            _ => compass_i18n::t!("index.no_data").into_owned(),
+        };
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(count_text)
+                    .size(tokens.typography.caption)
+                    .color(c.text_secondary),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button(
+                    egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
+                    |ui| {
+                        if ui
+                            .button(compass_i18n::t!("editor.market_header.reset_sort"))
+                            .clicked()
+                        {
+                            self.reset_sort();
+                            ui.close();
+                        }
+                    },
+                );
+                if Button::new(
+                    &tokens,
+                    if loading {
+                        compass_i18n::t!("index.computing")
+                    } else {
+                        compass_i18n::t!("index.refresh")
+                    },
+                )
+                .variant(ButtonVariant::Primary)
+                .size(ButtonSize::Md)
+                .icon(egui_phosphor::regular::ARROW_CLOCKWISE)
+                .min_width(96.0)
+                .loading(loading)
+                .show(ui)
+                .clicked()
+                {
+                    self.trigger_refresh(shared_state, ctx.signals.index);
+                }
+                ui.add_space(tokens.spacing.md);
+                if let Some(idx) = Segmented::new(
+                    &tokens,
+                    [
+                        compass_i18n::t!("index.segment.industry"),
+                        compass_i18n::t!("index.segment.official"),
+                    ],
+                )
+                .selected(self.segment)
+                .show(ui)
+                {
+                    self.segment = idx;
+                }
+            });
+        });
+    }
+
+    /// Body (design §6 Market row): core-index card + ranking table — the
+    /// old vertical order minus the toolbar (now the header). Local-copy
+    /// segment filter semantics unchanged: switching segments never clears
+    /// the shared snapshot.
+    fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        let snapshot = ctx.state.index_snapshot.get();
+        ui.vertical(|ui| {
+            self.core_index_card(ui, ctx.state, snapshot.as_ref(), ctx.signals.work);
+            ui.add_space(self.tokens.spacing.md);
+            self.results_area(
+                ui,
+                ctx.state,
+                ctx.signals.index,
+                ctx.signals.work,
+                snapshot.as_ref(),
+            );
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,6 +553,70 @@ mod tests {
         assert_eq!(panel.id(), &CitizenId::new("market"));
         assert_eq!(panel.segment, 0, "default segment is industry");
         assert!(panel.table.sort_descending(), "change column defaults desc");
+    }
+
+    /// The ⋮ reset-sort menu action (designer ruling 2026-09-05) restores
+    /// the constructor's business default: change percent descending.
+    #[test]
+    fn reset_sort_restores_business_default_order() {
+        let (mut panel, _) = panel();
+        // Equivalent to a header click on column 0 (toggle_sort is private;
+        // set_sort constructs the same live state).
+        panel.table.set_sort(0, false);
+        assert_eq!(panel.table.sort_column(), 0);
+        assert!(!panel.table.sort_descending());
+        panel.reset_sort();
+        assert_eq!(
+            panel.table.sort_column(),
+            CHANGE_COLUMN,
+            "reset-sort must return to the change column (business default)"
+        );
+        assert!(panel.table.sort_descending(), "change must be descending");
+        // Idempotent.
+        panel.reset_sort();
+        assert_eq!(panel.table.sort_column(), CHANGE_COLUMN);
+        assert!(panel.table.sort_descending());
+    }
+
+    /// End-to-end wiring (2c review P2-1 pattern): clicking ⋮ → reset-sort
+    /// through the real menu must invoke `reset_sort`.
+    #[test]
+    fn reset_sort_menu_action_restores_order_via_ui() {
+        let _guard = crate::citizens::ui_fixes_218::LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        let (mut panel, shared) = panel();
+        shared.index_snapshot.set(Some(sample_snapshot()));
+        shared.index_snapshot_loading.set(false);
+        let (index_signal, work_signal) = signals();
+        // Disturb the order first, as a user would via header clicks.
+        panel.table.set_sort(0, false);
+        assert_eq!(panel.table.sort_column(), 0);
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &index_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+        harness
+            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .click();
+        harness.run();
+        let reset_sort_label = compass_i18n::t!("editor.market_header.reset_sort");
+        harness.get_by_label(reset_sort_label.as_ref()).click();
+        harness.run();
+        drop(harness);
+        assert_eq!(
+            panel.table.sort_column(),
+            CHANGE_COLUMN,
+            "⋮ reset-sort click must return to the change column"
+        );
+        assert!(
+            panel.table.sort_descending(),
+            "⋮ reset-sort click must restore change descending"
+        );
+        compass_i18n::set_locale("zh");
     }
 
     #[test]
