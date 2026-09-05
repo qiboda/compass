@@ -352,6 +352,11 @@ pub struct EditorCtx<'a> {
     /// Single slot: same-frame multi-action is last-wins (unreachable under
     /// single-pointer egui semantics — one click yields one action).
     pub chart_action: &'a mut Option<ChartHeaderAction>,
+    /// Screener condition-builder context (plan §4.2): industry/board lists
+    /// backing the card multi-selects. Attached now that the screener moves
+    /// in; phase 3 converges the tab-viewer field set onto this struct.
+    pub screener_industries: &'a [String],
+    pub screener_boards: &'a [String],
 }
 
 /// Bundle of the five citizen-trigger signals (design §4.2 `EditorSignals`).

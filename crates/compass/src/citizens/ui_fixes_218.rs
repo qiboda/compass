@@ -207,6 +207,8 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
                 },
                 index_list: &app.index_list,
                 chart_action: &mut chart_action,
+                screener_industries: &[],
+                screener_boards: &[],
             };
             let mut frame = EditorFrame {
                 sidebar_visible: true,

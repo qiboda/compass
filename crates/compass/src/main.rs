@@ -1605,6 +1605,8 @@ mod tests {
                 },
                 index_list: &app.index_list,
                 chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
             };
             let sidebar_visible = desc
                 .layout
@@ -2414,6 +2416,113 @@ default_timeframe = "1w"
         assert!(
             !app.chart.indicator_visible(),
             "overlay must be hidden after selecting 隐藏"
+        );
+    }
+
+    /// Screener-editor render closure (plan §4.2): full editor frame
+    /// (header + sidebar + body) so kittest can query the condition builder,
+    /// run button, count chip, and results table in one pass.
+    fn screener_editor_harness_ui<'a>(app: &'a mut CompassApp) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Screener)
+                .expect("screener descriptor must exist");
+            let mut chart_action = None;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+            };
+            let sidebar_visible = desc
+                .layout
+                .sidebar
+                .as_ref()
+                .map(|s| s.default_visible)
+                .unwrap_or(false);
+            let mut frame = EditorFrame { sidebar_visible };
+            frame.show(ui, desc, &mut app.screener, &mut ctx);
+        }
+    }
+
+    /// The screener sidebar (plan §4.2) hosts the condition builder — its
+    /// card-title label must be queryable at the default width.
+    #[test]
+    fn render_screener_sidebar_exposes_condition_builder_label() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        let _ = harness.get_by_label(&tr("screener.builder.card_title"));
+    }
+
+    /// The screener header (plan §4.2) shows the result count label; the
+    /// key itself ("editor.screener_header.count") is scoped to the header.
+    #[test]
+    fn render_screener_header_shows_count_label() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.screener_total.set(3);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        let _ = harness.get_by_label("共 3 只");
+    }
+
+    /// The body renders the results table with its column headers once rows
+    /// are present (plan §4.2 — 6-column semantics unchanged).
+    #[test]
+    fn render_screener_results_table_shows_column_headers() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .screener_result
+            .set(vec![compass_types::ScreenerRow {
+                industry_en: None,
+                symbol: "SH600519".to_string(),
+                name: "贵州茅台".to_string(),
+                latest_price: 10.0,
+                change_20d: 5.0,
+                market_cap: 200.0,
+                industry: "银行".to_string(),
+            }]);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        let _ = harness.get_by_label(&tr("screener.table.code"));
+    }
+
+    /// The sidebar run button (plan §4.2) fires the run path: loading is set
+    /// synchronously before the signal send (same semantics as the old
+    /// combined `show`).
+    #[test]
+    fn render_screener_run_button_triggers_loading() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label(&tr("screener.filter")).click();
+        harness.step();
+        drop(harness);
+        assert!(
+            app.shared_state.screener_loading.get(),
+            "run button must set screener_loading before sending the signal"
         );
     }
 

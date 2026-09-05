@@ -54,6 +54,10 @@ editor:
     candle_hollow: Hollow
     volume: Volume
   screener: Screener
+  screener_header:
+    count: "%{count} matched"
+    running: Running…
+    clear_results: Clear results
   sepa: East SEPA
   market: Market
   logger: Log

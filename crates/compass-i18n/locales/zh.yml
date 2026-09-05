@@ -52,6 +52,10 @@ editor:
     candle_hollow: 空心
     volume: 成交量
   screener: 选股器
+  screener_header:
+    count: "共 %{count} 只"
+    running: 运行中…
+    clear_results: 清除结果
   sepa: 东方SEPA
   market: 大盘
   logger: 日志
