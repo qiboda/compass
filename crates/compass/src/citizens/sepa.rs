@@ -1424,7 +1424,6 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         compass_i18n::set_locale("zh");
-        let map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let row = row_with_industry("", None);
         let cells = SepaPanel::row_cells(&row);
         assert!(

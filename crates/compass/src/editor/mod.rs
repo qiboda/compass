@@ -339,7 +339,7 @@ pub struct EditorCtx<'a> {
     pub theme: &'a CompassTheme,
     /// Signal bundle — every App-level trigger an editor needs to fire
     /// (work/screener/sepa/index/llm). phase 2b+ editors use these;
-    /// the chart uses the `chart_action` out-param instead (see above).
+    /// the chart uses the `chart_action` out-param instead (see below).
     /// phase 3 converges the tab-viewer field set onto this struct.
     pub signals: &'a EditorSignals<'a>,
     /// Index list backing the 前复权 hide guard (design/plan §4.1:
