@@ -865,7 +865,7 @@
   institution_survey 338373/09-04；index_daily 529834/09-04；index_basic 120。
 - **教训**: auto-heal 回补必须复用 daily 路径的第三方兜底（Tencent）与 proxy 健康策略；
   任何新增 backfill 路径都要先验证 EastMoney 不可达时仍能完成。
-- **修复（fix/index-daily-tencent-default，PR 待填）**: `decide_official` 纯决策函数统一
+- **修复（fix/index-daily-tencent-default，PR #356）**: `decide_official` 纯决策函数统一
   daily `run()`/`backfill()`/`probe_official()` 官方指数源序——腾讯主源优先、东财
   push2his 备用、增量窗口任一源应答（含空行）即路径成功（非增量无行即失败）、双不可达才失败（增量空窗口按
   no-op 成功）；`SOURCE` 更新为 `Tencent kline + EastMoney fallback + THS industry kline`；
