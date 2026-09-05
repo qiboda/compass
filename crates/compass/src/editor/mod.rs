@@ -362,6 +362,12 @@ pub struct EditorCtx<'a> {
     /// in; phase 3 converges the tab-viewer field set onto this struct.
     pub screener_industries: &'a [String],
     pub screener_boards: &'a [String],
+    /// Out-param channel for the Logger export button (plan §4.5): the
+    /// editor writes the click during render; the owner opens the
+    /// save-file dialog after `show_inside` returns — same pattern as
+    /// `chart_action` and the pre-2e `logger_export_clicked` TabViewer
+    /// field (design §4.2 "按需并入").
+    pub logger_export_clicked: &'a mut bool,
 }
 
 /// Bundle of the five citizen-trigger signals (design §4.2 `EditorSignals`).

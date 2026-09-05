@@ -190,6 +190,7 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
     let mut app = build_compass_app(egui::Context::default());
     {
         let mut chart_action = None;
+        let mut logger_export_clicked = false;
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
             let desc = EDITOR_REGISTRY
                 .iter()
@@ -209,6 +210,7 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
                 chart_action: &mut chart_action,
                 screener_industries: &[],
                 screener_boards: &[],
+                logger_export_clicked: &mut logger_export_clicked,
             };
             let mut frame = EditorFrame {
                 sidebar_visible: true,

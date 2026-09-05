@@ -1589,6 +1589,7 @@ mod tests {
         chart_action: &'a mut Option<ChartHeaderAction>,
     ) -> impl FnMut(&mut egui::Ui) + 'a {
         move |ui| {
+            let mut logger_export_clicked = false;
             let desc = EDITOR_REGISTRY
                 .iter()
                 .find(|d| d.kind == EditorKind::Chart)
@@ -1607,6 +1608,7 @@ mod tests {
                 chart_action,
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
             };
             let sidebar_visible = desc
                 .layout
@@ -2429,6 +2431,7 @@ default_timeframe = "1w"
                 .find(|d| d.kind == EditorKind::Screener)
                 .expect("screener descriptor must exist");
             let mut chart_action = None;
+            let mut logger_export_clicked = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2443,6 +2446,7 @@ default_timeframe = "1w"
                 chart_action: &mut chart_action,
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
             };
             let sidebar_visible = desc
                 .layout
@@ -2462,6 +2466,7 @@ default_timeframe = "1w"
                 .find(|d| d.kind == EditorKind::Sepa)
                 .expect("sepa descriptor must exist");
             let mut chart_action = None;
+            let mut logger_export_clicked = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2476,6 +2481,7 @@ default_timeframe = "1w"
                 chart_action: &mut chart_action,
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
             };
             // SEPA registers no sidebar (design §6) — the 280px detail panel
             // stays an in-body right pane, so no left panel is created.
@@ -2493,6 +2499,7 @@ default_timeframe = "1w"
                 .find(|d| d.kind == EditorKind::Market)
                 .expect("market descriptor must exist");
             let mut chart_action = None;
+            let mut logger_export_clicked = false;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2507,12 +2514,51 @@ default_timeframe = "1w"
                 chart_action: &mut chart_action,
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
             };
             // Market registers no sidebar (design §6).
             let mut frame = EditorFrame {
                 sidebar_visible: false,
             };
             frame.show(ui, desc, &mut app.market, &mut ctx);
+        }
+    }
+
+    /// Logger-editor render closure (plan §4.5): header (SectionTitle row)
+    /// over body (egui_lens viewer) through `EditorFrame`. The export click
+    /// is reported through the `logger_export_clicked` out-param — the same
+    /// channel the production TabViewer hands to the App, which opens the
+    /// save-file dialog after the frame pass (unchanged flow).
+    fn logger_editor_harness_ui<'a>(
+        app: &'a mut CompassApp,
+        logger_export_clicked: &'a mut bool,
+    ) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Logger)
+                .expect("logger descriptor must exist");
+            let mut chart_action = None;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked,
+            };
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.logger, &mut ctx);
         }
     }
 
@@ -2673,6 +2719,50 @@ default_timeframe = "1w"
             tr("index.refresh")
         );
         harness.get_by_label(&refresh_label);
+    }
+
+    /// The logger header (plan §4.5): SectionTitle row — heading 「日志」 +
+    /// entry count + export icon button — all queryable through the
+    /// EditorFrame header slot.
+    #[test]
+    fn render_logger_header_exposes_title_count_and_export() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut logger_export_clicked = false;
+        let mut harness = egui_kittest::Harness::new_ui(logger_editor_harness_ui(
+            &mut app,
+            &mut logger_export_clicked,
+        ));
+        harness.run();
+        harness.get_by_label(&tr("logger.title"));
+        harness.get_by_label("0");
+        harness.get_by_label(egui_phosphor::regular::EXPORT);
+    }
+
+    /// Export click travels through the `logger_export_clicked` out-param
+    /// (plan §4.5: the App opens the save-file dialog after the frame pass —
+    /// that flow is unchanged, so the harness only proves the channel).
+    #[test]
+    fn render_logger_export_click_reports_out_param() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut logger_export_clicked = false;
+        let mut harness = egui_kittest::Harness::new_ui(logger_editor_harness_ui(
+            &mut app,
+            &mut logger_export_clicked,
+        ));
+        harness.run();
+        harness.get_by_label(egui_phosphor::regular::EXPORT).click();
+        harness.step();
+        drop(harness);
+        assert!(
+            logger_export_clicked,
+            "export button click must reach the out-param"
+        );
     }
 
     /// The ⋮ menu offers reset-sort (designer ruling 2026-09-05); the exact

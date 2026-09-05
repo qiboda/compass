@@ -348,6 +348,7 @@ impl ScreenerPanel {
             .map(|s| s.default_visible)
             .unwrap_or(false);
         let mut chart_action = None;
+        let mut logger_export_clicked = false;
         let mut ctx = EditorCtx {
             state: shared_state,
             theme: &theme,
@@ -362,6 +363,7 @@ impl ScreenerPanel {
             chart_action: &mut chart_action,
             screener_industries: industries,
             screener_boards: boards,
+            logger_export_clicked: &mut logger_export_clicked,
         };
         let mut frame = crate::editor::EditorFrame { sidebar_visible };
         frame.show(ui, desc, self, &mut ctx);
