@@ -57,6 +57,7 @@ editor:
   screener_header:
     count: "%{count} matched"
     running: Running…
+    reset_sort: Reset sort
     clear_results: Clear results
   sepa: East SEPA
   sepa_header:

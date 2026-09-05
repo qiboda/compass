@@ -138,8 +138,8 @@ impl DataTable {
     }
 
     /// The current sort column index (0 = first column). Read-only counterpart
-    /// of [`Self::set_sort`] — needed by callers that restore a documented
-    /// default order (e.g. the SEPA reset-sort menu action) and by tests.
+    /// of [`Self::set_sort`] — needed by tests asserting the current sort
+    /// state.
     pub fn sort_column(&self) -> usize {
         self.sort_column
     }

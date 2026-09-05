@@ -2769,6 +2769,29 @@ default_timeframe = "1w"
         );
     }
 
+    /// The ⋮ menu also offers "reset sort" (designer ruling 2026-09-05); the
+    /// exact sort-state restoration is asserted in screener.rs mod tests
+    /// (the `DataTable` field is private), here we only prove reachability —
+    /// clicking must not panic with the menu open.
+    #[test]
+    fn render_screener_header_menu_offers_reset_sort() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness
+            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.screener_header.reset_sort"))
+            .click();
+        harness.step();
+        drop(harness);
+    }
+
     /// The header shows the running chip (spinner + weak text) while
     /// `screener_loading` is set (plan §4.2 — header state feedback).
     #[test]

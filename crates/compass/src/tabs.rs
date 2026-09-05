@@ -305,7 +305,14 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     .iter()
                     .find(|d| d.kind == EditorKind::Sepa)
                     .expect("sepa descriptor must exist in EDITOR_REGISTRY");
-                let sidebar_visible = false; // SEPA registers no sidebar (design §6).
+                // Derived from the descriptor like the Chart/Screener branches
+                // (2c review P3-5): SEPA currently registers `sidebar: None`,
+                // so this stays false until a sidebar is actually registered.
+                let sidebar_visible = desc
+                    .layout
+                    .sidebar
+                    .as_ref()
+                    .map_or(false, |s| s.default_visible);
                 let mut ctx = EditorCtx {
                     state: self.shared_state,
                     theme: self.theme,

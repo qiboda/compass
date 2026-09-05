@@ -196,6 +196,18 @@ impl ScreenerPanel {
             ));
         }
     }
+
+    /// Restore the official default order (market-cap descending, ties broken
+    /// by code ascending — the state `new()` establishes at construction).
+    /// `DataTable::toggle_sort` only mutates `sort_column`/`sort_descending`;
+    /// `set_descending_default` also needs re-asserting to fully re-enter the
+    /// construction state. Idempotent; re-runs (`set_rows`) never reset this
+    /// order on their own, so an explicit reset is the only way back (designer
+    /// ruling 2026-09-05, design §6 Screener row).
+    fn reset_sort(&mut self) {
+        self.table.set_sort(MARKET_CAP_COLUMN, true);
+        self.table.set_descending_default(MARKET_CAP_COLUMN, true);
+    }
 }
 
 impl EditorView for ScreenerPanel {
@@ -221,6 +233,17 @@ impl EditorView for ScreenerPanel {
                 ui.menu_button(
                     egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
                     |ui| {
+                        // Non-destructive action first (OS menu convention); the
+                        // current sort state persists across re-runs because
+                        // `set_rows` on `DataTable` never resets ordering
+                        // (designer ruling 2026-09-05, design §6 Screener row).
+                        if ui
+                            .button(compass_i18n::t!("editor.screener_header.reset_sort"))
+                            .clicked()
+                        {
+                            self.reset_sort();
+                            ui.close();
+                        }
                         if ui
                             .button(compass_i18n::t!("editor.screener_header.clear_results"))
                             .clicked()
@@ -1522,6 +1545,23 @@ mod tests {
         // "全部" appears three times: the industry/exchange/board multi-select
         // triggers of the six preset cards.
         let _ = harness.query_all_by_label_contains("全部").count();
+    }
+
+    #[test]
+    fn reset_sort_restores_official_default_order() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut panel, _) = panel_with_form();
+        // Disturb the order (user clicked a column header, e.g. code asc).
+        panel.table.set_sort(0, false);
+        panel.reset_sort();
+        assert_eq!(panel.table.sort_column(), MARKET_CAP_COLUMN);
+        assert!(panel.table.sort_descending());
+        // Idempotent: a second reset keeps the official order.
+        panel.reset_sort();
+        assert_eq!(panel.table.sort_column(), MARKET_CAP_COLUMN);
+        assert!(panel.table.sort_descending());
     }
 
     #[test]
