@@ -2657,9 +2657,13 @@ default_timeframe = "1w"
             }));
         let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
         harness.run();
-        // Hardcoded interpolated output (SEPA kittest precedent) — the tr()
-        // helper cannot carry interpolation args.
-        harness.get_by_label("共 1 个 · 2026-08-13");
+        // Interpolated via the t! macro (SEPA kittest precedent); the tr()
+        // helper cannot carry args but t! can.
+        harness.get_by_label(&compass_i18n::t!(
+            "index.count",
+            count = 1,
+            date = "2026-08-13"
+        ));
         harness.get_by_label(&tr("index.segment.industry"));
         harness.get_by_label(&tr("index.segment.official"));
         // Icon-prefixed button label: "{icon} {text}" (chart Fetch precedent).

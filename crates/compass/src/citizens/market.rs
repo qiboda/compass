@@ -1,7 +1,8 @@
 //! Market panel citizen — 大盘 overview tab (epic #255 C4, plan T6).
 //!
-//! Report-type panel: a core-index card (6-index whitelist), a toolbar
-//! (count label + industry/official Segmented + manual refresh) and
+//! Report-type panel: a core-index card (6-index whitelist), an editor
+//! header (count label + industry/official Segmented + manual refresh +
+//! ⋮ reset-sort menu — migrated from the old toolbar, plan §4.4) and
 //! a sortable ranking table fed by the fourth `AsyncDispatcher` channel
 //! (`RunIndexSnapshotRequest` → `IndexSnapshot`). Segment switching filters
 //! a local copy of the snapshot in memory — never re-fetches (SEPA TOP-N
@@ -112,13 +113,20 @@ impl Citizen for MarketPanel {
 }
 
 impl MarketPanel {
+    /// Apply the business default table order — change percent descending
+    /// (板块轮动视角, design §四-③). Shared by `new()` and `reset_sort` so
+    /// the constructor default has a single definition (2d review P3-1,
+    /// SEPA `apply_official_default_sort` pattern).
+    fn apply_business_default_sort(table: &mut DataTable) {
+        // Header clicks keep the descending default for this column.
+        table.set_sort(CHANGE_COLUMN, true);
+        table.set_descending_default(CHANGE_COLUMN, true);
+    }
+
     /// Create a market panel with the given citizen identity/state.
     pub fn new(citizen_id: CitizenId, citizen_state: CitizenState, tokens: &ThemeTokens) -> Self {
         let mut table = DataTable::new(tokens, COLUMNS.to_vec());
-        // Business default: change percent descending (板块轮动视角, design
-        // §四-③); header clicks keep the descending default for this column.
-        table.set_sort(CHANGE_COLUMN, true);
-        table.set_descending_default(CHANGE_COLUMN, true);
+        Self::apply_business_default_sort(&mut table);
         Self {
             citizen_id,
             citizen_state,
@@ -134,8 +142,7 @@ impl MarketPanel {
     /// resets it, so this is the only explicit re-entry point (designer
     /// ruling 2026-09-05, design §6 Market row).
     fn reset_sort(&mut self) {
-        self.table.set_sort(CHANGE_COLUMN, true);
-        self.table.set_descending_default(CHANGE_COLUMN, true);
+        Self::apply_business_default_sort(&mut self.table);
     }
 
     /// Render the panel: core-index card + toolbar + ranking table.
