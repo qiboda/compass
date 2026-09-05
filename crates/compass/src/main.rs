@@ -512,7 +512,10 @@ fn layout_section_from_doc(doc: &toml::Value) -> LayoutSection {
         dock_version: section
             .get("dock_version")
             .and_then(|v| v.as_integer())
-            .map(|i| i as u32),
+            // `try_from` guards the wrap case (4294967298 → `as u32` == 2
+            // would sneak past the version check; review 41e74cc0 P3-3). A
+            // failed conversion becomes None → version mismatch → fallback.
+            .and_then(|i| u32::try_from(i).ok()),
         workspaces: section
             .get("workspaces")
             .and_then(|v| v.as_array())
@@ -770,13 +773,20 @@ fn save_theme_config(theme: &str) -> Result<(), String> {
 /// Resolve the `[layout]` section into the [`Workspaces`] container
 /// (design §9.1/§9.2). Returns `(workspaces, fell_back)`.
 ///
-/// Corruption — version mismatch (`dock_version != 2`), unknown workspace
-/// id, duplicate/partial workspace list, bad topology JSON, invalid
-/// topology (fraction out of range / empty leaf / duplicate kind) or an
-/// unknown `active_workspace` — falls back to `Workspaces::default()` with
-/// a warning; the config must never prevent startup (aligns with
-/// `load_config`). A missing `[layout]` section (first run) also returns
-/// the defaults but stays silent (`fell_back = false`).
+/// Corruption splits into two severities:
+/// - **Structural** (version mismatch, unknown/missing/duplicated workspace
+///   ids, unknown `active_workspace`) → whole `Workspaces::default()` with a
+///   warning; the container itself is unusable.
+/// - **Per-workspace** (bad topology JSON, invalid topology, missing `dock`,
+///   `active_screen` out of range) → *that* workspace alone falls back to
+///   `default_layout(id)` so the other workspaces keep their custom
+///   arrangement (review 41e74cc0 P2-1; design §9.2 wording updated by the
+///   "which layout to fall back to" ruling — the config must never prevent
+///   startup either way).
+///
+/// A missing `[layout]` section (first run) also returns the defaults but
+/// stays silent (`fell_back = false`); any actual corruption surfaces a
+/// toast through `fell_back`.
 fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bool) {
     use crate::editor::{WorkspaceId, dock_state_from_topology};
 
@@ -790,27 +800,33 @@ fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bo
         return (crate::editor::Workspaces::default(), false);
     }
 
-    let fallback = || {
+    let full_fallback = || {
         tracing::warn!("[layout] corrupted, using default layouts");
         (crate::editor::Workspaces::default(), true)
     };
 
-    if section.dock_version != Some(crate::editor::DOCK_TOPOLOGY_VERSION) {
+    // dock_version: missing or not equal to 2 → structural fallback. The
+    // TOML integer is an i64; u32::try_from guards the wrap-around case
+    // (e.g. 4294967298 would truncate to 2, review 41e74cc0 P3-3).
+    if section.dock_version.and_then(|v| u32::try_from(v).ok())
+        != Some(crate::editor::DOCK_TOPOLOGY_VERSION)
+    {
         tracing::warn!(
             version = ?section.dock_version,
             expected = crate::editor::DOCK_TOPOLOGY_VERSION,
             "[layout] dock_version mismatch, using default layouts"
         );
-        return fallback();
+        return full_fallback();
     }
 
-    // The stored list must contain exactly the three known workspaces — a
-    // partial or reordered list is treated as corrupted (design §9.1).
+    // The stored list must contain exactly the three known workspaces,
+    // each once (any order). A partial/duplicated/unknown list means the
+    // container shape is broken → structural fallback.
     let mut ids: Vec<WorkspaceId> = Vec::new();
     for ws in &section.workspaces {
         let Some(id) = WorkspaceId::from_str(&ws.id) else {
             tracing::warn!(id = %ws.id, "[layout] unknown workspace id, using default layouts");
-            return fallback();
+            return full_fallback();
         };
         ids.push(id);
     }
@@ -822,38 +838,72 @@ fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bo
             count = ids.len(),
             "[layout] workspace list incomplete/duplicated, using default layouts"
         );
-        return fallback();
+        return full_fallback();
     }
 
+    // active_workspace must name one of the stored ids.
+    let active = section
+        .workspaces
+        .iter()
+        .position(|ws| Some(ws.id.as_str()) == section.active_workspace.as_deref());
+    let Some(active_idx) = active else {
+        tracing::warn!(
+            active = ?section.active_workspace,
+            "[layout] active_workspace unknown, using default layouts"
+        );
+        return full_fallback();
+    };
+
+    // Per-workspace: any entry-level problem degrades only that workspace
+    // to its default layout (design §9.1/§9.2; review 41e74cc0 P2-1).
     let mut all = Vec::new();
-    let mut active = None;
-    for (i, ws) in section.workspaces.iter().enumerate() {
+    let mut fell_back = false;
+    for ws in section.workspaces.iter() {
         let id = WorkspaceId::from_str(&ws.id).expect("validated above");
-        if !EXPECTED_IDS.contains(&id) {
-            tracing::warn!(id = ?id, "[layout] unexpected workspace, using default layouts");
-            return fallback();
+        let id_default = || crate::editor::Workspaces::default_layout(id);
+
+        // v1 = exactly one screen per workspace (lock-in D3); any other
+        // `active_screen` would panic on the direct index in the render
+        // paths — treat it as this workspace's corruption (P1-1).
+        if ws.active_screen != 0 {
+            tracing::warn!(
+                id = %ws.id,
+                active_screen = ws.active_screen,
+                "[layout] active_screen out of range, using the default layout for this workspace"
+            );
+            fell_back = true;
+            all.push(crate::editor::Workspace {
+                id,
+                layouts: vec![crate::editor::ScreenLayout {
+                    dock_state: id_default(),
+                    active_tab: None,
+                }],
+                active_screen: 0,
+            });
+            continue;
         }
-        if Some(ws.id.as_str()) == section.active_workspace.as_deref() {
-            active = Some(i);
-        }
+
         let dock_state = match ws.dock.as_deref() {
-            Some(json) => {
-                let topo = match serde_json::from_str::<crate::editor::DockTopology>(json) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        tracing::warn!(id = %ws.id, error = %e, "[layout] bad dock topology JSON, using default layouts");
-                        return fallback();
+            Some(json) => match serde_json::from_str::<crate::editor::DockTopology>(json) {
+                Ok(topo) => {
+                    if let Err(e) = topo.validate() {
+                        tracing::warn!(id = %ws.id, error = %e, "[layout] invalid dock topology, using the default layout for this workspace");
+                        fell_back = true;
+                        id_default()
+                    } else {
+                        dock_state_from_topology(&topo)
                     }
-                };
-                if let Err(e) = topo.validate() {
-                    tracing::warn!(id = %ws.id, error = %e, "[layout] invalid dock topology, using default layouts");
-                    return fallback();
                 }
-                dock_state_from_topology(&topo)
-            }
+                Err(e) => {
+                    tracing::warn!(id = %ws.id, error = %e, "[layout] bad dock topology JSON, using the default layout for this workspace");
+                    fell_back = true;
+                    id_default()
+                }
+            },
             None => {
-                tracing::warn!(id = %ws.id, "[layout] missing dock entry, using default layouts");
-                return fallback();
+                tracing::warn!(id = %ws.id, "[layout] missing dock entry, using the default layout for this workspace");
+                fell_back = true;
+                id_default()
             }
         };
         all.push(crate::editor::Workspace {
@@ -862,30 +912,25 @@ fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bo
                 dock_state,
                 active_tab: None,
             }],
-            active_screen: ws.active_screen,
+            active_screen: 0,
         });
     }
-    let Some(active_idx) = active else {
-        tracing::warn!(
-            active = ?section.active_workspace,
-            "[layout] active_workspace unknown, using default layouts"
-        );
-        return fallback();
-    };
     (
         crate::editor::Workspaces {
             all,
             active: active_idx,
         },
-        false,
+        fell_back,
     )
 }
 
 /// Persist the `[layout]` section of config.toml (design §9.2): read-modify-
 /// write, mirrors [`save_theme_config`]; `dock` entries are v2 topology JSON
 /// strings (design §9.1). A workspace whose tree fails to extract (degenerate
-/// empty state) is skipped rather than persisted — the load side treats a
-/// missing `dock` as corrupted and falls back to the default layout.
+/// empty state) is **skipped with a trace** rather than persisted — the load
+/// side then falls that workspace back to its default layout (per-workspace
+/// corruption, review 41e74cc0 P2-1; a null-main-surface tree would
+/// otherwise poison the whole section).
 fn save_layout_config(workspaces: &crate::editor::Workspaces) -> Result<(), String> {
     let config_path = std::env::var("HOME")
         .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
@@ -931,6 +976,11 @@ fn save_layout_config(workspaces: &crate::editor::Workspaces) -> Result<(), Stri
             let json = serde_json::to_string(&topo)
                 .map_err(|e| format!("failed to serialize layout topology: {e}"))?;
             t.insert("dock".to_string(), toml::Value::String(json));
+        } else {
+            tracing::warn!(
+                id = %ws.id.as_str(),
+                "[layout] topology extraction failed, skipping the dock entry"
+            );
         }
         ws_array.push(toml::Value::Table(t));
     }
@@ -2457,6 +2507,156 @@ default_timeframe = "1w"
             .push_to_focused_leaf(crate::tabs::Tab::new(crate::editor::EditorKind::Screener));
         let fp1 = crate::layout_fingerprint(&ws).expect("edited fingerprint");
         assert_ne!(fp0, fp1, "adding a tab must change the fingerprint");
+    }
+
+    #[test]
+    fn resolve_workspaces_active_screen_out_of_range_falls_back_per_workspace() {
+        // P1-1: `active_screen >= layouts.len()` would panic on the direct
+        // index in the render paths — the workspace alone falls back to its
+        // default layout (active_screen forced 0); others keep their trees.
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.workspaces[0].active_screen = 1;
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(
+            fell_back,
+            "out-of-range active_screen must report a fallback"
+        );
+        assert_eq!(ws.all[0].active_screen, 0, "active_screen must clamp to 0");
+        let default_chart = crate::editor::extract_topology(
+            &crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Chart),
+        )
+        .unwrap();
+        let ws0 = crate::editor::extract_topology(&ws.all[0].layouts[0].dock_state).unwrap();
+        assert_eq!(
+            ws0, default_chart,
+            "the touched workspace falls back to default"
+        );
+        // Untouched workspaces keep their (default) trees and are usable.
+        let ws1 = crate::editor::extract_topology(&ws.all[1].layouts[0].dock_state).unwrap();
+        let default_screener = crate::editor::extract_topology(
+            &crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Screener),
+        )
+        .unwrap();
+        assert_eq!(ws1, default_screener);
+    }
+
+    #[test]
+    fn resolve_workspaces_corrupt_entry_keeps_other_workspaces() {
+        // P2-1 (per-id fallback): a custom (valid) chart tree survives even
+        // when the screener entry is corrupt — only the corrupt workspace
+        // degrades to its default layout.
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        // Chart workspace: main leaf carries [chart, screener] (custom).
+        section.workspaces[0].dock = Some(
+            r#"{"root":{"split":{"dir":"vertical","fraction":0.75,
+                "a":{"split":{"dir":"horizontal","fraction":0.25,
+                     "a":{"leaf":{"tabs":["watchlist"]}},
+                     "b":{"leaf":{"tabs":["chart","screener"]}}}},
+                "b":{"leaf":{"tabs":["logger"]}}}}}"#
+                .to_string(),
+        );
+        // Screener entry: bad JSON.
+        section.workspaces[1].dock = Some(r#"{"root":{"split":{"bogus":1}}}"#.to_string());
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back);
+        let ws0 = crate::editor::extract_topology(&ws.all[0].layouts[0].dock_state).unwrap();
+        assert!(
+            serde_json::to_string(&ws0)
+                .unwrap()
+                .contains("\"chart\",\"screener\""),
+            "custom chart tree must survive a sibling's corruption: {ws0:?}"
+        );
+        let ws1 = crate::editor::extract_topology(&ws.all[1].layouts[0].dock_state).unwrap();
+        let default_screener = crate::editor::extract_topology(
+            &crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Screener),
+        )
+        .unwrap();
+        assert_eq!(ws1, default_screener);
+    }
+
+    #[test]
+    fn resolve_workspaces_dock_version_wrap_guard() {
+        // P3-3: an i64 TOML integer that wraps to 2 via `as u32` must NOT
+        // pass the version check (the manual parser uses try_from).
+        let text = todays_layout_toml(&crate::editor::Workspaces::default())
+            .replace("dock_version = 2", "dock_version = 4294967298");
+        let section = parse_layout_section(&text);
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "wrapped dock_version must fall back");
+    }
+
+    /// P2-2 (kittest, stage 1): the startup restore path — a config with
+    /// `active_workspace = "sepa"` resolves and renders the SEPA recap as
+    /// the mounted workspace (end-to-end through the render tree).
+    #[test]
+    fn layout_startup_restores_active_workspace_renders_sepa() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.active_workspace = Some("sepa".to_string());
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        assert!(!fell_back);
+
+        let app = build_compass_app(egui::Context::default());
+        let app = CompassApp {
+            workspaces: restored,
+            ..app
+        };
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        // SEPA header in its no-data state (no snapshot loaded).
+        let _ = harness.get_by_label(&tr("sepa.no_data"));
+    }
+
+    /// P2-2 (kittest, stage 2): switching the workspace writes the
+    /// `[layout]` section to config.toml immediately (design §9.2) — the
+    /// file appears with the *new* active workspace.
+    #[test]
+    fn layout_workspace_switch_saves_section_immediately() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let _lock = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        harness.get_by_label(&seg_label).click_accesskit();
+        harness.run_steps(3);
+
+        let config_text = std::fs::read_to_string(tmp.path().join(".config/compass/config.toml"))
+            .expect("switch must create the config file");
+        let doc: toml::Value = toml::from_str(&config_text).unwrap();
+        assert_eq!(
+            doc["layout"]["active_workspace"].as_str(),
+            Some("screener"),
+            "switch must persist the new active workspace immediately"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]

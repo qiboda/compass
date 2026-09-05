@@ -1183,6 +1183,23 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn workspace_id_as_str_matches_serde_and_roundtrips() {
+        // review 41e74cc0 P3-7: the hand-maintained as_str/from_str table
+        // must stay in lockstep with serde's snake_case rename — the config
+        // [layout] strings go through the manual table, the serde paths
+        // through the derive; a drift would silently break persistence.
+        for id in [WorkspaceId::Chart, WorkspaceId::Screener, WorkspaceId::Sepa] {
+            assert_eq!(
+                format!("\"{}\"", id.as_str()),
+                serde_json::to_string(&id).unwrap(),
+                "as_str must match the serde snake_case name for {id:?}"
+            );
+            assert_eq!(WorkspaceId::from_str(id.as_str()), Some(id));
+        }
+        assert_eq!(WorkspaceId::from_str("bogus"), None);
+    }
+
     // ------------------------------------------------------------------
     // default_layout signature + tree structure（设计 §11 组 A）
     // ------------------------------------------------------------------
