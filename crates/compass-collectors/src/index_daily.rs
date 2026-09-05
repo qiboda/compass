@@ -432,27 +432,16 @@ async fn fetch_ths_kline(
 /// (issue #354). Returns the normalized kline rows (raw 7-field CSV lines)
 /// and the source code label (Tencent symbol / EastMoney echoed code).
 pub async fn probe_official(secid: &str, last_date: Option<&str>) -> Result<(Vec<String>, String)> {
+    // Validate the secid before any network call: invalid input fails fast
+    // instead of issuing pointless requests (review round 1).
+    let tcode = tencent_code(secid)?;
     let client = HttpClient::new()?;
     let mut throttle = Throttle::new(EM_MIN_INTERVAL);
     let mut pool = make_proxy_pool();
-    let tencent = fetch_tencent_kline(&client, &mut throttle, secid, last_date, &mut pool).await?;
-    let eastmoney = if tencent.as_ref().is_some_and(|k| !k.is_empty()) {
-        None
-    } else {
-        fetch_kline(&client, &mut throttle, secid, last_date, &mut pool).await?
-    };
-    let tcode = tencent_code(secid)?;
-    match decide_official(tencent, eastmoney, last_date.is_some()) {
-        OfficialDecision::Tencent(rows) => Ok((rows, tcode)),
-        OfficialDecision::EastMoney {
-            klines,
-            echoed_code,
-        } => Ok((klines, echoed_code)),
-        OfficialDecision::NoNewBars => Ok((Vec::new(), tcode)),
-        OfficialDecision::Fail => Err(CollectError::InvalidInput(format!(
-            "index_daily probe failed for {secid}"
-        ))),
-    }
+    let (tencent, eastmoney) =
+        fetch_official_sources(&client, &mut throttle, secid, last_date, &mut pool).await?;
+    let decision = decide_official(tencent, eastmoney, last_date.is_some());
+    shape_probe(decision, tcode, secid)
 }
 
 /// Probe the THS industry list parser against the live GBK page.
@@ -690,6 +679,62 @@ async fn fetch_tencent_kline(
     Ok(Some(merged))
 }
 
+/// Fetch both official kline sources with a Tencent-first short-circuit:
+/// non-empty Tencent rows win without querying EastMoney (issue #354
+/// decision 7 — a successful Tencent path must never fail on EastMoney).
+async fn fetch_official_sources(
+    client: &HttpClient,
+    throttle: &mut Throttle,
+    secid: &str,
+    last_date: Option<&str>,
+    pool: &mut Option<ProxyPool>,
+) -> Result<(Option<Vec<String>>, Option<(Vec<String>, String)>)> {
+    let tencent = fetch_tencent_kline(client, throttle, secid, last_date, pool).await?;
+    let eastmoney = if tencent.as_ref().is_some_and(|k| !k.is_empty()) {
+        None
+    } else {
+        fetch_kline(client, throttle, secid, last_date, pool).await?
+    };
+    Ok((tencent, eastmoney))
+}
+
+/// True when the EastMoney echoed code matches neither the canonical code nor
+/// the symbol: the row is skipped without bumping failures (pre-existing
+/// fallback-path behavior, kept verbatim).
+fn official_code_mismatch(echoed_code: &str, code: &str, symbol: &str) -> bool {
+    echoed_code != code && echoed_code != symbol
+}
+
+/// Push one `index_basic` row (official or industry) onto the record list.
+fn push_basic(records: &mut Vec<Record>, symbol: &str, name: &str, index_type: &str) {
+    records.push(vec![
+        ("symbol".to_string(), symbol.to_string()),
+        ("name".to_string(), name.to_string()),
+        ("index_type".to_string(), index_type.to_string()),
+    ]);
+}
+
+/// Shape the probe result from the decision (issue #354): Tencent rows carry
+/// the Tencent symbol label, EastMoney rows the echoed code, no-new-bars is a
+/// successful empty result, and Fail keeps the probe error message.
+fn shape_probe(
+    decision: OfficialDecision,
+    tcode: String,
+    secid: &str,
+) -> Result<(Vec<String>, String)> {
+    match decision {
+        OfficialDecision::Tencent(rows) => Ok((rows, tcode)),
+        OfficialDecision::EastMoney {
+            klines,
+            echoed_code,
+        } => Ok((klines, echoed_code)),
+        OfficialDecision::NoNewBars => Ok((Vec::new(), tcode)),
+        OfficialDecision::Fail => Err(CollectError::InvalidInput(format!(
+            "index_daily probe failed for {secid}"
+        ))),
+    }
+}
+
 /// Decision outcome for a single official index across the two kline sources
 /// (issue #354).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -701,10 +746,11 @@ enum OfficialDecision {
         klines: Vec<String>,
         echoed_code: String,
     },
-    /// Incremental window: at least one source answered (even empty) but no
-    /// new rows — no-op success.
+    /// Incremental window: neither side has non-empty rows, but at least one
+    /// source answered (even empty) — no-op success.
     NoNewBars,
-    /// Both sources unreachable, or no rows in a non-incremental window.
+    /// Both sources unreachable, or a non-incremental window with no
+    /// non-empty rows on either side.
     Fail,
 }
 
@@ -712,13 +758,15 @@ enum OfficialDecision {
 ///
 /// Tencent non-empty wins; else EastMoney non-empty pair wins; else with an
 /// incremental window and at least one answered source (even empty) the
-/// decision is `NoNewBars`; only both-unreachable (incremental) or any empty
-/// combination (non-incremental) is `Fail`.
+/// decision is `NoNewBars`; a non-incremental window with no non-empty rows
+/// on either side is `Fail`, as is both-unreachable.
 fn decide_official(
     tencent: Option<Vec<String>>,
     eastmoney: Option<(Vec<String>, String)>,
     incremental: bool,
 ) -> OfficialDecision {
+    // Order-sensitive: the both-None arm must precede the incremental arm,
+    // otherwise incremental both-unreachable would silently become NoNewBars.
     match (tencent, eastmoney, incremental) {
         (Some(klines), _, _) if !klines.is_empty() => OfficialDecision::Tencent(klines),
         (_, Some((klines, echoed_code)), _) if !klines.is_empty() => OfficialDecision::EastMoney {
@@ -808,11 +856,7 @@ pub async fn run() -> Result<PathBuf> {
             break;
         }
         let symbol = format!("BK{code}");
-        basic_records.push(vec![
-            ("symbol".to_string(), symbol.clone()),
-            ("name".to_string(), name.clone()),
-            ("index_type".to_string(), "industry".to_string()),
-        ]);
+        push_basic(&mut basic_records, &symbol, name, "industry");
         eprintln!("  [industry] {symbol} {name} ...");
 
         let max_raw = max_trade_date(&symbol).await?;
@@ -920,17 +964,13 @@ pub async fn run() -> Result<PathBuf> {
         let max_dt = parse_max_date(max_raw.as_deref());
         if max_dt.as_deref() == Some(today_iso.as_str()) {
             consecutive_failures = 0;
-            basic_records.push(vec![
-                ("symbol".to_string(), symbol.clone()),
-                ("name".to_string(), name.to_string()),
-                ("index_type".to_string(), "official".to_string()),
-            ]);
+            push_basic(&mut basic_records, &symbol, name, "official");
             eprintln!("up to date");
             continue;
         }
 
         let last_date = max_dt.clone();
-        let tencent_klines = fetch_tencent_kline(
+        let (tencent_klines, eastmoney) = fetch_official_sources(
             &client,
             &mut throttle,
             secid,
@@ -938,26 +978,10 @@ pub async fn run() -> Result<PathBuf> {
             &mut pool,
         )
         .await?;
-        let eastmoney = if tencent_klines.as_ref().is_some_and(|k| !k.is_empty()) {
-            None
-        } else {
-            fetch_kline(
-                &client,
-                &mut throttle,
-                secid,
-                last_date.as_deref(),
-                &mut pool,
-            )
-            .await?
-        };
         match decide_official(tencent_klines, eastmoney, last_date.is_some()) {
             OfficialDecision::Tencent(klines) => {
                 consecutive_failures = 0;
-                basic_records.push(vec![
-                    ("symbol".to_string(), symbol.clone()),
-                    ("name".to_string(), name.to_string()),
-                    ("index_type".to_string(), "official".to_string()),
-                ]);
+                push_basic(&mut basic_records, &symbol, name, "official");
                 daily_records.extend(kline_records(&symbol, "official", &klines, &today_iso));
                 eprintln!("{} bars (tencent)", klines.len());
             }
@@ -965,26 +989,18 @@ pub async fn run() -> Result<PathBuf> {
                 klines,
                 echoed_code,
             } => {
-                if echoed_code != *code && echoed_code != symbol {
+                if official_code_mismatch(&echoed_code, code, &symbol) {
                     eprintln!("code mismatch ({echoed_code:?}), skipped");
                 } else {
                     consecutive_failures = 0;
-                    basic_records.push(vec![
-                        ("symbol".to_string(), symbol.clone()),
-                        ("name".to_string(), name.to_string()),
-                        ("index_type".to_string(), "official".to_string()),
-                    ]);
+                    push_basic(&mut basic_records, &symbol, name, "official");
                     daily_records.extend(kline_records(&symbol, "official", &klines, &today_iso));
-                    eprintln!("{} bars", klines.len());
+                    eprintln!("{} bars (eastmoney)", klines.len());
                 }
             }
             OfficialDecision::NoNewBars => {
                 consecutive_failures = 0;
-                basic_records.push(vec![
-                    ("symbol".to_string(), symbol.clone()),
-                    ("name".to_string(), name.to_string()),
-                    ("index_type".to_string(), "official".to_string()),
-                ]);
+                push_basic(&mut basic_records, &symbol, name, "official");
                 eprintln!("no new bars");
             }
             OfficialDecision::Fail => {
@@ -1180,12 +1196,8 @@ pub async fn backfill(start: &str, end: &str) -> Result<PathBuf> {
         } else {
             format!("SZ{code}")
         };
-        let tencent = fetch_tencent_kline(&client, &mut throttle, secid, None, &mut pool).await?;
-        let eastmoney = if tencent.as_ref().is_some_and(|k| !k.is_empty()) {
-            None
-        } else {
-            fetch_kline(&client, &mut throttle, secid, None, &mut pool).await?
-        };
+        let (tencent, eastmoney) =
+            fetch_official_sources(&client, &mut throttle, secid, None, &mut pool).await?;
         match decide_official(tencent, eastmoney, false) {
             OfficialDecision::Tencent(klines) | OfficialDecision::EastMoney { klines, .. } => {
                 records.extend(kline_records(&symbol, "official", &klines, &today_iso));
@@ -1600,9 +1612,9 @@ mod tests {
         );
     }
 
-    // Matrix row 1 — capacity boundary: a large row set must not panic and must
-    // still resolve to Tencent (decision stays correct at scale, no accidental
-    // O(n^2) copies or content scans that could reject valid data).
+    // Robustness: a large row set must not panic and must still resolve to
+    // Tencent — guards against a future content-scanning implementation
+    // (decide_official itself is O(1) and never scans row content).
     #[test]
     fn decide_official_large_inputs_do_not_panic() {
         let big: Vec<String> = (0..20_000).map(|i| format!("row-{i}")).collect();
@@ -1628,19 +1640,15 @@ mod tests {
     // exactly one decision variant.
     #[test]
     fn decide_official_malformed_inputs_never_panic() {
-        // Empty-string kline rows on both sides + empty echoed code.
+        // Empty-string kline rows on both sides + empty echoed code: a
+        // non-empty Vec is a hit regardless of row content (plan §3 ruling:
+        // "非空 = Vec 非空，不校验行内容").
         let got = decide_official(
             Some(vec![String::new()]),
             Some((vec![String::new()], String::new())),
             true,
         );
-        assert!(matches!(
-            got,
-            OfficialDecision::Tencent(_)
-                | OfficialDecision::EastMoney { .. }
-                | OfficialDecision::NoNewBars
-                | OfficialDecision::Fail
-        ));
+        assert_eq!(got, OfficialDecision::Tencent(vec![String::new()]));
         // 1 MB strings on both sides must not panic or be rejected.
         let long = "x".repeat(1_000_000);
         assert_eq!(
@@ -1651,5 +1659,47 @@ mod tests {
             ),
             OfficialDecision::Tencent(vec![long.clone()])
         );
+    }
+
+    // Probe result shaping: lock all four arms, the label formats (Tencent
+    // symbol vs EastMoney echoed code) and the Fail error message.
+    #[test]
+    fn shape_probe_maps_every_decision() {
+        let tencent = decide_official(Some(vec!["row".to_string()]), None, false);
+        assert_eq!(
+            shape_probe(tencent, "sh000001".to_string(), "1.000001").unwrap(),
+            (vec!["row".to_string()], "sh000001".to_string())
+        );
+
+        let eastmoney = decide_official(
+            None,
+            Some((vec!["em".to_string()], "000001".to_string())),
+            false,
+        );
+        assert_eq!(
+            shape_probe(eastmoney, "sh000001".to_string(), "1.000001").unwrap(),
+            (vec!["em".to_string()], "000001".to_string())
+        );
+
+        let no_new = decide_official(Some(Vec::new()), None, true);
+        assert_eq!(
+            shape_probe(no_new, "sh000001".to_string(), "1.000001").unwrap(),
+            (Vec::<String>::new(), "sh000001".to_string())
+        );
+
+        let fail = decide_official(None, None, true);
+        let err = shape_probe(fail, "sh000001".to_string(), "1.000001").unwrap_err();
+        assert!(
+            matches!(err, CollectError::InvalidInput(msg) if msg == "index_daily probe failed for 1.000001")
+        );
+    }
+
+    // EastMoney code-mismatch guard: skipped only when the echoed code matches
+    // neither the canonical code nor the symbol.
+    #[test]
+    fn official_code_mismatch_guards_fallback() {
+        assert!(official_code_mismatch("999999", "000001", "SH000001"));
+        assert!(!official_code_mismatch("000001", "000001", "SH000001"));
+        assert!(!official_code_mismatch("SZ399001", "399001", "SZ399001"));
     }
 }
