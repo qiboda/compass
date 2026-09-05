@@ -160,7 +160,7 @@ Dolt 源表 `final_a_stock_eod_price` 混入 6 个**指数代码**（非股票�
 
 **指数独立入库（epic #255）**：剔除只作用于**股票管线**——自 epic #255 起，上述 6 个
 指数中的 5 个（`SH000300`/`SH000852`/`SH000905`/`SH000906`/`SH000985`）已加入官方指数
-白名单（`index_daily.rs::OFFICIAL_INDICES`，约 30 只主流指数），由东财 push2his
+白名单（`index_daily.rs::OFFICIAL_INDICES`，约 30 只主流指数），由腾讯主源（东财 push2his 备用）
 独立采集、以 `index_type='official'` 写入 `index_daily` 表，经 `import-compass` 导出
 `index_daily.parquet`（股票管线剔除与指数独立入库并存，互不干扰）。`SZ399300` 为
 沪深300 的深市口径重复码，**未入白名单**——其数据不单独采集（沪深300 以上交所

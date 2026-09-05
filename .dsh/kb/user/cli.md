@@ -132,7 +132,7 @@ cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 | `--since` | （无） | 增量导入：仅导入各表日期列 >= since 的数据（YYYY-MM-DD，如 2026-08-21；`import` 命令仍用 YYYYMMDD）。日期列按表不同：财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）为 `report_date`；行情表（capital_main_flow/dragon_list/block_trade/index_daily）为 `trade_date`；institution_survey 为 `survey_date`。index_basic/stock_basic 不支持 `--since`（全量覆盖/镜像）。增量 merge 前会校验 Dolt `< since` 历史与既有 parquet 一致性，不一致自动降级为全量导出（ref #343） |
 
 **指数/板块表（epic #255）**：`index_daily` / `index_basic` 存指数与板块数据
-（官方指数 + 行业板块，来源：东财 + THS，Rust 采集器 `index_daily`；
+（官方指数 + 行业板块，来源：腾讯主源 + 东财备用 + THS，Rust 采集器 `index_daily`；
 `index_type` 仅 `official`/`industry` 两种取值）：
 
 - `index_daily`（指数/板块日线，含 `index_type` 列）：**增量 merge**——按 parquet 侧 PK
