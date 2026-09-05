@@ -253,8 +253,10 @@ fn default_layout_function_exists() {
 
 #[test]
 fn chart_workspace_tree_watchlist_left_chart_main_logger_bottom() {
-    // 设计 §5.1 + Q6/A2: 图表 = Watchlist 左独立 leaf（split_left 0.75）+ Chart 主
-    // + Logger 底（split_below 0.75）。split_left 语义已核实（plan A2）。
+    // 设计 §5.1 + Q6/A2: 图表 = Watchlist 左独立 leaf（split_left 0.25）+ Chart 主
+    // + Logger 底（split_below 0.75）。egui_dock fraction = left/top 子份额：
+    // split_left(root, 0.25, [Watchlist]) 使 Watchlist 占 25%（plan A2 修正，
+    // 实现 editor/mod.rs default_layout）。
     let src = read_editor_mod().expect("editor 模块必须存在");
     assert!(
         src.contains("split_left"),

@@ -19,11 +19,8 @@
 //!   layer (`SpaceView3D` …), converging the `tabs.rs` 16-field borrow bomb
 //!   (friction F5)
 //!
-//! Phase 0 ships the type skeleton only; most items are consumed by phases
-//! 1-5 (default_layout trees, EditorView impls, Workspaces wiring). The
-//! `dead_code` allowance is expected until then and should be revisited when
-//! the last skeleton consumer lands (plan §2.3).
-#![allow(dead_code)]
+//! Skeleton consumers have landed through phase 3; any new `dead_code`
+//! warning here is a real one and should be handled explicitly (plan §2.3).
 
 use egui_dock::DockState;
 use egui_mobius::signals::Signal;
@@ -288,13 +285,6 @@ impl Workspaces {
             .unwrap_or_default()
     }
 
-    /// Whether every registered kind is on screen (menu shows nothing then —
-    /// all editors already reachable).
-    pub fn all_kinds_visible(&self, idx: usize) -> bool {
-        let visible = self.visible_kinds(idx);
-        EDITOR_REGISTRY.iter().all(|d| visible.contains(&d.kind))
-    }
-
     /// Default three-workspace container (design §5). Each workspace holds
     /// exactly one screen layout (lock-in D3) built from [`Self::default_layout`].
     /// Used by the production constructor and as the corrupted-config
@@ -396,6 +386,10 @@ impl Workspaces {
 /// (friction F5). `body` is required; `header`/`sidebar` render only when
 /// the `EditorLayout` registers the slot (empty impl costs nothing).
 pub trait EditorView {
+    /// Contract identity (design §4.4): the kind the instance serves.
+    /// Consumed by contract tests and kept for symmetric access; the
+    /// frame dispatches via the descriptor's `kind`, not the instance.
+    #[allow(dead_code)]
     fn kind(&self) -> EditorKind;
 
     fn header(&mut self, _ui: &mut egui::Ui, _ctx: &mut EditorCtx<'_>) {}
@@ -439,7 +433,10 @@ pub struct EditorCtx<'a> {
     pub logger_export_clicked: &'a mut bool,
     /// Toast sink (design §4.2 reserved field): editors that persist
     /// user-visible config (watchlist add/remove) push toasts through this
-    /// instead of owning an App-level toast channel.
+    /// instead of owning an App-level toast channel. No consumer yet as of
+    /// phase 3 — watchlist feedback goes through `watchlist_action`; revisit
+    /// at phase 5 before removing the field.
+    #[allow(dead_code)]
     pub toasts: &'a mut ToastManager,
     /// Stock metadata list backing watchlist row names/exchange tags
     /// (plan §4.6 — migrated from the old `render_sidebar` lookup).

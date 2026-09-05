@@ -1957,7 +1957,7 @@ dependencies = [
 [[package]]
 name = "egui-charts"
 version = "0.2.0"
-source = "git+https://github.com/qiboda/egui-charts.git?branch=compass#4f83519e35eb8d3268c3d126c3b68d1551fb9ca8"
+source = "git+https://github.com/qiboda/egui-charts.git?rev=b0ed1a3a#b0ed1a3a1ddb90be656f769b6f0c3415df41d2ee"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1994,7 +1994,7 @@ dependencies = [
 [[package]]
 name = "egui-phosphor"
 version = "0.13.0"
-source = "git+https://github.com/qiboda/egui-phosphor.git#b6f9ff699126a48187ad2a047dae346d75e83823"
+source = "git+https://github.com/qiboda/egui-phosphor.git?rev=b6f9ff69#b6f9ff699126a48187ad2a047dae346d75e83823"
 dependencies = [
  "egui",
 ]

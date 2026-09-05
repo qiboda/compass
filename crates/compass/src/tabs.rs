@@ -77,7 +77,6 @@ impl Tab {
     }
 
     /// The [`EditorKind`] this tab carries.
-    #[allow(dead_code)] // consumed by editor/unit tests today; phase 2 dispatch
     pub fn kind(&self) -> EditorKind {
         self.kind
     }
@@ -85,12 +84,6 @@ impl Tab {
     /// i18n key of the tab's display title (`editor.*` key tree).
     pub fn title(&self) -> &'static str {
         self.kind.title_key()
-    }
-
-    /// Phosphor icon glyph shown next to the tab title.
-    #[allow(dead_code)] // kept for parity with title(); phase 2 chrome uses it
-    pub fn icon(&self) -> &'static str {
-        self.kind.icon()
     }
 
     /// The [`CitizenId`] this tab maps to in the dispatcher, if it is a
@@ -147,8 +140,13 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     type Tab = Tab;
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
-        // egui_dock 0.21 requires a unique per-tree tab id; kind is unique per
-        // tree (one instance per EditorKind per workspace) and Tab is Hash.
+        // egui_dock 0.21: this id becomes the tab body's egui::Id root
+        // (dock_area_id.with(surface).with(tab_id)). The default dock area
+        // salt is global, so across workspaces the tab_id(kind) is what makes
+        // bodies distinct while only one tree renders per frame — DockArea is
+        // salted per workspace/screen in main.rs. Kind-uniqueness per tree is
+        // enforced by the add-editor menu (visible_kinds), and phase 4 must
+        // validate it on config load.
         egui::Id::new(*tab)
     }
 
@@ -270,7 +268,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn tab_new_chart_delegates_to_tab_kind() {
+    fn tab_new_chart_delegates_to_editor_kind() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -281,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_new_logger_delegates_to_tab_kind() {
+    fn tab_new_logger_delegates_to_editor_kind() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -292,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_new_screener_delegates_to_tab_kind() {
+    fn tab_new_screener_delegates_to_editor_kind() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -303,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_new_sepa_delegates_to_tab_kind() {
+    fn tab_new_sepa_delegates_to_editor_kind() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

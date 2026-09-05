@@ -902,6 +902,7 @@ impl eframe::App for CompassApp {
             let active_screen = self.workspaces.all[active].active_screen;
             let dock = &mut self.workspaces.all[active].layouts[active_screen].dock_state;
             DockArea::new(dock)
+                .id(egui::Id::new(("compass-dock", active, active_screen)))
                 .style(self.dock_style.clone())
                 .show_inside(
                     ui,
@@ -1489,14 +1490,16 @@ impl CompassApp {
     }
 
     /// Add an editor tab to the active workspace (design §7.1 ⋮ 添加编辑器):
-    /// the re-open path for closed editors. The tab lands in the dock's
-    /// first leaf (egui_dock `push_to_first_leaf`); editor instances are
-    /// global, so the reopened state is just the instance itself.
+    /// the re-open path for closed editors. The tab lands in the focused
+    /// leaf (egui_dock `push_to_focused_leaf` — the last-interacted leaf,
+    /// i.e. the main pane after the user clicks it, review 94e1992b P2-1);
+    /// editor instances are global, so the reopened state is just the
+    /// instance itself.
     fn add_editor(&mut self, kind: crate::editor::EditorKind) {
         let active = self.workspaces.active;
         let screen = self.workspaces.all[active].active_screen;
         let dock = &mut self.workspaces.all[active].layouts[screen].dock_state;
-        dock.push_to_first_leaf(crate::tabs::Tab::new(kind));
+        dock.push_to_focused_leaf(crate::tabs::Tab::new(kind));
     }
 }
 
@@ -2236,8 +2239,9 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
-        // Display Options); the topbar one renders first.
+        // Full-app harness: two ⋮ buttons exist this frame (topbar
+        // add-editor + chart header Display Options); the topbar one
+        // renders first.
         harness
             .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .next()
@@ -2831,8 +2835,8 @@ default_timeframe = "1w"
             }));
         let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
         harness.run();
-        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
-        // Display Options); the topbar one renders first.
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
         harness
             .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .next()
@@ -2944,8 +2948,8 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
         let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
         harness.run();
-        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
-        // Display Options); the topbar one renders first.
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
         harness
             .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .next()
@@ -3106,8 +3110,8 @@ default_timeframe = "1w"
         app.shared_state.screener_total.set(3);
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
-        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
-        // Display Options); the topbar one renders first.
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
         harness
             .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .next()
@@ -3142,8 +3146,8 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
         let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
         harness.run();
-        // Two ⋮ buttons exist this frame (topbar add-editor + chart header
-        // Display Options); the topbar one renders first.
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
         harness
             .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .next()

@@ -20,9 +20,9 @@ duckdb = { version = "1", features = ["bundled", "parquet"] }
 egui = "0.36"
 egui_extras = "0.36"
 eframe = "0.36"
-egui-charts = { git = "https://github.com/qiboda/egui-charts.git", branch = "compass" }
+egui-charts = { git = "https://github.com/qiboda/egui-charts.git", rev = "b0ed1a3a" }
 egui_dock = "0.21"
-egui-phosphor = { git = "https://github.com/qiboda/egui-phosphor.git" }
+egui-phosphor = { git = "https://github.com/qiboda/egui-phosphor.git", rev = "b6f9ff69" }
 emath = "0.36"
 futures = "0.3"
 rand = "0.9"

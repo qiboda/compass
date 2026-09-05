@@ -37,14 +37,19 @@ const WHITELIST: [&str; 6] = [
 fn tab_kind_gains_market_variant() {
     // Plan T6: tabs.rs TabKind 加 Market 变体（title "tab.market"、icon
     // TRENDING_UP、citizen_id "market"）.
-    let src = read_rel("src/tabs.rs").expect("tabs.rs must exist");
+    // [superseded by phase 3, 41923b0]: the transition TabKind enum was
+    // deleted; Market is now an EditorKind carrying the i18n key
+    // "editor.market" (title_key), with citizen_id MARKET_ID in tabs.rs.
+    // Both surface forms are accepted so the guard stays meaningful (F4).
+    let src_tabs = read_rel("src/tabs.rs").expect("tabs.rs must exist");
+    let src_editor = read_rel("src/editor/mod.rs").expect("editor/mod.rs must exist");
     assert!(
-        src.contains("Market"),
-        "TabKind must gain a Market variant (plan T6)"
+        src_tabs.contains("Market") || src_editor.contains("Market"),
+        "Market must remain represented (plan T6, post phase 3)"
     );
     assert!(
-        src.contains("tab.market"),
-        "TabKind::Market title must be the i18n key 'tab.market'"
+        src_tabs.contains("tab.market") || src_editor.contains("editor.market"),
+        "Market title key must exist as tab.market (pre) or editor.market (post phase 3)"
     );
 }
 
@@ -97,7 +102,11 @@ fn toolbar_adjust_dropdown_has_three_options_and_index_hide_guard() {
     // — the toolbar must reference all three i18n option keys via a Dropdown
     // with its own `id_salt("adjust")`, and the index/board hide guard must
     // be preserved (当前标的 index_type 非空或 BK 前缀时隐藏).
-    let src = read_rel("src/main.rs").expect("main.rs must exist");
+    // [migrated by 2a, 12901bb]: the adjust control moved from main.rs
+    // render_toolbar into the Chart editor header (chart.rs EditorView
+    // header); keys kept the toolbar.adjust.* namespace.
+    let src_chart = read_rel("src/citizens/chart.rs").expect("chart.rs must exist");
+    let src_editor = read_rel("src/editor/mod.rs").expect("editor/mod.rs must exist");
     // Three i18n option keys are rendered as dropdown options.
     for key in [
         "toolbar.adjust.qfq",
@@ -105,18 +114,18 @@ fn toolbar_adjust_dropdown_has_three_options_and_index_hide_guard() {
         "toolbar.adjust.none",
     ] {
         assert!(
-            src.contains(key),
-            "toolbar adjust dropdown must reference the option key {key}"
+            src_chart.contains(key),
+            "chart header adjust dropdown must reference the option key {key}"
         );
     }
     // The control is a Dropdown (not a Tag) with its own id salt "adjust".
     assert!(
-        src.contains("id_salt(\"adjust\")"),
+        src_chart.contains("id_salt(\"adjust\")"),
         "the adjust control must be a Dropdown with id_salt(\"adjust\")"
     );
-    // The hide guard must remain (plan T7).
+    // The hide guard must remain (plan T7) — now the moved helper.
     assert!(
-        src.contains("index_type") || src.contains("BK"),
+        src_editor.contains("is_index_or_board"),
         "the adjust Dropdown must be hidden when the symbol is an index/board \
          (plan T7: 当前标的 index_type 非空或 BK 前缀时隐藏)"
     );
