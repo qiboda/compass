@@ -6,6 +6,17 @@
 >
 > **修订记录（v2，2026-09-05）**：用户对整体方案 + Q1-Q6 + P1 全部仲裁确认；
 > 因仲裁改动的段落均以 `> **【2026-09-05 用户仲裁更新】**` 标注。8 条锁定决策内容未改动。
+> **修订记录（v3，2026-09-05）**：阶段 2b 代码评审（subagent 70ebfccf，commit df44802）
+> 发现两处设计契约悬空（实现忠实执行设计但设计层矛盾），已裁决并勘误，涉及段落以
+> `> **【2026-09-05 2b 评审勘误】**` 标注：① §6 Screener 行「列宽重置」暂缓（DataTable
+> 无列宽调整能力）；② Screener sidebar 宽度与 Chart 参数解耦，专用 500.0/(486.0..=640.0)。
+> **修订记录（v3，2026-09-05 追加）**：③ §6 SEPA 行右端 `⋮` 菜单内容裁决（2c 评审）——
+> 含「重置排序」一项（不渲染 ⋮ 候选被否，理由见 §13 决策记录新增行；plan §4.3 相应文本建议同步）。
+> **修订记录（v4，2026-09-05）**：④ §6 Market 行右端 `⋮` 内容裁决 + ⑤ §6 Screener 行 ⋮ 补
+> 「重置排序」（委托方 two-menu 裁决，同日 2b/2c 后续）——两项均与 SEPA 2c 裁决同构
+> （表头排序持久生效 → 恢复构造业务默认 → 动作幂等）；Screener 委托背景一处事实勘误
+> （`new()` 实则调用 `set_sort(MARKET_CAP_COLUMN, true)`，见 §6 新注记与 §13 新增行），
+> 以代码为准；§13 决策记录行数 18 → 20。
 
 ---
 
@@ -26,13 +37,13 @@
 
 | # | 摩擦点 | 具体表现 | 代码位置 |
 |---|---|---|---|
-| F1 | **全局 Toolbar 与 Chart 编辑器耦合** | 周期/复权/Fetch 只对图表有意义，却常驻渲染于所有面板激活态；用户在「选股器」tab 激活时看到的周期/复权控件是无效信息 | `crates/compass/src/main.rs:1397-1544`（`render_toolbar` 四组：标的/周期+复权/Fetch/显示），`main.rs:900-902`（`Panel::top("toolbar")`） |
+| F1 | **全局 Toolbar 与 Chart 编辑器耦合** | 周期/复权/Fetch 只对图表有意义，却常驻渲染于所有面板激活态；用户在「选股器」tab 激活时看到的周期/复权控件是无效信息 | `crates/compass/src/main.rs:1395-1486`（`render_toolbar` 四组：标的/周期+复权/Fetch/显示），`main.rs:898-900`（`Panel::top("toolbar")`） |
 | F2 | **面板 chrome 各自为政** | 每个 citizen 自绘自己的标题行/工具条：Logger 自绘 `SectionTitle`+导出按钮（`logger.rs:45-60`）；SEPA 自绘「② 工具条」（计数+TOP-N+刷新）；Market 自绘「② 工具条」（计数+Segmented+刷新）；Screener 自绘条件区+运行按钮；没有统一的 header/sidebar 声明模型，无 N 键入口，样式无法一站式定制 | `citizens/logger.rs:45-60`、`citizens/sepa.rs`（工具条区）、`citizens/market.rs`（工具条区）、`citizens/screener.rs`（条件区+DataTable） |
-| F3 | **自选股全局左栏绑死在 Application 层** | 左侧 `Panel::left` 由 `sidebar_visible: bool` 全局布尔控制（`main.rs:905-913`、字段 `main.rs:858-859`、工具栏开关 `main.rs:1459-1466`）；自选股不能入 dock、不能进其他 workspace、只能出现在「图表语境」 | `main.rs:905-913`、`main.rs:1222-1272`（`render_sidebar`） |
-| F4 | **布局不可持久化** | `DockState` 从不序列化；启动时硬编码重建（Chart/Market/Sepa 顶 leaf、Logger 0.75 split、Screener 0.5 split）；用户拖拽布局每次启动丢失 | `main.rs:156-174`；面板宽度硬编码：sidebar `main.rs:906-909`、SEPA 详情 `citizens/sepa.rs:34`（`DETAIL_PANEL_WIDTH: f32 = 280.0`） |
-| F5 | **TabViewer 巨型借用结构** | 每帧构造 16 字段 `TabViewer`（`tabs.rs:142-160`），`ui()` 里 6 处 match 分发 + `main.rs:922-944` 内联装配——新增编辑器要同时改 TabKind/TabViewer/注册表/main.rs 构造/测试锚点 6+ 处 | `tabs.rs:142-201`、`main.rs:920-944` |
-| F6 | **TabKind↔CitizenId 1:1 硬耦合** | `TabKind::citizen_id()` 每个变体绑定固定 `CitizenId`（`tabs.rs:91-99`），使「dock tab」与「citizen 激活追踪」完全绑定，无法表达「同一类型多处出现」 | `tabs.rs:91-99`、`dispatcher.rs:30-46`（`register_citizens` 5 个硬编码 ID） |
-| F7 | **快捷键是全局的不是上下文敏感的** | `1/2/3` 切周期、`/` 聚焦标的输入框在任意 tab/面板激活时都生效（文本焦点守卫之外无 context 判定）；在选股 workspace 按 `1/2/3` 无意义 | `main.rs:1073-1107`（`handle_shortcuts`） |
+| F3 | **自选股全局左栏绑死在 Application 层** | 左侧 `Panel::left` 由 `sidebar_visible: bool` 全局布尔控制（`main.rs:903-911`、字段 `main.rs:856-857`、工具栏开关 `main.rs:1459-1466`）；自选股不能入 dock、不能进其他 workspace、只能出现在「图表语境」 | `main.rs:903-911`、`main.rs:1220-1270`（`render_sidebar`） |
+| F4 | **布局不可持久化** | `DockState` 从不序列化；启动时硬编码重建（Chart/Market/Sepa 顶 leaf、Logger 0.75 split、Screener 0.5 split）；用户拖拽布局每次启动丢失 | `main.rs:154-172`；面板宽度硬编码：sidebar `main.rs:904-907`、SEPA 详情 `citizens/sepa.rs:35`（`DETAIL_PANEL_WIDTH: f32 = 280.0`） |
+| F5 | **TabViewer 巨型借用结构** | 每帧构造 16 字段 `TabViewer`（`tabs.rs:206-230`），`ui()` 里 6 处 match 分发 + `main.rs:921-945` 内联装配——新增编辑器要同时改 TabKind/TabViewer/注册表/main.rs 构造/测试锚点 6+ 处 | `tabs.rs:206-239`、`main.rs:921-945` |
+| F6 | **TabKind↔CitizenId 1:1 硬耦合** | `TabKind::citizen_id()` 每个变体绑定固定 `CitizenId`（`tabs.rs:101-109`），使「dock tab」与「citizen 激活追踪」完全绑定，无法表达「同一类型多处出现」 | `tabs.rs:101-109`、`dispatcher.rs:30-46`（`register_citizens` 5 个硬编码 ID） |
+| F7 | **快捷键是全局的不是上下文敏感的** | `1/2/3` 切周期、`/` 聚焦标的输入框在任意 tab/面板激活时都生效（文本焦点守卫之外无 context 判定）；在选股 workspace 按 `1/2/3` 无意义 | `main.rs:1083-1117`（`handle_shortcuts`） |
 | F8 | **每 leaf 单 tab 的隐性假设** | dock 样式注释明确「每 leaf 单 tab 结构下所有 tab 都是 active」（`dock_style.rs:36-42`），以 focused_leaf 区分高亮；这与「同一 area 多编辑器」的 Blender 心智有张力（本轮不解决，样式保留） | `compass-ui/src/dock_style.rs:36-42` |
 | F9 | **SharedState 平面膨胀** | 20 个 `Dynamic<T>` 字段（`state.rs:11-66`），各编辑器专属状态（`screener_*`/`sepa_*`/`index_*`/`llm_*`/`watchlist`/`industry_names`）无归属边界，未来按编辑器拆分状态无处安放 | `state.rs:11-66`、`state.rs:74-101` |
 
@@ -42,13 +53,13 @@
 
 | Blender 概念（源码） | Compass 对应物（类型） | 说明与差异 |
 |---|---|---|
-| **Application**（`wmWindowManager` + 进程级） | `CompassApp`（eframe::App，`main.rs:817-876`）+ 应用级状态容器（主题/语言/时钟/配置） | 相同点：进程级单例、持有全局配置。差异：Compass 不引入窗口级侧栏/工具条（Blender 源码证实 global areas 只有 topbar/statusbar → 锁定决策 4） |
+| **Application**（`wmWindowManager` + 进程级） | `CompassApp`（eframe::App，`main.rs:815-876`）+ 应用级状态容器（主题/语言/时钟/配置） | 相同点：进程级单例、持有全局配置。差异：Compass 不引入窗口级侧栏/工具条（Blender 源码证实 global areas 只有 topbar/statusbar → 锁定决策 4） |
 | **global areas**（`wmWindow` 的 Topbar/Statusbar，不在 bScreen areas 内） | Topbar（`Panel::top`，40px：workspace 切换条 + 标的选择器 + 主题/语言）+ StatusBar（`Panel::bottom`，26px：摘要/状态/时钟） | 直接对应：global areas 独立于 Screen/DockState 渲染，不随 workspace 切换重建 |
 | **Workspace**（`WorkSpace`，含 screens 链 + `WorkSpaceType` 注册表） | `Workspace { id, layouts: Vec<ScreenLayout>, active_screen }` + `WorkspaceId::Chart/Screener/Sepa` | 对应 `wm_workspace.h` 的 workspace 持 screen 列表；差异：Blender workspace 可有多个 screen 且窗口级切换，Compass v1 每 workspace 仅 1 screen（`Vec` 预留） |
 | **Screen**（`bScreen` —— area 顶点图，`ScreenListBase`） | `ScreenLayout { dock_state: DockState<Tab> }` | 同构点：`DockState` 树 = bScreen 的矩形分割顶点图（锁定决策 1 的原话）。差异：egui_dock 无浮窗/多窗口；`DockState` 已内建 serde feature（0.20.1 `dock_state/mod.rs:44` 有 `cfg_attr(feature="serde", derive(Serialize, Deserialize))`），是本设计持久化的关键事实 |
 | **Area**（`ScrArea`，矩形区域 + `SpaceLink *spacedata`） | egui_dock leaf（单个 tab 容器）+ active tab | 同构：leaf 持有「编辑器列表」，active tab 即当前 SpaceType；差异：Blender area 是绝对矩形+subwindow，egui_dock leaf 是 tab 容器（若 leaf 内多 tab，语义与 ScrArea 的 spacedata 链表完全对应） |
 | **SpaceType**（`spacetypes.h` 全局注册表：spaceid、`new()`、`convert()`、区注册） | `EditorDescriptor` 静态注册表（`EDITOR_REGISTRY: [EditorDescriptor; N]`） | 对应注册表条目：name/id、布局角色（layout）、标题/图标。差异：Rust 静态表替代 C 全局链；`convert()`（编辑器切换时保留数据）由「每 Kind 单实例全局容器」近似承担（见 §5 实例所有权） |
-| **SpaceData**（`SpaceView3D`/`SpaceOutliner` 等 per-instance 状态根） | 编辑器实例结构体（`ChartCitizen`/`ScreenerPanel`/`SepaPanel`/`MarketPanel`/`LoggerPanel`/新 `WatchlistEditor`） | 直接对应：每编辑器实例自带状态（chart 的 `IndicatorRegistry`+`cache_key`（`chart.rs:20-33`）、screener 的 `builder_root`（`screener.rs:89-100`）、sepa 的选择/TOP-N）。**差异**：Compass 每 Kind 单实例（现状），非「每 area 一实例」 |
+| **SpaceData**（`SpaceView3D`/`SpaceOutliner` 等 per-instance 状态根） | 编辑器实例结构体（`ChartCitizen`/`ScreenerPanel`/`SepaPanel`/`MarketPanel`/`LoggerPanel`/新 `WatchlistEditor`） | 直接对应：每编辑器实例自带状态（chart 的 `IndicatorRegistry`+`cache_key`（`chart.rs:25-49`）、screener 的 `builder_root`（`screener.rs:96-98`）、sepa 的选择/TOP-N）。**差异**：Compass 每 Kind 单实例（现状），非「每 area 一实例」 |
 | **ARegion**（`screen.h`：header/panel/toolbar 子矩形，`R_TYPE_*`） | `EditorLayout` 声明的三个槽位：`Header`（必备）/`Sidebar`/`Toolbar`（可选） | 对应 head=Header、panel=Sidebar、toolbar=Toolbar 区域；差异：Blender header 可上/下，Compass v1 恒顶部；Blender region 是 area 内绝对矩形，Compass 用 egui 布局流 |
 | **keymap + operator**（WM keymap：`N`→`screen.region_toggle` 的上下文绑定） | 集中式 `ShortcutRouter`（`ctx.input` 轮询 + 焦点守卫 + 活跃编辑器判定） | 差异（重要）：Blender 有完整 keymap/context 系统（按 active area/region/mode 解析按键）；egui **无全局按键监听**，只能每帧 `ctx.input(|i| i.key_pressed(..))` 轮询（现有 `handle_shortcuts` 即此机制）。本项目不引入 keymap DSL，用「集中路由 + 上下文判定」近似（见 §8） |
 
@@ -73,8 +84,9 @@ pub struct EditorLayout {
     pub toolbar: Option<ToolbarLayout>,   // None = 空槽：不分配区域、零渲染成本（Blender 源码证明 Outliner 无 toolbar）
 }
 pub struct SidebarLayout { pub default_visible: bool, pub default_width: f32, pub width_range: (f32, f32) }
-// SidebarLayout 推荐默认：default_width 240.0、width_range 200.0..=320.0（对齐现状 main.rs:907-909）
-// 注：该默认仅适用于注册了 Sidebar 的编辑器（Chart/Screener）；Watchlist 不是 Sidebar，不受此规则约束（Q6 定案，见 §5.1）。
+// Chart 推荐默认：default_width 240.0、width_range 200.0..=320.0（对齐现状 main.rs:905-906）
+// Screener 专用（2026-09-05 2b 评审勘误裁决）：default_width 500.0、width_range (486.0, 640.0)
+// 注：SidebarLayout 值按编辑器独立配置（Chart/Screener 各自指定）；Watchlist 不是 Sidebar，不受此规则约束（Q6 定案，见 §5.1）。
 
 /// 注册表条目（SpaceType 类比）：静态不可变
 pub struct EditorDescriptor {
@@ -87,6 +99,22 @@ pub struct EditorDescriptor {
 /// 静态注册表：新增编辑器 = 加一个 EditorKind 变体 + 一个 descriptor（编译期穷尽保证）
 pub static EDITOR_REGISTRY: [EditorDescriptor; 6] = [ /* chart, screener, sepa, market, logger, watchlist */ ];
 ```
+
+> **【2026-09-05 2b 评审勘误】（裁决 2：Screener sidebar 专用宽度）**：`SidebarLayout` 改为
+> **每编辑器独立配置**，不再有统一推荐默认值。Chart 保持 `default_width 240.0 /
+> width_range (200.0, 320.0)`（指标参数控件窄，与现状 `main.rs:905-906` 对齐）；
+> **Screener 专用 `default_width 500.0 / width_range (486.0, 640.0)`**。推导：条件卡片为
+> 原子组（ref #220：label+control 永不跨行），最宽叶片 = Momentum 估宽 **470px**
+> （`leaf_row_min_width`，`screener.rs:1272-1285`），加 Sidebar Panel 内边距 8×2=16px
+> （egui 0.35 `Frame::side_top_panel` → `Margin::symmetric(8, 2)`）得下限 **486px**；
+> 默认取 **500px**（内容区 484px ≥ 470px，且恰为 `GROUP_ALIGNMENT_WIDTHS` 首个测试锚
+> 500px，`screener.rs:1882`，可直接复用既有 kittest 覆盖）；上限 **640px** 为余量选择：
+> 1440px 默认窗口下结果表仍余 ≥800px（6 列 DataTable 可用），给用户放大构建器的空间。
+> 原 240/(200,320) 系从 Chart
+> 继承：内容区仅 224px，最窄叶片卡片（Unknown 300px）也无法容纳，控件必然横向溢出被
+> Panel clip——即 2b 评审发现的矛盾根因。实现注意：EDITOR_REGISTRY Screener 条目
+> （`editor/mod.rs:156-160`）与契约测试 `chart_and_screener_sidebar_spec_follows_contract`
+> （`editor/mod.rs:611-624`，现断言 Chart/Screener 同为 240/(200,320)）须同步拆分。
 
 ### 4.2 EditorView + EditorCtx（实例层，SpaceData 类比）
 
@@ -158,7 +186,7 @@ impl Workspaces {
     /// 切换：把当前 workspace 的 DockState 就地保存（即时保存触发点之一），
     /// 换 active；编辑器实例状态全局共享，切换无状态丢失（§4.5 实例所有权）
     pub fn switch(&mut self, target: WorkspaceId) { /* … */ }
-    pub fn default_layout(id: WorkspaceId) -> DockState<Tab> { /* 抽出 main.rs:156-174 改为按 id */ }
+    pub fn default_layout(id: WorkspaceId) -> DockState<Tab> { /* 抽出 main.rs:154-172 改为按 id */ }
 }
 ```
 
@@ -166,7 +194,7 @@ impl Workspaces {
 
 ```rust
 /// 每 EditorKind 单实例全局容器（决策 B，见 §11 决策记录 #5）。
-/// 现状的 CompassApp 五 citizen 字段（main.rs:820-824）收拢为这一类，
+/// 现状的 CompassApp 五 citizen 字段（main.rs:818-822）收拢为这一类，
 /// 通过 EditorKind → &mut dyn EditorView 分发；Tab 仍是轻量 Copy 值，不含实例句柄。
 pub struct EditorInstances {
     pub chart:    ChartCitizen,
@@ -193,7 +221,7 @@ impl EditorInstances {
 
 ```rust
 /// 现有 CompassApp 字段按职责分组（不引入新 crate）
-pub struct WallClock { pub clock: String }              // Time 驱动 StatusBar 时钟（main.rs:1356 现状）
+pub struct WallClock { pub clock: String }              // Time 驱动 StatusBar 时钟（main.rs:1354 现状）
 
 pub struct CompassApp {
     // Layer A: Application 级
@@ -268,7 +296,7 @@ pub struct CompassApp {
 │  │ sidebar   │ 结果 DataTable(6 列：代码/名称/最新/20日涨幅/市值/行业)      │ │
 │  │ 条件构建器 │  （默认市值降序；行点击 dispatch_symbol_fetch 联动图表）      │ │
 │  │ (N 键,    │                                                          │ │
-│  │  240px)   │                                                          │ │
+│  │  500px)   │                                                          │ │
 │  │ ──────────│                                                          │ │
 │  │ 根组卡片   │                                                          │ │
 │  │ (AND/OR)  │                                                          │ │
@@ -321,12 +349,40 @@ Market 段选择的本地副本策略不变（SEPA `rows.clone().truncate(top_n)
 
 | Editor | Header 结构（编辑器切换器位置 + 控件） | Sidebar | Toolbar |
 |---|---|---|---|
-| **Chart** | 切换器 = dock tab 栏（`[图表]`，Blender header type-switcher 同构，**不在 header 内重复做切换器**）；header 左端 Mode Toggle 组：周期 `Segmented 1d\|1w\|1M` + 复权 `Dropdown`（指数/板块隐藏逻辑保留 `main.rs:1211-1217`）→ 指标切换 `Dropdown`（MA/BOLL 显隐 + 参数入口，`id_salt("indicators")`）→ 右端：`Fetch` Primary 按钮（loading 禁用+spinner）+ Display Options（`⋮` 菜单：十字准线/交易量/图例开关，及 N 键提示） | **有**：指标参数（MA 周期编辑、BOLL 参数）+ 图层设置（K 线样式/成交量子开关）——Blender「Separated Data Properties from Tools」的 N-panel 类比（锁定决策 7）；N 键显隐，默认 `visible=true`（Q4 定案） | **无**（锁定决策 7：无工具数据支撑）。空槽表达：`EditorLayout { toolbar: None }`——`EditorFrame` 见 None 不分配任何区域（Blender 源码证明 Outliner 同样无 toolbar） |
-| **Screener** | 切换器 = dock tab；header：计数标签「共 N 只」（`screener_total`）+ 运行中状态 chip + 右端 `⋮`（列宽重置/清除结果） | **有**：条件构建器（根组卡片+11 类+子分组，从现状主区上段迁入，`screener.rs` 的 `builder_root`/`builder_root_operator` 状态不变）；N 键显隐，默认 `visible=true`；「运行/清空」按钮随构建器入 sidebar 底部 | 无 |
-| **SEPA** | 切换器 = dock tab；header = 现状「② 工具条」升级：计数「共 N 行 · 日期」+ `Segmented [TOP 50,TOP 30]` + 刷新（Primary + spinner；纯手动）；右端 `⋮` | 无（详情面板 280px 是 body 内部右栏，保持 `sepa.rs:34` 布局与垂直堆叠约束 `ref #221`） | 无 |
-| **Market** | 切换器 = dock tab；header = 现状「② 工具条」：计数 + `Segmented [行业板块\|官方指数]` + 刷新；右端 `⋮` | 无 | 无 |
+| **Chart** | 切换器 = dock tab 栏（`[图表]`，Blender header type-switcher 同构，**不在 header 内重复做切换器**）；header 左端 Mode Toggle 组：周期 `Segmented 1d\|1w\|1M` + 复权 `Dropdown`（指数/板块隐藏逻辑保留 `editor/mod.rs:395`）→ 指标切换 `Dropdown`（MA/BOLL 显隐 + 参数入口，`id_salt("indicators")`）→ 右端：`Fetch` Primary 按钮（loading 禁用+spinner）+ Display Options（`⋮` 菜单：十字准线/交易量/图例开关，及 N 键提示） | **有**：指标参数（MA 周期编辑、BOLL 参数）+ 图层设置（K 线样式/成交量子开关）——Blender「Separated Data Properties from Tools」的 N-panel 类比（锁定决策 7）；N 键显隐，默认 `visible=true`（Q4 定案） | **无**（锁定决策 7：无工具数据支撑）。空槽表达：`EditorLayout { toolbar: None }`——`EditorFrame` 见 None 不分配任何区域（Blender 源码证明 Outliner 同样无 toolbar） |
+| **Screener** | 切换器 = dock tab；header：计数标签「共 N 只」（`screener_total`）+ 运行中状态 chip + 右端 `⋮`（**「重置排序」+「清除结果」两项**；2026-09-05 裁决补入「重置排序」——恢复业务默认市值降序 `MARKET_CAP_COLUMN=4`，`screener.rs:151-153`，i18n 键 `editor.screener_header.reset_sort`；「列宽重置」暂缓，见下方勘误注记） | **有**：条件构建器（根组卡片+11 类+子分组，从现状主区上段迁入，`screener.rs` 的 `builder_root`/`builder_root_operator` 状态不变）；N 键显隐，默认 `visible=true`；**sidebar 专用宽度 `default_width 500.0 / width_range (486.0, 640.0)`**（与 Chart 240 解耦，见 §4.1 勘误）；「运行/清空」按钮随构建器入 sidebar 底部 | 无 |
+| **SEPA** | 切换器 = dock tab；header = 现状「② 工具条」升级：计数「共 N 行 · 日期」+ `Segmented [TOP 50,TOP 30]` + 刷新（Primary + spinner；纯手动）；右端 `⋮`（菜单含**「重置排序」**一项，2026-09-05 2c 裁决：SEPA 表头点击排序持久生效——`table` 为 panel 字段、`set_sort` 仅构造时调用（`sepa.rs:170-172`）、`set_rows` 不重置排序，用户乱序后无显式复位入口；菜单项恢复官方默认（rank asc + 得分列 3..=8 降序），动作幂等；i18n 键 `editor.sepa_header.reset_sort`） | 无（详情面板 280px 是 body 内部右栏，保持 `sepa.rs:35` 布局与垂直堆叠约束 `ref #221`） | 无 |
+| **Market** | 切换器 = dock tab；header = 现状「② 工具条」：计数 + `Segmented [行业板块\|官方指数]` + 刷新；右端 `⋮`（菜单含**「重置排序」**一项，2026-09-05 裁决：Market 表头点击排序持久生效——`table` 为 panel 字段（`market.rs:94`）、`set_sort(CHANGE_COLUMN, true)` 仅构造时调用（`market.rs:115-120`）、`set_rows` 不重置排序（`data_table.rs:110-112`），用户乱序后无显式复位入口；菜单项恢复板块轮动业务默认 = **涨幅降序**（`CHANGE_COLUMN=3`，`market.rs:66-68`），动作幂等；i18n 键 `editor.market_header.reset_sort`） | 无 | 无 |
 | **Logger** | 切换器 = dock tab；header = 现状 `SectionTitle`（标题+计数+导出按钮，`logger.rs:45-60`）升级为 EditorFrame Header 槽：`[日志] · N 条` 左 + `[导出]` 右 | 无 | 无 |
-| **Watchlist**（新，Outliner 式） | 切换器 = dock tab；header：搜索输入框（`Ctrl+K` 聚焦语义从旧侧栏迁来，`main.rs:1094-1097`）+ `[添加]` IconButton（添加当前标的，`main.rs:1266` 语义）；位置：图表 workspace 左侧独立 dock leaf tab（Q6 定案），宽度随 dock 不固定 | 无 | 无 |
+| **Watchlist**（新，Outliner 式） | 切换器 = dock tab；header：搜索输入框（`Ctrl+K` 聚焦语义从旧侧栏迁来，`main.rs:1104-1107`）+ `[添加]` IconButton（添加当前标的，`main.rs:1264` 语义）；位置：图表 workspace 左侧独立 dock leaf tab（Q6 定案），宽度随 dock 不固定 | 无 | 无 |
+
+> **【2026-09-05 2b 评审勘误】（裁决 1：列宽重置暂缓）**：Screener header 右端 `⋮`
+> **当前仅「清除结果」一项**（截至 2b 评审时；2026-09-05 后续裁决补入「重置排序」，
+> 见下方 2026-09-05 ⋮ 菜单裁决注记——即本段「仅一项」描述不再反映最终契约）。
+> 原契约「列宽重置/清除结果」两项中的「列宽重置」**暂缓**——
+> 事实核实：DataTable（`crates/compass-ui/src/widgets/data_table.rs`）的 `ColumnSpec` 仅
+> `header: &'static str` + `numeric: bool` 两字段（:69-74），pub API 为
+> `new/set_rows/set_selected/set_tokens/set_sort/sort_descending/set_descending_default/show`
+> （:97-151），无任何列宽调整/列宽状态 API，「列宽重置」当前无可重置对象。**触发条件**：
+> DataTable 获得列宽调整能力（如列宽拖拽或可配置列宽）的同一 PR 再补入该菜单项，
+> 并同步本段契约与 plan 相应文本。实现现状对应：`screener.rs:221-231`（menu 仅
+> `editor.screener_header.clear_results` 一项）；i18n 键 `editor.screener_header.*`
+> 仅需 clear_results（列宽重置键在能力落地前不定义）。
+
+> **【2026-09-05 ⋮ 菜单裁决】（Q2：Screener ⋮ 补「重置排序」）**：Screener 结果表 ⋮
+> 补入**「重置排序」**一项（位置：菜单上项，「清除结果」移至下项——非破坏性动作在上、
+> 破坏性在下；沿 OS 菜单惯例），行为同 SEPA 2c 裁决：恢复构造默认 = **市值降序**
+> （`set_sort(4, true)`，`screener.rs:151-153`），动作幂等。**委托背景事实勘误**：综述称
+> `new()` 无 set_sort 调用（初始化默认 = 第一列升序 = 按代码排序）——**以代码为准**：
+> `screener.rs:151-153` 实际调用 `set_sort(MARKET_CAP_COLUMN, true)` +
+> `set_descending_default(MARKET_CAP_COLUMN, true)`（默认市值降序，与 §5.2「默认市值降序」
+> 一致）；且 `DataTable::show` 每帧应用 `sort_rows`（`data_table.rs:176`），**无「backend
+> 原始顺序」显示模式**——初始顺序 = 构造排序态 = 市值降序（并列按列 0 代码升序，
+> `data_table.rs:281`），reset 目标明确。「clear_results 后重跑即恢复」不成立：`clear_results`
+> 只清 `screener_result/total`（`screener.rs:228-230`）不改 table 排序态，重跑走 `set_rows`
+> （`screener.rs:364`）同样保留排序态——乱序在重跑后仍保留（与 SEPA 2c 同因）。
+> i18n 键 `editor.screener_header.reset_sort`（zh 重置排序 / en Reset sort，镜像
+> `editor.sepa_header.reset_sort`，`zh.yml:61` / `en.yml:63`）。
 
 > **【2026-09-05 用户仲裁更新】（§6 相关行确认）**：① **Chart 行**——Fetch 按钮在 header
 > **右端**（Q3 定案，推荐采纳：Primary + loading，与 Display Options `⋮` 同端）；Sidebar
@@ -348,7 +404,7 @@ Market 段选择的本地副本策略不变（SEPA `rows.clone().truncate(top_n)
    左：Workspace 切换（Segmented，3 段，图标+键化名：CHART_LINE 图表 / FUNNEL_SIMPLE 选股 / GAUGE SEPA 复盘）
    中：标的选择器（SearchableDropdown，stock+index 合并列表 = 现状 picker_list）
    右：`⋮ 添加编辑器`（下拉列出注册表 EditorKind 中未在屏幕上的，重建已关闭 tab——v1 便捷入口）
-   最右：主题 Dropdown + 语言 Dropdown（从现状 Group D 迁入，行为/持久化不变 main.rs:1467-1524）
+   最右：主题 Dropdown + 语言 Dropdown（从现状 Group D 迁入，行为/持久化不变 main.rs:1405-1467）
 ```
 
 > **【2026-09-05 用户仲裁更新】（Q2 定案）**：主题/语言入口在 **Topbar 最右段**获用户确认
@@ -363,7 +419,7 @@ Market 段选择的本地副本策略不变（SEPA `rows.clone().truncate(top_n)
 
 | 段 | 内容 | 变化 |
 |---|---|---|
-| 左 | 标的摘要（mono 价格 + 红涨绿跌，`latest_quote`） | 不变（`main.rs:1354-1395`） |
+| 左 | 标的摘要（mono 价格 + 红涨绿跌，`latest_quote`） | 不变（`main.rs:1352-1393`） |
 | 中 | 状态点（loading 脉冲 / error 红点 / idle） | 不变 |
 | 右 | 数据源信息（N 只）+ 本地时钟（每秒刷新） | 不变；**新增可选** workspace 名 caption（`workspace.chart` 等）——推荐省略（摘要已含标的信息），待确认 |
 
@@ -378,10 +434,10 @@ Market 段选择的本地副本策略不变（SEPA `rows.clone().truncate(top_n)
 
 - egui 不提供 winit 式全局按键监听/钩子；唯一机制是**每帧驱动内轮询**：
   `ui.ctx().input(|i| i.key_pressed(egui::Key::N))`——只能在 `App::ui` 主分发点轮询一次，
-  不可注册「按下即回调」。现有 `handle_shortcuts`（`main.rs:1073-1107`）即此模式，N 键并入同一路由。
+  不可注册「按下即回调」。现有 `handle_shortcuts`（`main.rs:1083-1117`）即此模式，N 键并入同一路由。
 - **焦点守卫（必须）**：`let editing_text = ui.ctx().memory(|m| m.focused().is_some());`
   文本输入框（标的选择器/自选股搜索/LLM 输入）聚焦时 N 不触发——否则输代码/输入自带字母 n
-  的词会误弹侧栏（与 `1/2/3` 守卫同因，`main.rs:1077`）。补充：弹层（Dropdown/MultiSelect 弹出）
+  的词会误弹侧栏（与 `1/2/3` 守卫同因，`main.rs:1087`）。补充：弹层（Dropdown/MultiSelect 弹出）
   内置输入框同样有焦点，守卫全覆盖。
 - **重复触发防抖**：`key_pressed` 只在本帧按下事件为真（egui 自动区分 repeat？——`key_pressed` 含系统
   自动重复；需要仅初始按下时用 `key_pressed` + 本帧 `!i.key_down` 状态机或忽略 repeat 的 `i.keys_down`，
@@ -393,7 +449,7 @@ Market 段选择的本地副本策略不变（SEPA `rows.clone().truncate(top_n)
 N 键按下且 !editing_text
   → 判定 active editor：
      ① `dock_state.focused_leaf()`（egui_dock 0.20 `dock_state/mod.rs:370`，与现有样式高亮同源）
-     ② fallback：`last_interacted_kind`（TabViewer::on_tab_button click 时更新，`tabs.rs:196-200` 已有钩子）
+     ② fallback：`last_interacted_kind`（TabViewer::on_tab_button click 时更新，`tabs.rs:340-348` 已有钩子）
   → `EDITOR_REGISTRY` 查该 kind 的 `layout.sidebar`：
      Some(layout) → 翻转 `sidebar_visibility[kind]`（会话级 HashMap，默认 = layout.default_visible）
      None         → 无操作（不提示，Blender 中无 panel region 的编辑器 N 亦无操作）
@@ -403,7 +459,7 @@ N 键按下且 !editing_text
 > （`default_visible=true`）已确认（推荐采纳）；N 键翻转机制不变——本节无逻辑变更，仅确认默认值方向。
 
 - **状态存储**：`sidebar_visibility: HashMap<EditorKind, bool>`（App 级，会话级不持久化——
-  与 adjust 模式会话态先例一致 `main.rs:1127-1132`；v1 持久化面最小，§11 决策记录 #12）。
+  与 adjust 模式会话态先例一致 `main.rs:1132-1142`；v1 持久化面最小，§11 决策记录 #12）。
 - **动画**：显隐瞬时（egui 布局无过渡；N-panel 弹入滑动动画超本轮）。
 - **可访问性**：Header 右端 Display Options 中的「侧栏」按钮保留（IconButton + tooltip「显示/隐藏侧栏 (N)」），
   鼠标用户与键盘用户双入口；按钮 label 走 i18n 键 `editor.toggle_sidebar`。
@@ -438,21 +494,21 @@ dock = """{...}"""
 **格式决策事实依据**：
 - egui_dock 0.20.1 提供 `serde` feature（`Cargo.toml: serde = ["dep:serde", "egui/serde"]`），
   `DockState<T: Serialize>` 可直接序列化（`dock_state/mod.rs:44` derive）——**开 feature，不引新依赖**。
-- TOML 内嵌 JSON 字符串沿用 `[screener] filter = "<JSON>"` 先例（`main.rs:303-312`）。
+- TOML 内嵌 JSON 字符串沿用 `[screener] filter = "<JSON>"` 先例（`main.rs:301-310`）。
 - 写盘用现有 **read-modify-write** 模式（`save_screener_config`/`save_watchlist_config`/`save_theme_config`，
-  `main.rs:554-675`）：读 `toml::Value` → 改 `[layout]` → 整体写回；未知节/注释丢失为既有已接受取舍。
+  `main.rs:552-673`）：读 `toml::Value` → 改 `[layout]` → 整体写回；未知节/注释丢失为既有已接受取舍。
 - 加载失败（坏 JSON / dock_version 不匹配 / TOML 语法错）→ `Workspaces::default()` 三默认布局 + warn
-  （对齐 load_config 的「配置永远不阻止启动」原则 `main.rs:407-432`）。
+  （对齐 load_config 的「配置永远不阻止启动」原则 `main.rs:399-431`）。
 
 > **【2026-09-05 用户仲裁更新】（Q6 相关）**：Watchlist 宽度**不进** `tab_widths` 固定宽预留组——
 > 其宽度由 DockState 树内的 split 比例持久化（用户拖拽即写，§9.2 的 DockStateChange 触发保存）；
-> `tab_widths` 仍仅预留（SEPA 详情 280px 等 body 内嵌右栏宽度，现状 `sepa.rs:34` 不变）。
+> `tab_widths` 仍仅预留（SEPA 详情 280px 等 body 内嵌右栏宽度，现状 `sepa.rs:35` 不变）。
 
 ### 9.2 启动恢复 / 切换即时保存
 
 ```
 启动：load_config → [layout] 解析 → 每 workspace DockState::from(serde) → active_workspace 挂载
-缺失/损坏：default_layout(id)（main.rs:156-174 抽成 per-id 构造）
+缺失/损坏：default_layout(id)（main.rs:154-172 抽成 per-id 构造）
 切换：Workspaces::switch(target) := 保存当前 DockState（内存）+ 立即写 config.toml（即时保存）
 布局改动：DockArea::show_inside 返回 Option<DockStateChange>（TabMoved/TabClosed/…）
         → Some(_) 即触发保存（同帧末尾，写盘频率 = 用户拖拽频率，可接受）
@@ -464,8 +520,8 @@ dock = """{...}"""
 | 阶段 | 内容 | 验证方式 |
 |---|---|---|
 | **0 代码勘察/类型骨架** | 开启 egui_dock `serde` feature；新建 `editor/` 模块：`EditorKind`/`EditorLayout`/`EditorDescriptor`/`EDITOR_REGISTRY`/`WorkspaceId`/`ScreenLayout`/`Workspace`/`default_layout`（纯类型 + serde，**零 UI 改动**） | `cargo check` + 新单测（§11 测试锚点组 A）；现有 kittest 全绿（无行为变化） |
-| **1 EditorKind/Layout 骨架落地，不迁 UI** | `TabKind` 保留，新增 `From<TabKind> for EditorKind` 映射 + descriptor 引用；`Workspaces` 默认布局函数抽离（`main.rs:156-174` 只搬逻辑不接 UI） | 单测：映射全变体、descriptor 完整性（Header 恒存在、title_key/icon 非空）；`cargo test` 全绿 |
-| **2 逐编辑器迁移**（每子步独立 commit） | 2a Chart：周期/复权/Fetch 从 `render_toolbar` 移入 Chart header（`main.rs:1408-1456` 移除）→ 2b Screener：条件构建器 → Sidebar（`screener.rs` 布局调整，状态不动）→ 2c SEPA：工具条 → header → 2d Market：工具条 → header → 2e Logger：SectionTitle → header → 2f Watchlist：`render_sidebar`（`main.rs:1222-1272`）→ `WatchlistEditor`（Panel::left 移除 `main.rs:905-913`，Watchlist 入图表 workspace dock 树**左侧独立 leaf**——Q6 定案形态，宽度随 dock 无默认值） | 每子步：既有 kittest 更新 + 新 kittest 断言（label 存在性）；`scripts/run.sh` 截图（多模态视觉 + 形状/像素交叉验证，禁单一目测，AGENTS.md 品质准则） |
+| **1 EditorKind/Layout 骨架落地，不迁 UI** | `TabKind` 保留，新增 `From<TabKind> for EditorKind` 映射 + descriptor 引用；`Workspaces` 默认布局函数抽离（`main.rs:154-172` 只搬逻辑不接 UI） | 单测：映射全变体、descriptor 完整性（Header 恒存在、title_key/icon 非空）；`cargo test` 全绿 |
+| **2 逐编辑器迁移**（每子步独立 commit） | 2a Chart：周期/复权/Fetch 从 `render_toolbar` 移入 Chart header（`main.rs:1408-1456` 移除）→ 2b Screener：条件构建器 → Sidebar（`screener.rs` 布局调整，状态不动）→ 2c SEPA：工具条 → header → 2d Market：工具条 → header → 2e Logger：SectionTitle → header → 2f Watchlist：`render_sidebar`（`main.rs:1220-1270`）→ `WatchlistEditor`（Panel::left 移除 `main.rs:903-911`，Watchlist 入图表 workspace dock 树**左侧独立 leaf**——Q6 定案形态，宽度随 dock 无默认值） | 每子步：既有 kittest 更新 + 新 kittest 断言（label 存在性）；`scripts/run.sh` 截图（多模态视觉 + 形状/像素交叉验证，禁单一目测，AGENTS.md 品质准则） |
 | **3 Workspace 容器与切换** | `Workspaces` 接入 CompassApp；Topbar 改造（workspace Segmented + 标的选择器同层，移入主题/语言至最右段；移除 Group B/C/D 残留）；`EditorCtx` 收敛 TabViewer 借用束 | kittest：切换 workspace → 断言中央 UI 变化（「选股器」标题/DataTable 表头存在）；既有 `citizens_register_and_activate` 类单测更新 |
 | **4 持久化** | `[layout]` 节读写、启动恢复、切换即时保存、DockStateChange 触发保存 | round-trip 单测（§11 组 C）+ kittest 两阶段（构造→保存→载入→树相等）；手改 config 损坏值 → 回退默认 + warn（`RUST_LOG=debug scripts/run.sh` 观察） |
 | **5 收尾** | 快捷键上下文化（`1/2/3` 仅在图表 workspace 生效——以 active workspace + 活跃编辑器判定；`/` 保持全局）、N 键全链路、新 i18n 键、doc-sync（`.dsh/kb/design/ui.md`/`architecture.md`/`user/gui.md`/`user/config.md`）、决策记录 | `just check` 全绿（覆盖率门槛维持：compass 90%）；截图验收清单逐项核 |
@@ -486,8 +542,8 @@ dock = """{...}"""
 - 渲染断言（`response.rect.width()`）优先字段断言（:415-420）；形状扫描 `unique_colors` 模式（dock_style.rs:337-362）。
 
 **组 A — 注册表/纯逻辑（单测，无头）**：
-- `EDITOR_REGISTRY` 完整性：6 kind 各恰 1 条、`layout.header` 恒存在、`sidebar/toolbar` 与预期角色一致、title_key/icon 非空且 title_key 在 i18n 字典存在（`LANG_LOCK` 串行模式，`tabs.rs:210-217`）。
-- `EditorKind`/`WorkspaceId` serde：snake_case 字符串 round-trip + 未知值回退（对齐 `adjust_index_from_value` 回退测试风格 `main.rs:1794-1825`）。
+- `EDITOR_REGISTRY` 完整性：6 kind 各恰 1 条、`layout.header` 恒存在、`sidebar/toolbar` 与预期角色一致、title_key/icon 非空且 title_key 在 i18n 字典存在（`LANG_LOCK` 串行模式，`tabs.rs:358-375`）。
+- `EditorKind`/`WorkspaceId` serde：snake_case 字符串 round-trip + 未知值回退（对齐 `adjust_index_from_value` 回退测试风格 `main.rs:1785-1808`）。
 - `default_layout(id)`：三 workspace 默认 DockState 结构断言（split 层级、tab 序列、宽度比例；**图表 workspace 断言 Watchlist leaf 在左、Chart 主 leaf，Chart 右/下层级与 Logger 底部**）。
 
 **组 B — workspace 切换（kittest）**：
@@ -521,7 +577,7 @@ dock = """{...}"""
 | P1 | 「Chart header：编辑器切换器 → Mode Toggle」字面理解为 header 内切换器；但 dock tab 栏已是类型切换载体 | D1 + D7 | ✅ **dock tab 栏 = 编辑器切换器**（Blender header 的 type-switcher 同构）；Mode Toggle 紧贴其下方 header 左端 | header 内再做切换器 | header 内做会与 dock tab 双重切换语义冲突、交互重复；推荐方案零新增 |
 | P2 | 「主题/语言 → topbar/statusbar」未指定具体位置 | D6 | ✅ **Topbar 最右段**（现状用户已习惯在顶部找到） | StatusBar | StatusBar 26px 全屏角落、发现性差 |
 | P3 | D6 拆解清单**未包含 Fetch 按钮**的去向 | D6（遗漏） | ✅ **Chart header 右端**（Primary + loading） | 保留 Topbar | Fetch 语义绑定 Chart 编辑器；选股/SEPA workspace 无图表时 Topbar 上有 Fetch 是无效控件——保留会延续 F1 耦合 |
-| P4 | 图表 workspace 是否保留 Market/Sepa 三 tab（现状 `main.rs:157-160`） | D2/D7（workspace=任务划分） | ✅ **拆出**：Market/Sepa 归 SEPA 复盘 workspace | 保留现状三 tab | 拆出后「图表」workspace 名实相符、Blender 式任务划分纯粹；保留则迁移更平滑但 workspace 语义混乱 |
+| P4 | 图表 workspace 是否保留 Market/Sepa 三 tab（现状 `main.rs:155-158`） | D2/D7（workspace=任务划分） | ✅ **拆出**：Market/Sepa 归 SEPA 复盘 workspace | 保留现状三 tab | 拆出后「图表」workspace 名实相符、Blender 式任务划分纯粹；保留则迁移更平滑但 workspace 语义混乱 |
 | P5 | 自选股编辑器化后，其「显隐」走什么通道（锁定决策未明） | D5 + 「侧栏开关→各编辑器 N 键」 | ✅ Watchlist 非 Sidebar：显隐 = dock tab 关闭/`⋮ 添加编辑器`重开；N 键仅作用于注册了 Sidebar 的编辑器 | N 键兼作 workspace 左栏开合 | 推荐方案与 Blender Outliner（无 toolbar、无 N-panel）完全一致 |
 
 ## 13. 决策记录
@@ -533,15 +589,20 @@ dock = """{...}"""
 | Editor 注册表 | 静态 const 表 + enum（编译期穷尽） / `once_cell`/inventory 动态全局表 | 静态表 | 6 编辑器固定；match 穷尽 + 静态表完整性与 i18n 键可单测；无全局可变状态；kittest 断言「恰 6 条」 | 动态注册需全局初始化、错误处理与运行时迭代，收益低（新增编辑器两处改动可接受） |
 | 自选股 | 编辑器化（EditorKind::Watchlist，Outliner 类比）/ 保留全局左栏 | 编辑器化（锁定决策 5） | 可入 dock（任意 workspace 组合/拖动/重开）；解耦 Application 层（F3）；Blender Outliner 先例 | 保留全局左栏延续「面板各自为政」，无法纳入布局持久化 |
 | per-Editor 状态所有权 | 每 Kind 单实例（现 citizen 全局容器演进）/ per-area 多实例（Blender 完全式） | 单实例 + kind 分发（句柄化预留） | 渐进映射（D1）；现有 citizen/Dispatcher one-hot/SharedState 响应式全复用；SEPA/大盘/选股行点击共享「单一标的」语义（`dispatcher.rs:100-108`）；`EditorInstances::get_mut` 单点分发为未来升级留缝 | per-area 实例需每个编辑器状态打 serde 契约、layout 树与实例生命周期绑定，风险与工作量远超本轮；会破坏「同屏多个结果表联动单一图表」的用途假设 |
-| 持久化格式 | config.toml `[layout]` 节（DockState JSON 内嵌 + dock_version）/ 独立 layout 文件 | config.toml 单文件（锁定决策 8） | 保持项目单配置约定；`save_*_config` read-modify-write 先例成熟（`main.rs:554-675`）；坏值回退默认不阻止启动 | 独立文件破坏单文件约定、需新加载路径与失败处理 |
-| N 键实现机制 | `ctx.input` 轮询集中路由 / 引入 keymap-operator 系统 | ctx.input 轮询（现有 `handle_shortcuts` 演进） | egui 无全局按键监听（唯一机制即每帧轮询）；现有模式已验证（`main.rs:1073-1107` + 焦点守卫）；keymap DSL 需运行时注册/重绑定/序列化，超出本轮 | keymap 系统是 Blender 完整基础设施复刻，属过度设计（单一 N 键） |
+| 持久化格式 | config.toml `[layout]` 节（DockState JSON 内嵌 + dock_version）/ 独立 layout 文件 | config.toml 单文件（锁定决策 8） | 保持项目单配置约定；`save_*_config` read-modify-write 先例成熟（`main.rs:552-673`）；坏值回退默认不阻止启动 | 独立文件破坏单文件约定、需新加载路径与失败处理 |
+| N 键实现机制 | `ctx.input` 轮询集中路由 / 引入 keymap-operator 系统 | ctx.input 轮询（现有 `handle_shortcuts` 演进） | egui 无全局按键监听（唯一机制即每帧轮询）；现有模式已验证（`main.rs:1083-1117` + 焦点守卫）；keymap DSL 需运行时注册/重绑定/序列化，超出本轮 | keymap 系统是 Blender 完整基础设施复刻，属过度设计（单一 N 键） |
 | 图表 workspace 归属 Market/Sepa | 保留现状三 tab / 拆至 SEPA 复盘 workspace | 拆至 SEPA 复盘（用户仲裁 Q1 定案，2026-09-05 确认） | workspace=任务语义（D2）；三 tab 属「复盘」任务；拆分后 Chart header 结构（D7）更纯粹 | 保留让「图表」workspace 名不符实，且 Topbar/header 拆分收益打折 |
 | Fetch 按钮去向 | 保留 Topbar Group C / Chart header | Chart header 右端（用户仲裁 Q3 定案，2026-09-05 确认） | Fetch 语义绑定 Chart 编辑器；workspace 无 Chart 时 Topbar 上的 Fetch 是无效控件（F1 根因之一） | 保留 Topbar 继续全局 chrome 与编辑器耦合 |
-| 主题/语言入口 | Topbar 右端 / StatusBar | Topbar 右端（用户仲裁 Q2 定案，2026-09-05 确认） | 发现性最优；现状用户已在顶部建立心智（`main.rs:1467-1524` 迁入即可） | StatusBar 紧凑信息区、点击不便；两处重复 |
+| 主题/语言入口 | Topbar 右端 / StatusBar | Topbar 右端（用户仲裁 Q2 定案，2026-09-05 确认） | 发现性最优；现状用户已在顶部建立心智（`main.rs:1405-1467` 迁入即可） | StatusBar 紧凑信息区、点击不便；两处重复 |
 | 编辑器内部状态持久化范围 | 仅 DockState 树 + 面板宽度 / 含各编辑器内部状态（builder_root、TOP-N、排序） | 仅树 + 宽度（v1） | 锁定决策 8 字面范围；编辑器内部状态 serde 需逐 citizen 打标（MultiSelect 瞬态不可序列化）、契约与测试矩阵爆炸 | 内部状态持久化收益低（builder 有 config 级 `[screener]` 兜底），风险高 |
-| Sidebar 显隐持久化 | 会话级（默认 default_visible）/ `[layout]` 持久化 | 会话级 | 与 adjust 会话态先例一致（`main.rs:1127` 注释）；v1 持久化面最小 | 持久化需 per-screen 拆键 + 恢复时序处理，收益低 |
+| Sidebar 显隐持久化 | 会话级（默认 default_visible）/ `[layout]` 持久化 | 会话级 | 与 adjust 会话态先例一致（`main.rs:1136` 注释）；v1 持久化面最小 | 持久化需 per-screen 拆键 + 恢复时序处理，收益低 |
 | Logger 默认布局 | 选股无 Logger / 两处都含 | **两处都含**（用户仲裁 Q5 定案，2026-09-05 确认——推翻原推荐「选股无 Logger」） | 用户明确选择与现状一致的习惯；错误处理仍走 inline + toast 双通道 | 版面纯净收益低于用户习惯一致性 |
 | Watchlist 布局 | 左侧竖 split 240px（resizable）/ 主区叠 tab / 左侧 tab 无固定宽度 | **左侧 tab 无固定宽度**（用户仲裁 Q6 定案，2026-09-05 确认——用户自定义，推翻两个推荐选项） | 保持左栏空间习惯（左侧）+ 无硬编码宽度（dock split + 拖拽 + 持久化控制），可与其它编辑器叠 tab | 固定 240 默认宽与「主区叠 tab」均未获用户选择 |
+| Screener ⋮ 菜单「列宽重置」 | 删除契约项 / **暂缓（记录为待 DataTable 能力）** | **暂缓**（2026-09-05 2b 评审勘误） | DataTable（`compass-ui/src/widgets/data_table.rs`）`ColumnSpec` 仅 header+numeric，pub API 无任何列宽调整/状态能力（:69-151），「列宽重置」无可重置对象；保留契约意图（重置是列宽功能的补全项）待 DataTable 列宽调整上线首日一并实现 | 删除会丢失功能意图（列宽调整是数据表常见需求）；虚构空菜单项违反「不实现不可用功能」原则 |
+| SEPA ⋮ 菜单内容 | 不渲染 ⋮ / **⋮ 含「重置排序」一项** / ⋮ 含其他动作 | **⋮ 含「重置排序」一项**（2026-09-05 2c 裁决） | 事实：SEPA 表头点击排序持久生效（`table` 为 panel 字段 `sepa.rs:143-144`，`set_sort(0, false)` 仅构造时调用 `sepa.rs:170-172`，`set_rows` 不重置排序 `data_table.rs:110-112`）；用户乱序后唯一复位路径是自行点击表头 rank 列，须已知「官方顺序 = rank asc」这一隐含约定（发现性差）；re-run 后乱序仍保留；恢复目标由代码明确定义（rank asc + 得分列 3..=8 降序），API 齐备（`set_sort`/`set_descending_default`）且动作幂等 | 不渲染：官方顺序复位依赖用户自行发现表头点击路径；其他动作无对象——清除结果（数据为后台一次性 `RunSepaRequest` 报告，无「清除」语义）、列宽重置（DataTable 无列宽调整 API，同 2b Screener 裁决）、报告导出（无既有实现，不虚构空菜单项） |
+| Screener Sidebar 宽度 | 沿用 Chart 240.0/(200.0..=320.0) / **Screener 专用 500.0/(486.0..=640.0)** / 窄宽重排（卡片纵向堆叠） | **Screener 专用 500.0/(486.0..=640.0)**（2026-09-05 2b 评审勘误） | 条件卡片为原子组（ref #220：label+control 永不跨行），最宽叶片 Momentum 估宽 470px（`screener.rs:1272-1285`）+ Panel 内边距 8×2=16px = 下限 486px；默认 500px 恰为 `GROUP_ALIGNMENT_WIDTHS` 首个测试锚（`screener.rs:1882`），复用既有 kittest 覆盖；240px 下内容区仅 224px 无法容纳任何叶片（最窄 300px），控件必被 Panel clip（2b 评审矛盾根因） | 沿用 Chart 值直接复现溢出；窄宽重排需改 `render_leaf_row`/`render_leaf_params` 布局与全部 wrap 测试锚，工作量大且破坏原子组心智，留待后续专项设计 |
+| Market ⋮ 菜单内容 | 不渲染 ⋮ / **⋮ 含「重置排序」一项** / ⋮ 含其他动作 | **⋮ 含「重置排序」一项**（2026-09-05 裁决，与 SEPA 2c 同构） | 事实与 SEPA 完全同构：`table` 为 panel 字段（`market.rs:94`），`set_sort(CHANGE_COLUMN, true)` 仅构造时调用（`market.rs:115-120`），`set_rows` 不重置排序（`data_table.rs:110-112`），表头点击排序持久生效（`toggle_sort` `data_table.rs:262-269`）；用户按其他列（最新价/成交额/名称）乱序后，唯一复位路径 = 点回 CHANGE 列头——须已知「官方默认 = 涨幅降序」（`market.rs:66-68`）这一隐含约定，且误点一次活跃列头即翻向升序、须再点一次（发现性差）；刷新/segment 切换均不清排序态（`filter_rows` 只过滤本地副本 `market.rs:370-380`，绝不写 shared_state；`set_rows` 保留排序）；恢复目标由代码明确定义（板块轮动默认 = `set_sort(3, true)`），API 齐备（`set_sort` + 只读 `sort_column()` getter `data_table.rs:143-145`，SEPA 2c 先例）且动作幂等 | 不渲染：§6 已声明「右端 ⋮」槽位，空 ⋮ 槽零收益且丢弃「官方顺序显式复位」意图（SEPA 2c 同因被否）；其他动作无对象——清除结果（快照为后端一次性 `RunIndexSnapshotRequest` 报告，无清除语义，同 SEPA 2c 排除）、列宽重置（DataTable 无列宽调整 API，同 2b Screener 裁决）、导出（无既有实现，不虚构空菜单项）、刷新（header 已有 Primary + spinner 按钮，重复） |
+| Screener ⋮ 补「重置排序」 | 补（同 SEPA 模式）/ 不补（clear_results 后重跑即恢复） / 暂缓（随 2d/PR 收尾再定） | **补**（2026-09-05 裁决） | 先勘误：委托综述称 `new()` 无 set_sort 调用（默认 = 第一列升序按代码）——**以代码为准**：`screener.rs:151-153` 实际调用 `set_sort(MARKET_CAP_COLUMN=4, true)` + `set_descending_default(4, true)`（默认市值降序，与 §5.2 契约一致）；`DataTable::show` 每帧应用 `sort_rows`（`data_table.rs:176`），无「backend 原始顺序」显示模式——初始顺序 = 构造排序态 = 市值降序（并列按列 0 代码升序，`data_table.rs:281`），reset 目标明确；「clear_results 后重跑即恢复」不成立：`clear_results` 只清 `screener_result/total`（`screener.rs:228-230`）不改 table；重跑走 `set_rows`（`screener.rs:364`）同样保留排序态——乱序在重跑/重筛后仍保留（与 SEPA 2c 同因）；动作幂等（`set_sort(4, true)` 恒等恢复构造默认） | 不补：「复位入口冗余」反例成立——唯一手动路径（点回市值列头）需已知隐含默认约定，误点一次活跃列头即翻向升序、须两次点击；暂缓：无新增不确定性（对象/API/目标顺序全部已存在，SEPA 2c 先例已定模式），暂缓只延后一致体验且让「仅清除结果」菜单悬在中间态 |
 
 ## 14. 用户仲裁记录（2026-09-05，设计确认 + 6 问全定案）
 
@@ -562,4 +623,6 @@ dock = """{...}"""
 - **核心设计**：egui_dock 0.20 保留为 Area 引擎（serde feature 已具备，DockState=bScreen 顶点图）；EditorKind 静态注册表 + EditorLayout 组件规范（Header 必备/Sidebar/Toolbar 槽位，空槽零渲染）；EditorFrame 统一 chrome，TabViewer 16 字段借用束收敛为 EditorCtx；每 Kind 单实例（句柄化预留多实例升级）；三个内置 Workspace（图表=自选+Chart+日志 / 选股=Screener+条件构建器 Sidebar+日志 / SEPA 复盘=SEPA+大盘+日志）。
 - **交互亮点**：workspace 顶部 Segmented 切换 + DockStateChange 即时持久化（`[layout]` 节 + dock_version 回退）；N 键按聚焦编辑器切换 Sidebar（ctx.input 轮询 + 文本焦点守卫 + focused_leaf/on_tab_button 缓存）；Chart header 承载 Mode Toggle（周期/复权）→ 指标 → Fetch，不建 Toolbar（空槽表达）。
 - **约束**：全文遵守 handoff 8 条锁定决策；5 个映射歧义/决策缝隙（P1-P5，无硬冲突）已给推荐——**2026-09-05 用户仲裁全部确认**（整体批准 + Q1-Q6 定案 + P1 采纳推荐）。
-- **开放问题**：无（Q1-Q6 + P1 已全部定案，见 §14）；**决策记录** 15 行（§13）。
+- **开放问题**：无（Q1-Q6 + P1 已全部定案，见 §14；2b 评审两处勘误已裁决，见 §4.1/§6/§13；
+  2026-09-05 ⋮ 菜单两项裁决（Market ⋮ 内容 + Screener ⋮ 补「重置排序」）已落地，见 §6/§13）；
+  **决策记录** 20 行（§13，含 2026-09-05 2b 评审新增 2 行、2c 裁决新增 1 行、⋮ 菜单裁决新增 2 行）。
