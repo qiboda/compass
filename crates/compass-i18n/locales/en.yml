@@ -59,6 +59,8 @@ editor:
     running: Running…
     clear_results: Clear results
   sepa: East SEPA
+  sepa_header:
+    reset_sort: Reset sort
   market: Market
   logger: Log
   watchlist: Watchlist

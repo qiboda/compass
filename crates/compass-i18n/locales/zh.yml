@@ -57,6 +57,8 @@ editor:
     running: 运行中…
     clear_results: 清除结果
   sepa: 东方SEPA
+  sepa_header:
+    reset_sort: 重置排序
   market: 大盘
   logger: 日志
   watchlist: 自选

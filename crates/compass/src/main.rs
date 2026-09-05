@@ -2455,6 +2455,207 @@ default_timeframe = "1w"
         }
     }
 
+    fn sepa_editor_harness_ui<'a>(app: &'a mut CompassApp) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Sepa)
+                .expect("sepa descriptor must exist");
+            let mut chart_action = None;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+            };
+            // SEPA registers no sidebar (design §6) — the 280px detail panel
+            // stays an in-body right pane, so no left panel is created.
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.sepa, &mut ctx);
+        }
+    }
+
+    /// The sepa header (plan §4.3): count label 「共 N 行 · 日期」 + TOP-N
+    /// segmented + refresh button — all three queryable at once.
+    #[test]
+    fn render_sepa_header_exposes_count_topn_and_refresh() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .sepa_data
+            .set(Some(compass_types::SepaData {
+                rows: vec![compass_types::SepaRow {
+                    symbol: "SH600519".to_string(),
+                    name: "贵州茅台".to_string(),
+                    rank: 1,
+                    total_score: 80.0,
+                    trend: 20.0,
+                    theme: 18.0,
+                    capital: 15.0,
+                    pattern: 15.0,
+                    risk: 0.0,
+                    industry: "白酒".to_string(),
+                    industry_en: None,
+                    latest_price: 1500.0,
+                    change_pct: 2.5,
+                    details: compass_types::SepaDetails {
+                        trend: vec![],
+                        theme: vec![],
+                        capital: vec![],
+                        pattern: vec![],
+                        risk: vec![],
+                    },
+                }],
+                thermometer: compass_types::MarketThermometer {
+                    score: 72.0,
+                    position_key: "sepa.position.full",
+                    position_pct: 90.0,
+                    indicators: vec![],
+                },
+                date: "2026-08-02".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label(&compass_i18n::t!(
+            "sepa.count",
+            shown = 1,
+            date = "2026-08-02"
+        ));
+        // Buttons with an icon expose "icon text" as the AccessKit label
+        // (same as the 2a chart fetch button test below).
+        let refresh_label = format!(
+            "{} {}",
+            egui_phosphor::regular::ARROW_CLOCKWISE,
+            tr("sepa.refresh")
+        );
+        harness.get_by_label(&refresh_label);
+        harness.get_by_label("TOP 50");
+        harness.get_by_label("TOP 30");
+    }
+
+    /// The header ⋮ menu (design §6 SEPA 行 / 2c ruling) offers "reset sort";
+    /// the menu must be openable and its action clickable (design §11 group D).
+    /// The precise sort-state restoration is asserted in sepa.rs mod tests
+    /// (the table field is private to the citizen).
+    #[test]
+    fn render_sepa_header_menu_offers_reset_sort() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .sepa_data
+            .set(Some(compass_types::SepaData {
+                rows: vec![compass_types::SepaRow {
+                    symbol: "SH600519".to_string(),
+                    name: "贵州茅台".to_string(),
+                    rank: 1,
+                    total_score: 80.0,
+                    trend: 20.0,
+                    theme: 18.0,
+                    capital: 15.0,
+                    pattern: 15.0,
+                    risk: 0.0,
+                    industry: "白酒".to_string(),
+                    industry_en: None,
+                    latest_price: 1500.0,
+                    change_pct: 2.5,
+                    details: compass_types::SepaDetails {
+                        trend: vec![],
+                        theme: vec![],
+                        capital: vec![],
+                        pattern: vec![],
+                        risk: vec![],
+                    },
+                }],
+                thermometer: compass_types::MarketThermometer {
+                    score: 72.0,
+                    position_key: "sepa.position.full",
+                    position_pct: 90.0,
+                    indicators: vec![],
+                },
+                date: "2026-08-02".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
+        harness.run();
+        harness
+            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.sepa_header.reset_sort"))
+            .click();
+        harness.step();
+        drop(harness);
+    }
+
+    /// The sepa body (plan §4.3): thermometer card + ranking table render in
+    /// the vertical stacking context (ref #221 regression guard — header rows
+    /// and body rows must stack vertically, never side by side).
+    #[test]
+    fn render_sepa_body_stacks_thermometer_and_table() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .sepa_data
+            .set(Some(compass_types::SepaData {
+                rows: vec![compass_types::SepaRow {
+                    symbol: "SH600519".to_string(),
+                    name: "贵州茅台".to_string(),
+                    rank: 1,
+                    total_score: 80.0,
+                    trend: 20.0,
+                    theme: 18.0,
+                    capital: 15.0,
+                    pattern: 15.0,
+                    risk: 0.0,
+                    industry: "白酒".to_string(),
+                    industry_en: None,
+                    latest_price: 1500.0,
+                    change_pct: 2.5,
+                    details: compass_types::SepaDetails {
+                        trend: vec![],
+                        theme: vec![],
+                        capital: vec![],
+                        pattern: vec![],
+                        risk: vec![],
+                    },
+                }],
+                thermometer: compass_types::MarketThermometer {
+                    score: 72.0,
+                    position_key: "sepa.position.full",
+                    position_pct: 90.0,
+                    indicators: vec![],
+                },
+                date: "2026-08-02".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
+        harness.run();
+        // Thermometer label prominent; table header + a row cell visible in
+        // the same frame — the vertical stacking keeps them column-aligned
+        // (the #221 real-GUI regression would place body rows right of the
+        // header, which AccessKit would report as separate labels at best,
+        // so the precise assertion stays in sepa.rs mod tests; this one
+        // guards the editor frame path end-to-end).
+        harness.get_by_label_contains(&tr("sepa.thermometer"));
+        harness.get_by_label_contains(&tr("sepa.table.code"));
+    }
+
     /// The screener sidebar (plan §4.2) hosts the condition builder — its
     /// card-title label must be queryable at the default width.
     #[test]
@@ -2509,10 +2710,11 @@ default_timeframe = "1w"
     /// The sidebar run button (plan §4.2) is intentionally *not* asserted for
     /// the loading transition here: `run_filter` sends through the real
     /// wire_backend dispatcher, whose async consumer may flip
-    /// `screener_loading` back to false (error path) before the assert runs —
-    /// a race (reviewer P2-3). The synchronous loading-before-send semantics
-    /// are covered race-free in `screener.rs` mod tests
-    /// (`filter_button_click_sets_loading`, isolated signal slot).
+    /// `screener_loading` back to false — on the success or the fast-failure
+    /// error path — before the assert runs, a race (reviewer P2-3). The
+    /// synchronous loading-before-send semantics are covered race-free in
+    /// `screener.rs` mod tests (`filter_button_click_sets_loading`, isolated
+    /// signal slot).
     #[test]
     fn render_screener_sidebar_run_button_is_queryable() {
         let _guard = LANG_LOCK

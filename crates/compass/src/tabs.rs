@@ -301,8 +301,28 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                 frame.show(ui, desc, self.screener, &mut ctx);
             }
             EditorKind::Sepa => {
-                self.sepa
-                    .show(ui, self.shared_state, self.sepa_signal, self.work_signal);
+                let desc = EDITOR_REGISTRY
+                    .iter()
+                    .find(|d| d.kind == EditorKind::Sepa)
+                    .expect("sepa descriptor must exist in EDITOR_REGISTRY");
+                let sidebar_visible = false; // SEPA registers no sidebar (design §6).
+                let mut ctx = EditorCtx {
+                    state: self.shared_state,
+                    theme: self.theme,
+                    signals: &EditorSignals {
+                        work: self.work_signal,
+                        screener: self.run_screener_signal,
+                        sepa: self.sepa_signal,
+                        index: self.index_signal,
+                        llm: self.llm_signal,
+                    },
+                    index_list: self.index_list,
+                    chart_action: self.chart_action,
+                    screener_industries: self.screener_industries,
+                    screener_boards: self.screener_boards,
+                };
+                let mut frame = EditorFrame { sidebar_visible };
+                frame.show(ui, desc, self.sepa, &mut ctx);
             }
             EditorKind::Market => {
                 self.market

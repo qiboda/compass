@@ -278,10 +278,13 @@ impl EditorView for ScreenerPanel {
     /// card was visible in the same frame. Here `EditorFrame` renders
     /// header → sidebar (builder) → body, and `consume_llm_result` runs in
     /// `body`, i.e. after the builder — a freshly merged card appears one
-    /// frame later. This is covered by the `llm_repaint_ctx` keep-alive
-    /// (≤200 ms), and consume must stay in `body` because `sidebar` can be
-    /// hidden by the N key in phase 5 (consume must not depend on sidebar
-    /// visibility). Revisit when EditorCtx converges in phase 3.
+    /// frame later. Two repaint mechanisms cover the delay: the app main
+    /// loop's global `request_repaint_after(200ms)` keep-alive (main.rs:1072),
+    /// and `llm_repaint_ctx.request_repaint()` fired immediately when the LLM
+    /// response arrives (backend.rs:425). Consume must stay in `body` because
+    /// `sidebar` can be hidden by the N key in phase 5 (consume must not
+    /// depend on sidebar visibility). Revisit when EditorCtx converges in
+    /// phase 3.
     fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
         self.consume_llm_result(ctx.state);
         self.results_area(ui, ctx.state, ctx.signals.work);
