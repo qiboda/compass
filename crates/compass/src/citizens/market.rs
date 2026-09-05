@@ -170,6 +170,8 @@ impl MarketPanel {
             egui_mobius::factory::create_signal_slot::<crate::messages::RunLlmRequest>();
         let mut chart_action = None;
         let mut logger_export_clicked = false;
+        let mut toasts = compass_ui::widgets::toast::ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
         let mut ctx = EditorCtx {
             state: shared_state,
             theme: &theme,
@@ -185,6 +187,9 @@ impl MarketPanel {
             screener_industries: &[],
             screener_boards: &[],
             logger_export_clicked: &mut logger_export_clicked,
+            toasts: &mut toasts,
+            stock_list: &[],
+            watchlist_action: &mut watchlist_action,
         };
         let mut frame = crate::editor::EditorFrame {
             sidebar_visible: false,

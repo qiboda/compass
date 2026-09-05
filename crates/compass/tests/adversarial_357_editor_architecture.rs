@@ -163,9 +163,15 @@ fn phase2f_global_watchlist_left_panel_removed() {
 #[test]
 fn phase2f_sidebar_visible_state_removed() {
     let src = main_src();
+    // Narrower than a bare substring: `sidebar_visible` also names the
+    // EditorFrame-local panel flag (an unrelated per-editor concept), so the
+    // guard targets the App-level field shape: its declaration and any
+    // self-usage.
     assert!(
-        !src.contains("sidebar_visible"),
-        "RED: `sidebar_visible` still in main.rs — the app-level sidebar \
+        !src.contains("sidebar_visible: bool")
+            && !src.contains("self.sidebar_visible")
+            && !src.contains("if self.sidebar_visible"),
+        "RED: App-level `sidebar_visible` still in main.rs — the sidebar \
          toggle must vanish; Watchlist visibility is dock tab open/close (P5)."
     );
     assert!(

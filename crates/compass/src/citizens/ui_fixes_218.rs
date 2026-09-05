@@ -108,6 +108,7 @@ pub(crate) fn build_compass_app_with_timeframe(
 
     CompassApp {
         dock_state,
+        watchlist: crate::editor::WatchlistEditor::new(),
         dispatcher,
         chart,
         logger,
@@ -148,8 +149,6 @@ pub(crate) fn build_compass_app_with_timeframe(
         last_index_error: None,
         last_index_loading: false,
         last_screener_synced_symbol: startup_symbol,
-        sidebar_visible: true,
-        sidebar_search: String::new(),
         status_clock: String::new(),
         symbol_input_id: None,
         pending_delete: None,
@@ -191,6 +190,8 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
     {
         let mut chart_action = None;
         let mut logger_export_clicked = false;
+        let mut toasts = ToastManager::new(*app.theme.tokens());
+        let mut watchlist_action = None;
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
             let desc = EDITOR_REGISTRY
                 .iter()
@@ -211,6 +212,9 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
                 screener_industries: &[],
                 screener_boards: &[],
                 logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &[],
+                watchlist_action: &mut watchlist_action,
             };
             let mut frame = EditorFrame {
                 sidebar_visible: true,

@@ -69,6 +69,8 @@ impl LoggerPanel {
             .expect("logger descriptor must exist in EDITOR_REGISTRY");
         let mut logger_export_clicked = false;
         let mut chart_action = None;
+        let mut toasts = compass_ui::widgets::toast::ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
         let mut ctx = EditorCtx {
             state,
             theme: &theme,
@@ -84,6 +86,9 @@ impl LoggerPanel {
             screener_industries: &[],
             screener_boards: &[],
             logger_export_clicked: &mut logger_export_clicked,
+            toasts: &mut toasts,
+            stock_list: &[],
+            watchlist_action: &mut watchlist_action,
         };
         let mut frame = crate::editor::EditorFrame {
             sidebar_visible: false,

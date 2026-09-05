@@ -77,7 +77,8 @@ impl<'a> Sidebar<'a> {
         Self { tokens }
     }
 
-    /// Show the sidebar; returns the events produced this frame.
+    /// Show the whole composite (search row + list); returns the events
+    /// produced this frame.
     pub fn show(
         &self,
         ui: &mut egui::Ui,
@@ -85,11 +86,19 @@ impl<'a> Sidebar<'a> {
         search: &mut String,
     ) -> Vec<SidebarEvent> {
         let tokens = self.tokens;
+        ui.set_min_width(tokens.spacing.sidebar_w);
+        let mut events = self.search_row(ui, search);
+        ui.add_space(tokens.spacing.sm);
+        events.extend(self.show_list(ui, groups));
+        events
+    }
+
+    /// The search row only (input + add button). The caller owns the text;
+    /// the widget mutates it in place and reports back through events.
+    pub fn search_row(&self, ui: &mut egui::Ui, search: &mut String) -> Vec<SidebarEvent> {
+        let tokens = self.tokens;
         let mut events = Vec::new();
 
-        ui.set_min_width(tokens.spacing.sidebar_w);
-
-        // Search row: input + add button.
         ui.horizontal(|ui| {
             let placeholder = t!("sidebar.search_placeholder");
             let search_resp = Input::new(tokens, search)
@@ -109,7 +118,17 @@ impl<'a> Sidebar<'a> {
                 events.push(SidebarEvent::Add);
             }
         });
-        ui.add_space(tokens.spacing.sm);
+
+        events
+    }
+
+    /// The list body only (empty state + groups): no search row — the
+    /// caller renders that in its owner's header slot (editor-architecture
+    /// phase 2f, design §6 Watchlist 行).
+    pub fn show_list(&self, ui: &mut egui::Ui, groups: &[SidebarGroup]) -> Vec<SidebarEvent> {
+        let tokens = self.tokens;
+        ui.set_min_width(tokens.spacing.sidebar_w);
+        let mut events = Vec::new();
 
         let total: usize = groups.iter().map(|g| g.items.len()).sum();
         if total == 0 {

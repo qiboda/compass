@@ -32,13 +32,15 @@ use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
 use crate::editor::{
     ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
+    WatchlistAction, WatchlistEditor,
 };
 use crate::messages::{
     FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
 };
 use crate::state::SharedState;
-use compass_core::model::IndexBasic;
+use compass_core::model::{IndexBasic, StockBasic};
 use compass_i18n::t;
+use compass_ui::widgets::toast::ToastManager;
 
 // ---------------------------------------------------------------------------
 // Citizen ID constants
@@ -210,6 +212,7 @@ pub struct TabViewer<'a> {
     pub screener: &'a mut ScreenerPanel,
     pub sepa: &'a mut SepaPanel,
     pub market: &'a mut MarketPanel,
+    pub watchlist: &'a mut WatchlistEditor,
     pub run_screener_signal: &'a Signal<RunScreenerRequest>,
     pub sepa_signal: &'a Signal<RunSepaRequest>,
     pub index_signal: &'a Signal<RunIndexSnapshotRequest>,
@@ -227,6 +230,13 @@ pub struct TabViewer<'a> {
     /// Out-param: chart header action (timeframe/adjust/fetch) consumed by
     /// the owner after `show_inside` returns.
     pub chart_action: &'a mut Option<ChartHeaderAction>,
+    /// Toast sink handed to editors (plan §4.6 — watchlist add/remove).
+    pub toasts: &'a mut ToastManager,
+    /// Stock metadata list backing watchlist row names/exchange tags.
+    pub stock_list: &'a [StockBasic],
+    /// Out-param: watchlist editor action (fetch/add/delete-request modal)
+    /// consumed by the owner after `show_inside` returns.
+    pub watchlist_action: &'a mut Option<WatchlistAction>,
 }
 
 impl egui_dock::TabViewer for TabViewer<'_> {
@@ -264,6 +274,9 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     screener_industries: self.screener_industries,
                     screener_boards: self.screener_boards,
                     logger_export_clicked: self.logger_export_clicked,
+                    toasts: self.toasts,
+                    stock_list: self.stock_list,
+                    watchlist_action: self.watchlist_action,
                 };
                 let mut frame = EditorFrame { sidebar_visible };
                 frame.show(ui, desc, self.chart, &mut ctx);
@@ -294,6 +307,9 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     screener_industries: self.screener_industries,
                     screener_boards: self.screener_boards,
                     logger_export_clicked: self.logger_export_clicked,
+                    toasts: self.toasts,
+                    stock_list: self.stock_list,
+                    watchlist_action: self.watchlist_action,
                 };
                 let mut frame = EditorFrame { sidebar_visible };
                 frame.show(ui, desc, self.logger, &mut ctx);
@@ -324,6 +340,9 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     screener_industries: self.screener_industries,
                     screener_boards: self.screener_boards,
                     logger_export_clicked: self.logger_export_clicked,
+                    toasts: self.toasts,
+                    stock_list: self.stock_list,
+                    watchlist_action: self.watchlist_action,
                 };
                 let mut frame = EditorFrame { sidebar_visible };
                 frame.show(ui, desc, self.screener, &mut ctx);
@@ -356,6 +375,9 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     screener_industries: self.screener_industries,
                     screener_boards: self.screener_boards,
                     logger_export_clicked: self.logger_export_clicked,
+                    toasts: self.toasts,
+                    stock_list: self.stock_list,
+                    watchlist_action: self.watchlist_action,
                 };
                 let mut frame = EditorFrame { sidebar_visible };
                 frame.show(ui, desc, self.sepa, &mut ctx);
@@ -388,6 +410,9 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     screener_industries: self.screener_industries,
                     screener_boards: self.screener_boards,
                     logger_export_clicked: self.logger_export_clicked,
+                    toasts: self.toasts,
+                    stock_list: self.stock_list,
+                    watchlist_action: self.watchlist_action,
                 };
                 let mut frame = EditorFrame { sidebar_visible };
                 frame.show(ui, desc, self.market, &mut ctx);
@@ -396,7 +421,37 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             // in phase 2f (plan §4.6); its leaf only becomes reachable once
             // the workspaces tie in (phase 3).
             EditorKind::Watchlist => {
-                ui.label(t!("editor.watchlist"));
+                let desc = EDITOR_REGISTRY
+                    .iter()
+                    .find(|d| d.kind == EditorKind::Watchlist)
+                    .expect("watchlist descriptor must exist in EDITOR_REGISTRY");
+                let sidebar_visible = desc
+                    .layout
+                    .sidebar
+                    .as_ref()
+                    .map(|s| s.default_visible)
+                    .unwrap_or(false);
+                let mut ctx = EditorCtx {
+                    state: self.shared_state,
+                    theme: self.theme,
+                    signals: &EditorSignals {
+                        work: self.work_signal,
+                        screener: self.run_screener_signal,
+                        sepa: self.sepa_signal,
+                        index: self.index_signal,
+                        llm: self.llm_signal,
+                    },
+                    index_list: self.index_list,
+                    chart_action: self.chart_action,
+                    screener_industries: self.screener_industries,
+                    screener_boards: self.screener_boards,
+                    logger_export_clicked: self.logger_export_clicked,
+                    toasts: self.toasts,
+                    stock_list: self.stock_list,
+                    watchlist_action: self.watchlist_action,
+                };
+                let mut frame = EditorFrame { sidebar_visible };
+                frame.show(ui, desc, self.watchlist, &mut ctx);
             }
         }
     }
@@ -683,6 +738,9 @@ mod tests {
 
         let mut logger_export_clicked = false;
         let mut chart_action = None;
+        let mut toasts = ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
+        let mut watchlist = WatchlistEditor::new();
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
             chart: &mut chart,
@@ -702,6 +760,10 @@ mod tests {
             logger_export_clicked: &mut logger_export_clicked,
             index_list: &[],
             chart_action: &mut chart_action,
+            watchlist: &mut watchlist,
+            toasts: &mut toasts,
+            stock_list: &[],
+            watchlist_action: &mut watchlist_action,
         };
 
         for (kind, title) in [

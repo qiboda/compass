@@ -16,7 +16,6 @@ use compass_types::{Filter, ScreenerQuery};
 use compass_ui::widgets::dropdown::Dropdown;
 use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
-use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
 use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
 use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use compass_ui::widgets::toolbar::Toolbar;
@@ -183,6 +182,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(CompassApp {
                 dock_state,
+                watchlist: crate::editor::WatchlistEditor::new(),
                 dispatcher,
                 chart,
                 logger,
@@ -218,8 +218,6 @@ fn main() -> eframe::Result {
                 last_index_error: None,
                 last_index_loading: false,
                 last_screener_synced_symbol: startup_symbol,
-                sidebar_visible: true,
-                sidebar_search: String::new(),
                 status_clock: String::new(),
                 symbol_input_id: None,
                 pending_delete: None,
@@ -814,6 +812,9 @@ fn export_logs(state: &state::SharedState, path: &std::path::Path) -> Result<(),
 
 struct CompassApp {
     dock_state: DockState<Tab>,
+    /// Outliner-style watchlist editor (plan §4.6 — replaced the global
+    /// left sidebar: an independent dock leaf in the chart workspace).
+    watchlist: crate::editor::WatchlistEditor,
     dispatcher: Dispatcher,
     chart: ChartCitizen,
     logger: LoggerPanel,
@@ -853,10 +854,6 @@ struct CompassApp {
     last_index_error: Option<String>,
     last_index_loading: bool,
     last_screener_synced_symbol: String,
-    /// Whether the left watchlist sidebar is visible.
-    sidebar_visible: bool,
-    /// Sidebar search filter text.
-    sidebar_search: String,
     /// Clock string refreshed every frame (`%H:%M:%S`, local time).
     status_clock: String,
     /// Widget id of the toolbar symbol input (for the `/` shortcut).
@@ -899,17 +896,6 @@ impl eframe::App for CompassApp {
             self.render_toolbar(ui);
         });
 
-        // Left: watchlist sidebar (240 px, resizable 200–320, design §6.2).
-        if self.sidebar_visible {
-            egui::Panel::left("sidebar")
-                .default_size(240.0)
-                .size_range(200.0..=320.0)
-                .resizable(true)
-                .show(ui, |ui| {
-                    self.render_sidebar(ui);
-                });
-        }
-
         // Bottom: status bar (26 px, design §6.3).
         egui::Panel::bottom("statusbar").show(ui, |ui| {
             self.render_status_bar(ui);
@@ -918,6 +904,7 @@ impl eframe::App for CompassApp {
         egui::CentralPanel::default().show(ui, |ui| {
             let mut logger_export_clicked = false;
             let mut chart_action: Option<crate::editor::ChartHeaderAction> = None;
+            let mut watchlist_action: Option<crate::editor::WatchlistAction> = None;
             DockArea::new(&mut self.dock_state)
                 .style(self.dock_style.clone())
                 .show_inside(
@@ -929,6 +916,7 @@ impl eframe::App for CompassApp {
                         screener: &mut self.screener,
                         sepa: &mut self.sepa,
                         market: &mut self.market,
+                        watchlist: &mut self.watchlist,
                         run_screener_signal: &self.run_screener_signal,
                         sepa_signal: &self.sepa_signal,
                         index_signal: &self.index_signal,
@@ -941,6 +929,9 @@ impl eframe::App for CompassApp {
                         logger_export_clicked: &mut logger_export_clicked,
                         index_list: &self.index_list,
                         chart_action: &mut chart_action,
+                        toasts: &mut self.toast,
+                        stock_list: &self.stock_list,
+                        watchlist_action: &mut watchlist_action,
                     },
                 );
 
@@ -951,6 +942,12 @@ impl eframe::App for CompassApp {
                 Some(crate::editor::ChartHeaderAction::Adjust(idx)) => self.set_adjust(idx),
                 Some(crate::editor::ChartHeaderAction::Fetch) => self.fetch_bars(),
                 None => {}
+            }
+
+            // Consume the watchlist editor action (fetch/add/delete-request
+            // modal) after the dock render, same channel pattern.
+            if let Some(action) = watchlist_action {
+                self.handle_watchlist_action(action, ui.ctx().input(|i| i.time));
             }
 
             self.toast.render(ui.ctx());
@@ -1103,7 +1100,7 @@ impl CompassApp {
         }
         if ctrl_k {
             ui.ctx()
-                .memory_mut(|m| m.request_focus(Self::sidebar_search_input_id()));
+                .memory_mut(|m| m.request_focus(crate::editor::WatchlistEditor::search_input_id()));
         }
         if num1 {
             self.set_timeframe(0);
@@ -1139,22 +1136,6 @@ impl CompassApp {
         self.adjust_index = idx;
         self.shared_state.adjust.set(adjust_value(idx).to_string());
         self.fetch_bars();
-    }
-
-    /// Widget id of the search input rendered inside [`Sidebar::show`].
-    ///
-    /// The sidebar body runs under an explicit `sidebar_body` Ui id so the
-    /// chain is fully derivable: each child Ui layer (`Sidebar`'s horizontal,
-    /// the `Input` frame and its inner horizontal) uses the default `"child"`
-    /// salt on the parent's stable id, and the `TextEdit` adds its
-    /// `"compass_input"` salt. The salts must be applied as [`egui::IdSalt`]
-    /// (hash of the salt value), matching egui's `Ui::new_child` derivation —
-    /// `Id::with(&str)` hashes the string instead and yields a different id.
-    fn sidebar_search_input_id() -> egui::Id {
-        let body = egui::Id::new("sidebar_body");
-        let child = egui::IdSalt::new("child");
-        let input = egui::IdSalt::new("compass_input");
-        body.with(child).with(child).with(child).with(input)
     }
 
     /// Fetch bars for a symbol through the dispatcher.
@@ -1214,61 +1195,6 @@ impl CompassApp {
         self.stock_picker.selected_exchange = exchange;
     }
 
-    /// Left watchlist sidebar: search row + the "自选" group backed by
-    /// `SharedState.watchlist` (design §6.2). Add inserts the current symbol;
-    /// delete requests open a danger confirm modal before removal.
-    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        let tokens = *self.theme.tokens();
-        let sidebar = Sidebar::new(&tokens);
-        let current_symbol = self.shared_state.symbol.get();
-        let watchlist = self.shared_state.watchlist.get();
-        let query = self.sidebar_search.trim().to_lowercase();
-
-        let mut items = Vec::new();
-        for symbol in &watchlist {
-            let stock = self.stock_list.iter().find(|s| &s.symbol == symbol);
-            let name = stock
-                .map(|s| s.name.clone())
-                .unwrap_or_else(|| symbol.clone());
-            let exchange = stock
-                .map(|s| exchange_of_symbol(&s.symbol).to_string())
-                .unwrap_or_default();
-            let matches = query.is_empty()
-                || symbol.to_lowercase().contains(&query)
-                || name.to_lowercase().contains(&query);
-            if matches {
-                items.push(SidebarItem {
-                    symbol: symbol.clone(),
-                    name,
-                    exchange,
-                    selected: symbol == &current_symbol,
-                });
-            }
-        }
-        let groups = [SidebarGroup {
-            title: t!("sidebar.group_watchlist").to_string(),
-            items,
-        }];
-
-        let events = ui
-            .scope_builder(
-                egui::UiBuilder::new().id(egui::Id::new("sidebar_body")),
-                |ui| sidebar.show(ui, &groups, &mut self.sidebar_search),
-            )
-            .inner;
-
-        for event in events {
-            match event {
-                SidebarEvent::Select { symbol } => self.fetch_symbol(&symbol),
-                SidebarEvent::Search(_) => {}
-                SidebarEvent::Add => self.add_to_watchlist(&current_symbol),
-                SidebarEvent::DeleteRequest { symbol } => {
-                    self.request_watchlist_removal(ui.ctx().input(|i| i.time), &symbol)
-                }
-            }
-        }
-    }
-
     /// Add `symbol` to the watchlist (dedup + sort) and persist it.
     fn add_to_watchlist(&mut self, symbol: &str) {
         let mut watchlist = self.shared_state.watchlist.get();
@@ -1303,6 +1229,24 @@ impl CompassApp {
             ToastLevel::Success,
             t!("toast.watchlist_removed", symbol = symbol),
         );
+    }
+
+    /// Apply one watchlist editor action after the dock render (plan §4.6):
+    /// row select fetches the symbol, add inserts the current one and a
+    /// delete request opens the danger modal. Extracted from the `ui()`
+    /// match so the App-level semantics are unit-testable (the editor
+    /// only collects events into the out-param).
+    fn handle_watchlist_action(&mut self, action: crate::editor::WatchlistAction, now: f64) {
+        match action {
+            crate::editor::WatchlistAction::Select { symbol } => self.fetch_symbol(&symbol),
+            crate::editor::WatchlistAction::Add => {
+                let current = self.shared_state.symbol.get();
+                self.add_to_watchlist(&current);
+            }
+            crate::editor::WatchlistAction::DeleteRequest { symbol } => {
+                self.request_watchlist_removal(now, &symbol);
+            }
+        }
     }
 
     /// Open the danger confirm modal for removing `symbol` from the watchlist
@@ -1564,6 +1508,7 @@ mod tests {
     use crate::messages::RunLlmRequest;
     use compass_core::model::{IndexBasic, StockBasic};
     use compass_types::{Filter, ScreenerQuery};
+    use compass_ui::widgets::toast::ToastManager;
 
     use crate::build_industry_names;
 
@@ -1590,6 +1535,8 @@ mod tests {
     ) -> impl FnMut(&mut egui::Ui) + 'a {
         move |ui| {
             let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
             let desc = EDITOR_REGISTRY
                 .iter()
                 .find(|d| d.kind == EditorKind::Chart)
@@ -1609,6 +1556,9 @@ mod tests {
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
                 logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
             };
             let sidebar_visible = desc
                 .layout
@@ -2432,6 +2382,8 @@ default_timeframe = "1w"
                 .expect("screener descriptor must exist");
             let mut chart_action = None;
             let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2447,6 +2399,9 @@ default_timeframe = "1w"
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
                 logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
             };
             let sidebar_visible = desc
                 .layout
@@ -2467,6 +2422,8 @@ default_timeframe = "1w"
                 .expect("sepa descriptor must exist");
             let mut chart_action = None;
             let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2482,6 +2439,9 @@ default_timeframe = "1w"
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
                 logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
             };
             // SEPA registers no sidebar (design §6) — the 280px detail panel
             // stays an in-body right pane, so no left panel is created.
@@ -2500,6 +2460,8 @@ default_timeframe = "1w"
                 .expect("market descriptor must exist");
             let mut chart_action = None;
             let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2515,6 +2477,9 @@ default_timeframe = "1w"
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
                 logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
             };
             // Market registers no sidebar (design §6).
             let mut frame = EditorFrame {
@@ -2529,6 +2494,48 @@ default_timeframe = "1w"
     /// is reported through the `logger_export_clicked` out-param — the same
     /// channel the production TabViewer hands to the App, which opens the
     /// save-file dialog after the frame pass (unchanged flow).
+    /// Watchlist-editor render closure (plan §4.6): header (search row)
+    /// over body (自选 group list) through `EditorFrame`. The editor
+    /// collects row/add/delete events into the `watchlist_action` out-param
+    /// — same channel pattern as the chart/logger harnesses.
+    fn watchlist_editor_harness_ui<'a>(
+        app: &'a mut CompassApp,
+        watchlist_action: &'a mut Option<crate::editor::WatchlistAction>,
+    ) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Watchlist)
+                .expect("watchlist descriptor must exist");
+            let mut chart_action = None;
+            let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action,
+            };
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.watchlist, &mut ctx);
+        }
+    }
+
     fn logger_editor_harness_ui<'a>(
         app: &'a mut CompassApp,
         logger_export_clicked: &'a mut bool,
@@ -2539,6 +2546,8 @@ default_timeframe = "1w"
                 .find(|d| d.kind == EditorKind::Logger)
                 .expect("logger descriptor must exist");
             let mut chart_action = None;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
             let mut ctx = EditorCtx {
                 state: &app.shared_state,
                 theme: &app.theme,
@@ -2554,6 +2563,9 @@ default_timeframe = "1w"
                 screener_industries: &app.screener_industries,
                 screener_boards: &app.screener_boards,
                 logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
             };
             let mut frame = EditorFrame {
                 sidebar_visible: false,
@@ -2995,8 +3007,8 @@ default_timeframe = "1w"
 
     /// The watchlist sidebar toggle was removed from the toolbar with the
     /// sidebar semantics (plan §4.1 — Group D 侧栏开关随 Chart sidebar 语义
-    /// 迁走; the watchlist left panel itself moves in phase 2f). No toolbar
-    /// control flips `sidebar_visible` anymore.
+    /// 迁走; in 2f the watchlist itself became an editor dock leaf). No
+    /// toolbar control flips any sidebar visibility anymore.
     #[test]
     fn render_toolbar_no_sidebar_toggle_control() {
         let _guard = LANG_LOCK
@@ -3015,7 +3027,8 @@ default_timeframe = "1w"
                 "toolbar must no longer render a sidebar toggle (moved to chart)"
             );
         }
-        assert!(app.sidebar_visible, "watchlist panel unchanged for now");
+        // Watchlist became an editor (2f): its visibility is the dock tab,
+        // not a global flag — nothing to assert on the App anymore.
     }
 
     #[test]
@@ -3208,6 +3221,9 @@ default_timeframe = "1w"
             DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
         let mut logger_export_clicked = false;
         let mut chart_action = None;
+        let mut toasts = ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
+        let mut watchlist = crate::editor::WatchlistEditor::new();
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
             chart: &mut chart,
@@ -3227,6 +3243,10 @@ default_timeframe = "1w"
             logger_export_clicked: &mut logger_export_clicked,
             index_list: &[],
             chart_action: &mut chart_action,
+            watchlist: &mut watchlist,
+            toasts: &mut toasts,
+            stock_list: &[],
+            watchlist_action: &mut watchlist_action,
         };
 
         let mut harness = egui_kittest::Harness::builder()
@@ -3328,8 +3348,6 @@ default_timeframe = "1w"
             t!("toolbar.fetch")
         );
         let _ = harness.get_by_label(&fetch_label);
-        let _ =
-            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
         let _ = harness.get_by_label(&t!("statusbar.source", count = 0));
         // Dock area renders: the logger citizen's "Logs: n/1000" counter is
         // visible (egui_dock paints tab buttons without accesskit labels, so
@@ -3337,28 +3355,26 @@ default_timeframe = "1w"
         let _ = harness.get_by_label_contains("Logs:");
     }
 
+    /// The watchlist editor renders header (search row) and body; per Q6
+    /// there is **no hardcoded width** — the dock split + user drag (phase 4
+    /// persistence) decide it, and the split geometry is asserted in the
+    /// `default_layout` structure tests (editor/mod.rs). Here we only prove
+    /// both controls exist on the editor itself.
     #[test]
-    fn sidebar_panel_is_left_anchored_at_240px() {
+    fn watchlist_editor_renders_search_row_and_add_button() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        let search =
+        let mut app = build_compass_app(egui::Context::default());
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
+        let _ =
             harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
-        assert!(
-            search.rect().min.x < 60.0,
-            "sidebar must hug the left edge, got min.x={}",
-            search.rect().min.x
-        );
-        let add_button = harness.get_by_label("\u{e3d4}");
-        assert!(
-            add_button.rect().max.x > 220.0,
-            "sidebar must be ~240px wide (add button right edge), got max.x={}",
-            add_button.rect().max.x
-        );
+        let _ = harness.get_by_label("\u{e3d4}"); // add button
     }
 
     #[test]
@@ -3391,53 +3407,72 @@ default_timeframe = "1w"
     // Its absence is asserted by `render_toolbar_no_sidebar_toggle_control`.
 
     #[test]
-    fn sidebar_empty_state_shows_when_no_stock_list() {
+    fn watchlist_editor_empty_state_shows_when_watchlist_empty() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
         let _ = harness.get_by_label(&tr("sidebar.empty_title"));
     }
 
     #[test]
-    fn sidebar_row_click_fetches_selected_symbol() {
+    fn watchlist_editor_row_click_reports_select_action() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let stocks = vec![StockBasic {
-            symbol: "SH600519".to_string(),
-            name: "贵州茅台".to_string(),
-            name_en: None,
-            area: None,
-            industry: None,
-            industry_en: None,
-            market: None,
-            board: None,
-            full_name: None,
-            total_share: None,
-            list_date: None,
-            delist_date: None,
-        }];
-        let app = build_compass_app_with_stocks(egui::Context::default(), stocks);
+        let mut app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("SH600519", "贵州茅台")],
+        );
         app.shared_state.symbol.set("SH600519".to_string());
         app.shared_state.watchlist.set(vec!["SH600519".to_string()]);
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
         harness.get_by_label("贵州茅台").click();
         harness.step();
+        drop(harness);
+        assert_eq!(
+            watchlist_action,
+            Some(crate::editor::WatchlistAction::Select {
+                symbol: "SH600519".to_string()
+            }),
+            "row click must be collected as a Select action"
+        );
+    }
 
-        assert_eq!(harness.state().shared_state.symbol.get(), "SH600519");
-        assert!(
-            harness.state().shared_state.loading.get(),
-            "sidebar select must trigger a fetch"
+    /// App-level consumer: a `Select` action fetches the symbol (the
+    /// loading flag flips — the fetch itself is async, like the chart
+    /// header fetch test).
+    #[test]
+    fn handle_watchlist_select_fetches_symbol() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.handle_watchlist_action(
+            crate::editor::WatchlistAction::Select {
+                symbol: "SZ000001".to_string(),
+            },
+            0.0,
         );
         assert_eq!(
-            harness.state().stock_picker.selected_symbol,
-            "SH600519",
-            "sidebar select must sync the picker"
+            app.shared_state.symbol.get(),
+            "SZ000001",
+            "select must set the global symbol"
+        );
+        assert!(
+            app.shared_state.loading.get(),
+            "select must trigger a fetch through the dispatcher"
         );
     }
 
@@ -3463,7 +3498,32 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn sidebar_add_button_adds_current_symbol_to_watchlist_and_persists() {
+    fn watchlist_editor_add_button_reports_add_action() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("SZ000001", "平安银行")],
+        );
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
+        harness.get_by_label("\u{e3d4}").click(); // ＋ add button
+        harness.step();
+        drop(harness);
+        assert_eq!(
+            watchlist_action,
+            Some(crate::editor::WatchlistAction::Add),
+            "add click must be collected as an Add action"
+        );
+    }
+
+    #[test]
+    fn handle_watchlist_add_persists_current_symbol() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3477,18 +3537,14 @@ default_timeframe = "1w"
             std::env::set_var("HOME", tmp.path());
         }
 
-        let app = build_compass_app_with_stocks(
+        let mut app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![stock_basic("SZ000001", "平安银行")],
         );
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        harness.get_by_label("\u{e3d4}").click(); // ＋ add button
-        harness.step();
+        app.handle_watchlist_action(crate::editor::WatchlistAction::Add, 0.0);
 
         assert_eq!(
-            harness.state().shared_state.watchlist.get(),
+            app.shared_state.watchlist.get(),
             vec!["SZ000001".to_string()],
             "add must insert the current symbol"
         );
@@ -3589,13 +3645,14 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        // The selected row reveals its × button without hovering.
-        let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
-        assert!(
-            !delete_buttons.is_empty(),
-            "selected row must show the delete button"
+        // Delete request comes from the watchlist editor's out-param after
+        // the dock render (plan §4.6); the App consumer opens the modal.
+        harness.state_mut().handle_watchlist_action(
+            crate::editor::WatchlistAction::DeleteRequest {
+                symbol: "SH600519".to_string(),
+            },
+            0.0,
         );
-        delete_buttons.remove(0).click();
         harness.step();
 
         // Danger confirm modal (design §6.5 scenario 3). One 0.25 s step
@@ -3644,8 +3701,13 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
-        delete_buttons.remove(0).click();
+        // Same out-param consumer path as the remove-on-confirm test.
+        harness.state_mut().handle_watchlist_action(
+            crate::editor::WatchlistAction::DeleteRequest {
+                symbol: "SH600519".to_string(),
+            },
+            0.0,
+        );
         harness.step();
         // One 0.25 s step completes the entry animation so the Cancel button
         // is clickable.
@@ -3840,11 +3902,11 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn sidebar_watchlist_restores_from_config() {
+    fn watchlist_editor_restores_and_renders_rows_from_state() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app_with_stocks(
+        let mut app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![
                 stock_basic("SZ000001", "平安银行"),
@@ -3854,15 +3916,19 @@ default_timeframe = "1w"
         app.shared_state
             .watchlist
             .set(vec!["SZ000001".to_string(), "SH600519".to_string()]);
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
 
         let _ = harness.get_by_label("平安银行");
         let _ = harness.get_by_label("贵州茅台");
+        drop(harness);
         assert_eq!(
-            harness.state().shared_state.watchlist.get().len(),
-            2,
-            "both watchlist symbols render as sidebar rows"
+            watchlist_action, None,
+            "rendering alone must not emit an action"
         );
     }
 
@@ -3955,22 +4021,66 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn ctrl_k_focuses_sidebar_search_input() {
+    fn watchlist_search_input_id_matches_rendered_input() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
-        harness.run_steps(3);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut watchlist_action = None;
+        let focus = std::cell::Cell::new(false);
+        let mut harness = egui_kittest::Harness::new_ui({
+            let app = &mut app;
+            let watchlist_action = &mut watchlist_action;
+            let focus = &focus;
+            move |ui| {
+                let desc = EDITOR_REGISTRY
+                    .iter()
+                    .find(|d| d.kind == EditorKind::Watchlist)
+                    .expect("watchlist descriptor must exist");
+                let mut chart_action = None;
+                let mut logger_export_clicked = false;
+                let mut toasts = ToastManager::new(*app.theme.tokens());
+                let mut ctx = EditorCtx {
+                    state: &app.shared_state,
+                    theme: &app.theme,
+                    signals: &EditorSignals {
+                        work: &app.work_signal,
+                        screener: &app.run_screener_signal,
+                        sepa: &app.sepa_signal,
+                        index: &app.index_signal,
+                        llm: &app.llm_signal,
+                    },
+                    index_list: &app.index_list,
+                    chart_action: &mut chart_action,
+                    screener_industries: &app.screener_industries,
+                    screener_boards: &app.screener_boards,
+                    logger_export_clicked: &mut logger_export_clicked,
+                    toasts: &mut toasts,
+                    stock_list: &app.stock_list,
+                    watchlist_action,
+                };
+                // The Ctrl+K shortcut (plan §4.6, migrated) requests this id;
+                // the salt chain must land on the rendered search input.
+                if focus.get() {
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(crate::editor::WatchlistEditor::search_input_id())
+                    });
+                }
+                let mut frame = EditorFrame {
+                    sidebar_visible: false,
+                };
+                frame.show(ui, desc, &mut app.watchlist, &mut ctx);
+            }
+        });
+        harness.run();
+        focus.set(true);
+        harness.step();
 
         let search =
             harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
         assert!(
             search.is_focused(),
-            "Ctrl+K must focus the sidebar search input"
+            "request_focus on WatchlistEditor::search_input_id() must land on the search input"
         );
     }
 

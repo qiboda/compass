@@ -29,8 +29,11 @@ use egui_dock::DockState;
 use egui_mobius::signals::Signal;
 use serde::{Deserialize, Serialize};
 
-use compass_core::data::symbol::parse_explicit_prefix;
-use compass_core::model::IndexBasic;
+use compass_core::data::symbol::{exchange_of_symbol, parse_explicit_prefix};
+use compass_core::model::{IndexBasic, StockBasic};
+use compass_i18n::t;
+use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
+use compass_ui::widgets::toast::ToastManager;
 
 use crate::messages::{
     FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
@@ -368,6 +371,17 @@ pub struct EditorCtx<'a> {
     /// `chart_action` and the pre-2e `logger_export_clicked` TabViewer
     /// field (design §4.2 "按需并入").
     pub logger_export_clicked: &'a mut bool,
+    /// Toast sink (design §4.2 reserved field): editors that persist
+    /// user-visible config (watchlist add/remove) push toasts through this
+    /// instead of owning an App-level toast channel.
+    pub toasts: &'a mut ToastManager,
+    /// Stock metadata list backing watchlist row names/exchange tags
+    /// (plan §4.6 — migrated from the old `render_sidebar` lookup).
+    pub stock_list: &'a [StockBasic],
+    /// Out-param channel for watchlist editor actions (plan §4.6): the
+    /// editor writes at most one action per frame during render; the owner
+    /// fetches/adds/opens the removal modal after `show_inside` returns.
+    pub watchlist_action: &'a mut Option<WatchlistAction>,
 }
 
 /// Bundle of the five citizen-trigger signals (design §4.2 `EditorSignals`).
@@ -453,9 +467,140 @@ impl EditorFrame {
     }
 }
 
-/// Placeholder for the Outliner-style watchlist editor (design §6);
-/// filled in during phase 2f (migration of `render_sidebar`).
-pub struct WatchlistEditor;
+/// Outliner-style watchlist editor (design §6 Watchlist 行, plan §4.6):
+/// an editor whose header slot holds the search row (input + add button)
+/// and whose body renders the 自选 group list. It is **not** a Sidebar
+/// (Q6): it lives as an independent dock leaf in the chart workspace, has
+/// no default width, no N-key registration and no citizen (its
+/// `EditorKind::citizen_id()` returns `None`).
+pub struct WatchlistEditor {
+    /// Search filter text (migrated from the old global `sidebar_search`;
+    /// owned per-editor instance now).
+    pub search: String,
+}
+
+impl WatchlistEditor {
+    /// Create an editor with an empty search filter.
+    pub fn new() -> Self {
+        Self {
+            search: String::new(),
+        }
+    }
+
+    /// `egui::Id` of the watchlist search input, for the Ctrl+K focus
+    /// shortcut (migrated verbatim from the old `sidebar_search_input_id`:
+    /// the header renders the input inside a `UiBuilder` child of
+    /// `id("sidebar_body")`, and the `Input` widget derives its own id the
+    /// same way — hash of the salt value, not the string).
+    pub fn search_input_id() -> egui::Id {
+        let body = egui::Id::new("sidebar_body");
+        let child = egui::IdSalt::new("child");
+        let input = egui::IdSalt::new("compass_input");
+        body.with(child).with(child).with(child).with(input)
+    }
+}
+
+/// App-level action produced by the watchlist editor (plan §4.6): the
+/// editor itself is pure render + event collection; the owner (App)
+/// consumes these after the frame pass — same channel pattern as
+/// `chart_action` / `logger_export_clicked`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchlistAction {
+    /// A row was clicked: fetch that symbol (global single-symbol state).
+    Select { symbol: String },
+    /// The add (＋) button was clicked: insert the current symbol.
+    Add,
+    /// The delete (×) button of a row was clicked: open the danger
+    /// confirm modal (App-level, modal is not an editor concern).
+    DeleteRequest { symbol: String },
+}
+
+impl EditorView for WatchlistEditor {
+    fn kind(&self) -> EditorKind {
+        EditorKind::Watchlist
+    }
+
+    /// Header (design §6 Watchlist 行): the search row — filter input +
+    /// [添加] IconButton — migrated from the `Sidebar` widget composite
+    /// (plan §4.6; Ctrl+K focus semantics via [`WatchlistEditor::search_input_id`]).
+    /// Add clicks are collected into the action out-param (the App inserts
+    /// the current symbol); the input mutates `self.search` in place.
+    fn header(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        let tokens = *ctx.theme.tokens();
+        let sidebar = Sidebar::new(&tokens);
+        let events = ui
+            .scope_builder(
+                egui::UiBuilder::new().id(egui::Id::new("sidebar_body")),
+                |ui| sidebar.search_row(ui, &mut self.search),
+            )
+            .inner;
+        for event in events {
+            if let SidebarEvent::Add = event {
+                *ctx.watchlist_action = Some(WatchlistAction::Add);
+            }
+        }
+    }
+
+    /// Body (design §6 Watchlist 行): the 自选 group list backed by
+    /// `SharedState.watchlist`, filtered by `self.search`. Row clicks /
+    /// add / delete are collected into `ctx.watchlist_action` (single-slot,
+    /// last-wins per frame — unreachable under single-pointer semantics).
+    fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        let tokens = *ctx.theme.tokens();
+        let sidebar = Sidebar::new(&tokens);
+        let current_symbol = ctx.state.symbol.get();
+        let watchlist = ctx.state.watchlist.get();
+        let query = self.search.trim().to_lowercase();
+
+        let mut items = Vec::new();
+        for symbol in &watchlist {
+            let stock = ctx.stock_list.iter().find(|s| &s.symbol == symbol);
+            let name = stock
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| symbol.clone());
+            let exchange = stock
+                .map(|s| exchange_of_symbol(&s.symbol).to_string())
+                .unwrap_or_default();
+            let matches = query.is_empty()
+                || symbol.to_lowercase().contains(&query)
+                || name.to_lowercase().contains(&query);
+            if matches {
+                items.push(SidebarItem {
+                    symbol: symbol.clone(),
+                    name,
+                    exchange,
+                    selected: symbol == &current_symbol,
+                });
+            }
+        }
+        let groups = [SidebarGroup {
+            title: t!("sidebar.group_watchlist").to_string(),
+            items,
+        }];
+
+        let events = ui
+            .scope_builder(
+                egui::UiBuilder::new().id(egui::Id::new("watchlist_body")),
+                |ui| sidebar.show_list(ui, &groups),
+            )
+            .inner;
+
+        for event in events {
+            match event {
+                SidebarEvent::Select { symbol } => {
+                    *ctx.watchlist_action = Some(WatchlistAction::Select { symbol });
+                }
+                SidebarEvent::Search(_) => {}
+                SidebarEvent::Add => {
+                    *ctx.watchlist_action = Some(WatchlistAction::Add);
+                }
+                SidebarEvent::DeleteRequest { symbol } => {
+                    *ctx.watchlist_action = Some(WatchlistAction::DeleteRequest { symbol });
+                }
+            }
+        }
+    }
+}
 
 /// One instance per `EditorKind` (design §4.5 — decision B, see design
 /// §11 decision record #5). `get_mut` is the single dispatch point that
