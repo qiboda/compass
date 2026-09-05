@@ -393,3 +393,30 @@
 ### Trends (last 10)
 - fixture/验证与真实场景脱节首次系统出现（#353）：此前 #345/#348 为"测试与实现一致性"教训，无"真实数据形状"维度——新趋势项，已用回归测试+文档固化。
 - edit 摩擦趋势（#336/#338/#342-343/#345/本轮 1 次复现）：process.md 编辑纪律已存在，执行层仍靠自觉；本轮仅 1 次且立即重读解决，量级低，继续观察。
+
+## 2026-09-04 — ref #354 index_daily 官方指数腾讯主源 + 东财备用
+
+**What was done**: 修复 #354——index_daily 官方指数路径改为腾讯主源 + 东财备用：新纯函数 `decide_official`（Tencent/EastMoney/NoNewBars/Fail 四决策；18 格矩阵对抗测试）+ `fetch_official_sources` 统一 run/backfill/probe 三调用点短路；SOURCE → "Tencent kline + EastMoney fallback + THS industry kline"；docs 同步 8 文件 + 决策记录 #354 行；5 角度审查 2 轮（初审 7 MINOR → 2a4ef5e 修复 + 98ec4b8 增量限定修正 → 5 复验全 PASS）。真实冒烟：EM push2his 不可达环境下 `index-daily-probe --secid 1.000001 -o /tmp/index_daily_probe_354.csv` exit 0、8708 行（1990-12-19→2026-09-04）——腾讯主源路径在 #354 场景成功。133 测试全绿 + clippy/fmt 通过。审查遗留已建后续硬化 issue #355（SEV-LOW-1 降级可见性 + SEV-LOW-2 trade_date 校验 + R1 backfill code-mismatch 守卫）。
+
+**User corrections** (if any): 无纠正型消息——本 session trace 仅 1 条 worktree 启动指令（先读 .dsh/plans/handoff.md）；grill 决策由父会话 handoff 锁定（7 条），本会话无用户直接输入。
+
+**What went wrong**:
+1. gh issue create 两次失败后才成功：`--json` 输出 flag 本 gh 版本不支持（unknown flag: --json）；标签名 `C-Improvement` 不存在（实际为 `C-Code-Quality`）→ 第 3 次创建成功 #355。根因：凭习惯/记忆构造命令与标签名，未先查 `gh label list`。
+2. job_output 对已清理 job id 报 unknown job（1 次工具 error）；list_agents 同一 turn 重复调用（×5/×4）——对已结束后台 agent 的轮询过早/重复。
+3. plan 原文字面矛盾（第 4 行"双方均 None 或均空-无应答→Fail" vs 第 3 行 NoNewBars）由对抗测试 agent 抓出后主 agent 裁定：权威语义=双空 Some+增量→NoNewBars（保持周末/停牌 no-op 成功）、仅双 None→Fail——已修正 plan 文档。属计划语句与权威语义矩阵未对齐的笔误，非实现偏差。
+4. git 客观验证无流程偏差：5 commits（6ff1686/e7f2c99/ec9c7b9/2a4ef5e/98ec4b8）全部落在 fix/index-daily-tencent-default；无残留未用 worktree；base 未漂移（origin/master 仍 c9a55a6）无需 rebase。
+
+**Lessons learned**:
+1. 构造 gh issue create 前先 `gh label list` 核对标签名、不用本版本不支持的 `--json`（取新 issue 编号用输出 URL）。
+2. 计划中的语义矩阵含条件/例外时，正文文字必须与权威裁决逐格对齐——本计划 18 格矩阵与正文第 4 行笔误；对抗测试的 18 格穷举正是发现此类笔误的有效手段，plan 与测试 expected 均以矩阵为准。
+3. 审查遗留"已知限制"（SEV-LOW/不对称）收尾时立即建后续 issue（#355）而非仅记录在 comment——延续 #348→#349 模式，保持 issue 链完整。
+
+**Process improvements**:
+- 已落实（随本 PR doc commits）：data-providers.md 决策记录新增 #354 行（腾讯主源 + 东财备用，注明取代 #278/#286 东财优先及 2026-09-04 实证）；toolchain.md #354 排查卡追加「修复」+「验证」小节（decide_official 统一三路径、SOURCE 新值、THS 坏代理删除不在本 issue 范围=grill 决策 6、本环境验证方法）。
+- proposed (ref #355)：SEV-LOW-1 降级可见性、SEV-LOW-2 trade_date 格式校验、R1 backfill code-mismatch 守卫——已建 issue 跟踪，随 #355 落地。
+- 自动化盘点：本次 5 角度审查/真实冒烟/issue 链均按既有流程执行，无新增手工环节需脚本化；gh CLI 摩擦为单次版本差异未固化。
+
+### Trends (last 10)
+- 文档-实现条件语义不一致由审查兜底（#348 测试基建示例首轮漏同步→MED-1；#354 决策记录"任一源应答即成功"缺增量限定→质量 MINOR M1）：两例均"条件限定词/示例未与实现逐字对齐"——5b 文档步应加自查：决策记录与排查卡中的语义表述须逐行核对实现（含增量/非增量、任一/全部限定词）。
+- 审查遗留 → 后续硬化 issue 模式已成型（#348→#349 dolt --global 迁移；#354→#355 trade_date 校验+降级可见性+backfill 守卫）：收尾建链为标准动作，趋势稳定。
+- 真实环境冒烟作为外部数据源变更的最终验证（#353 教训"测试绿≠正确"→#354 在真实 EM 不可达环境冒烟通过并写入 toolchain.md 验证小节）：模式延续有效，无需新机制。
