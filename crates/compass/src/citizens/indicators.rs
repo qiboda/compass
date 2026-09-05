@@ -44,6 +44,10 @@ impl MaBollIndicator {
 
     /// Creates a new indicator over an explicit parameter set (plan §4.1:
     /// the chart sidebar edits MA periods and BOLL parameters live).
+    ///
+    /// Caller is responsible for valid parameters (no guard here): periods
+    /// must be non-zero, `boll_std` must be finite and > 0. The `set_*`
+    /// setters enforce these rules for runtime edits (plan §4.1).
     pub fn with_periods(ma_periods: [usize; 5], boll_period: usize, boll_std: f64) -> Self {
         Self {
             values: Vec::new(),

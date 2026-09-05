@@ -126,7 +126,7 @@ impl ChartCitizen {
 
     /// Whether the MA/BOLL overlay is currently visible (kittest door for
     /// the header indicator dropdown state).
-    #[allow(dead_code)] // kittest door — consumed only under cfg(test)
+    #[cfg(test)]
     pub fn indicator_visible(&self) -> bool {
         self.ma_boll.is_visible()
     }
@@ -225,12 +225,10 @@ impl ChartCitizen {
         let mut volume = volume;
         let mut legend = legend;
 
+        // Icon-only ⋮ button (design §6 "Display Options ⋮ 菜单"); the
+        // label rides on hover tooltip to keep the header light.
         ui.menu_button(
-            egui::RichText::new(format!(
-                "{} {}",
-                egui_phosphor::regular::DOTS_THREE_VERTICAL,
-                t!("editor.chart_display.label")
-            )),
+            egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
             |ui| {
                 if ui
                     .checkbox(&mut crosshair_visible, t!("editor.chart_display.crosshair"))
@@ -254,7 +252,9 @@ impl ChartCitizen {
                 ui.separator();
                 ui.label(egui::RichText::new(t!("editor.chart_display.n_hint")).weak());
             },
-        );
+        )
+        .response
+        .on_hover_text(t!("editor.chart_display.label"));
     }
 
     /// Paints the static MA/BOLL legend row below the vendored OHLC legend.
@@ -275,6 +275,12 @@ impl ChartCitizen {
         let Some(first) = self.registry.indicators().first() else {
             return;
         };
+        // P2-1 (review 12901bb): legend must follow the same visibility
+        // switches as the overlay itself — hidden indicator or legend
+        // display-off ⇒ no legend row either.
+        if !first.is_visible() || !self.chart.config.show_ohlc_info {
+            return;
+        }
         let Some(IndicatorValue::Multiple(values)) = first.values().get(end.saturating_sub(1))
         else {
             return;

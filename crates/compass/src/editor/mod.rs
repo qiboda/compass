@@ -338,7 +338,8 @@ pub struct EditorCtx<'a> {
     pub state: &'a SharedState,
     pub theme: &'a CompassTheme,
     /// Signal bundle — every App-level trigger an editor needs to fire
-    /// (work/screener/sepa/index/llm). Charts use `work` to refetch;
+    /// (work/screener/sepa/index/llm). phase 2b+ editors use these;
+    /// the chart uses the `chart_action` out-param instead (see above).
     /// phase 3 converges the tab-viewer field set onto this struct.
     pub signals: &'a EditorSignals<'a>,
     /// Index list backing the 前复权 hide guard (design/plan §4.1:
@@ -348,6 +349,8 @@ pub struct EditorCtx<'a> {
     /// adjust / fetch). The editor writes the action during render; the
     /// owner consumes it after `show_inside` returns — same pattern as the
     /// existing `logger_export_clicked` out-param (design §4.2 "按需并入").
+    /// Single slot: same-frame multi-action is last-wins (unreachable under
+    /// single-pointer egui semantics — one click yields one action).
     pub chart_action: &'a mut Option<ChartHeaderAction>,
 }
 
@@ -582,6 +585,9 @@ mod tests {
                 desc.title_key
             );
         }
+        // Restore the zh default (tabs.rs precedent leaves the locale at zh;
+        // never leak en out of the LANG_LOCK guard).
+        compass_i18n::set_locale("zh");
     }
 
     #[test]
