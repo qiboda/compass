@@ -55,7 +55,8 @@
 //!   After phase 0: `phase0_manifest_enables_egui_dock_serde` +
 //!   `tabkind_serde_snake_case_guard` pass (round 2).
 //!   After phase 2f: the three sidebar tests pass.
-//!   After phase 3/4.0: the layout-extraction tests pass.
+//!   After phase 3: the layout-extraction tests pass (dock-state
+//!   construction + TabKind:: constructions leave main.rs).
 
 use std::path::Path;
 
@@ -226,17 +227,23 @@ fn phase3_dock_state_construction_leaves_main() {
     }
 }
 
-/// RED: #357 — phase 4.0 — main.rs no longer constructs tabs via `TabKind::`
-/// (payload switched to `EditorKind`, plan §4.0).
+/// RED: #357 — phase 3 — main.rs no longer constructs tabs via `TabKind::`
+/// (payload switched to `EditorKind`, plan §4.0; the app shell mounts
+/// workspace layouts at phase 3, plan §5.1).
+///
+/// Timing note (review P2-2): plan §3.1 keeps main.rs's inline DockState
+/// (with `Tab::new(TabKind::…)` constructions) until phase 3 — so this
+/// guard stays RED through 2a even though §4.0 payload switch lands with
+/// 2a; its GREEN point is phase 3's workspace wiring, NOT 2a.
 ///
 /// A3 fallback note: even under the "keep TabKind as internal transition
 /// enum" fallback, main.rs must construct tabs with `EditorKind` — a
 /// `TabKind::` construction in the app shell means the 1:1 hard coupling
 /// (F6) survives.
 ///
-/// Expected GREEN: no `TabKind::` in main.rs.
+/// Expected GREEN (phase 3+): no `TabKind::` in main.rs.
 #[test]
-fn phase40_tab_kind_payload_switched() {
+fn phase3_tabkind_construction_leaves_main() {
     let src = main_src();
     assert!(
         !src.contains("TabKind::"),
