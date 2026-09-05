@@ -248,6 +248,25 @@ pub struct Workspaces {
 }
 
 impl Workspaces {
+    /// Default three-workspace container (design §5). Each workspace holds
+    /// exactly one screen layout (lock-in D3) built from [`Self::default_layout`].
+    /// Used by the production constructor and as the corrupted-config
+    /// fallback in phase 4.
+    pub fn default() -> Self {
+        let all = [WorkspaceId::Chart, WorkspaceId::Screener, WorkspaceId::Sepa]
+            .into_iter()
+            .map(|id| Workspace {
+                id,
+                layouts: vec![ScreenLayout {
+                    dock_state: Self::default_layout(id),
+                    active_tab: None,
+                }],
+                active_screen: 0,
+            })
+            .collect();
+        Workspaces { all, active: 0 }
+    }
+
     /// Switch the active workspace: in phase 3 this also saves the current
     /// dock tree in memory and marks the layout dirty for persistence
     /// (design §4.4/§9.2). Editor instance state is global — switching
@@ -442,7 +461,7 @@ impl EditorFrame {
         &mut self,
         ui: &mut egui::Ui,
         desc: &EditorDescriptor,
-        editor: &mut impl EditorView,
+        editor: &mut dyn EditorView,
         ctx: &mut EditorCtx<'_>,
     ) {
         egui::Panel::top(egui::Id::new(("editor_header", desc.kind))).show(ui, |ui| {
@@ -615,11 +634,18 @@ pub struct EditorInstances {
 }
 
 impl EditorInstances {
-    /// Kind → mutable instance dispatch. Phase 2 wires the real match once
-    /// each citizen implements `EditorView`.
+    /// Kind → mutable instance dispatch. The single match point that
+    /// `TabViewer::ui` uses — replacing the six scattered field borrows
+    /// (friction F5/F6, design §4.5).
     pub fn get_mut(&mut self, kind: EditorKind) -> &mut dyn EditorView {
-        let _ = kind;
-        unimplemented!("phase 2: per-kind dispatch once citizens implement EditorView")
+        match kind {
+            EditorKind::Chart => &mut self.chart,
+            EditorKind::Screener => &mut self.screener,
+            EditorKind::Sepa => &mut self.sepa,
+            EditorKind::Market => &mut self.market,
+            EditorKind::Logger => &mut self.logger,
+            EditorKind::Watchlist => &mut self.watchlist,
+        }
     }
 }
 

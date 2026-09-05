@@ -1,41 +1,18 @@
 //! egui_dock TabViewer bridge for the citizen pattern.
 //!
-//! Each tab is a [`Tab`] wrapping a [`TabKind`] variant. When a tab button is
+//! Each tab is a [`Tab`] wrapping an [`EditorKind`]. When a tab button is
 //! clicked, the `on_tab_button` hook calls
-//! [`Dispatcher::activate`] with the tab's [`CitizenId`], enabling one-hot
-//! panel activation across the dock layout.
-//!
-//! ## Usage
-//!
-//! ```text
-//! let mut dock_state = egui_dock::DockState::new(vec![
-//!     Tab::new(TabKind::Chart),
-//!     Tab::new(TabKind::Logger),
-//! ]);
-//! let mut tab_viewer = TabViewer {
-//!     dispatcher: &mut dispatcher,
-//!     chart: &mut (),
-//!     logger: &mut (),
-//! };
-//! egui_dock::DockArea::new(&mut dock_state).show_inside(ui, &mut tab_viewer);
-//! for msg in tab_viewer.dispatcher.drain_messages() { /* ... */ }
-//! ```
+//! [`Dispatcher::activate`] with the tab's [`CitizenId`] (skipped for
+//! non-citizen kinds like Watchlist), enabling one-hot panel activation
+//! across the dock layout. Rendering delegates to
+//! [`EditorInstances::get_mut`] + [`EditorFrame`] (design §4.2/§4.5).
 
 use egui_citizen::{CitizenId, Dispatcher};
-use egui_mobius::signals::Signal;
 use serde::{Deserialize, Serialize};
 
-use crate::citizens::chart::ChartCitizen;
-use crate::citizens::logger::LoggerPanel;
-use crate::citizens::market::MarketPanel;
-use crate::citizens::screener::ScreenerPanel;
-use crate::citizens::sepa::SepaPanel;
 use crate::editor::{
-    ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
-    WatchlistAction, WatchlistEditor,
-};
-use crate::messages::{
-    FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest, RunSepaRequest,
+    ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorInstances, EditorKind,
+    EditorSignals, WatchlistAction,
 };
 use crate::state::SharedState;
 use compass_core::model::{IndexBasic, StockBasic};
@@ -201,39 +178,37 @@ impl Tab {
 use crate::theme::CompassTheme;
 
 /// egui_dock [`TabViewer`] that bridges tab clicks to citizen activation
-/// and delegates rendering to each citizen's `show` method.
+/// and delegates rendering to each editor via [`EditorInstances::get_mut`].
 ///
 /// Created inline each frame — the short-lived borrows satisfy egui_dock's
-/// borrowing requirements.
+/// borrowing requirements. Phase 3 converged the per-editor field list
+/// (chart/logger/screener/… 6 fields + 5 signals + 4 context lists) onto
+/// `editors` + the [`EditorCtx`] bundle (plan §5.1, design §4.2): the
+/// out-params (`logger_export_clicked` / `chart_action` / `watchlist_action`)
+/// stay as explicit fields per plan §5.2's preferred fallback — they are
+/// owner channels written during render and consumed after `show_inside`.
 pub struct TabViewer<'a> {
     pub dispatcher: &'a mut Dispatcher,
-    pub chart: &'a mut ChartCitizen,
-    pub logger: &'a mut LoggerPanel,
-    pub screener: &'a mut ScreenerPanel,
-    pub sepa: &'a mut SepaPanel,
-    pub market: &'a mut MarketPanel,
-    pub watchlist: &'a mut WatchlistEditor,
-    pub run_screener_signal: &'a Signal<RunScreenerRequest>,
-    pub sepa_signal: &'a Signal<RunSepaRequest>,
-    pub index_signal: &'a Signal<RunIndexSnapshotRequest>,
-    pub llm_signal: &'a Signal<RunLlmRequest>,
-    pub work_signal: &'a Signal<FetchRequest>,
-    pub screener_industries: &'a [String],
-    pub screener_boards: &'a [String],
+    /// All editor instances — the single dispatch container (design §4.5).
+    pub editors: &'a mut EditorInstances,
     pub shared_state: &'a SharedState,
     pub theme: &'a CompassTheme,
+    /// Signal bundle passed through to every editor (design §4.2).
+    pub signals: &'a EditorSignals<'a>,
+    /// Index list backing the chart header's 前复权 hide guard (plan §4.1).
+    pub index_list: &'a [IndexBasic],
+    /// Screener condition-builder context (plan §4.2).
+    pub screener_industries: &'a [String],
+    pub screener_boards: &'a [String],
+    /// Stock metadata list backing watchlist row names/exchange tags.
+    pub stock_list: &'a [StockBasic],
+    /// Toast sink handed to editors (plan §4.6 — watchlist add/remove).
+    pub toasts: &'a mut ToastManager,
     /// Out-param: set to `true` when the logger export button was clicked.
     pub logger_export_clicked: &'a mut bool,
-    /// Index list backing the chart header's 前复权 hide guard (plan §4.1 —
-    /// the control moved out of the toolbar; `is_index_or_board` moved too).
-    pub index_list: &'a [IndexBasic],
     /// Out-param: chart header action (timeframe/adjust/fetch) consumed by
     /// the owner after `show_inside` returns.
     pub chart_action: &'a mut Option<ChartHeaderAction>,
-    /// Toast sink handed to editors (plan §4.6 — watchlist add/remove).
-    pub toasts: &'a mut ToastManager,
-    /// Stock metadata list backing watchlist row names/exchange tags.
-    pub stock_list: &'a [StockBasic],
     /// Out-param: watchlist editor action (fetch/add/delete-request modal)
     /// consumed by the owner after `show_inside` returns.
     pub watchlist_action: &'a mut Option<WatchlistAction>,
@@ -247,213 +222,34 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        match tab.kind {
-            EditorKind::Chart => {
-                let desc = EDITOR_REGISTRY
-                    .iter()
-                    .find(|d| d.kind == EditorKind::Chart)
-                    .expect("chart descriptor must exist in EDITOR_REGISTRY");
-                let sidebar_visible = desc
-                    .layout
-                    .sidebar
-                    .as_ref()
-                    .map(|s| s.default_visible)
-                    .unwrap_or(false);
-                let mut ctx = EditorCtx {
-                    state: self.shared_state,
-                    theme: self.theme,
-                    signals: &EditorSignals {
-                        work: self.work_signal,
-                        screener: self.run_screener_signal,
-                        sepa: self.sepa_signal,
-                        index: self.index_signal,
-                        llm: self.llm_signal,
-                    },
-                    index_list: self.index_list,
-                    chart_action: self.chart_action,
-                    screener_industries: self.screener_industries,
-                    screener_boards: self.screener_boards,
-                    logger_export_clicked: self.logger_export_clicked,
-                    toasts: self.toasts,
-                    stock_list: self.stock_list,
-                    watchlist_action: self.watchlist_action,
-                };
-                let mut frame = EditorFrame { sidebar_visible };
-                frame.show(ui, desc, self.chart, &mut ctx);
-            }
-            EditorKind::Logger => {
-                let desc = EDITOR_REGISTRY
-                    .iter()
-                    .find(|d| d.kind == EditorKind::Logger)
-                    .expect("logger descriptor must exist in EDITOR_REGISTRY");
-                let sidebar_visible = desc
-                    .layout
-                    .sidebar
-                    .as_ref()
-                    .map(|s| s.default_visible)
-                    .unwrap_or(false);
-                let mut ctx = EditorCtx {
-                    state: self.shared_state,
-                    theme: self.theme,
-                    signals: &EditorSignals {
-                        work: self.work_signal,
-                        screener: self.run_screener_signal,
-                        sepa: self.sepa_signal,
-                        index: self.index_signal,
-                        llm: self.llm_signal,
-                    },
-                    index_list: self.index_list,
-                    chart_action: self.chart_action,
-                    screener_industries: self.screener_industries,
-                    screener_boards: self.screener_boards,
-                    logger_export_clicked: self.logger_export_clicked,
-                    toasts: self.toasts,
-                    stock_list: self.stock_list,
-                    watchlist_action: self.watchlist_action,
-                };
-                let mut frame = EditorFrame { sidebar_visible };
-                frame.show(ui, desc, self.logger, &mut ctx);
-            }
-            EditorKind::Screener => {
-                let desc = EDITOR_REGISTRY
-                    .iter()
-                    .find(|d| d.kind == EditorKind::Screener)
-                    .expect("screener descriptor must exist in EDITOR_REGISTRY");
-                let sidebar_visible = desc
-                    .layout
-                    .sidebar
-                    .as_ref()
-                    .map(|s| s.default_visible)
-                    .unwrap_or(false);
-                let mut ctx = EditorCtx {
-                    state: self.shared_state,
-                    theme: self.theme,
-                    signals: &EditorSignals {
-                        work: self.work_signal,
-                        screener: self.run_screener_signal,
-                        sepa: self.sepa_signal,
-                        index: self.index_signal,
-                        llm: self.llm_signal,
-                    },
-                    index_list: self.index_list,
-                    chart_action: self.chart_action,
-                    screener_industries: self.screener_industries,
-                    screener_boards: self.screener_boards,
-                    logger_export_clicked: self.logger_export_clicked,
-                    toasts: self.toasts,
-                    stock_list: self.stock_list,
-                    watchlist_action: self.watchlist_action,
-                };
-                let mut frame = EditorFrame { sidebar_visible };
-                frame.show(ui, desc, self.screener, &mut ctx);
-            }
-            EditorKind::Sepa => {
-                let desc = EDITOR_REGISTRY
-                    .iter()
-                    .find(|d| d.kind == EditorKind::Sepa)
-                    .expect("sepa descriptor must exist in EDITOR_REGISTRY");
-                // Derived from the descriptor like the Chart/Screener branches
-                // (2c review P3-5): SEPA currently registers `sidebar: None`,
-                // so this stays false until a sidebar is actually registered.
-                let sidebar_visible = desc
-                    .layout
-                    .sidebar
-                    .as_ref()
-                    .is_some_and(|s| s.default_visible);
-                let mut ctx = EditorCtx {
-                    state: self.shared_state,
-                    theme: self.theme,
-                    signals: &EditorSignals {
-                        work: self.work_signal,
-                        screener: self.run_screener_signal,
-                        sepa: self.sepa_signal,
-                        index: self.index_signal,
-                        llm: self.llm_signal,
-                    },
-                    index_list: self.index_list,
-                    chart_action: self.chart_action,
-                    screener_industries: self.screener_industries,
-                    screener_boards: self.screener_boards,
-                    logger_export_clicked: self.logger_export_clicked,
-                    toasts: self.toasts,
-                    stock_list: self.stock_list,
-                    watchlist_action: self.watchlist_action,
-                };
-                let mut frame = EditorFrame { sidebar_visible };
-                frame.show(ui, desc, self.sepa, &mut ctx);
-            }
-            EditorKind::Market => {
-                let desc = EDITOR_REGISTRY
-                    .iter()
-                    .find(|d| d.kind == EditorKind::Market)
-                    .expect("market descriptor must exist in EDITOR_REGISTRY");
-                // Derived from the descriptor like the Chart/Screener branches:
-                // Market registers `sidebar: None`, so this stays false until
-                // a sidebar is actually registered (2c review P3-5 pattern).
-                let sidebar_visible = desc
-                    .layout
-                    .sidebar
-                    .as_ref()
-                    .is_some_and(|s| s.default_visible);
-                let mut ctx = EditorCtx {
-                    state: self.shared_state,
-                    theme: self.theme,
-                    signals: &EditorSignals {
-                        work: self.work_signal,
-                        screener: self.run_screener_signal,
-                        sepa: self.sepa_signal,
-                        index: self.index_signal,
-                        llm: self.llm_signal,
-                    },
-                    index_list: self.index_list,
-                    chart_action: self.chart_action,
-                    screener_industries: self.screener_industries,
-                    screener_boards: self.screener_boards,
-                    logger_export_clicked: self.logger_export_clicked,
-                    toasts: self.toasts,
-                    stock_list: self.stock_list,
-                    watchlist_action: self.watchlist_action,
-                };
-                let mut frame = EditorFrame { sidebar_visible };
-                frame.show(ui, desc, self.market, &mut ctx);
-            }
-            // Phase-1 placeholder: the Outliner-style watchlist editor lands
-            // in phase 2f (plan §4.6); its leaf only becomes reachable once
-            // the workspaces tie in (phase 3).
-            EditorKind::Watchlist => {
-                let desc = EDITOR_REGISTRY
-                    .iter()
-                    .find(|d| d.kind == EditorKind::Watchlist)
-                    .expect("watchlist descriptor must exist in EDITOR_REGISTRY");
-                let sidebar_visible = desc
-                    .layout
-                    .sidebar
-                    .as_ref()
-                    .map(|s| s.default_visible)
-                    .unwrap_or(false);
-                let mut ctx = EditorCtx {
-                    state: self.shared_state,
-                    theme: self.theme,
-                    signals: &EditorSignals {
-                        work: self.work_signal,
-                        screener: self.run_screener_signal,
-                        sepa: self.sepa_signal,
-                        index: self.index_signal,
-                        llm: self.llm_signal,
-                    },
-                    index_list: self.index_list,
-                    chart_action: self.chart_action,
-                    screener_industries: self.screener_industries,
-                    screener_boards: self.screener_boards,
-                    logger_export_clicked: self.logger_export_clicked,
-                    toasts: self.toasts,
-                    stock_list: self.stock_list,
-                    watchlist_action: self.watchlist_action,
-                };
-                let mut frame = EditorFrame { sidebar_visible };
-                frame.show(ui, desc, self.watchlist, &mut ctx);
-            }
-        }
+        let kind = tab.kind;
+        let desc = EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == kind)
+            .expect("descriptor must exist in EDITOR_REGISTRY");
+        // Sidebar visibility derives from the registered layout (arbitration
+        // Q4: Chart/Screener default-visible; Sepa/Market/Logger/Watchlist
+        // register None so this is false for them).
+        let sidebar_visible = desc
+            .layout
+            .sidebar
+            .as_ref()
+            .is_some_and(|s| s.default_visible);
+        let mut ctx = EditorCtx {
+            state: self.shared_state,
+            theme: self.theme,
+            signals: self.signals,
+            index_list: self.index_list,
+            chart_action: self.chart_action,
+            screener_industries: self.screener_industries,
+            screener_boards: self.screener_boards,
+            logger_export_clicked: self.logger_export_clicked,
+            toasts: self.toasts,
+            stock_list: self.stock_list,
+            watchlist_action: self.watchlist_action,
+        };
+        let mut frame = EditorFrame { sidebar_visible };
+        frame.show(ui, desc, self.editors.get_mut(kind), &mut ctx);
     }
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &egui::Response) {
@@ -698,9 +494,15 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         use crate::citizens::chart::ChartCitizen;
         use crate::citizens::logger::LoggerPanel;
+        use crate::citizens::market::MarketPanel;
         use crate::citizens::screener::ScreenerPanel;
+        use crate::citizens::sepa::SepaPanel;
         use crate::dispatcher::register_citizens;
-        use crate::messages::{FetchRequest, RunScreenerRequest};
+        use crate::editor::{EditorInstances, EditorSignals, WatchlistEditor};
+        use crate::messages::{
+            FetchRequest, RunIndexSnapshotRequest, RunLlmRequest, RunScreenerRequest,
+            RunSepaRequest,
+        };
         use crate::state::SharedState;
         use crate::theme::CompassTheme;
         use egui_dock::TabViewer as _;
@@ -708,9 +510,9 @@ mod tests {
 
         let mut dispatcher = Dispatcher::new();
         let registered = register_citizens(&mut dispatcher);
-        let mut chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
-        let mut logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
-        let mut screener = ScreenerPanel::new(
+        let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let screener = ScreenerPanel::new(
             CitizenId::new(SCREENER_ID),
             registered.screener,
             None,
@@ -718,12 +520,12 @@ mod tests {
             &compass_ui::tokens::ThemeTokens::dark(),
             false,
         );
-        let mut sepa = SepaPanel::new(
+        let sepa = SepaPanel::new(
             CitizenId::new(SEPA_ID),
             registered.sepa,
             &compass_ui::tokens::ThemeTokens::dark(),
         );
-        let mut market = MarketPanel::new(
+        let market = MarketPanel::new(
             CitizenId::new(MARKET_ID),
             registered.market,
             &compass_ui::tokens::ThemeTokens::dark(),
@@ -736,33 +538,38 @@ mod tests {
         let shared = SharedState::new("000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
+        let mut editors = EditorInstances {
+            chart,
+            logger,
+            screener,
+            sepa,
+            market,
+            watchlist: WatchlistEditor::new(),
+        };
+        let signals = EditorSignals {
+            work: &work_signal,
+            screener: &run_signal,
+            sepa: &sepa_signal,
+            index: &index_signal,
+            llm: &llm_signal,
+        };
         let mut logger_export_clicked = false;
         let mut chart_action = None;
         let mut toasts = ToastManager::new(*theme.tokens());
         let mut watchlist_action = None;
-        let mut watchlist = WatchlistEditor::new();
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
-            chart: &mut chart,
-            logger: &mut logger,
-            screener: &mut screener,
-            sepa: &mut sepa,
-            market: &mut market,
-            run_screener_signal: &run_signal,
-            sepa_signal: &sepa_signal,
-            index_signal: &index_signal,
-            llm_signal: &llm_signal,
-            work_signal: &work_signal,
-            screener_industries: &[],
-            screener_boards: &[],
+            editors: &mut editors,
             shared_state: &shared,
             theme: &theme,
-            logger_export_clicked: &mut logger_export_clicked,
+            signals: &signals,
             index_list: &[],
-            chart_action: &mut chart_action,
-            watchlist: &mut watchlist,
-            toasts: &mut toasts,
+            screener_industries: &[],
+            screener_boards: &[],
             stock_list: &[],
+            toasts: &mut toasts,
+            logger_export_clicked: &mut logger_export_clicked,
+            chart_action: &mut chart_action,
             watchlist_action: &mut watchlist_action,
         };
 

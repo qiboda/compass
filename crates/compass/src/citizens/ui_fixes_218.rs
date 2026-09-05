@@ -19,7 +19,7 @@ use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::StockPicker;
 use compass_ui::widgets::toast::ToastManager;
 use egui_citizen::{CitizenId, Dispatcher};
-use egui_dock::DockState;
+
 use egui_kittest::kittest::Queryable;
 
 use crate::CompassApp;
@@ -33,7 +33,7 @@ use crate::editor::{
 };
 use crate::state::SharedState;
 use crate::stock_projection;
-use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
+use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID};
 use crate::theme::CompassTheme;
 
 /// Serializes `set_locale` calls across ALL test modules — `rust_i18n::set_locale`
@@ -82,39 +82,21 @@ pub(crate) fn build_compass_app_with_timeframe(
     let stock_picker = StockPicker::new(theme_tokens, "SZ000001", stock_projection());
     let dock_style = egui_dock::Style::default();
 
-    let mut dock_state = DockState::new(vec![
-        Tab::new(TabKind::Chart),
-        Tab::new(TabKind::Market),
-        Tab::new(TabKind::Sepa),
-    ]);
-    if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
-        && let Some(tree) = surface.node_tree_mut()
-    {
-        let _ = tree.split_below(
-            egui_dock::NodeIndex::root(),
-            0.75,
-            vec![Tab::new(TabKind::Logger)],
-        );
-        let _ = tree.split_below(
-            egui_dock::NodeIndex::root(),
-            0.5,
-            vec![Tab::new(TabKind::Screener)],
-        );
-    }
-
     let startup_symbol = shared_state.symbol.get();
     let timeframe_index = crate::timeframe_index_from_value(&shared_state.timeframe.get());
     let adjust_index = crate::adjust_index_from_value(&shared_state.adjust.get());
 
     CompassApp {
-        dock_state,
-        watchlist: crate::editor::WatchlistEditor::new(),
+        workspaces: crate::editor::Workspaces::default(),
+        editors: crate::editor::EditorInstances {
+            chart,
+            logger,
+            screener,
+            sepa,
+            market,
+            watchlist: crate::editor::WatchlistEditor::new(),
+        },
         dispatcher,
-        chart,
-        logger,
-        screener,
-        sepa,
-        market,
         run_screener_signal,
         sepa_signal,
         index_signal,
@@ -219,7 +201,7 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
             let mut frame = EditorFrame {
                 sidebar_visible: true,
             };
-            frame.show(ui, desc, &mut app.chart, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.chart, &mut ctx);
         });
         harness.run();
         harness.get_by_label("1w").click();

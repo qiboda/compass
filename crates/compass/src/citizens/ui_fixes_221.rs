@@ -179,17 +179,18 @@ fn sepa_ranking_table_renders_all_fifty_rows_in_dock() {
     let _ = harness.get_by_label("SH600050");
 }
 
-/// The dock tree splits below the root (Chart+Sepa share the top leaf), so
-/// the root node is a split, not a leaf: locate the SEPA tab's leaf via
-/// `find_tab` before activating it.
+/// The SEPA tab lives in the SEPA-recap workspace (arbitration Q1), so the
+/// test switches to that workspace first, then activates its tab — the
+/// dock tree split below the root in the default layout.
 fn activate_sepa_tab(app: &mut CompassApp) {
-    let path = app
-        .dock_state
+    app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+    let active = app.workspaces.active;
+    let screen = app.workspaces.all[active].active_screen;
+    let dock = &mut app.workspaces.all[active].layouts[screen].dock_state;
+    let path = dock
         .find_tab(&Tab::new(TabKind::Sepa))
-        .expect("SEPA tab exists in the dock tree");
-    app.dock_state
-        .set_active_tab(path)
-        .expect("activate SEPA tab");
+        .expect("SEPA tab exists in the sepa workspace dock tree");
+    dock.set_active_tab(path).expect("activate SEPA tab");
 }
 
 /// Sanity guard: the injected fixture itself is deterministic (50 rows,

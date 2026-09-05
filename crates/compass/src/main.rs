@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use egui_citizen::{CitizenId, Dispatcher};
-use egui_dock::{DockArea, DockState};
+use egui_dock::DockArea;
 use egui_file_dialog::FileDialog;
 use serde::Deserialize;
 use tracing::{debug, info};
@@ -42,7 +42,7 @@ use citizens::logger::LoggerPanel;
 use citizens::market::MarketPanel;
 use citizens::screener::ScreenerPanel;
 use citizens::sepa::SepaPanel;
-use tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind, TabViewer};
+use tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, TabViewer};
 use theme::CompassTheme;
 
 /// Default inner window size (design doc §Q8: 1440×900).
@@ -146,29 +146,11 @@ fn main() -> eframe::Result {
             boards.sort();
             boards.dedup();
 
-            // Create initial dock state: Chart + 大盘 + 东方SEPA share the top
-            // leaf (SEPA's 12-column table + detail panel and the market
-            // panel's card + table need the full width), Logger + Screener
-            // below.
-            let mut dock_state = DockState::new(vec![
-                Tab::new(TabKind::Chart),
-                Tab::new(TabKind::Market),
-                Tab::new(TabKind::Sepa),
-            ]);
-            if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
-                && let Some(tree) = surface.node_tree_mut()
-            {
-                let _ = tree.split_below(
-                    egui_dock::NodeIndex::root(),
-                    0.75,
-                    vec![Tab::new(TabKind::Logger)],
-                );
-                let _ = tree.split_below(
-                    egui_dock::NodeIndex::root(),
-                    0.5,
-                    vec![Tab::new(TabKind::Screener)],
-                );
-            }
+            // Create initial workspaces (three default layouts, design §5):
+            // the inline dock tree that used to live here now comes from
+            // `Workspaces::default()` (plan §3.1 — the layout builder
+            // belongs in editor/, not main).
+            let workspaces = crate::editor::Workspaces::default();
 
             let theme_tokens = *theme.tokens();
             let stock_picker = StockPicker::new(
@@ -181,14 +163,16 @@ fn main() -> eframe::Result {
             let startup_symbol = shared_state.symbol.get();
 
             Ok(Box::new(CompassApp {
-                dock_state,
-                watchlist: crate::editor::WatchlistEditor::new(),
+                workspaces,
+                editors: crate::editor::EditorInstances {
+                    chart,
+                    logger,
+                    screener,
+                    sepa,
+                    market,
+                    watchlist: crate::editor::WatchlistEditor::new(),
+                },
                 dispatcher,
-                chart,
-                logger,
-                screener,
-                sepa,
-                market,
                 run_screener_signal,
                 sepa_signal,
                 index_signal,
@@ -811,16 +795,15 @@ fn export_logs(state: &state::SharedState, path: &std::path::Path) -> Result<(),
 // ---------------------------------------------------------------------------
 
 struct CompassApp {
-    dock_state: DockState<Tab>,
-    /// Outliner-style watchlist editor (plan §4.6 — replaced the global
-    /// left sidebar: an independent dock leaf in the chart workspace).
-    watchlist: crate::editor::WatchlistEditor,
+    /// Workspace container (design §4.4): three workspaces × one screen
+    /// each (lock-in D3). The active workspace's dock tree is what the
+    /// `DockArea` renders below (plan §5.1).
+    workspaces: crate::editor::Workspaces,
+    /// All editor instances — the single dispatch container replacing the
+    /// per-citizen fields (design §4.5; includes the WatchlistEditor,
+    /// which is not a citizen, plan §4.6).
+    editors: crate::editor::EditorInstances,
     dispatcher: Dispatcher,
-    chart: ChartCitizen,
-    logger: LoggerPanel,
-    screener: ScreenerPanel,
-    sepa: SepaPanel,
-    market: MarketPanel,
     run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
     sepa_signal: egui_mobius::signals::Signal<messages::RunSepaRequest>,
     index_signal: egui_mobius::signals::Signal<messages::RunIndexSnapshotRequest>,
@@ -905,32 +888,35 @@ impl eframe::App for CompassApp {
             let mut logger_export_clicked = false;
             let mut chart_action: Option<crate::editor::ChartHeaderAction> = None;
             let mut watchlist_action: Option<crate::editor::WatchlistAction> = None;
-            DockArea::new(&mut self.dock_state)
+            let signals = crate::editor::EditorSignals {
+                work: &self.work_signal,
+                screener: &self.run_screener_signal,
+                sepa: &self.sepa_signal,
+                index: &self.index_signal,
+                llm: &self.llm_signal,
+            };
+            // Render the active workspace's dock tree (plan §5.1). The
+            // workspace hold methods the tree in memory; phase 4 persists it.
+            let active = self.workspaces.active;
+            let active_screen = self.workspaces.all[active].active_screen;
+            let dock = &mut self.workspaces.all[active].layouts[active_screen].dock_state;
+            DockArea::new(dock)
                 .style(self.dock_style.clone())
                 .show_inside(
                     ui,
                     &mut TabViewer {
                         dispatcher: &mut self.dispatcher,
-                        chart: &mut self.chart,
-                        logger: &mut self.logger,
-                        screener: &mut self.screener,
-                        sepa: &mut self.sepa,
-                        market: &mut self.market,
-                        watchlist: &mut self.watchlist,
-                        run_screener_signal: &self.run_screener_signal,
-                        sepa_signal: &self.sepa_signal,
-                        index_signal: &self.index_signal,
-                        llm_signal: &self.llm_signal,
-                        work_signal: &self.work_signal,
-                        screener_industries: &self.screener_industries,
-                        screener_boards: &self.screener_boards,
+                        editors: &mut self.editors,
                         shared_state: &self.shared_state,
                         theme: &self.theme,
-                        logger_export_clicked: &mut logger_export_clicked,
+                        signals: &signals,
                         index_list: &self.index_list,
-                        chart_action: &mut chart_action,
-                        toasts: &mut self.toast,
+                        screener_industries: &self.screener_industries,
+                        screener_boards: &self.screener_boards,
                         stock_list: &self.stock_list,
+                        toasts: &mut self.toast,
+                        logger_export_clicked: &mut logger_export_clicked,
+                        chart_action: &mut chart_action,
                         watchlist_action: &mut watchlist_action,
                     },
                 );
@@ -1014,7 +1000,7 @@ impl eframe::App for CompassApp {
             // dropped along with the toast (design §7).
             let current_sepa_loading = self.shared_state.sepa_loading.get();
             if self.last_sepa_loading && !current_sepa_loading {
-                self.sepa.reset_selection();
+                self.editors.sepa.reset_selection();
                 if self.shared_state.sepa_error.get().is_none() {
                     let count = self
                         .shared_state
@@ -1373,9 +1359,9 @@ impl CompassApp {
                         self.stock_picker.set_tokens(tokens);
                         self.toast.set_tokens(tokens);
                         self.modal.set_tokens(tokens);
-                        self.screener.set_tokens(tokens);
-                        self.sepa.set_tokens(tokens);
-                        self.market.set_tokens(tokens);
+                        self.editors.screener.set_tokens(tokens);
+                        self.editors.sepa.set_tokens(tokens);
+                        self.editors.market.set_tokens(tokens);
                         self.toast
                             .push(ToastLevel::Info, t!("toast.theme_switched"));
                     }
@@ -1567,7 +1553,7 @@ mod tests {
                 .map(|s| s.default_visible)
                 .unwrap_or(false);
             let mut frame = EditorFrame { sidebar_visible };
-            frame.show(ui, desc, &mut app.chart, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.chart, &mut ctx);
         }
     }
 
@@ -1764,7 +1750,6 @@ mod tests {
     // ======================================================================
 
     use crate::WINDOW_INNER_SIZE;
-    use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
     use compass_core::model::{AppConfig, AppSection, WatchlistConfig};
     use compass_ui::tokens::ColorTokens;
@@ -2347,7 +2332,10 @@ default_timeframe = "1w"
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
-        assert!(app.chart.indicator_visible(), "default: overlay visible");
+        assert!(
+            app.editors.chart.indicator_visible(),
+            "default: overlay visible"
+        );
 
         {
             let mut chart_action = None;
@@ -2366,7 +2354,7 @@ default_timeframe = "1w"
         }
 
         assert!(
-            !app.chart.indicator_visible(),
+            !app.editors.chart.indicator_visible(),
             "overlay must be hidden after selecting 隐藏"
         );
     }
@@ -2410,7 +2398,7 @@ default_timeframe = "1w"
                 .map(|s| s.default_visible)
                 .unwrap_or(false);
             let mut frame = EditorFrame { sidebar_visible };
-            frame.show(ui, desc, &mut app.screener, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.screener, &mut ctx);
         }
     }
 
@@ -2448,7 +2436,7 @@ default_timeframe = "1w"
             let mut frame = EditorFrame {
                 sidebar_visible: false,
             };
-            frame.show(ui, desc, &mut app.sepa, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.sepa, &mut ctx);
         }
     }
 
@@ -2485,7 +2473,7 @@ default_timeframe = "1w"
             let mut frame = EditorFrame {
                 sidebar_visible: false,
             };
-            frame.show(ui, desc, &mut app.market, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.market, &mut ctx);
         }
     }
 
@@ -2532,7 +2520,7 @@ default_timeframe = "1w"
             let mut frame = EditorFrame {
                 sidebar_visible: false,
             };
-            frame.show(ui, desc, &mut app.watchlist, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.watchlist, &mut ctx);
         }
     }
 
@@ -2570,7 +2558,7 @@ default_timeframe = "1w"
             let mut frame = EditorFrame {
                 sidebar_visible: false,
             };
-            frame.show(ui, desc, &mut app.logger, &mut ctx);
+            frame.show(ui, desc, &mut app.editors.logger, &mut ctx);
         }
     }
 
@@ -3191,15 +3179,15 @@ default_timeframe = "1w"
         use crate::state::SharedState;
         use crate::tabs::MARKET_ID;
         use crate::tabs::TabViewer;
-        use egui_dock::{DockArea, DockState};
+        use egui_dock::DockArea;
         use egui_mobius::factory;
 
         let tokens = compass_ui::tokens::ThemeTokens::dark();
         let mut dispatcher = Dispatcher::new();
         let registered = register_citizens(&mut dispatcher);
-        let mut chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
-        let mut logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
-        let mut screener = ScreenerPanel::new(
+        let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let screener = ScreenerPanel::new(
             CitizenId::new(SCREENER_ID),
             registered.screener,
             None,
@@ -3207,8 +3195,8 @@ default_timeframe = "1w"
             &tokens,
             false,
         );
-        let mut sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
-        let mut market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &tokens);
+        let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
+        let market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &tokens);
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
         let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
@@ -3217,35 +3205,45 @@ default_timeframe = "1w"
         let shared = SharedState::new("SZ000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
+        // The dock tree comes from the layout builder (plan §3.1: main.rs
+        // never constructs DockState directly — the phase3 guard asserts
+        // that by text). The Sepa workspace's default layout keeps the
+        // two-tab-in-one-leaf shape this test needs (Sepa + Market share the
+        // top leaf) plus the accent-ring click path on the 东方SEPA tab.
         let mut dock_state =
-            DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
+            crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Sepa);
+        let mut editors = crate::editor::EditorInstances {
+            chart,
+            logger,
+            screener,
+            sepa,
+            market,
+            watchlist: crate::editor::WatchlistEditor::new(),
+        };
+        let signals = crate::editor::EditorSignals {
+            work: &work_signal,
+            screener: &run_signal,
+            sepa: &sepa_signal,
+            index: &index_signal,
+            llm: &llm_signal,
+        };
         let mut logger_export_clicked = false;
         let mut chart_action = None;
         let mut toasts = ToastManager::new(*theme.tokens());
         let mut watchlist_action = None;
-        let mut watchlist = crate::editor::WatchlistEditor::new();
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
-            chart: &mut chart,
-            logger: &mut logger,
-            screener: &mut screener,
-            sepa: &mut sepa,
-            market: &mut market,
-            run_screener_signal: &run_signal,
-            sepa_signal: &sepa_signal,
-            llm_signal: &llm_signal,
-            index_signal: &index_signal,
-            work_signal: &work_signal,
-            screener_industries: &[],
-            screener_boards: &[],
+            editors: &mut editors,
             shared_state: &shared,
             theme: &theme,
-            logger_export_clicked: &mut logger_export_clicked,
+            signals: &signals,
             index_list: &[],
-            chart_action: &mut chart_action,
-            watchlist: &mut watchlist,
-            toasts: &mut toasts,
+            screener_industries: &[],
+            screener_boards: &[],
             stock_list: &[],
+            toasts: &mut toasts,
+            logger_export_clicked: &mut logger_export_clicked,
+            chart_action: &mut chart_action,
             watchlist_action: &mut watchlist_action,
         };
 
@@ -4069,7 +4067,7 @@ default_timeframe = "1w"
                 let mut frame = EditorFrame {
                     sidebar_visible: false,
                 };
-                frame.show(ui, desc, &mut app.watchlist, &mut ctx);
+                frame.show(ui, desc, &mut app.editors.watchlist, &mut ctx);
             }
         });
         harness.run();
