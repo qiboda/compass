@@ -383,13 +383,17 @@ impl Workspaces {
 
 /// egui_dock's `Tree::split` leaves `focused_node` on the node created by
 /// the *last* split (tree/mod.rs:534) — for the default layouts above that
-/// is the bottom Logger leaf, so「⋮ 重开编辑器」(add_editor →
-/// `push_to_focused_leaf`) would drop new editors into the logger pane
-/// until the user clicks a tab title. Direct focus back to the main editor
-/// leaf (review 26b1a84c P2-1).
+/// is the bottom Logger leaf, so the add-editor menu (`push_to_focused_leaf`)
+/// would drop new editors into the logger pane until the user clicks a tab
+/// title. Direct focus back to the main editor leaf (review 26b1a84c P2-1).
 fn focus_main_leaf(tree: &mut egui_dock::Tree<Tab>, kind: EditorKind) {
     if let Some((node, _)) = tree.find_tab(&Tab::new(kind)) {
         tree.set_focused_node(node);
+    } else {
+        // Unreachable today: the tab was just constructed one line above.
+        // Record the invariant so a future caller cannot silently regress
+        // to the logger-focus bug (review 28e54c4f P3-4).
+        debug_assert!(false, "focus_main_leaf: kind {kind:?} missing from layout");
     }
 }
 

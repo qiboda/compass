@@ -2285,12 +2285,16 @@ default_timeframe = "1w"
         let (screener_leaf, _) = tree
             .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Screener))
             .expect("screener tab present");
-        let (logger_leaf, _) = tree
-            .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Logger))
-            .expect("logger tab present");
-        assert_ne!(
-            screener_leaf, logger_leaf,
-            "add_editor must drop the new tab into the main leaf, not the Logger bottom leaf"
+        let (chart_leaf, _) = tree
+            .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Chart))
+            .expect("chart tab present");
+        // P2-1 contract: the new tab lands in the main (Chart) leaf —
+        // equality with the Chart leaf is tighter than merely differing from
+        // Logger (a focus regression onto the Watchlist leaf would pass an
+        // assert_ne only) (review 28e54c4f P3-2).
+        assert_eq!(
+            screener_leaf, chart_leaf,
+            "add_editor must land in the main (Chart) leaf"
         );
     }
 

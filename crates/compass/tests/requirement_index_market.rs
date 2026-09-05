@@ -1,9 +1,15 @@
 //! Requirement-acceptance contract tests for the C4 market tab (epic #255,
 //! plan T6 / T7).
 //!
-//! The full kittest rendering tests (三 tab 渲染 / Segmented 切换 / 行点击
-//! 联动 / 空态) cannot compile until `TabKind::Market` and
-//! `citizens/market.rs` land — the compass crate is a pure-bin crate and
+//! [superseded, 41923b0]: the RED-time framing below ("cannot compile until
+//! TabKind::Market ... land") is *historical* — TabKind has since been
+//! deleted and the market tab lands as EditorKind::Market (see the
+//! [migrated] note further down). Kept as a record of the original
+//! acceptance surface.
+//!
+//! [historical framing] — The full kittest rendering tests (三 tab 渲染 /
+//! Segmented 切换 / 行点击 联动 / 空态) cannot compile until `TabKind::Market`
+//! and `citizens/market.rs` land — the compass crate is a pure-bin crate and
 //! both symbols do not exist yet. These source-contract tests stay
 //! compile-green TODAY (no reference to the missing symbols) and assert the
 //! plan-declared surface, mirroring the contract-grep style already used in
@@ -90,12 +96,20 @@ fn i18n_market_keys_zh_en_symmetric() {
     // Plan T6: index.* i18n 命名空间 zh/en 对称.
     let zh = read_rel("../compass-i18n/locales/zh.yml").expect("compass-i18n zh.yml must exist");
     let en = read_rel("../compass-i18n/locales/en.yml").expect("compass-i18n en.yml must exist");
+    // [migrated by 41923b0]: TabKind removed — the active market key is the
+    // nested editor.market (editor: → market:); legacy flat `tab.market`
+    // keys stay in the yml but carry no code reference (EDITOR_KEYS covers
+    // editor.market in requirement_editor_architecture.rs). Anchor the
+    // assertion to the editor: section rather than a bare substring
+    // (review 28e54c4f P3-1).
+    let zh_editor = zh.split("editor:").nth(1).unwrap_or("");
+    let en_editor = en.split("editor:").nth(1).unwrap_or("");
     assert!(
-        zh.contains("  market:"),
+        zh_editor.contains("  market:"),
         "zh.yml must define the nested editor.market key (editor: → market:)"
     );
     assert!(
-        en.contains("  market:"),
+        en_editor.contains("  market:"),
         "en.yml must define the nested editor.market key (editor: → market:)"
     );
     assert!(
