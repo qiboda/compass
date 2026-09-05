@@ -27,6 +27,7 @@ use compass_ui::widgets::toolbar::Toolbar;
 mod backend;
 mod citizens;
 mod dispatcher;
+mod editor;
 mod i18n_name;
 mod llm_screener;
 mod messages;

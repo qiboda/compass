@@ -33,6 +33,19 @@ sidebar:
   empty_title: Watchlist is empty
   empty_desc: Click + to add stocks
 
+editor:
+  chart: Chart
+  screener: Screener
+  sepa: East SEPA
+  market: Market
+  logger: Log
+  watchlist: Watchlist
+
+workspace:
+  chart: Chart
+  screener: Screener
+  sepa: SEPA Review
+
 statusbar:
   loading: Loading...
   source: "Local data · %{count} symbols"

@@ -31,6 +31,19 @@ sidebar:
   empty_title: 自选股为空
   empty_desc: 点击 + 添加关注的股票
 
+editor:
+  chart: 图表
+  screener: 选股器
+  sepa: 东方SEPA
+  market: 大盘
+  logger: 日志
+  watchlist: 自选
+
+workspace:
+  chart: 图表
+  screener: 选股
+  sepa: SEPA复盘
+
 statusbar:
   loading: 加载中…
   source: "本地数据源 · %{count} 只"

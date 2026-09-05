@@ -23,6 +23,7 @@
 
 use egui_citizen::{CitizenId, Dispatcher};
 use egui_mobius::signals::Signal;
+use serde::{Deserialize, Serialize};
 
 use crate::citizens::chart::ChartCitizen;
 use crate::citizens::logger::LoggerPanel;
@@ -53,7 +54,8 @@ pub const MARKET_ID: &str = "market";
 ///
 /// Maps 1:1 to citizen IDs — each variant has a fixed [`CitizenId`] that
 /// the dispatcher uses for one-hot activation tracking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TabKind {
     Chart,
     Logger,
@@ -106,7 +108,7 @@ impl TabKind {
 /// A dockable tab carrying its [`TabKind`].
 ///
 /// Used as `DockState<Tab>` and `TabViewer::Tab = Tab` in egui_dock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tab {
     kind: TabKind,
 }
