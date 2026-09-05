@@ -1230,4 +1230,365 @@ mod tests {
             "0"
         );
     }
+
+    // 契约甲：SOURCE 常量更新（grill 决策 5 —— source_label 写入 Dolt data_updates 的值）
+    #[test]
+    fn source_label_is_tencent_primary() {
+        assert_eq!(
+            SOURCE,
+            "Tencent kline + EastMoney fallback + THS industry kline"
+        );
+    }
+
+    // 契约乙：主源优先 —— Tencent 非空即胜；EastMoney 即使可用且 incremental=false 也不生效
+    #[test]
+    fn official_decision_tencent_primary_wins() {
+        let tencent_rows = vec!["2026-09-01,3900,3920,3930,3890,1000000,5.0".to_string()];
+        let eastmoney_rows = vec!["2026-09-02,3900,3920,3930,3890,1000000,5.0".to_string()];
+        let d = decide_official(
+            Some(tencent_rows.clone()),
+            Some((eastmoney_rows, "000001".to_string())),
+            false,
+        );
+        assert_eq!(d, OfficialDecision::Tencent(tencent_rows));
+    }
+
+    // 契约丙：备用激活 —— Tencent 不可达（None）→ EastMoney 非空 pair 命中，echoed_code 原样透传
+    #[test]
+    fn official_decision_eastmoney_fallback_echoes_code() {
+        let eastmoney_rows = vec!["2026-09-01,3900,3920,3930,3890,1000000,5.0".to_string()];
+        let d = decide_official(
+            None,
+            Some((eastmoney_rows.clone(), "000001".to_string())),
+            true,
+        );
+        assert_eq!(
+            d,
+            OfficialDecision::EastMoney {
+                klines: eastmoney_rows,
+                echoed_code: "000001".to_string(),
+            }
+        );
+    }
+
+    // 契约丁：无新行 no-op —— 增量窗口 Tencent 应答但无行（Some([])）→ 成功 no-op，不误报失败
+    #[test]
+    fn official_decision_no_new_bars_incremental() {
+        let d = decide_official(Some(vec![]), None, true);
+        assert_eq!(d, OfficialDecision::NoNewBars);
+    }
+
+    // 契约戊：全量窗口空 = 失败 —— 非增量回补遇到空行不得静默通过
+    #[test]
+    fn official_decision_full_window_empty_fails() {
+        let d = decide_official(None, Some((vec![], "000001".to_string())), false);
+        assert_eq!(d, OfficialDecision::Fail);
+    }
+
+    // 契约己：双方不可达 = 失败 —— 唯一允许失败的组合（增量路径亦然）
+    #[test]
+    fn official_decision_both_unreachable_fails() {
+        let d = decide_official(None, None, true);
+        assert_eq!(d, OfficialDecision::Fail);
+    }
+
+    // 基本错误路径：双方均应答但全量窗口无行 → Fail（与 NoNewBars 的区分仅在 incremental=true 成立）
+    #[test]
+    fn official_decision_both_empty_full_window_fails() {
+        let d = decide_official(Some(vec![]), Some((vec![], "000001".to_string())), false);
+        assert_eq!(d, OfficialDecision::Fail);
+    }
+
+    // ======================================================================
+    // Adversarial tests for `decide_official` (issue #354)
+    // Contract source: `.dsh/plans/index-daily-tencent-default.md` §3
+    // semantics matrix (as clarified by the delegating task: double-empty
+    // SOME answers + incremental=true -> NoNewBars; only both-None -> Fail).
+    // "Matrix row N" comments below refer to that table.
+    // ======================================================================
+
+    // Matrix rows 1/2/3/4/5 — exhaustive 3x3x2 = 18-combination sweep.
+    // Attacks: every matrix cell at once (boundary / error-path / invalid-input),
+    // priority inversion (row 1 must beat row 2 when both sides are non-empty),
+    // Some(empty) vs None distinction (answered vs unreachable), and
+    // incremental=false failure semantics.
+    #[test]
+    fn decide_official_exhaustive_matrix_18_combos() {
+        #[derive(Clone, Copy, Debug)]
+        enum T {
+            None,
+            Empty,
+            NonEmpty,
+        }
+        #[derive(Clone, Copy, Debug)]
+        enum E {
+            None,
+            Empty,
+            NonEmpty,
+        }
+
+        let tencent = |t: T| match t {
+            T::None => None,
+            T::Empty => Some(Vec::new()),
+            T::NonEmpty => Some(vec!["k1".to_string(), "k2".to_string()]),
+        };
+        let eastmoney = |e: E| match e {
+            E::None => None,
+            E::Empty => Some((Vec::new(), "000001".to_string())),
+            E::NonEmpty => Some((vec!["k1".to_string()], "000001".to_string())),
+        };
+        let expected = |t: T, e: E, inc: bool| match (t, e, inc) {
+            // row 1: tencent Some(non-empty) wins over everything, even a
+            // non-empty eastmoney pair and even with incremental=false.
+            (T::NonEmpty, _, _) => {
+                OfficialDecision::Tencent(vec!["k1".to_string(), "k2".to_string()])
+            }
+            // row 2: tencent has no non-empty rows (None OR Some(empty));
+            // eastmoney Some(non-empty pair) activates for any incremental.
+            (_, E::NonEmpty, _) => OfficialDecision::EastMoney {
+                klines: vec!["k1".to_string()],
+                echoed_code: "000001".to_string(),
+            },
+            // row 4: incremental=true and BOTH sides unreachable (both None)
+            // -> Fail. This is the only failure in incremental mode.
+            (T::None, E::None, _) => OfficialDecision::Fail,
+            // row 3: incremental=true and at least one side answered, even
+            // with an empty body (`Some(vec![])` / `Some((vec![], code))`),
+            // and neither side has non-empty rows -> NoNewBars (no-op success).
+            (_, _, true) => OfficialDecision::NoNewBars,
+            // row 5: incremental=false and no side has non-empty rows -> Fail.
+            (_, _, false) => OfficialDecision::Fail,
+        };
+
+        for t in [T::None, T::Empty, T::NonEmpty] {
+            for e in [E::None, E::Empty, E::NonEmpty] {
+                for inc in [true, false] {
+                    let got = decide_official(tencent(t), eastmoney(e), inc);
+                    let want = expected(t, e, inc);
+                    assert_eq!(got, want, "tencent={t:?} eastmoney={e:?} incremental={inc}");
+                }
+            }
+        }
+    }
+
+    // Matrix rows 3/4 — the core trap: `Some(vec![])` means "answered, no new
+    // rows" (incremental no-op success), while `None` means "unreachable".
+    // Only BOTH-None fails in incremental mode; a double-empty-answer does NOT.
+    #[test]
+    fn decide_official_empty_answer_is_noop_but_none_is_unreachable() {
+        // row 3: tencent answered empty, eastmoney unreachable -> no-op success.
+        assert_eq!(
+            decide_official(Some(Vec::new()), None, true),
+            OfficialDecision::NoNewBars
+        );
+        // row 3: eastmoney answered empty, tencent unreachable -> no-op success.
+        assert_eq!(
+            decide_official(None, Some((Vec::new(), "000001".to_string())), true),
+            OfficialDecision::NoNewBars
+        );
+        // row 3: BOTH sides answered empty -> still NoNewBars, NOT Fail
+        // (an empty reply is still a reply; only both None = both unreachable
+        // hits the row-4 Fail).
+        assert_eq!(
+            decide_official(
+                Some(Vec::new()),
+                Some((Vec::new(), "000001".to_string())),
+                true
+            ),
+            OfficialDecision::NoNewBars
+        );
+        // row 4: both unreachable -> Fail (this is the ONLY incremental failure).
+        assert_eq!(decide_official(None, None, true), OfficialDecision::Fail);
+        // row 5: incremental=false -> empty answers are NOT success either.
+        assert_eq!(
+            decide_official(Some(Vec::new()), None, false),
+            OfficialDecision::Fail
+        );
+        assert_eq!(
+            decide_official(None, Some((Vec::new(), "000001".to_string())), false),
+            OfficialDecision::Fail
+        );
+        assert_eq!(
+            decide_official(
+                Some(Vec::new()),
+                Some((Vec::new(), "000001".to_string())),
+                false
+            ),
+            OfficialDecision::Fail
+        );
+    }
+
+    // Matrix row 1 — priority inversion attack: Tencent (primary) must win for
+    // BOTH incremental modes when both sources return non-empty rows.
+    #[test]
+    fn decide_official_tencent_wins_over_eastmoney_when_both_nonempty() {
+        let t = vec!["tencent-row".to_string()];
+        let e = (vec!["em-row".to_string()], "000001".to_string());
+        assert_eq!(
+            decide_official(Some(t.clone()), Some(e.clone()), true),
+            OfficialDecision::Tencent(t.clone())
+        );
+        assert_eq!(
+            decide_official(Some(t.clone()), Some(e.clone()), false),
+            OfficialDecision::Tencent(t)
+        );
+    }
+
+    // Matrix row 2 + value transparency: EastMoney klines and echoed_code pass
+    // through verbatim — no dropped fields, no content rewriting, no filtering.
+    #[test]
+    fn decide_official_eastmoney_passthrough_verbatim() {
+        // Multi-row klines including a legitimate empty row string must not be
+        // transformed or dropped by the decision function.
+        let klines = vec![
+            "2026-08-27,1,2,3,4,5,6".to_string(),
+            String::new(),
+            "2026-08-26,7,8,9,10,11,12".to_string(),
+        ];
+        let echoed = "399001".to_string();
+        assert_eq!(
+            decide_official(None, Some((klines.clone(), echoed.clone())), true),
+            OfficialDecision::EastMoney {
+                klines: klines.clone(),
+                echoed_code: echoed.clone()
+            }
+        );
+        // row 2 with Some(empty) tencent + incremental=false: eastmoney still
+        // activates (matrix row 2 says "any incremental").
+        let single = vec!["only".to_string()];
+        assert_eq!(
+            decide_official(
+                Some(Vec::new()),
+                Some((single.clone(), "000001".to_string())),
+                false
+            ),
+            OfficialDecision::EastMoney {
+                klines: single,
+                echoed_code: "000001".to_string()
+            }
+        );
+        // An empty echoed_code string is still a legal pair part -> passthrough,
+        // the decision function must not fabricate or reject it.
+        assert_eq!(
+            decide_official(None, Some((vec!["x".to_string()], String::new())), true),
+            OfficialDecision::EastMoney {
+                klines: vec!["x".to_string()],
+                echoed_code: String::new()
+            }
+        );
+    }
+
+    // Matrix row 1 + value transparency: Tencent klines pass through verbatim
+    // for both single-row and multi-row non-empty inputs.
+    #[test]
+    fn decide_official_tencent_passthrough_verbatim() {
+        let single = vec!["s".to_string()];
+        assert_eq!(
+            decide_official(Some(single.clone()), None, true),
+            OfficialDecision::Tencent(single)
+        );
+        let multi = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(
+            decide_official(Some(multi.clone()), None, false),
+            OfficialDecision::Tencent(multi)
+        );
+    }
+
+    // Matrix rows 1-5 — variant distinctness: incremental no-op success
+    // (NoNewBars) must NEVER collapse into Fail, and each variant is
+    // content-sensitive (PartialEq precision).
+    #[test]
+    fn decide_official_variants_stay_distinct() {
+        // The subtle one: an answered-but-empty tencent reply and a
+        // both-unreachable input diverge on the exact same code path shape.
+        let no_new = decide_official(Some(Vec::new()), None, true);
+        let fail = decide_official(None, None, true);
+        assert_ne!(no_new, OfficialDecision::Fail);
+        assert_eq!(no_new, OfficialDecision::NoNewBars);
+        assert_eq!(fail, OfficialDecision::Fail);
+
+        // Tencent identity is content-sensitive.
+        assert_ne!(
+            OfficialDecision::Tencent(vec!["a".to_string()]),
+            OfficialDecision::Tencent(vec!["b".to_string()])
+        );
+        assert_ne!(
+            OfficialDecision::Tencent(vec!["a".to_string()]),
+            OfficialDecision::Tencent(vec!["a".to_string(), "b".to_string()])
+        );
+        // EastMoney identity is content-sensitive on BOTH fields.
+        assert_ne!(
+            OfficialDecision::EastMoney {
+                klines: vec!["a".to_string()],
+                echoed_code: "x1".to_string()
+            },
+            OfficialDecision::EastMoney {
+                klines: vec!["a".to_string()],
+                echoed_code: "x2".to_string()
+            }
+        );
+        assert_ne!(
+            OfficialDecision::EastMoney {
+                klines: vec!["a".to_string()],
+                echoed_code: "x".to_string()
+            },
+            OfficialDecision::EastMoney {
+                klines: vec!["b".to_string()],
+                echoed_code: "x".to_string()
+            }
+        );
+    }
+
+    // Matrix row 1 — capacity boundary: a large row set must not panic and must
+    // still resolve to Tencent (decision stays correct at scale, no accidental
+    // O(n^2) copies or content scans that could reject valid data).
+    #[test]
+    fn decide_official_large_inputs_do_not_panic() {
+        let big: Vec<String> = (0..20_000).map(|i| format!("row-{i}")).collect();
+        let big_em: Vec<String> = (0..20_000).map(|i| format!("em-{i}")).collect();
+        assert_eq!(
+            decide_official(
+                Some(big.clone()),
+                Some((big_em, "000001".to_string())),
+                true
+            ),
+            OfficialDecision::Tencent(big.clone())
+        );
+        assert_eq!(
+            decide_official(None, Some((big.clone(), "000001".to_string())), false),
+            OfficialDecision::EastMoney {
+                klines: big,
+                echoed_code: "000001".to_string()
+            }
+        );
+    }
+
+    // Robustness: malformed-but-legal inputs never panic and always return
+    // exactly one decision variant.
+    #[test]
+    fn decide_official_malformed_inputs_never_panic() {
+        // Empty-string kline rows on both sides + empty echoed code.
+        let got = decide_official(
+            Some(vec![String::new()]),
+            Some((vec![String::new()], String::new())),
+            true,
+        );
+        assert!(matches!(
+            got,
+            OfficialDecision::Tencent(_)
+                | OfficialDecision::EastMoney { .. }
+                | OfficialDecision::NoNewBars
+                | OfficialDecision::Fail
+        ));
+        // 1 MB strings on both sides must not panic or be rejected.
+        let long = "x".repeat(1_000_000);
+        assert_eq!(
+            decide_official(
+                Some(vec![long.clone()]),
+                Some((vec![long.clone()], "c".to_string())),
+                false
+            ),
+            OfficialDecision::Tencent(vec![long.clone()])
+        );
+    }
 }
