@@ -2,7 +2,7 @@
 //!
 //! Each tab is a [`Tab`] wrapping an [`EditorKind`]. When a tab button is
 //! clicked, the `on_tab_button` hook calls
-//! [`Dispatcher::activate`] with the tab's [`CitizenId`] (skipped for
+//! [`egui_citizen::Registry::activate`] with the tab's [`CitizenId`] (skipped for
 //! non-citizen kinds like Watchlist), enabling one-hot panel activation
 //! across the dock layout. Rendering delegates to
 //! [`EditorInstances::get_mut`] + [`EditorFrame`] (design §4.2/§4.5).

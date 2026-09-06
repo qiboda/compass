@@ -450,7 +450,7 @@ pub const DOCK_TOPOLOGY_VERSION: u32 = 2;
 /// sequences. No egui types inside — this deliberately sidesteps
 /// egui_dock#197 (`Rect::NOTHING` = ±inf serializes as `null`, at
 /// `dock_state/tree/node/mod.rs:145`, breaking any direct `DockState`
-/// round-trip; https://github.com/anhosh/egui_dock/issues/197, still
+/// round-trip; <https://github.com/anhosh/egui_dock/issues/197>, still
 /// unfixed in 0.21.1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockTopology {
@@ -866,7 +866,7 @@ impl EditorView for WatchlistEditor {
     }
 
     /// Header (design §6 Watchlist 行): the search row — filter input +
-    /// [添加] IconButton — migrated from the `Sidebar` widget composite
+    /// `[添加]` IconButton — migrated from the `Sidebar` widget composite
     /// (plan §4.6; Ctrl+K focus semantics via [`WatchlistEditor::search_input_id`]).
     /// Add clicks are collected into the action out-param (the App inserts
     /// the current symbol); the input mutates `self.search` in place.

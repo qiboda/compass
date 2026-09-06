@@ -780,7 +780,7 @@ fn save_theme_config(theme: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
 
-/// Resolve the `[layout]` section into the [`Workspaces`] container
+/// Resolve the `[layout]` section into the [`editor::Workspaces`] container
 /// (design §9.1/§9.2). Returns `(workspaces, fell_back)`.
 ///
 /// Corruption splits into two severities:
