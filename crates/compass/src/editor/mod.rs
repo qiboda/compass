@@ -854,7 +854,7 @@ impl EditorView for WatchlistEditor {
         let events = ui
             .scope_builder(
                 egui::UiBuilder::new().id(egui::Id::new("sidebar_body")),
-                |ui| sidebar.search_row(ui, &mut self.search),
+                |ui| sidebar.search_row(ui, &mut self.search, ui.available_width()),
             )
             .inner;
         for event in events {
@@ -904,7 +904,7 @@ impl EditorView for WatchlistEditor {
         let events = ui
             .scope_builder(
                 egui::UiBuilder::new().id(egui::Id::new("watchlist_body")),
-                |ui| sidebar.show_list(ui, &groups),
+                |ui| sidebar.show_list(ui, &groups, ui.available_width()),
             )
             .inner;
 

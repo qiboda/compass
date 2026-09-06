@@ -86,17 +86,31 @@ impl<'a> Sidebar<'a> {
         search: &mut String,
     ) -> Vec<SidebarEvent> {
         let tokens = self.tokens;
-        ui.set_min_width(tokens.spacing.sidebar_w);
-        let mut events = self.search_row(ui, search);
+        // The full composite keeps the widget-level content minimum (design
+        // §6 裁决 2): 240px as `Sidebar::show()`'s default; decomposed
+        // callers (WatchlistEditor) pass the dock-adaptive width instead.
+        let min_width = tokens.spacing.sidebar_w;
+        ui.set_min_width(min_width);
+        let mut events = self.search_row(ui, search, min_width);
         ui.add_space(tokens.spacing.sm);
-        events.extend(self.show_list(ui, groups));
+        events.extend(self.show_list(ui, groups, min_width));
         events
     }
 
     /// The search row only (input + add button). The caller owns the text;
     /// the widget mutates it in place and reports back through events.
-    pub fn search_row(&self, ui: &mut egui::Ui, search: &mut String) -> Vec<SidebarEvent> {
+    /// `min_width` is the row's minimum width (design §6 裁决 2: the
+    /// WatchlistEditor passes the dock-adaptive `ui.available_width()`;
+    /// values below 240 shrink the input accordingly and stay functional —
+    /// narrow-width degradation is the caller's layout contract).
+    pub fn search_row(
+        &self,
+        ui: &mut egui::Ui,
+        search: &mut String,
+        min_width: f32,
+    ) -> Vec<SidebarEvent> {
         let tokens = self.tokens;
+        ui.set_min_width(min_width);
         let mut events = Vec::new();
 
         ui.horizontal(|ui| {
@@ -104,7 +118,7 @@ impl<'a> Sidebar<'a> {
             let search_resp = Input::new(tokens, search)
                 .placeholder(&placeholder)
                 .prefix_icon(ICON_SEARCH)
-                .width(tokens.spacing.sidebar_w - 40.0)
+                .width(min_width - 40.0)
                 .show(ui);
             if search_resp.changed() {
                 events.push(SidebarEvent::Search(search.clone()));
@@ -125,9 +139,14 @@ impl<'a> Sidebar<'a> {
     /// The list body only (empty state + groups): no search row — the
     /// caller renders that in its owner's header slot (editor-architecture
     /// phase 2f, design §6 Watchlist 行).
-    pub fn show_list(&self, ui: &mut egui::Ui, groups: &[SidebarGroup]) -> Vec<SidebarEvent> {
+    pub fn show_list(
+        &self,
+        ui: &mut egui::Ui,
+        groups: &[SidebarGroup],
+        min_width: f32,
+    ) -> Vec<SidebarEvent> {
         let tokens = self.tokens;
-        ui.set_min_width(tokens.spacing.sidebar_w);
+        ui.set_min_width(min_width);
         let mut events = Vec::new();
 
         let total: usize = groups.iter().map(|g| g.items.len()).sum();
@@ -294,6 +313,48 @@ mod tests {
     // ------------------------------------------------------------------
     // Rendering
     // ------------------------------------------------------------------
+
+    #[test]
+    fn search_row_and_list_accept_custom_min_width() {
+        // design §6 裁决 2 (A 参数化): the decomposed entry points take
+        // the caller's width — below the composite 240 default they must
+        // still render (input placeholder + rows) and stay functional.
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let sidebar = Sidebar::new(&tokens);
+        let mut search = String::new();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let min_width = 200.0; // below the composite default
+            let mut events = sidebar.search_row(ui, &mut search, min_width);
+            ui.add_space(4.0);
+            events.extend(sidebar.show_list(ui, &groups(), min_width));
+            let _ = events;
+        });
+        harness.run();
+        harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        let _ = harness.get_by_label("贵州茅台");
+        let _ = harness.get_by_label("平安银行");
+    }
+
+    #[test]
+    fn search_row_propagates_search_events_with_custom_width() {
+        // The parameter only changes sizing: the event contract (Search on
+        // input, Add on button) is untouched below the default width.
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let sidebar = Sidebar::new(&tokens);
+        let search = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let search_inner = search.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let _ = sidebar.search_row(ui, &mut search_inner.borrow_mut(), 180.0);
+        });
+        harness.run();
+        let input = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        input.focus();
+        input.type_text("6");
+        harness.run();
+        assert_eq!(*search.borrow(), "6");
+    }
 
     #[test]
     fn renders_groups_names_codes_and_tags() {
