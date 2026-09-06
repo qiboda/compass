@@ -1,9 +1,15 @@
 //! Requirement-acceptance contract tests for the C4 market tab (epic #255,
 //! plan T6 / T7).
 //!
-//! The full kittest rendering tests (三 tab 渲染 / Segmented 切换 / 行点击
-//! 联动 / 空态) cannot compile until `TabKind::Market` and
-//! `citizens/market.rs` land — the compass crate is a pure-bin crate and
+//! [superseded, 41923b0]: the RED-time framing below ("cannot compile until
+//! TabKind::Market ... land") is *historical* — TabKind has since been
+//! deleted and the market tab lands as EditorKind::Market (see the
+//! [migrated] note further down). Kept as a record of the original
+//! acceptance surface.
+//!
+//! [historical framing] — The full kittest rendering tests (三 tab 渲染 /
+//! Segmented 切换 / 行点击 联动 / 空态) cannot compile until `TabKind::Market`
+//! and `citizens/market.rs` land — the compass crate is a pure-bin crate and
 //! both symbols do not exist yet. These source-contract tests stay
 //! compile-green TODAY (no reference to the missing symbols) and assert the
 //! plan-declared surface, mirroring the contract-grep style already used in
@@ -16,8 +22,14 @@
 //! - the toolbar adjust Tag (前复权) is hidden for index/board symbols
 //!   (plan T7) — asserted via the source guard that gates the Tag
 //!
-//! RED vs current code: no Market variant, no market citizen, no i18n keys,
-//! and the adjust Tag renders unconditionally — all assertions below fail.
+//! [migrated, 41923b0/12901bb]: the whole plan surface has landed — the
+//! market tab is `EditorKind::Market` (TabKind deleted), the adjust control
+//! moved into the Chart editor header (chart.rs), and the active i18n key is
+//! the nested `editor.market`. The assertions below were retargeted to the
+//! migrated surface; this file is now a migration guard. The legacy flat
+//! `tab.market` keys (zh.yml:15 / en.yml:17) carry no code reference and are
+//! kept only to avoid breaking third-party consumers — see the policy under
+//! `requirement_editor_architecture.rs` (双风格 yml).
 
 use std::path::{Path, PathBuf};
 
@@ -37,14 +49,19 @@ const WHITELIST: [&str; 6] = [
 fn tab_kind_gains_market_variant() {
     // Plan T6: tabs.rs TabKind 加 Market 变体（title "tab.market"、icon
     // TRENDING_UP、citizen_id "market"）.
-    let src = read_rel("src/tabs.rs").expect("tabs.rs must exist");
+    // [superseded by phase 3, 41923b0]: the transition TabKind enum was
+    // deleted; Market is now an EditorKind carrying the i18n key
+    // "editor.market" (title_key), with citizen_id MARKET_ID in tabs.rs.
+    // Both surface forms are accepted so the guard stays meaningful (F4).
+    let src_tabs = read_rel("src/tabs.rs").expect("tabs.rs must exist");
+    let src_editor = read_rel("src/editor/mod.rs").expect("editor/mod.rs must exist");
     assert!(
-        src.contains("Market"),
-        "TabKind must gain a Market variant (plan T6)"
+        src_tabs.contains("Market") || src_editor.contains("Market"),
+        "Market must remain represented (plan T6, post phase 3)"
     );
     assert!(
-        src.contains("tab.market"),
-        "TabKind::Market title must be the i18n key 'tab.market'"
+        src_tabs.contains("tab.market") || src_editor.contains("editor.market"),
+        "Market title key must exist as tab.market (pre) or editor.market (post phase 3)"
     );
 }
 
@@ -79,8 +96,22 @@ fn i18n_market_keys_zh_en_symmetric() {
     // Plan T6: index.* i18n 命名空间 zh/en 对称.
     let zh = read_rel("../compass-i18n/locales/zh.yml").expect("compass-i18n zh.yml must exist");
     let en = read_rel("../compass-i18n/locales/en.yml").expect("compass-i18n en.yml must exist");
-    assert!(zh.contains("tab.market:"), "zh.yml must define tab.market");
-    assert!(en.contains("tab.market:"), "en.yml must define tab.market");
+    // [migrated by 41923b0]: TabKind removed — the active market key is the
+    // nested editor.market (editor: → market:); legacy flat `tab.market`
+    // keys stay in the yml but carry no code reference (EDITOR_KEYS covers
+    // editor.market in requirement_editor_architecture.rs). Anchor the
+    // assertion to the editor: section rather than a bare substring
+    // (review 28e54c4f P3-1).
+    let zh_editor = zh.split("editor:").nth(1).unwrap_or("");
+    let en_editor = en.split("editor:").nth(1).unwrap_or("");
+    assert!(
+        zh_editor.contains("  market:"),
+        "zh.yml must define the nested editor.market key (editor: → market:)"
+    );
+    assert!(
+        en_editor.contains("  market:"),
+        "en.yml must define the nested editor.market key (editor: → market:)"
+    );
     assert!(
         zh.lines().any(|l| l.trim_start().starts_with("index:")),
         "zh.yml must define the index.* namespace"
@@ -97,7 +128,11 @@ fn toolbar_adjust_dropdown_has_three_options_and_index_hide_guard() {
     // — the toolbar must reference all three i18n option keys via a Dropdown
     // with its own `id_salt("adjust")`, and the index/board hide guard must
     // be preserved (当前标的 index_type 非空或 BK 前缀时隐藏).
-    let src = read_rel("src/main.rs").expect("main.rs must exist");
+    // [migrated by 2a, 12901bb]: the adjust control moved from main.rs
+    // render_toolbar into the Chart editor header (chart.rs EditorView
+    // header); keys kept the toolbar.adjust.* namespace.
+    let src_chart = read_rel("src/citizens/chart.rs").expect("chart.rs must exist");
+    let src_editor = read_rel("src/editor/mod.rs").expect("editor/mod.rs must exist");
     // Three i18n option keys are rendered as dropdown options.
     for key in [
         "toolbar.adjust.qfq",
@@ -105,18 +140,18 @@ fn toolbar_adjust_dropdown_has_three_options_and_index_hide_guard() {
         "toolbar.adjust.none",
     ] {
         assert!(
-            src.contains(key),
-            "toolbar adjust dropdown must reference the option key {key}"
+            src_chart.contains(key),
+            "chart header adjust dropdown must reference the option key {key}"
         );
     }
     // The control is a Dropdown (not a Tag) with its own id salt "adjust".
     assert!(
-        src.contains("id_salt(\"adjust\")"),
+        src_chart.contains("id_salt(\"adjust\")"),
         "the adjust control must be a Dropdown with id_salt(\"adjust\")"
     );
-    // The hide guard must remain (plan T7).
+    // The hide guard must remain (plan T7) — now the moved helper.
     assert!(
-        src.contains("index_type") || src.contains("BK"),
+        src_editor.contains("is_index_or_board"),
         "the adjust Dropdown must be hidden when the symbol is an index/board \
          (plan T7: 当前标的 index_type 非空或 BK 前缀时隐藏)"
     );

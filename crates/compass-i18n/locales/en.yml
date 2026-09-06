@@ -33,6 +33,52 @@ sidebar:
   empty_title: Watchlist is empty
   empty_desc: Click + to add stocks
 
+editor:
+  chart: Chart
+  chart_indicators:
+    on: MA/BOLL Show
+    off: MA/BOLL Hide
+  chart_display:
+    label: Display Options
+    crosshair: Crosshair
+    volume: Volume
+    legend: Legend
+    n_hint: Press N to toggle sidebar
+  chart_sidebar:
+    title: Chart Settings
+    ma_periods: MA Periods
+    boll_period: BOLL Period
+    boll_std: BOLL StdDev
+    candle_style: Candle Style
+    candle_filled: Filled
+    candle_hollow: Hollow
+    volume: Volume
+  screener: Screener
+  screener_header:
+    count: "%{count} matched"
+    running: Running…
+    reset_sort: Reset sort
+    clear_results: Clear results
+  sepa: East SEPA
+  sepa_header:
+    reset_sort: Reset sort
+  market: Market
+  market_header:
+    reset_sort: Reset sort
+  logger: Log
+  watchlist: Watchlist
+  add: Add editor
+  add_none: All editors open
+  toggle_sidebar: Show/hide sidebar
+
+workspace:
+  chart: Chart
+  screener: Screener
+  sepa: SEPA Review
+
+layout:
+  fallback: Layout config invalid; default layout restored
+
 statusbar:
   loading: Loading...
   source: "Local data · %{count} symbols"
@@ -139,6 +185,7 @@ screener:
     empty_desc: Click "Add Condition" to build a filter, or run to see the whole market
     empty_group: Empty Group
     clear_tooltip: Clear Conditions
+    clear_action: Clear
     delete_tooltip: Delete Condition
     negate_tooltip: Negate (exclude)
     unknown_shape: Advanced

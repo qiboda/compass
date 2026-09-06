@@ -188,6 +188,10 @@ mod tests {
     impl egui_dock::TabViewer for TestViewer {
         type Tab = TestTab;
 
+        fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
+            egui::Id::new(tab.0)
+        }
+
         fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
             tab.0.into()
         }

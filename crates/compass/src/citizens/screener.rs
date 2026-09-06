@@ -28,6 +28,7 @@ use crate::citizens::screener_builder::{
     BoolOp, CondGroup, CondItem, CondLeaf, LeafKind, LeafParams, MaKind, filter_to_items,
     group_to_filter,
 };
+use crate::editor::{EditorCtx, EditorKind, EditorView};
 use crate::messages::{FetchRequest, RunLlmRequest, RunScreenerRequest};
 use crate::state::SharedState;
 
@@ -171,7 +172,167 @@ impl ScreenerPanel {
         })
     }
 
-    /// Render the panel: condition builder + results area.
+    /// Run the current builder filter (plan §4.2 — the run logic moved with
+    /// the button into the sidebar; extracted from the old combined `show`).
+    fn run_filter(
+        &mut self,
+        shared_state: &SharedState,
+        run_screener_signal: &Signal<RunScreenerRequest>,
+    ) {
+        let filter = self.build_filter();
+        shared_state.screener_loading.set(true);
+        // Clear the previous run error before saving: the save hint below
+        // must survive the whole run (the toast layer in main.rs pushes it
+        // on the None→Some transition).
+        shared_state.screener_error.set(None);
+        // Persist the Filter AST directly — the engine evaluates any AST
+        // shape (issue #246), so no legacy compressibility oracle is needed
+        // and no combination is unsaved.
+        (self.on_save)(&filter);
+        if let Err(e) = run_screener_signal.send(RunScreenerRequest { filter }) {
+            shared_state.screener_loading.set(false);
+            shared_state.screener_error.set(Some(
+                compass_i18n::t!("error.screener_run", e = e.to_string()).into_owned(),
+            ));
+        }
+    }
+
+    /// Restore the official default order (market-cap descending, ties broken
+    /// by code ascending — the state `new()` establishes at construction).
+    /// `DataTable::toggle_sort` only mutates `sort_column`/`sort_descending`;
+    /// `set_descending_default` also needs re-asserting to fully re-enter the
+    /// construction state. Idempotent; re-runs (`set_rows`) never reset this
+    /// order on their own, so an explicit reset is the only way back (designer
+    /// ruling 2026-09-05, design §6 Screener row).
+    fn reset_sort(&mut self) {
+        self.table.set_sort(MARKET_CAP_COLUMN, true);
+        self.table.set_descending_default(MARKET_CAP_COLUMN, true);
+    }
+}
+
+impl EditorView for ScreenerPanel {
+    fn kind(&self) -> EditorKind {
+        EditorKind::Screener
+    }
+
+    /// Header (design §6 Scope-Screener): result-count label + running chip
+    /// + right-end ⋮ menu (clear results).
+    fn header(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        ui.horizontal(|ui| {
+            ui.label(compass_i18n::t!(
+                "editor.screener_header.count",
+                count = ctx.state.screener_total.get()
+            ));
+            if ctx.state.screener_loading.get() {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new(compass_i18n::t!("editor.screener_header.running")).weak(),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button(
+                    egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
+                    |ui| {
+                        // Non-destructive action first (OS menu convention); the
+                        // current sort state persists across re-runs because
+                        // `set_rows` on `DataTable` never resets ordering
+                        // (designer ruling 2026-09-05, design §6 Screener row).
+                        if ui
+                            .button(compass_i18n::t!("editor.screener_header.reset_sort"))
+                            .clicked()
+                        {
+                            self.reset_sort();
+                            ui.close();
+                        }
+                        ui.separator();
+                        // Sidebar visibility mouse entry (design §8.2, N-key
+                        // twin): the same out-param the Chart editor uses —
+                        // tabs.rs flips it after the frame.
+                        if ui
+                            .button(compass_i18n::t!("editor.toggle_sidebar"))
+                            .on_hover_text(compass_i18n::t!("editor.toggle_sidebar"))
+                            .clicked()
+                        {
+                            *ctx.sidebar_toggle_requested = true;
+                            ui.close();
+                        }
+                        if ui
+                            .button(compass_i18n::t!("editor.screener_header.clear_results"))
+                            .clicked()
+                        {
+                            ctx.state.screener_result.set(Vec::new());
+                            ctx.state.screener_total.set(0);
+                            ui.close();
+                        }
+                    },
+                );
+            });
+        });
+    }
+
+    /// Sidebar (plan §4.2): the condition builder moved in from the main
+    /// area plus run/clear buttons at the bottom (builder state itself
+    /// unchanged — `builder_root`/`builder_root_operator` untouched).
+    fn sidebar(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        self.condition_builder(
+            ui,
+            ctx.state,
+            ctx.signals.llm,
+            ctx.screener_industries,
+            ctx.screener_boards,
+        );
+
+        ui.add_space(self.form_tokens().spacing.md);
+        ui.horizontal(|ui| {
+            if Button::new(&self.form_tokens(), compass_i18n::t!("screener.filter"))
+                .variant(ButtonVariant::Primary)
+                .size(ButtonSize::Md)
+                .show(ui)
+                .clicked()
+            {
+                self.run_filter(ctx.state, ctx.signals.screener);
+            }
+            if Button::new(
+                &self.form_tokens(),
+                compass_i18n::t!("screener.builder.clear_action"),
+            )
+            .size(ButtonSize::Md)
+            .show(ui)
+            .clicked()
+            {
+                self.builder_root.clear();
+                self.builder_multi_selects.clear();
+            }
+        });
+    }
+
+    /// Body: the results table (6-column semantics unchanged, plan §4.2).
+    ///
+    /// Frame-order note (reviewer P2-1): the old combined `show` consumed the
+    /// LLM result *before* rendering the condition builder, so a merged filter
+    /// card was visible in the same frame. Here `EditorFrame` renders
+    /// header → sidebar (builder) → body, and `consume_llm_result` runs in
+    /// `body`, i.e. after the builder — a freshly merged card appears one
+    /// frame later. Two repaint mechanisms cover the delay: the app main
+    /// loop's global `request_repaint_after(200ms)` keep-alive (main.rs:1072),
+    /// and `llm_repaint_ctx.request_repaint()` fired immediately when the LLM
+    /// response arrives (backend.rs:425). Consume must stay in `body` because
+    /// `sidebar` can be hidden by the N key in phase 5 (consume must not
+    /// depend on sidebar visibility). Revisit when EditorCtx converges in
+    /// phase 3.
+    fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        self.consume_llm_result(ctx.state);
+        self.results_area(ui, ctx.state, ctx.signals.work);
+    }
+}
+
+impl ScreenerPanel {
+    /// Test-only stand-in for the old combined render (plan §4.2): the
+    /// production path now renders header + sidebar + body through
+    /// `EditorFrame`; this keeps the old signature so existing kittest
+    /// harnesses stay untouched. The `sepa`/`index` signals are dummies —
+    /// the screener never fires them.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -183,39 +344,48 @@ impl ScreenerPanel {
         boards: &[String],
         llm_signal: &Signal<RunLlmRequest>,
     ) {
-        self.consume_llm_result(shared_state);
-        ui.vertical(|ui| {
-            self.condition_builder(ui, shared_state, llm_signal, industries, boards);
-
-            ui.add_space(self.form_tokens().spacing.sm);
-            if Button::new(&self.form_tokens(), compass_i18n::t!("screener.filter"))
-                .variant(ButtonVariant::Primary)
-                .size(ButtonSize::Md)
-                .show(ui)
-                .clicked()
-            {
-                let filter = self.build_filter();
-                shared_state.screener_loading.set(true);
-                // Clear the previous run error before saving: the save hint
-                // below must survive the whole run (the toast layer in
-                // main.rs pushes it on the None→Some transition).
-                shared_state.screener_error.set(None);
-                // Persist the Filter AST directly — the engine evaluates any
-                // AST shape (issue #246), so no legacy compressibility oracle
-                // is needed and no combination is unsaved.
-                (self.on_save)(&filter);
-                if let Err(e) = run_screener_signal.send(RunScreenerRequest { filter }) {
-                    shared_state.screener_loading.set(false);
-                    shared_state.screener_error.set(Some(
-                        compass_i18n::t!("error.screener_run", e = e.to_string()).into_owned(),
-                    ));
-                }
-            }
-
-            ui.add_space(self.form_tokens().spacing.md);
-
-            self.results_area(ui, shared_state, work_signal);
-        });
+        let theme = crate::theme::CompassTheme::compass_dark();
+        let (sepa_signal, _sepa_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunSepaRequest>();
+        let (index_signal, _index_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunIndexSnapshotRequest>();
+        let desc = crate::editor::EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == EditorKind::Screener)
+            .expect("screener descriptor must exist in EDITOR_REGISTRY");
+        let sidebar_visible = desc
+            .layout
+            .sidebar
+            .as_ref()
+            .map(|s| s.default_visible)
+            .unwrap_or(false);
+        let mut chart_action = None;
+        let mut logger_export_clicked = false;
+        let mut toasts = compass_ui::widgets::toast::ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
+        let mut sidebar_toggle_requested = false;
+        let mut ctx = EditorCtx {
+            state: shared_state,
+            theme: &theme,
+            signals: &crate::editor::EditorSignals {
+                work: work_signal,
+                screener: run_screener_signal,
+                sepa: &sepa_signal,
+                index: &index_signal,
+                llm: llm_signal,
+            },
+            index_list: &[],
+            chart_action: &mut chart_action,
+            screener_industries: industries,
+            screener_boards: boards,
+            logger_export_clicked: &mut logger_export_clicked,
+            toasts: &mut toasts,
+            stock_list: &[],
+            watchlist_action: &mut watchlist_action,
+            sidebar_toggle_requested: &mut sidebar_toggle_requested,
+        };
+        let mut frame = crate::editor::EditorFrame { sidebar_visible };
+        frame.show(ui, desc, self, &mut ctx);
     }
 
     /// Results table with sortable headers and row-click chart linkage.
@@ -1396,6 +1566,23 @@ mod tests {
         // "全部" appears three times: the industry/exchange/board multi-select
         // triggers of the six preset cards.
         let _ = harness.query_all_by_label_contains("全部").count();
+    }
+
+    #[test]
+    fn reset_sort_restores_official_default_order() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut panel, _) = panel_with_form();
+        // Disturb the order (user clicked a column header, e.g. code asc).
+        panel.table.set_sort(0, false);
+        panel.reset_sort();
+        assert_eq!(panel.table.sort_column(), MARKET_CAP_COLUMN);
+        assert!(panel.table.sort_descending());
+        // Idempotent: a second reset keeps the official order.
+        panel.reset_sort();
+        assert_eq!(panel.table.sort_column(), MARKET_CAP_COLUMN);
+        assert!(panel.table.sort_descending());
     }
 
     #[test]

@@ -18,8 +18,8 @@ use compass_core::model::AppConfig;
 use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::StockPicker;
 use compass_ui::widgets::toast::ToastManager;
-use egui_citizen::{CitizenId, Dispatcher};
-use egui_dock::DockState;
+use egui_citizen::{CitizenId, Registry};
+
 use egui_kittest::kittest::Queryable;
 
 use crate::CompassApp;
@@ -28,9 +28,12 @@ use crate::citizens::logger::LoggerPanel;
 use crate::citizens::market::MarketPanel;
 use crate::citizens::screener::ScreenerPanel;
 use crate::citizens::sepa::SepaPanel;
+use crate::editor::{
+    ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
+};
 use crate::state::SharedState;
 use crate::stock_projection;
-use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind};
+use crate::tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID};
 use crate::theme::CompassTheme;
 
 /// Serializes `set_locale` calls across ALL test modules — `rust_i18n::set_locale`
@@ -59,7 +62,7 @@ pub(crate) fn build_compass_app_with_timeframe(
     let (work_signal, run_screener_signal, sepa_signal, index_signal, llm_signal, _backend_handle) =
         crate::backend::wire_backend(config, shared_state.clone(), egui_ctx, None);
 
-    let mut dispatcher = Dispatcher::new();
+    let mut dispatcher = Registry::new();
     let registered = crate::dispatcher::register_citizens(&mut dispatcher);
 
     let theme = CompassTheme::compass_dark();
@@ -79,38 +82,21 @@ pub(crate) fn build_compass_app_with_timeframe(
     let stock_picker = StockPicker::new(theme_tokens, "SZ000001", stock_projection());
     let dock_style = egui_dock::Style::default();
 
-    let mut dock_state = DockState::new(vec![
-        Tab::new(TabKind::Chart),
-        Tab::new(TabKind::Market),
-        Tab::new(TabKind::Sepa),
-    ]);
-    if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
-        && let Some(tree) = surface.node_tree_mut()
-    {
-        let _ = tree.split_below(
-            egui_dock::NodeIndex::root(),
-            0.75,
-            vec![Tab::new(TabKind::Logger)],
-        );
-        let _ = tree.split_below(
-            egui_dock::NodeIndex::root(),
-            0.5,
-            vec![Tab::new(TabKind::Screener)],
-        );
-    }
-
     let startup_symbol = shared_state.symbol.get();
     let timeframe_index = crate::timeframe_index_from_value(&shared_state.timeframe.get());
     let adjust_index = crate::adjust_index_from_value(&shared_state.adjust.get());
 
     CompassApp {
-        dock_state,
+        workspaces: crate::editor::Workspaces::default(),
+        editors: crate::editor::EditorInstances {
+            chart,
+            logger,
+            screener,
+            sepa,
+            market,
+            watchlist: crate::editor::WatchlistEditor::new(),
+        },
         dispatcher,
-        chart,
-        logger,
-        screener,
-        sepa,
-        market,
         run_screener_signal,
         sepa_signal,
         index_signal,
@@ -145,19 +131,34 @@ pub(crate) fn build_compass_app_with_timeframe(
         last_index_error: None,
         last_index_loading: false,
         last_screener_synced_symbol: startup_symbol,
-        sidebar_visible: true,
-        sidebar_search: String::new(),
         status_clock: String::new(),
         symbol_input_id: None,
         pending_delete: None,
         delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
         startup_modal_shown: false,
         language: "zh".to_string(),
+        layout_fp: None,
+        sidebar_visibility: crate::editor::EDITOR_REGISTRY
+            .iter()
+            .filter_map(|d| {
+                d.layout
+                    .sidebar
+                    .as_ref()
+                    .map(|s| (d.kind, s.default_visible))
+            })
+            .collect(),
+        last_interacted_kind: None,
     }
 }
 
 pub(crate) fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
-    build_compass_app_with_timeframe(egui_ctx, "1d")
+    let mut app = build_compass_app_with_timeframe(egui_ctx, "1d");
+    // Test builders must mirror the production constructor (main.rs:155):
+    // `layout_fp` pre-seeded with the initial fingerprint, otherwise the
+    // first harness frame sees None != Some(...) and writes `[layout]` into
+    // the real ~/.config/compass/config.toml (review 6757f35b P1-1).
+    app.layout_fp = crate::layout_fingerprint(&app.workspaces);
+    app
 }
 
 pub(crate) fn build_compass_app_with_stocks(
@@ -186,12 +187,48 @@ fn segmented_switch_syncs_shared_state_and_triggers_fetch() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut app = build_compass_app(egui::Context::default());
     {
+        let mut chart_action = None;
+        let mut logger_export_clicked = false;
+        let mut toasts = ToastManager::new(*app.theme.tokens());
+        let mut watchlist_action = None;
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            app.render_toolbar(ui);
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Chart)
+                .expect("chart descriptor");
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &[],
+                screener_boards: &[],
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &[],
+                watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            let mut frame = EditorFrame {
+                sidebar_visible: true,
+            };
+            frame.show(ui, desc, &mut app.editors.chart, &mut ctx);
         });
         harness.run();
         harness.get_by_label("1w").click();
         harness.step();
+        drop(harness);
+        if let Some(ChartHeaderAction::Timeframe(idx)) = chart_action {
+            app.set_timeframe(idx);
+        }
     }
     assert_eq!(
         app.shared_state.timeframe.get(),

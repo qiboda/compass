@@ -25,7 +25,12 @@ compass (GUI binary)
   ├── state.rs       ─ SharedState with Dynamic<T> reactive fields
   ├── messages.rs    ─ AppMessage, FetchRequest/FetchResponse, RunScreenerRequest/Response,
   │                     RunSepaRequest/Response, RunIndexSnapshotRequest/Response, RunLlmRequest
-  ├── tabs.rs        ─ Tab/TabKind/TabViewer (egui_dock bridge, 5 TabKind)
+  ├── tabs.rs        ─ Tab/EditorView bridge (egui_dock TabViewer, EditorKind 6 变体)
+  ├── editor/        ─ 编辑器架构（issue #357 五层）：EditorKind/EDITOR_REGISTRY/
+  │                     EditorLayout、WorkspaceId/Workspace/Workspaces（3 workspace×1 screen）、
+  │                     EditorView trait + EditorCtx（字段束）/EditorFrame（统一 chrome）、
+  │                     EditorInstances（每 kind 单实例分发）、WatchlistEditor、
+  │                     DockTopology（[layout] v2 持久化：提取/重建，绕开 egui_dock#197）
   ├── backend.rs     ─ wire_backend, BackendHandle, AsyncDispatcher wiring (5 channels:
   │                     fetch/screener/sepa/index-snapshot/llm)
   ├── dispatcher.rs  ─ register_citizens, lifecycle draining, message routing
@@ -647,7 +652,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 
 | # | 决策 | 选择 | 理由 |
 |---|---|---|---|
-| 1 | GUI 框架 | egui 0.35 + eframe | 纯 Rust 即时模式 GUI。无 HTML/CSS/JS，无 webview 依赖。编译为单个原生二进制文件。 |
+| 1 | GUI 框架 | egui 0.36 + eframe | 纯 Rust 即时模式 GUI。无 HTML/CSS/JS，无 webview 依赖。编译为单个原生二进制文件。 |
 | 2 | 图表组件 | egui-charts（qiboda fork，`compass` 分支） | K 线图，内置平移、缩放、十字准线。与 egui 生态系统匹配。从上游 fork 以进行 compass 特定修复。 |
 | 3 | 异步运行时 | tokio（rt-multi-thread） | DuckDbProvider 使用 tokio::spawn_blocking 处理同步 DuckDB 查询。CLI 使用 current_thread 以简化。 |
 | 4 | HTTP 客户端 | reqwest 0.12（rustls-tls） | 库用于 `DataError::Network`。GUI 无直接 HTTP 依赖——所有数据均为本地。 |
@@ -664,7 +669,8 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | 15 | 并发 | futures Semaphore + buffer_unordered | 批量导入的有界并行。Semaphore 限制并发操作；buffer_unordered 在结果到达时处理，同时保持顺序。 |
 | 16 | 响应式状态 | egui_mobius_reactive `Dynamic<T>` | 每个字段的 `Dynamic<T>` 替代了单体 `Arc<Mutex<CompassState>>`。无手动版本计数器，无跨字段锁竞争。每个字段可独立读写。 |
 | 17 | Citizen 模式 | egui_citizen（Citizen trait） | 框架管理 citizen 生命周期（register、activate、deactivate、drain），消除手动线程布线。Citizen 使用 outbox 模式——不直接耦合后端。 |
-| 18 | 停靠布局 | egui_dock 0.20 | 可停靠的选项卡式面板，支持调整大小和重排。通过 TabViewer 桥接到 citizen 激活。替代手动面板布局。 |
+| 18 | 停靠布局 | egui_dock 0.21 | 可停靠的选项卡式面板，支持调整大小和重排。通过 TabViewer 桥接到 EditorKind 激活替代 citizen 手动面板布局。`serde` feature 开启但直接 `DockState<Tab>` 序列化因上游 #197（`Rect::NOTHING` ±inf → null）弃用——持久化走本项目 `DockTopology` 自定义拓扑（设计 §9.1，`config.toml [layout] dock_version=2`）。 |
+| 18a | 响应式/公民 | egui_mobius 0.6 / egui_citizen 0.6（crates.io） | 0.5 git → 0.6 随 egui 0.36 全栈升级（issue #357）：`Dispatcher`→`Registry`、`register(id)`→`add().with_name(id)`；5 个 `impl Citizen` 零改动。 |
 | 19 | 异步派发 | egui_mobius `Signal`/`Slot` + `AsyncDispatcher` | 类型化通道替代 `mpsc::channel` 进行命令派发。`AsyncDispatcher` 管理自己的 tokio runtime——无需 `std::thread::spawn` + `rt.block_on` 样板代码。 |
 | 20 | Provider trait | DataProvider + DataWriter + NegativeCache | 基于 trait 的数据后端抽象：DuckDB、Parquet——全部在同一接口后面。可通过 mock 实现进行测试。 |
 | 21 | Parquet 存储 | DuckDB read_parquet + COPY TO | 按股票分区的列式格式。无需加载到表中即可查询。 |

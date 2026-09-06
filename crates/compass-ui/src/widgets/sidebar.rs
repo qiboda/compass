@@ -77,7 +77,8 @@ impl<'a> Sidebar<'a> {
         Self { tokens }
     }
 
-    /// Show the sidebar; returns the events produced this frame.
+    /// Show the whole composite (search row + list); returns the events
+    /// produced this frame.
     pub fn show(
         &self,
         ui: &mut egui::Ui,
@@ -85,17 +86,46 @@ impl<'a> Sidebar<'a> {
         search: &mut String,
     ) -> Vec<SidebarEvent> {
         let tokens = self.tokens;
+        // The full composite keeps the widget-level content minimum (design
+        // §6 裁决 2): 240px as `Sidebar::show()`'s default; decomposed
+        // callers (WatchlistEditor) pass the dock-adaptive width instead.
+        let min_width = tokens.spacing.sidebar_w;
+        ui.set_min_width(min_width);
+        let mut events = self.search_row(ui, search, min_width);
+        ui.add_space(tokens.spacing.sm);
+        events.extend(self.show_list(ui, groups, min_width));
+        events
+    }
+
+    /// The search row only (input + add button). The caller owns the text;
+    /// the widget mutates it in place and reports back through events.
+    /// `min_width` is the row's minimum width (design §6 裁决 2: the
+    /// WatchlistEditor passes the dock-adaptive `ui.available_width()`;
+    /// values below 240 shrink the input accordingly and stay functional —
+    /// narrow-width degradation is the caller's layout contract).
+    pub fn search_row(
+        &self,
+        ui: &mut egui::Ui,
+        search: &mut String,
+        min_width: f32,
+    ) -> Vec<SidebarEvent> {
+        let tokens = self.tokens;
+        ui.set_min_width(min_width);
         let mut events = Vec::new();
 
-        ui.set_min_width(tokens.spacing.sidebar_w);
-
-        // Search row: input + add button.
         ui.horizontal(|ui| {
             let placeholder = t!("sidebar.search_placeholder");
             let search_resp = Input::new(tokens, search)
                 .placeholder(&placeholder)
                 .prefix_icon(ICON_SEARCH)
-                .width(tokens.spacing.sidebar_w - 40.0)
+                // design §6 裁决 2: the input follows the caller width —
+                // (min_width - 40.0) leaves room for the add button; the
+                // .max(80.0) floor guards a dock leaf dragged below 40px
+                // (egui_dock clamps only by separator/range, no content
+                // convergence — show/mod.rs:538-542), where a negative
+                // field width would panic egui's placer (review 37c81bfe
+                // P1-1).
+                .width((min_width - 40.0).max(80.0))
                 .show(ui);
             if search_resp.changed() {
                 events.push(SidebarEvent::Search(search.clone()));
@@ -109,7 +139,22 @@ impl<'a> Sidebar<'a> {
                 events.push(SidebarEvent::Add);
             }
         });
-        ui.add_space(tokens.spacing.sm);
+
+        events
+    }
+
+    /// The list body only (empty state + groups): no search row — the
+    /// caller renders that in its owner's header slot (editor-architecture
+    /// phase 2f, design §6 Watchlist 行).
+    pub fn show_list(
+        &self,
+        ui: &mut egui::Ui,
+        groups: &[SidebarGroup],
+        min_width: f32,
+    ) -> Vec<SidebarEvent> {
+        let tokens = self.tokens;
+        ui.set_min_width(min_width);
+        let mut events = Vec::new();
 
         let total: usize = groups.iter().map(|g| g.items.len()).sum();
         if total == 0 {
@@ -275,6 +320,134 @@ mod tests {
     // ------------------------------------------------------------------
     // Rendering
     // ------------------------------------------------------------------
+
+    #[test]
+    fn search_row_and_list_accept_custom_min_width() {
+        // design §6 裁决 2 (A 参数化): the decomposed entry points take
+        // the caller's width — below the composite 240 default they must
+        // still render (input placeholder + rows) and the layout must
+        // actually claim the requested minimum (review 37c81bfe P2-1).
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let sidebar = Sidebar::new(&tokens);
+        let mut search = String::new();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let min_width = 200.0; // below the composite default
+            let mut events = sidebar.search_row(ui, &mut search, min_width);
+            ui.add_space(4.0);
+            events.extend(sidebar.show_list(ui, &groups(), min_width));
+            let _ = events;
+        });
+        harness.run();
+        let input = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
+        let _ = harness.get_by_label("贵州茅台");
+        let _ = harness.get_by_label("平安银行");
+        // The parameterization must actually flow into layout: field =
+        // min_width − 40 (add-button offset, sidebar.rs) − 56 (icon
+        // budget, input.rs:180-221 precedent) — expressed via the budget
+        // so a designer adjustment updates one formula, not three magic
+        // numbers (review 81e84e15 P2-1).
+        let expected = 200.0 - 40.0 - 56.0;
+        assert!(
+            (input.rect().width() - expected).abs() <= 1.0,
+            "decomposed entries must size the input from the caller min_width, got {}",
+            input.rect().width()
+        );
+    }
+
+    #[test]
+    fn composite_show_keeps_default_240_width() {
+        // design §6 裁决 2: Sidebar::show() keeps the 240 composite
+        // default — a regression guard for the parameterization
+        // (review 37c81bfe P2-1).
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let sidebar = Sidebar::new(&tokens);
+        let mut search = String::new();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let _ = sidebar.show(ui, &groups(), &mut search);
+        });
+        harness.run();
+        // 240 default via the same budget formula (review 81e84e15 P2-1).
+        let w = harness
+            .get_by(|n| n.placeholder() == Some("搜索自选"))
+            .rect()
+            .width();
+        let expected = 240.0 - 40.0 - 56.0;
+        assert!(
+            (w - expected).abs() <= 1.0,
+            "composite show() must keep the 240 default field, got {w}"
+        );
+    }
+
+    #[test]
+    fn narrow_width_below_guard_does_not_panic() {
+        // review 37c81bfe P1-1: a dock leaf can be dragged below 40px
+        // (egui_dock clamps only by separator/range) — the .max(80.0)
+        // floor keeps the input field positive and the frame sane.
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let sidebar = Sidebar::new(&tokens);
+        let mut search = String::new();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let _ = sidebar.search_row(ui, &mut search, 30.0);
+        });
+        harness.run();
+        // The .max(80.0) floor keeps the field positive: 30 → 80 → field
+        // ≈ 24 px (> 0). Assert the rendered input width directly so the
+        // floor removal is caught even if a future egui clamps the
+        // negative width instead of panicking (review 81e84e15 P2-2).
+        let w = harness
+            .get_by(|n| n.placeholder() == Some("搜索自选"))
+            .rect()
+            .width();
+        assert!(
+            (20.0..40.0).contains(&w),
+            "the floor must keep the narrow field at ≈24 px, got {w}"
+        );
+    }
+
+    #[test]
+    fn search_row_propagates_search_events_with_custom_width() {
+        // The parameter only changes sizing: the event contract (Search
+        // on input, Add on button) is untouched below the default width —
+        // the actual SidebarEvent::Search must be emitted (review
+        // 37c81bfe P2-2).
+        rust_i18n::set_locale("zh");
+        let tokens = ThemeTokens::dark();
+        let sidebar = Sidebar::new(&tokens);
+        let search = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let search_inner = search.clone();
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let events_inner = events.clone();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            events_inner.borrow_mut().extend(sidebar.search_row(
+                ui,
+                &mut search_inner.borrow_mut(),
+                180.0,
+            ));
+        });
+        harness.fit_contents();
+        harness.step();
+        // Pointer click establishes egui focus (the AX `focus()` request
+        // does not reliably precede the Text event — see the sibling
+        // `typing_in_search_emits_search_event` precedent), then a single
+        // step consumes the change frame.
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .click();
+        harness.step();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .type_text("6");
+        harness.step();
+        assert_eq!(*search.borrow(), "6");
+        assert_eq!(
+            *events.borrow(),
+            vec![SidebarEvent::Search("6".to_string())],
+            "typing must emit exactly one Search event"
+        );
+    }
 
     #[test]
     fn renders_groups_names_codes_and_tags() {

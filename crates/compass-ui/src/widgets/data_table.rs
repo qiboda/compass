@@ -137,6 +137,13 @@ impl DataTable {
         self.sort_descending
     }
 
+    /// The current sort column index (0 = first column). Read-only counterpart
+    /// of [`Self::set_sort`] — needed by tests asserting the current sort
+    /// state.
+    pub fn sort_column(&self) -> usize {
+        self.sort_column
+    }
+
     /// Columns that should default to descending when newly selected
     /// (business preference, e.g. market cap in the screener).
     pub fn set_descending_default(&mut self, column: usize, descending: bool) {

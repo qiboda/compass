@@ -31,6 +31,52 @@ sidebar:
   empty_title: 自选股为空
   empty_desc: 点击 + 添加关注的股票
 
+editor:
+  chart: 图表
+  chart_indicators:
+    on: MA/BOLL 显示
+    off: MA/BOLL 隐藏
+  chart_display:
+    label: 显示选项
+    crosshair: 十字准线
+    volume: 成交量
+    legend: 图例
+    n_hint: 按 N 显示/隐藏侧栏
+  chart_sidebar:
+    title: 图表设置
+    ma_periods: MA 周期
+    boll_period: BOLL 周期
+    boll_std: BOLL 标准差
+    candle_style: K 线样式
+    candle_filled: 实心
+    candle_hollow: 空心
+    volume: 成交量
+  screener: 选股器
+  screener_header:
+    count: "共 %{count} 只"
+    running: 运行中…
+    reset_sort: 重置排序
+    clear_results: 清除结果
+  sepa: 东方SEPA
+  sepa_header:
+    reset_sort: 重置排序
+  market: 大盘
+  market_header:
+    reset_sort: 重置排序
+  logger: 日志
+  watchlist: 自选
+  add: 添加编辑器
+  add_none: 全部编辑器已打开
+  toggle_sidebar: 显示/隐藏侧栏
+
+workspace:
+  chart: 图表
+  screener: 选股
+  sepa: SEPA复盘
+
+layout:
+  fallback: 布局配置无效，已恢复默认布局
+
 statusbar:
   loading: 加载中…
   source: "本地数据源 · %{count} 只"
@@ -137,6 +183,7 @@ screener:
     empty_desc: 点击「添加条件」构建筛选，或直接筛选查看全市场
     empty_group: 空分组
     clear_tooltip: 清空条件
+    clear_action: 清空
     delete_tooltip: 删除条件
     negate_tooltip: 取反（排除）
     unknown_shape: 高级条件

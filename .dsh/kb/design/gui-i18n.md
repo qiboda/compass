@@ -49,6 +49,24 @@
 - 行业 75/75 = 100%；官方指数 30/30（`index_type='official'`）
 - （概念 486/503 = 96.6% 为 issue #283 前旧数据，已不作为现状引用）
 
+## 框架文本键域（issue #357 编辑器架构）
+
+框架文本（模板/标签）存于 `crates/compass-i18n/locales/{zh,en}.yml`，编译期 `KEY_*`
+常量 + `t!()` 取用；zh/en 键集强制对称（`compass-i18n` 契约测试）。编辑器架构引入并
+启用的键域：
+
+- `editor.*`：6 编辑器标题（chart/watchlist/screener/sepa/market/logger）+ `editor.add`/
+  `editor.add_none`（Topbar ⋮ 添加编辑器）/ `editor.toggle_sidebar`（N 键/Display Options）；
+  编辑器内子键用**前缀式**命名（YAML 同层禁止标量与子 map 同名）：`editor.chart_indicators.*`
+  （MA/BOLL 显隐）、`editor.chart_display.*`（显示选项菜单）、`editor.chart_sidebar.*`
+  （图表侧栏：指标参数/图层）、`editor.screener_header.*`（count/running/reset_sort/
+  clear_results）、`editor.sepa_header.reset_sort`、`editor.market_header.reset_sort`
+- `workspace.*`：3 工作区段名（chart/screener/sepa）——Topbar Segmented + `WorkspaceId::title_key()`
+- `layout.*`：布局持久化回退消息（`layout.fallback`；加载/保存 warn 走 tracing 英文日志）
+- 旧 `tab.*` 键随 TabKind 删除（41923b0）退役：`editor.*` 为标题唯一来源（tab_title_
+  delegates_to_editor_key 契约锁定）；`toolbar.*` 键中随 2a 迁移的周期/复权/Fetch 组已随
+  header 迁入 `editor.*` 域（`toolbar.adjust.*` 由 chart header 复用）
+
 ## 决策记录
 
 | 决策 | 选项 | 选择 | 理由 | 排除原因 |

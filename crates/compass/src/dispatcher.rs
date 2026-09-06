@@ -2,7 +2,8 @@
 //! messages each frame, route AppMessage events to the work signal.
 
 use chrono::Utc;
-use egui_citizen::{CitizenId, CitizenState, Dispatcher};
+use egui_citizen::{CitizenId, CitizenState, Registry};
+
 use egui_lens::ReactiveEventLogger;
 use egui_mobius::signals::Signal;
 
@@ -27,14 +28,14 @@ pub struct RegisteredCitizens {
 ///
 /// Returns the `CitizenState` handles so callers can construct the citizen
 /// panel structs with the same reactive state that the dispatcher manages.
-pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
-    let chart = dispatcher.register(CitizenId::new(CHART_ID));
-    let logger = dispatcher.register(CitizenId::new(LOGGER_ID));
-    let screener = dispatcher.register(CitizenId::new(SCREENER_ID));
-    let sepa = dispatcher.register(CitizenId::new(SEPA_ID));
-    let market = dispatcher.register(CitizenId::new(MARKET_ID));
+pub fn register_citizens(dispatcher: &mut Registry) -> RegisteredCitizens {
+    let chart = dispatcher.add().with_name(CitizenId::new(CHART_ID));
+    let logger = dispatcher.add().with_name(CitizenId::new(LOGGER_ID));
+    let screener = dispatcher.add().with_name(CitizenId::new(SCREENER_ID));
+    let sepa = dispatcher.add().with_name(CitizenId::new(SEPA_ID));
+    let market = dispatcher.add().with_name(CitizenId::new(MARKET_ID));
 
-    dispatcher.activate(&CitizenId::new(CHART_ID));
+    dispatcher.activate(CitizenId::new(CHART_ID));
 
     RegisteredCitizens {
         chart,
@@ -51,7 +52,7 @@ pub fn register_citizens(dispatcher: &mut Dispatcher) -> RegisteredCitizens {
 /// Call once per frame after `DockArea::show()` returns. Messages are
 /// consumed — calling again returns an empty vec until new messages are
 /// produced by tab clicks or other lifecycle events.
-pub fn drain_citizen(dispatcher: &mut Dispatcher, state: &SharedState) {
+pub fn drain_citizen(dispatcher: &mut Registry, state: &SharedState) {
     let logger = ReactiveEventLogger::new(&state.log);
     for msg in dispatcher.drain_messages() {
         logger.log_custom("citizen", &format!("{msg:?}"));
@@ -117,7 +118,7 @@ mod tests {
     use crate::messages::{AppMessage, FetchRequest};
     use crate::state::SharedState;
     use crate::tabs::{CHART_ID, LOGGER_ID};
-    use egui_citizen::{CitizenId, Dispatcher};
+    use egui_citizen::{CitizenId, Registry};
     use egui_mobius::factory;
 
     // ------------------------------------------------------------------
@@ -126,20 +127,20 @@ mod tests {
 
     #[test]
     fn register_citizens_registers_chart_and_logger_and_activates_chart() {
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let registered = register_citizens(&mut dispatcher);
 
         let chart_state = dispatcher
-            .get(&CitizenId::new(CHART_ID))
+            .get(CitizenId::new(CHART_ID))
             .expect("chart citizen should be registered");
         let logger_state = dispatcher
-            .get(&CitizenId::new(LOGGER_ID))
+            .get(CitizenId::new(LOGGER_ID))
             .expect("logger citizen should be registered");
         let screener_state = dispatcher
-            .get(&CitizenId::new(SCREENER_ID))
+            .get(CitizenId::new(SCREENER_ID))
             .expect("screener citizen should be registered");
         let sepa_state = dispatcher
-            .get(&CitizenId::new(SEPA_ID))
+            .get(CitizenId::new(SEPA_ID))
             .expect("sepa citizen should be registered");
 
         // Chart is active (one-hot), logger is inactive.
@@ -173,7 +174,7 @@ mod tests {
 
     #[test]
     fn drain_citizen_appends_lifecycle_messages_to_log() {
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let _registered = register_citizens(&mut dispatcher);
         let state = SharedState::new("SZ000001", "1d", "qfq");
 

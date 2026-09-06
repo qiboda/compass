@@ -420,3 +420,38 @@
 - 文档-实现条件语义不一致由审查兜底（#348 测试基建示例首轮漏同步→MED-1；#354 决策记录"任一源应答即成功"缺增量限定→质量 MINOR M1）：两例均"条件限定词/示例未与实现逐字对齐"——5b 文档步应加自查：决策记录与排查卡中的语义表述须逐行核对实现（含增量/非增量、任一/全部限定词）。
 - 审查遗留 → 后续硬化 issue 模式已成型（#348→#349 dolt --global 迁移；#354→#355 trade_date 校验+降级可见性+backfill 守卫）：收尾建链为标准动作，趋势稳定。
 - 真实环境冒烟作为外部数据源变更的最终验证（#353 教训"测试绿≠正确"→#354 在真实 EM 不可达环境冒烟通过并写入 toolchain.md 验证小节）：模式延续有效，无需新机制。
+
+## 2026-09-05 — ref #357 gui Blender 式编辑器架构重构（Workspace/Screen/Area/Editor 五层）
+
+**What was done**: 实现 #357——egui 架构从单中央面板重构为 Blender 式五层（Application→Workspace/Screen→Area/Editor）：EditorKind 注册表/EditorLayout/EditorView/EditorFrame/EditorInstances/Workspaces + DockTopology 自定义拓扑持久化（[layout]/dock_version=2，绕开 egui_dock#197 Rect::NOTHING serde null 崩溃）+ egui 0.35→0.36.1 全栈升级（egui_dock 0.21.1/egui_mobius 0.6/两个 fork 推送）+ 6 编辑器迁移（Chart/Screener/SEPA/Market/Logger/Watchlist）+ 阶段 5 收尾（N 键/1-2-3 快捷键/侧栏显隐）。33 commits 全部独立行 ref #357；验证 bin 394/compass-ui 246/requirement 33/adversarial 7/index_market 5/i18n 9 全绿 + llvm-cov 1690 tests 覆盖率达标（workspace 95.60%）；review 链闭环（阶段级 6 轮 + 收尾 4 轮 APPROVE）。
+
+**User corrections**:
+- 「还有一个subaxgent在运行，等他完成」——用户提醒等待后台 review 完成再推进（流程提醒：后台 subagent 未完成时不应以旧结论继续修复）。
+- 「push」——用户授权 push 触发收尾（rebase→push→issue 收尾→worktree close）。
+- 更早（本工作树会话）：「先把我前一条对话处理了。不要自己改设计和plan的文本，交给对应的subagent来处理」「设计请交给设计师来处理」「升级egui不好吗」——design/plan 文本修订归设计师/架构师 subagent（主 agent 不自行改）；egui 升级由用户质疑后重评并执行全栈升级。
+
+**What went wrong**:
+1. P0 过度声称：37c81bfe 修复轮用 python 批量 patch 实现 save_layout_config 的 cfg(test) 围栏——脚本第二个替换 assert 失败抛 Traceback，但脚本 print 位于 write 之前且输出第一个成功信息，误判全部成功 → 围栏实际未写入，commit message 却声称「fenced」；81e84e15 复核轮才抓出 P0-1（围栏真实缺失，用户 config.toml 被测试轮污染 active_workspace=sepa）。修复 4de9ab8 + FENCE-OK 实证（全量测试后 config mtime 不变）。
+2. commit message 含反引号（`leaf(root()).is_ok()`）被 `git commit -m` 的 shell 命令替换吃掉 → 消息残缺，deb3e2b amend 修复（用 heredoc）。
+3. 批量 python 正则 patch 多次误插（重复行/`let mut ctx` dup/KEY_TREE 行误删——zh/en 值相同字符串致 dedupe 误删）——靠编译错误驱动迭代修复。
+4. egui_kittest 探索摩擦：placeholder 实际「搜索自选」非预期值；type_text 需先 click 建立焦点；run() 多帧覆盖 per-frame 事件须 extend 累积；ui.min_rect() 返回 root rect（784）不可测宽度须用 TextInput node rect；get_all_by_label 空结果 panic 须 query_all_by_label；双 ⋮ 按 rect y 排序区分。
+5. 并行死锁 1 次：layout_workspace_switch_saves_section_immediately 测试锁序写反（HOME_LOCK→LANG_LOCK）挂死全量套件——锁序必须 LANG_LOCK→HOME_LOCK。
+6. cargo llvm-cov 首跑失败于 /tmp/compass_sepa_writeback 遗留 artifact（flaky-env，清理后 PASS）。
+7. subagent-compile 约束下子代理仅 cargo check，多轮验证由主 agent 跑重载编译——耗时但合规。
+
+**Lessons learned**:
+1. 批量脚本（python patch/替换）结构必须「每个替换 assert 成功 + 计数打印 → 全部成功才单次 write → write 后立即 grep 验证关键字符串真实落盘」；禁止 print 成功信息先于 write。声称实现的功能（commit message/F1 evidence）必须 grep/测试验证——AGENTS.md「收尾前核实实现存在」本次为违规实例，P0 坐实。
+2. commit message 用 `git commit -F -` heredoc，避免反引号/`$()` 被 shell 解释。
+3. 测试写入用户全局状态必须围栏（cfg(test) + env opt-in）——固化 COMPASS_TEST_PERSIST_LAYOUT；围栏后必须实证（FENCE-OK：config mtime 不变）。
+4. egui_kittest 断言元素尺寸用 AccessKit node rect（如 TextInput node）而非 ui.min_rect()（root rect 不可测）；placeholder 以实际渲染为准（先打印 AccessKit 树）。
+5. 全量测试套件并行期锁序固定（LANG_LOCK→HOME_LOCK），测试死锁先查锁序。
+
+**Process improvements**:
+- 已落实（随本 PR）：FENCE 机制（save_layout_config cfg(test) 围栏 + COMPASS_TEST_PERSIST_LAYOUT opt-in + roundtrips 测试 opt-in）——测试防污染机制固化。
+- 已落实（随本次反思 commit）：process.md「编辑纪律」补一行——批量脚本化替换后必须 grep 验证落盘字符串（趋势落实：#353 与 #357 两度出现「声称 vs 实际」脱节，第二次触发固化）。
+- None（一次性教训：commit 反引号/锁序/kittest API 为工具级摩擦，机制沿用既有纪律）。
+
+### Trends (last 10)
+- 「声称 vs 实际脱节（过度声称/验证不足）」第二次出现并首次由 P0 坐实：#353（fixture 整秒时间戳→生产零删除，3 个 reviewer 抓出）与 #357（fence python 未写入却声称 fenced，81e84e15 抓出）——本次落实：process.md 编辑纪律补「批量替换后 grep 验证落盘」；AGENTS.md「收尾前核实」为既有规则，关闭条件=后续无同类 P0。
+- edit 工具摩擦延续（#336/#338/#342-343/#345/#348/#353 → #357 用脚本化替代 edit 但引入新风险「脚本化≠安全」）：由 process.md 编辑纪律承载，本轮教训强化验证环节。
+- 独立审查兜底模式持续有效：#348 MED-1/#354 M1/#357 P0 均由 review 子代理抓出——主 agent 自证不足是常态，review 链不可省。

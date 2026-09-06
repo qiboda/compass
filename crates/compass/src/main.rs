@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use egui_citizen::{CitizenId, Dispatcher};
-use egui_dock::{DockArea, DockState};
+use egui_citizen::{CitizenId, Registry};
+use egui_dock::DockArea;
 use egui_file_dialog::FileDialog;
 use serde::Deserialize;
 use tracing::{debug, info};
@@ -13,13 +13,10 @@ use compass_core::data::symbol::{
 };
 use compass_core::model::{AppConfig, IndexBasic, WatchlistConfig};
 use compass_types::{Filter, ScreenerQuery};
-use compass_ui::widgets::button::{Button, ButtonSize, ButtonVariant};
 use compass_ui::widgets::dropdown::Dropdown;
-use compass_ui::widgets::icon_button::IconButton;
 use compass_ui::widgets::modal::Modal;
 use compass_ui::widgets::searchable_dropdown::{StockPicker, StockProjection};
 use compass_ui::widgets::segmented::Segmented;
-use compass_ui::widgets::sidebar::{Sidebar, SidebarEvent, SidebarGroup, SidebarItem};
 use compass_ui::widgets::status_bar::{StatusBar, StatusBarData, StatusKind, StockSummary};
 use compass_ui::widgets::toast::{ToastLevel, ToastManager};
 use compass_ui::widgets::toolbar::Toolbar;
@@ -27,6 +24,7 @@ use compass_ui::widgets::toolbar::Toolbar;
 mod backend;
 mod citizens;
 mod dispatcher;
+mod editor;
 mod i18n_name;
 mod llm_screener;
 mod messages;
@@ -45,7 +43,7 @@ use citizens::logger::LoggerPanel;
 use citizens::market::MarketPanel;
 use citizens::screener::ScreenerPanel;
 use citizens::sepa::SepaPanel;
-use tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, Tab, TabKind, TabViewer};
+use tabs::{CHART_ID, LOGGER_ID, MARKET_ID, SCREENER_ID, SEPA_ID, TabViewer};
 use theme::CompassTheme;
 
 /// Default inner window size (design doc §Q8: 1440×900).
@@ -110,7 +108,7 @@ fn main() -> eframe::Result {
             );
 
             // Register citizens
-            let mut dispatcher = Dispatcher::new();
+            let mut dispatcher = Registry::new();
             let registered = dispatcher::register_citizens(&mut dispatcher);
 
             // The theme drives the citizen panel styling (screener components
@@ -149,29 +147,12 @@ fn main() -> eframe::Result {
             boards.sort();
             boards.dedup();
 
-            // Create initial dock state: Chart + 大盘 + 东方SEPA share the top
-            // leaf (SEPA's 12-column table + detail panel and the market
-            // panel's card + table need the full width), Logger + Screener
-            // below.
-            let mut dock_state = DockState::new(vec![
-                Tab::new(TabKind::Chart),
-                Tab::new(TabKind::Market),
-                Tab::new(TabKind::Sepa),
-            ]);
-            if let Some(surface) = dock_state.get_surface_mut(egui_dock::SurfaceIndex::main())
-                && let Some(tree) = surface.node_tree_mut()
-            {
-                let _ = tree.split_below(
-                    egui_dock::NodeIndex::root(),
-                    0.75,
-                    vec![Tab::new(TabKind::Logger)],
-                );
-                let _ = tree.split_below(
-                    egui_dock::NodeIndex::root(),
-                    0.5,
-                    vec![Tab::new(TabKind::Screener)],
-                );
-            }
+            // Recreate workspaces from the persisted `[layout]` section
+            // (design §9.1/§9.2): corrupted/missing config falls back to
+            // `Workspaces::default()` so startup never blocks (the config
+            // must never prevent launching, aligns with `load_config`).
+            let (workspaces, layout_fell_back) = resolve_workspaces(&config.layout);
+            let layout_fp = layout_fingerprint(&workspaces);
 
             let theme_tokens = *theme.tokens();
             let stock_picker = StockPicker::new(
@@ -183,14 +164,25 @@ fn main() -> eframe::Result {
 
             let startup_symbol = shared_state.symbol.get();
 
+            let mut toast = ToastManager::new(theme_tokens);
+            if layout_fell_back {
+                // The [layout] section was present but unusable — tell the
+                // user the defaults took over instead of silently losing
+                // their arrangement (design §9.2 recovery UX).
+                toast.push(ToastLevel::Info, t!("layout.fallback"));
+            }
+
             Ok(Box::new(CompassApp {
-                dock_state,
+                workspaces,
+                editors: crate::editor::EditorInstances {
+                    chart,
+                    logger,
+                    screener,
+                    sepa,
+                    market,
+                    watchlist: crate::editor::WatchlistEditor::new(),
+                },
                 dispatcher,
-                chart,
-                logger,
-                screener,
-                sepa,
-                market,
                 run_screener_signal,
                 sepa_signal,
                 index_signal,
@@ -208,7 +200,7 @@ fn main() -> eframe::Result {
                 theme,
                 dock_style,
                 _backend_handle,
-                toast: ToastManager::new(theme_tokens),
+                toast,
                 modal: Modal::new(theme_tokens),
                 file_dialog: FileDialog::new(),
                 last_error: None,
@@ -220,14 +212,23 @@ fn main() -> eframe::Result {
                 last_index_error: None,
                 last_index_loading: false,
                 last_screener_synced_symbol: startup_symbol,
-                sidebar_visible: true,
-                sidebar_search: String::new(),
                 status_clock: String::new(),
                 symbol_input_id: None,
                 pending_delete: None,
                 delete_confirmed: std::rc::Rc::new(std::cell::RefCell::new(false)),
                 startup_modal_shown: false,
                 language: normalize_language(&config.app.language).to_string(),
+                layout_fp,
+                sidebar_visibility: crate::editor::EDITOR_REGISTRY
+                    .iter()
+                    .filter_map(|d| {
+                        d.layout
+                            .sidebar
+                            .as_ref()
+                            .map(|s| (d.kind, s.default_visible))
+                    })
+                    .collect(),
+                last_interacted_kind: None,
             }))
         }),
     )
@@ -287,6 +288,14 @@ struct FullConfig {
     watchlist: WatchlistConfig,
     #[serde(default)]
     llm: LlmSection,
+    /// Picked out manually — see [`layout_section_from_doc`]: toml 0.8's
+    /// serde deserializer cannot map the *nested* `[[layout.workspaces]]`
+    /// array-of-tables into a `Vec` field (a known limitation; only
+    /// top-level arrays of tables deserialize), so the section is extracted
+    /// from the raw `toml::Value` in [`load_config`]. `#[serde(skip)]`
+    /// keeps the derive path silent and the field defaulted until then.
+    #[serde(skip)]
+    layout: LayoutSection,
 }
 
 /// The `[screener]` config section — dual-format (issue #246).
@@ -380,6 +389,44 @@ impl LlmSection {
     }
 }
 
+/// The `[layout]` config section (design §9.1 / plan §6.1): workspace layout
+/// persistence. Only `Deserialize` is derived — the save path writes the
+/// section by hand as a `toml::Value` table (mirrors [`ScreenerSection`]).
+#[derive(Deserialize, Default)]
+struct LayoutSection {
+    /// Active workspace id string (`"chart"` | `"screener"` | `"sepa"`).
+    #[serde(default)]
+    active_workspace: Option<String>,
+    /// Topology format version (design §9.1): `!= 2` → fall back to
+    /// `Workspaces::default()`. Missing together with an empty `workspaces`
+    /// list = first run (no `[layout]` yet), which stays silent.
+    #[serde(default)]
+    dock_version: Option<u32>,
+    /// One table per workspace (v1: one workspace = one screen; the array
+    /// shape is the multi-screen reservation, lock-in D3).
+    #[serde(default)]
+    workspaces: Vec<WorkspaceLayoutSection>,
+}
+
+/// One `[[layout.workspaces]]` table (design §9.1).
+#[derive(Deserialize, Default)]
+struct WorkspaceLayoutSection {
+    /// `WorkspaceId::as_str()`, e.g. `"chart"`.
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    active_screen: usize,
+    /// v2 topology JSON string (`DockTopology`, design §9.1 schema).
+    #[serde(default)]
+    dock: Option<String>,
+    /// Reserved (design §9.1): fixed-width panel widths. Split ratios live
+    /// in the dock topology; body-internal panes (e.g. SEPA detail 280px)
+    /// are not layout state. Kept so the config shape is stable.
+    #[serde(default)]
+    #[allow(dead_code)] // reserved: no consumer until fixed-width panels land
+    tab_widths: Option<Vec<f32>>,
+}
+
 /// Normalize a raw config language value to the two supported codes ("zh" /
 /// "en"), falling back to "zh" for anything else — including the empty string
 /// produced by `AppConfig::default()` on a parse failure (derive `Default`
@@ -404,22 +451,44 @@ fn load_config() -> FullConfig {
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
 
     match std::fs::read_to_string(&config_path) {
-        Ok(contents) => match toml::from_str(&contents) {
-            Ok(mut cfg) => {
-                tracing::info!(path = %config_path.display(), "config loaded");
-                migrate_legacy_config(&mut cfg, &config_path, &contents);
-                cfg
-            }
-            Err(e) => {
-                tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
-                FullConfig {
-                    app: AppConfig::default(),
-                    screener: ScreenerSection::default(),
-                    watchlist: WatchlistConfig::default(),
-                    llm: LlmSection::default(),
+        Ok(contents) => {
+            // Parse the raw document first so `[layout]` survives: its
+            // nested `[[layout.workspaces]]` array-of-tables cannot be
+            // deserialized into a `Vec` field by toml 0.8's serde
+            // integration (see `layout_section_from_doc`), while the
+            // document-level `Value` keeps them intact.
+            let doc: toml::Value = match toml::from_str(&contents) {
+                Ok(doc) => doc,
+                Err(e) => {
+                    tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
+                    return FullConfig {
+                        app: AppConfig::default(),
+                        screener: ScreenerSection::default(),
+                        watchlist: WatchlistConfig::default(),
+                        llm: LlmSection::default(),
+                        layout: LayoutSection::default(),
+                    };
+                }
+            };
+            match toml::Value::try_into::<FullConfig>(doc.clone()) {
+                Ok(mut cfg) => {
+                    cfg.layout = layout_section_from_doc(&doc);
+                    tracing::info!(path = %config_path.display(), "config loaded");
+                    migrate_legacy_config(&mut cfg, &config_path, &contents);
+                    cfg
+                }
+                Err(e) => {
+                    tracing::warn!(path = %config_path.display(), error = %e, "failed to parse config, using defaults");
+                    FullConfig {
+                        app: AppConfig::default(),
+                        screener: ScreenerSection::default(),
+                        watchlist: WatchlistConfig::default(),
+                        llm: LlmSection::default(),
+                        layout: LayoutSection::default(),
+                    }
                 }
             }
-        },
+        }
         Err(e) => {
             tracing::warn!(path = %config_path.display(), error = %e, "config file not found, using defaults");
             FullConfig {
@@ -427,8 +496,45 @@ fn load_config() -> FullConfig {
                 screener: ScreenerSection::default(),
                 watchlist: WatchlistConfig::default(),
                 llm: LlmSection::default(),
+                layout: LayoutSection::default(),
             }
         }
+    }
+}
+
+/// Extract the `[layout]` section from a parsed TOML document (design §9.1).
+/// Manual because toml 0.8's serde deserializer cannot map a *nested*
+/// `[[layout.workspaces]]` array-of-tables into a `Vec<…>` field through
+/// `toml::from_str` — but the document-level `toml::Value` model preserves
+/// them as `Value::Array` of tables, which convert one by one. Mirrors the
+/// hand-built [`save_layout_config`] side. A malformed entry is dropped
+/// (the caller's `resolve_workspaces` then sees a partial list and falls
+/// back to the default layouts).
+fn layout_section_from_doc(doc: &toml::Value) -> LayoutSection {
+    let Some(section) = doc.get("layout").and_then(|v| v.as_table()) else {
+        return LayoutSection::default();
+    };
+    LayoutSection {
+        active_workspace: section
+            .get("active_workspace")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        dock_version: section
+            .get("dock_version")
+            .and_then(|v| v.as_integer())
+            // `try_from` guards the wrap case (4294967298 → `as u32` == 2
+            // would sneak past the version check; review 41e74cc0 P3-3). A
+            // failed conversion becomes None → version mismatch → fallback.
+            .and_then(|i| u32::try_from(i).ok()),
+        workspaces: section
+            .get("workspaces")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.clone().try_into::<WorkspaceLayoutSection>().ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -673,6 +779,268 @@ fn save_theme_config(theme: &str) -> Result<(), String> {
     std::fs::write(&config_path, serialized)
         .map_err(|e| format!("failed to write config.toml: {e}"))
 }
+
+/// Resolve the `[layout]` section into the [`editor::Workspaces`] container
+/// (design §9.1/§9.2). Returns `(workspaces, fell_back)`.
+///
+/// Corruption splits into two severities:
+/// - **Structural** (version mismatch, unknown/missing/duplicated workspace
+///   ids, unknown `active_workspace`) → whole `Workspaces::default()` with a
+///   warning; the container itself is unusable.
+/// - **Per-workspace** (bad topology JSON, invalid topology, missing `dock`,
+///   `active_screen` out of range) → *that* workspace alone falls back to
+///   `default_layout(id)` so the other workspaces keep their custom
+///   arrangement (review 41e74cc0 P2-1; design §9.2 wording updated by the
+///   "which layout to fall back to" ruling — the config must never prevent
+///   startup either way).
+///
+/// A missing `[layout]` section (first run) also returns the defaults but
+/// stays silent (`fell_back = false`); any actual corruption surfaces a
+/// toast through `fell_back`.
+fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bool) {
+    use crate::editor::{WorkspaceId, dock_state_from_topology};
+
+    const EXPECTED_IDS: [WorkspaceId; 3] =
+        [WorkspaceId::Chart, WorkspaceId::Screener, WorkspaceId::Sepa];
+
+    let first_run = section.active_workspace.is_none()
+        && section.dock_version.is_none()
+        && section.workspaces.is_empty();
+    if first_run {
+        return (crate::editor::Workspaces::default(), false);
+    }
+
+    let full_fallback = || {
+        tracing::warn!("[layout] corrupted, using default layouts");
+        (crate::editor::Workspaces::default(), true)
+    };
+
+    // dock_version: missing or not equal to 2 → structural fallback. The
+    // wrap-around guard lives at parse time (`layout_section_from_doc`
+    // converts the i64 with `try_from`, review 41e74cc0 P3-3) — the field
+    // is already a validated u32 here.
+    if section.dock_version != Some(crate::editor::DOCK_TOPOLOGY_VERSION) {
+        tracing::warn!(
+            version = ?section.dock_version,
+            expected = crate::editor::DOCK_TOPOLOGY_VERSION,
+            "[layout] dock_version mismatch, using default layouts"
+        );
+        return full_fallback();
+    }
+
+    // The stored list must contain exactly the three known workspaces,
+    // each once (any order). A partial/duplicated/unknown list means the
+    // container shape is broken → structural fallback.
+    let mut ids: Vec<WorkspaceId> = Vec::new();
+    for ws in &section.workspaces {
+        let Some(id) = WorkspaceId::from_str(&ws.id) else {
+            tracing::warn!(id = %ws.id, "[layout] unknown workspace id, using default layouts");
+            return full_fallback();
+        };
+        ids.push(id);
+    }
+    let mut sorted = ids.clone();
+    sorted.sort_by_key(|id| id.as_str());
+    sorted.dedup();
+    if ids.len() != EXPECTED_IDS.len() || sorted.len() != EXPECTED_IDS.len() {
+        tracing::warn!(
+            count = ids.len(),
+            "[layout] workspace list incomplete/duplicated, using default layouts"
+        );
+        return full_fallback();
+    }
+
+    // active_workspace must name one of the stored ids.
+    let active = section
+        .workspaces
+        .iter()
+        .position(|ws| Some(ws.id.as_str()) == section.active_workspace.as_deref());
+    let Some(active_idx) = active else {
+        tracing::warn!(
+            active = ?section.active_workspace,
+            "[layout] active_workspace unknown, using default layouts"
+        );
+        return full_fallback();
+    };
+
+    // Per-workspace: any entry-level problem degrades only that workspace
+    // to its default layout (design §9.1/§9.2; review 41e74cc0 P2-1).
+    let mut all = Vec::new();
+    let mut fell_back = false;
+    for ws in section.workspaces.iter() {
+        let id = WorkspaceId::from_str(&ws.id).expect("validated above");
+        let id_default = || crate::editor::Workspaces::default_layout(id);
+
+        // v1 = exactly one screen per workspace (lock-in D3); any other
+        // `active_screen` would panic on the direct index in the render
+        // paths — treat it as this workspace's corruption (P1-1).
+        if ws.active_screen != 0 {
+            tracing::warn!(
+                id = %ws.id,
+                active_screen = ws.active_screen,
+                "[layout] active_screen out of range, using the default layout for this workspace"
+            );
+            fell_back = true;
+            all.push(crate::editor::Workspace {
+                id,
+                layouts: vec![crate::editor::ScreenLayout {
+                    dock_state: id_default(),
+                    active_tab: None,
+                }],
+                active_screen: 0,
+            });
+            continue;
+        }
+
+        let dock_state = match ws.dock.as_deref() {
+            Some(json) => match serde_json::from_str::<crate::editor::DockTopology>(json) {
+                Ok(topo) => {
+                    if let Err(e) = topo.validate() {
+                        tracing::warn!(id = %ws.id, error = %e, "[layout] invalid dock topology, using the default layout for this workspace");
+                        fell_back = true;
+                        id_default()
+                    } else {
+                        let mut d = dock_state_from_topology(&topo);
+                        // The rebuild leaves egui_dock's focused_node on
+                        // the last split's b-side (Logger for the chart
+                        // layout, tree/mod.rs:534) — re-focus this
+                        // workspace's main editor so the phase-5 "active
+                        // editor" gates (1/2/3, design §7.1) work right
+                        // after a restore (review 37c81bfe P1-2).
+                        crate::editor::focus_main_leaf(
+                            d.main_surface_mut(),
+                            id.default_editor_kind(),
+                        );
+                        d
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(id = %ws.id, error = %e, "[layout] bad dock topology JSON, using the default layout for this workspace");
+                    fell_back = true;
+                    id_default()
+                }
+            },
+            None => {
+                tracing::warn!(id = %ws.id, "[layout] missing dock entry, using the default layout for this workspace");
+                fell_back = true;
+                id_default()
+            }
+        };
+        all.push(crate::editor::Workspace {
+            id,
+            layouts: vec![crate::editor::ScreenLayout {
+                dock_state,
+                active_tab: None,
+            }],
+            active_screen: 0,
+        });
+    }
+    (
+        crate::editor::Workspaces {
+            all,
+            active: active_idx,
+        },
+        fell_back,
+    )
+}
+
+/// Persist the `[layout]` section of config.toml (design §9.2): read-modify-
+/// write, mirrors [`save_theme_config`]; `dock` entries are v2 topology JSON
+/// strings (design §9.1). A workspace whose tree fails to extract (degenerate
+/// empty state) is **skipped with a trace** rather than persisted — the load
+/// side then falls that workspace back to its default layout (per-workspace
+/// corruption, review 41e74cc0 P2-1; a null-main-surface tree would
+/// otherwise poison the whole section).
+fn save_layout_config(workspaces: &crate::editor::Workspaces) -> Result<(), String> {
+    // Tests must never write the real user config (review 6757f35b P1-1 /
+    // 37c81bfe P1-3 / 81e84e15 P0-1): full-harness frames trigger genuine
+    // topo changes (workspace switch saves immediately, add-editor changes
+    // the frame fingerprint) and would silently overwrite the developer's
+    // ~/.config/compass/config.toml. The test build skips the save unless
+    // a persistence test opts back in per test via COMPASS_TEST_PERSIST_
+    // LAYOUT (paired with a tempdir HOME); cfg! keeps this compile-time in
+    // release builds, where the production path always writes.
+    if cfg!(test) && std::env::var_os("COMPASS_TEST_PERSIST_LAYOUT").is_none() {
+        return Ok(());
+    }
+    let config_path = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
+
+    let mut doc = match std::fs::read_to_string(&config_path) {
+        Ok(contents) => contents
+            .parse::<toml::Value>()
+            .map_err(|e| format!("failed to parse config.toml: {e}"))?,
+        Err(_) => toml::Value::Table(Default::default()),
+    };
+
+    let mut layout = toml::map::Map::new();
+    let active_id = workspaces
+        .all
+        .get(workspaces.active)
+        .map(|w| w.id.as_str())
+        .unwrap_or("chart");
+    layout.insert(
+        "active_workspace".to_string(),
+        toml::Value::String(active_id.to_string()),
+    );
+    layout.insert(
+        "dock_version".to_string(),
+        toml::Value::Integer(crate::editor::DOCK_TOPOLOGY_VERSION as i64),
+    );
+    let mut ws_array = Vec::new();
+    for ws in &workspaces.all {
+        let mut t = toml::map::Map::new();
+        t.insert(
+            "id".to_string(),
+            toml::Value::String(ws.id.as_str().to_string()),
+        );
+        t.insert(
+            "active_screen".to_string(),
+            toml::Value::Integer(ws.active_screen as i64),
+        );
+        if let Some(topo) = ws
+            .layouts
+            .get(ws.active_screen)
+            .and_then(|s| crate::editor::extract_topology(&s.dock_state))
+        {
+            let json = serde_json::to_string(&topo)
+                .map_err(|e| format!("failed to serialize layout topology: {e}"))?;
+            t.insert("dock".to_string(), toml::Value::String(json));
+        } else {
+            tracing::warn!(
+                id = %ws.id.as_str(),
+                "[layout] topology extraction failed, skipping the dock entry"
+            );
+        }
+        ws_array.push(toml::Value::Table(t));
+    }
+    layout.insert("workspaces".to_string(), toml::Value::Array(ws_array));
+    doc.as_table_mut()
+        .expect("value is a table")
+        .insert("layout".to_string(), toml::Value::Table(layout));
+
+    let serialized =
+        toml::to_string(&doc).map_err(|e| format!("failed to serialize config.toml: {e}"))?;
+    if let Some(dir) = config_path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&config_path, serialized)
+        .map_err(|e| format!("failed to write config.toml: {e}"))
+}
+
+/// Fingerprint of the active workspace topology (design §9.2): egui_dock
+/// 0.21.1's `show_inside` returns `()` — there is no layout-change event
+/// (the plan's `DockStateChange` was a pre-0.21 assumption; A1 correction),
+/// so a frame-end string compare detects edits (drag/close/move). The
+/// serialization is topology-only and tiny.
+pub(crate) fn layout_fingerprint(workspaces: &crate::editor::Workspaces) -> Option<String> {
+    let active = workspaces.all.get(workspaces.active)?;
+    let screen = active.layouts.get(active.active_screen)?;
+    crate::editor::extract_topology(&screen.dock_state)
+        .map(|t| serde_json::to_string(&t).expect("topology serializes"))
+}
+
 ///
 /// The UI crate stays free of business-crate dependencies; the binary adapts
 /// its own row type through projection functions.
@@ -815,13 +1183,15 @@ fn export_logs(state: &state::SharedState, path: &std::path::Path) -> Result<(),
 // ---------------------------------------------------------------------------
 
 struct CompassApp {
-    dock_state: DockState<Tab>,
-    dispatcher: Dispatcher,
-    chart: ChartCitizen,
-    logger: LoggerPanel,
-    screener: ScreenerPanel,
-    sepa: SepaPanel,
-    market: MarketPanel,
+    /// Workspace container (design §4.4): three workspaces × one screen
+    /// each (lock-in D3). The active workspace's dock tree is what the
+    /// `DockArea` renders below (plan §5.1).
+    workspaces: crate::editor::Workspaces,
+    /// All editor instances — the single dispatch container replacing the
+    /// per-citizen fields (design §4.5; includes the WatchlistEditor,
+    /// which is not a citizen, plan §4.6).
+    editors: crate::editor::EditorInstances,
+    dispatcher: Registry,
     run_screener_signal: egui_mobius::signals::Signal<messages::RunScreenerRequest>,
     sepa_signal: egui_mobius::signals::Signal<messages::RunSepaRequest>,
     index_signal: egui_mobius::signals::Signal<messages::RunIndexSnapshotRequest>,
@@ -855,10 +1225,6 @@ struct CompassApp {
     last_index_error: Option<String>,
     last_index_loading: bool,
     last_screener_synced_symbol: String,
-    /// Whether the left watchlist sidebar is visible.
-    sidebar_visible: bool,
-    /// Sidebar search filter text.
-    sidebar_search: String,
     /// Clock string refreshed every frame (`%H:%M:%S`, local time).
     status_clock: String,
     /// Widget id of the toolbar symbol input (for the `/` shortcut).
@@ -873,6 +1239,17 @@ struct CompassApp {
     /// Current UI language (`"zh"` | `"en"`), mirroring the process-global
     /// rust-i18n locale so the toolbar dropdown can render the selection.
     language: String,
+    /// Last persisted layout fingerprint (design §9.2): a frame-end compare
+    /// against `layout_fingerprint` detects dock edits (egui_dock 0.21 has
+    /// no layout-change event) and persists once per edit burst.
+    layout_fp: Option<String>,
+    /// Per-kind sidebar visibility (design §8.2): the N key flips entries
+    /// here; seeded from `EDITOR_REGISTRY` defaults (Q4 — Chart/Screener
+    /// `default_visible = true`). Session-only, never persisted.
+    sidebar_visibility: std::collections::HashMap<crate::editor::EditorKind, bool>,
+    /// Kind of the most recently clicked tab button (design §8.2 ②) — the
+    /// N-key fallback when `focused_leaf()` is `None`.
+    last_interacted_kind: Option<crate::editor::EditorKind>,
 }
 
 impl eframe::App for CompassApp {
@@ -901,17 +1278,6 @@ impl eframe::App for CompassApp {
             self.render_toolbar(ui);
         });
 
-        // Left: watchlist sidebar (240 px, resizable 200–320, design §6.2).
-        if self.sidebar_visible {
-            egui::Panel::left("sidebar")
-                .default_size(240.0)
-                .size_range(200.0..=320.0)
-                .resizable(true)
-                .show(ui, |ui| {
-                    self.render_sidebar(ui);
-                });
-        }
-
         // Bottom: status bar (26 px, design §6.3).
         egui::Panel::bottom("statusbar").show(ui, |ui| {
             self.render_status_bar(ui);
@@ -919,29 +1285,76 @@ impl eframe::App for CompassApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             let mut logger_export_clicked = false;
-            DockArea::new(&mut self.dock_state)
+            let mut chart_action: Option<crate::editor::ChartHeaderAction> = None;
+            let mut watchlist_action: Option<crate::editor::WatchlistAction> = None;
+            let signals = crate::editor::EditorSignals {
+                work: &self.work_signal,
+                screener: &self.run_screener_signal,
+                sepa: &self.sepa_signal,
+                index: &self.index_signal,
+                llm: &self.llm_signal,
+            };
+            // Render the active workspace's dock tree (plan §5.1). The
+            // workspace hold methods the tree in memory; phase 4 persists it.
+            let active = self.workspaces.active;
+            let active_screen = self.workspaces.all[active].active_screen;
+            // The salt keys on the stable workspace id (phase-4 persistence:
+            // config load can reorder the vector, so indices are not stable
+            // identifiers — review 26b1a84c P3-4).
+            let dock_id = self.workspaces.all[active].id;
+            let dock = &mut self.workspaces.all[active].layouts[active_screen].dock_state;
+            DockArea::new(dock)
+                .id(egui::Id::new(("compass-dock", dock_id)))
                 .style(self.dock_style.clone())
                 .show_inside(
                     ui,
                     &mut TabViewer {
                         dispatcher: &mut self.dispatcher,
-                        chart: &mut self.chart,
-                        logger: &mut self.logger,
-                        screener: &mut self.screener,
-                        sepa: &mut self.sepa,
-                        market: &mut self.market,
-                        run_screener_signal: &self.run_screener_signal,
-                        sepa_signal: &self.sepa_signal,
-                        index_signal: &self.index_signal,
-                        llm_signal: &self.llm_signal,
-                        work_signal: &self.work_signal,
-                        screener_industries: &self.screener_industries,
-                        screener_boards: &self.screener_boards,
+                        editors: &mut self.editors,
                         shared_state: &self.shared_state,
                         theme: &self.theme,
+                        signals: &signals,
+                        index_list: &self.index_list,
+                        screener_industries: &self.screener_industries,
+                        screener_boards: &self.screener_boards,
+                        stock_list: &self.stock_list,
+                        toasts: &mut self.toast,
                         logger_export_clicked: &mut logger_export_clicked,
+                        chart_action: &mut chart_action,
+                        watchlist_action: &mut watchlist_action,
+                        sidebar_visibility: &mut self.sidebar_visibility,
+                        last_interacted_kind: &mut self.last_interacted_kind,
                     },
                 );
+
+            // Consume the chart header action (timeframe/adjust/fetch) after
+            // the dock render, mirroring the logger export out-param flow.
+            match chart_action {
+                Some(crate::editor::ChartHeaderAction::Timeframe(idx)) => self.set_timeframe(idx),
+                Some(crate::editor::ChartHeaderAction::Adjust(idx)) => self.set_adjust(idx),
+                Some(crate::editor::ChartHeaderAction::Fetch) => self.fetch_bars(),
+                None => {}
+            }
+
+            // Consume the watchlist editor action (fetch/add/delete-request
+            // modal) after the dock render, same channel pattern.
+            if let Some(action) = watchlist_action {
+                self.handle_watchlist_action(action, ui.ctx().input(|i| i.time));
+            }
+
+            // Phase 4 (design §9.2): unprompted dock edits (drag/close/move)
+            // have no change event in egui_dock 0.21 — a frame-end compare of
+            // the active topology fingerprint persists once per edit burst.
+            // The workspace *switches* save immediately (see
+            // `switch_workspace`), so only the in-place edit path lands here.
+            if let Some(fp) = layout_fingerprint(&self.workspaces)
+                && self.layout_fp.as_deref() != Some(fp.as_str())
+            {
+                self.layout_fp = Some(fp);
+                if let Err(e) = save_layout_config(&self.workspaces) {
+                    tracing::warn!(error = %e, "failed to save layout config");
+                }
+            }
 
             self.toast.render(ui.ctx());
             self.modal.show(ui.ctx());
@@ -1007,7 +1420,7 @@ impl eframe::App for CompassApp {
             // dropped along with the toast (design §7).
             let current_sepa_loading = self.shared_state.sepa_loading.get();
             if self.last_sepa_loading && !current_sepa_loading {
-                self.sepa.reset_selection();
+                self.editors.sepa.reset_selection();
                 if self.shared_state.sepa_error.get().is_none() {
                     let count = self
                         .shared_state
@@ -1071,15 +1484,17 @@ impl CompassApp {
     /// selection, `Ctrl+K` focuses the sidebar search and `1/2/3` switch the
     /// timeframe.
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
-        // Guard: plain keys (digits, `/`) must not fire while a text widget has
-        // focus — typing a symbol like "601318" would otherwise flip the
-        // timeframe under the user's fingers. Ctrl-combos stay active.
+        // Guard: plain keys (digits, `/`, `N`) must not fire while a text
+        // widget has focus — typing a symbol like "601318" would otherwise
+        // flip the timeframe under the user's fingers. Ctrl-combos stay
+        // active.
         let editing_text = ui.ctx().memory(|m| m.focused().is_some());
-        let (slash, ctrl_enter, ctrl_k, num1, num2, num3) = ui.ctx().input(|i| {
+        let (slash, ctrl_enter, ctrl_k, n_pressed, num1, num2, num3) = ui.ctx().input(|i| {
             (
                 i.key_pressed(egui::Key::Slash) && !editing_text,
                 i.key_pressed(egui::Key::Enter) && i.modifiers.command,
                 i.key_pressed(egui::Key::K) && i.modifiers.command,
+                i.key_pressed(egui::Key::N) && !editing_text,
                 i.key_pressed(egui::Key::Num1) && !editing_text,
                 i.key_pressed(egui::Key::Num2) && !editing_text,
                 i.key_pressed(egui::Key::Num3) && !editing_text,
@@ -1091,19 +1506,98 @@ impl CompassApp {
         if ctrl_enter {
             self.fetch_bars();
         }
-        if ctrl_k {
+        if ctrl_k && self.watchlist_leaf_open() {
             ui.ctx()
-                .memory_mut(|m| m.request_focus(Self::sidebar_search_input_id()));
+                .memory_mut(|m| m.request_focus(crate::editor::WatchlistEditor::search_input_id()));
         }
-        if num1 {
-            self.set_timeframe(0);
+        // N: sidebar toggle for the active editor (design §8.2). No-op for
+        // kinds without a registered Sidebar; long-press repeat is allowed
+        // (toggle semantics, design §8.1 known trade-off).
+        if n_pressed {
+            self.toggle_sidebar_for_focused_editor();
         }
-        if num2 {
-            self.set_timeframe(1);
+        // 1/2/3 (timeframe) is scoped to the Chart workspace AND the Chart
+        // editor being the focused one (plan §7.1 双判定): in Screener/SEPA
+        // the digits do nothing, and inside the Chart workspace clicking
+        // the Logger/Watchlist tab (focused leaf left Chart) also no-ops —
+        // egui_dock moves `new_focused` on every tab click
+        // (leaf.rs:577-584), so the focused kind is the authoritative
+        // "which editor is active" answer.
+        if self.chart_editor_active() {
+            if num1 {
+                self.set_timeframe(0);
+            }
+            if num2 {
+                self.set_timeframe(1);
+            }
+            if num3 {
+                self.set_timeframe(2);
+            }
         }
-        if num3 {
-            self.set_timeframe(2);
+    }
+
+    /// N-key sidebar toggle target (design §8.2): the focused leaf's active
+    /// tab first — egui_dock `focused_leaf()` is the same source the tab-bar
+    /// highlight uses — then the last clicked tab button as fallback.
+    fn toggle_sidebar_for_focused_editor(&mut self) {
+        let Some(kind) = self.focused_editor_kind() else {
+            return;
+        };
+        let Some(sidebar) = crate::editor::EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == kind)
+            .and_then(|d| d.layout.sidebar.as_ref())
+        else {
+            // No registered Sidebar → silent no-op (design §8.2).
+            return;
+        };
+        let current = self
+            .sidebar_visibility
+            .get(&kind)
+            .copied()
+            .unwrap_or(sidebar.default_visible);
+        self.sidebar_visibility.insert(kind, !current);
+    }
+
+    /// Resolve the "active editor" for the N key (design §8.2): the active
+    /// tab of egui_dock's focused leaf, falling back to the last clicked
+    /// tab-button kind.
+    fn focused_editor_kind(&self) -> Option<crate::editor::EditorKind> {
+        let ws = self.workspaces.all.get(self.workspaces.active)?;
+        let screen = ws.layouts.get(ws.active_screen)?;
+        let tree = screen.dock_state.main_surface();
+        if let Some(node) = tree.focused_leaf()
+            && let Ok(leaf) = tree.leaf(node)
+            && let Some(tab) = leaf.tabs.get(leaf.active.0)
+        {
+            return Some(tab.kind());
         }
+        self.last_interacted_kind
+    }
+
+    /// Dual gate for the 1/2/3 timeframe shortcuts (plan §7.1): they apply
+    /// only in the Chart workspace AND while the Chart editor is the
+    /// focused one — `focused_editor_kind()` follows egui_dock's focused
+    /// leaf, which moves on every tab click (leaf.rs:577-584).
+    fn chart_editor_active(&self) -> bool {
+        self.workspaces
+            .all
+            .get(self.workspaces.active)
+            .is_some_and(|w| w.id == crate::editor::WorkspaceId::Chart)
+            && self.focused_editor_kind() == Some(crate::editor::EditorKind::Chart)
+    }
+
+    /// Ctrl+K target existence (plan §7.1): the watchlist search input
+    /// only exists while the active workspace's dock tree holds a
+    /// Watchlist leaf — workspaces without one must no-op (no ghost focus).
+    /// Known residual (review 37c81bfe P3-3): a leaf containing Watchlist
+    /// plus another tab (via add-editor) still gate-checks open even when
+    /// Watchlist is not the active tab — the request_focus then targets an
+    /// id that is not rendered this frame, which is a harmless no-op.
+    fn watchlist_leaf_open(&self) -> bool {
+        self.workspaces
+            .visible_kinds(self.workspaces.active)
+            .contains(&crate::editor::EditorKind::Watchlist)
     }
 
     fn set_timeframe(&mut self, idx: usize) {
@@ -1129,22 +1623,6 @@ impl CompassApp {
         self.adjust_index = idx;
         self.shared_state.adjust.set(adjust_value(idx).to_string());
         self.fetch_bars();
-    }
-
-    /// Widget id of the search input rendered inside [`Sidebar::show`].
-    ///
-    /// The sidebar body runs under an explicit `sidebar_body` Ui id so the
-    /// chain is fully derivable: each child Ui layer (`Sidebar`'s horizontal,
-    /// the `Input` frame and its inner horizontal) uses the default `"child"`
-    /// salt on the parent's stable id, and the `TextEdit` adds its
-    /// `"compass_input"` salt. The salts must be applied as [`egui::IdSalt`]
-    /// (hash of the salt value), matching egui's `Ui::new_child` derivation —
-    /// `Id::with(&str)` hashes the string instead and yields a different id.
-    fn sidebar_search_input_id() -> egui::Id {
-        let body = egui::Id::new("sidebar_body");
-        let child = egui::IdSalt::new("child");
-        let input = egui::IdSalt::new("compass_input");
-        body.with(child).with(child).with(child).with(input)
     }
 
     /// Fetch bars for a symbol through the dispatcher.
@@ -1204,73 +1682,6 @@ impl CompassApp {
         self.stock_picker.selected_exchange = exchange;
     }
 
-    /// Whether `symbol` is an index/board (epic #255 C4): BK-prefixed board
-    /// codes or any symbol listed in index_basic.parquet. Drives the 前复权
-    /// tag hide guard — indexes are not adjusted (fqt=0), so showing the tag
-    /// would be wrong information.
-    fn is_index_or_board(&self, symbol: &str) -> bool {
-        parse_explicit_prefix(symbol).0 == "BK"
-            || self
-                .index_list
-                .iter()
-                .any(|i| i.symbol == symbol && !i.index_type.is_empty())
-    }
-
-    /// Left watchlist sidebar: search row + the "自选" group backed by
-    /// `SharedState.watchlist` (design §6.2). Add inserts the current symbol;
-    /// delete requests open a danger confirm modal before removal.
-    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        let tokens = *self.theme.tokens();
-        let sidebar = Sidebar::new(&tokens);
-        let current_symbol = self.shared_state.symbol.get();
-        let watchlist = self.shared_state.watchlist.get();
-        let query = self.sidebar_search.trim().to_lowercase();
-
-        let mut items = Vec::new();
-        for symbol in &watchlist {
-            let stock = self.stock_list.iter().find(|s| &s.symbol == symbol);
-            let name = stock
-                .map(|s| s.name.clone())
-                .unwrap_or_else(|| symbol.clone());
-            let exchange = stock
-                .map(|s| exchange_of_symbol(&s.symbol).to_string())
-                .unwrap_or_default();
-            let matches = query.is_empty()
-                || symbol.to_lowercase().contains(&query)
-                || name.to_lowercase().contains(&query);
-            if matches {
-                items.push(SidebarItem {
-                    symbol: symbol.clone(),
-                    name,
-                    exchange,
-                    selected: symbol == &current_symbol,
-                });
-            }
-        }
-        let groups = [SidebarGroup {
-            title: t!("sidebar.group_watchlist").to_string(),
-            items,
-        }];
-
-        let events = ui
-            .scope_builder(
-                egui::UiBuilder::new().id(egui::Id::new("sidebar_body")),
-                |ui| sidebar.show(ui, &groups, &mut self.sidebar_search),
-            )
-            .inner;
-
-        for event in events {
-            match event {
-                SidebarEvent::Select { symbol } => self.fetch_symbol(&symbol),
-                SidebarEvent::Search(_) => {}
-                SidebarEvent::Add => self.add_to_watchlist(&current_symbol),
-                SidebarEvent::DeleteRequest { symbol } => {
-                    self.request_watchlist_removal(ui.ctx().input(|i| i.time), &symbol)
-                }
-            }
-        }
-    }
-
     /// Add `symbol` to the watchlist (dedup + sort) and persist it.
     fn add_to_watchlist(&mut self, symbol: &str) {
         let mut watchlist = self.shared_state.watchlist.get();
@@ -1305,6 +1716,24 @@ impl CompassApp {
             ToastLevel::Success,
             t!("toast.watchlist_removed", symbol = symbol),
         );
+    }
+
+    /// Apply one watchlist editor action after the dock render (plan §4.6):
+    /// row select fetches the symbol, add inserts the current one and a
+    /// delete request opens the danger modal. Extracted from the `ui()`
+    /// match so the App-level semantics are unit-testable (the editor
+    /// only collects events into the out-param).
+    fn handle_watchlist_action(&mut self, action: crate::editor::WatchlistAction, now: f64) {
+        match action {
+            crate::editor::WatchlistAction::Select { symbol } => self.fetch_symbol(&symbol),
+            crate::editor::WatchlistAction::Add => {
+                let current = self.shared_state.symbol.get();
+                self.add_to_watchlist(&current);
+            }
+            crate::editor::WatchlistAction::DeleteRequest { symbol } => {
+                self.request_watchlist_removal(now, &symbol);
+            }
+        }
     }
 
     /// Open the danger confirm modal for removing `symbol` from the watchlist
@@ -1396,134 +1825,139 @@ impl CompassApp {
 
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
         let tokens = *self.theme.tokens();
-        let loading = self.shared_state.loading.get();
+        let mut switch_to: Option<usize> = None;
+        let mut add_kind: Option<crate::editor::EditorKind> = None;
 
         Toolbar::new(&tokens).show(ui, |tb, ui| {
-            // Group A — 标的: symbol picker (merged stock + index/board list).
+            // Group 1 — workspace switcher (design §7.1 左段): Segmented of
+            // the three built-in workspaces, icon + localized name. Clicking
+            // a segment mounts that workspace's dock tree (switch handled
+            // after the toolbar render — no repaint mid-frame).
+            tb.group(ui, |ui| {
+                let options: Vec<String> = self
+                    .workspaces
+                    .all
+                    .iter()
+                    .map(|w| format!("{} {}", w.id.icon(), t!(w.id.title_key())))
+                    .collect();
+                if let Some(idx) = Segmented::new(&tokens, options)
+                    .selected(self.workspaces.active)
+                    .show(ui)
+                {
+                    switch_to = Some(idx);
+                }
+            });
+
+            // Group 2 — 标的: symbol picker (merged stock + index/board list).
             tb.group(ui, |ui| {
                 let response = self.stock_picker.show(ui, &self.picker_list);
                 self.symbol_input_id = Some(response.id);
             });
 
-            // Group B — 周期: segmented 1d/1w/1M + 复权方式 dropdown. The
-            // adjust control is hidden when the current symbol is an
-            // index/board (指数不复权 — plan T7); stocks keep it.
+            // Group 3 — right-hand end (design §7.1 / Q2): ⋮ add editor,
+            // then theme + language dropdowns. Right-to-left layout so the
+            // first added item sits rightmost (theme/language outer edge).
             tb.group(ui, |ui| {
-                if let Some(idx) = Segmented::new(&tokens, ["1d", "1w", "1M"])
-                    .selected(self.timeframe_index)
-                    .show(ui)
-                {
-                    self.set_timeframe(idx);
-                }
-                let current_symbol = self.shared_state.symbol.get();
-                let is_index = self.is_index_or_board(&current_symbol);
-                if !is_index
-                    && let Some(idx) = Dropdown::new(
-                        &tokens,
-                        [
-                            t!("toolbar.adjust.qfq"),
-                            t!("toolbar.adjust.hfq"),
-                            t!("toolbar.adjust.none"),
-                        ],
-                    )
-                    .id_salt("adjust")
-                    .selected(self.adjust_index)
-                    .width(96.0)
-                    .show(ui)
-                {
-                    self.set_adjust(idx);
-                }
-            });
-
-            // Group C — 操作: primary Fetch button with loading state.
-            tb.group(ui, |ui| {
-                let fetch_label = if loading {
-                    t!("toolbar.loading")
-                } else {
-                    t!("toolbar.fetch")
-                };
-                let fetch_clicked = Button::new(&tokens, fetch_label)
-                    .variant(ButtonVariant::Primary)
-                    .size(ButtonSize::Lg)
-                    .icon(egui_phosphor::regular::DOWNLOAD_SIMPLE)
-                    .min_width(104.0)
-                    .loading(loading)
-                    .show(ui)
-                    .clicked();
-                if fetch_clicked && !loading {
-                    self.fetch_bars();
-                }
-            });
-
-            // Group D — 显示: sidebar toggle + theme dropdown.
-            tb.group(ui, |ui| {
-                let toggle_sidebar = t!("toolbar.toggle_sidebar");
-                if IconButton::new(&tokens, egui_phosphor::regular::SIDEBAR_SIMPLE)
-                    .tooltip(&toggle_sidebar)
-                    .show(ui)
-                {
-                    self.sidebar_visible = !self.sidebar_visible;
-                }
-                let theme_idx = CompassTheme::all_names()
-                    .iter()
-                    .position(|n| *n == self.theme.name())
-                    .unwrap_or(0);
-                if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
-                    .id_salt("theme")
-                    .selected(theme_idx)
-                    .width(140.0)
-                    .show(ui)
-                {
-                    let name = CompassTheme::all_names()[idx];
-                    if name != self.theme.name() {
-                        self.theme = CompassTheme::from_config(name);
-                        if let Err(e) = save_theme_config(name) {
-                            tracing::warn!(error = %e, "failed to save theme config");
-                        }
-                        let tokens = *self.theme.tokens();
-                        self.dock_style = compass_ui::dock_style::dock_style(&tokens);
-                        // Stored stateful widgets copy tokens at construction;
-                        // refresh them so the theme switch applies everywhere.
-                        self.stock_picker.set_tokens(tokens);
-                        self.toast.set_tokens(tokens);
-                        self.modal.set_tokens(tokens);
-                        self.screener.set_tokens(tokens);
-                        self.sepa.set_tokens(tokens);
-                        self.market.set_tokens(tokens);
-                        self.toast
-                            .push(ToastLevel::Info, t!("toast.theme_switched"));
-                    }
-                }
-
-                // Language dropdown: native-name options (中文/English), not
-                // keyed — the option strings are the visible labels in both
-                // locales. Switching applies the process-global locale
-                // immediately; the window title stays the English brand.
-                let lang_options = ["中文", "English"];
-                let lang_idx = if self.language == "en" { 1 } else { 0 };
-                if let Some(idx) = Dropdown::new(&tokens, lang_options.to_vec())
-                    .id_salt("language")
-                    .selected(lang_idx)
-                    .width(76.0)
-                    .show(ui)
-                {
-                    let new_lang = if idx == 1 { "en" } else { "zh" };
-                    if new_lang != self.language {
-                        self.language = new_lang.to_string();
-                        compass_i18n::set_locale(new_lang);
-                        ui.ctx().request_repaint();
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
-                            "Compass — Stock Chart".to_string(),
-                        ));
-                        self.toast
-                            .push(ToastLevel::Info, t!("toast.language_switched"));
-                        if let Err(e) = save_language_config(new_lang) {
-                            tracing::warn!(error = %e, "failed to save language config");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Theme dropdown: unchanged behavior (save + toast),
+                    // only its position moved here in phase 3.
+                    let theme_idx = CompassTheme::all_names()
+                        .iter()
+                        .position(|n| *n == self.theme.name())
+                        .unwrap_or(0);
+                    if let Some(idx) = Dropdown::new(&tokens, CompassTheme::all_names().to_vec())
+                        .id_salt("theme")
+                        .selected(theme_idx)
+                        .width(140.0)
+                        .show(ui)
+                    {
+                        let name = CompassTheme::all_names()[idx];
+                        if name != self.theme.name() {
+                            self.theme = CompassTheme::from_config(name);
+                            if let Err(e) = save_theme_config(name) {
+                                tracing::warn!(error = %e, "failed to save theme config");
+                            }
+                            let tokens = *self.theme.tokens();
+                            self.dock_style = compass_ui::dock_style::dock_style(&tokens);
+                            // Stored stateful widgets copy tokens at construction;
+                            // refresh them so the theme switch applies everywhere.
+                            self.stock_picker.set_tokens(tokens);
+                            self.toast.set_tokens(tokens);
+                            self.modal.set_tokens(tokens);
+                            self.editors.screener.set_tokens(tokens);
+                            self.editors.sepa.set_tokens(tokens);
+                            self.editors.market.set_tokens(tokens);
+                            self.toast
+                                .push(ToastLevel::Info, t!("toast.theme_switched"));
                         }
                     }
-                }
+
+                    // Language dropdown: native-name options (中文/English),
+                    // not keyed — the option strings are the visible labels
+                    // in both locales. Switching applies the process-global
+                    // locale immediately; the window title stays the English
+                    // brand.
+                    let lang_options = ["中文", "English"];
+                    let lang_idx = if self.language == "en" { 1 } else { 0 };
+                    if let Some(idx) = Dropdown::new(&tokens, lang_options.to_vec())
+                        .id_salt("language")
+                        .selected(lang_idx)
+                        .width(76.0)
+                        .show(ui)
+                    {
+                        let new_lang = if idx == 1 { "en" } else { "zh" };
+                        if new_lang != self.language {
+                            self.language = new_lang.to_string();
+                            compass_i18n::set_locale(new_lang);
+                            ui.ctx().request_repaint();
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
+                                "Compass — Stock Chart".to_string(),
+                            ));
+                            self.toast
+                                .push(ToastLevel::Info, t!("toast.language_switched"));
+                            if let Err(e) = save_language_config(new_lang) {
+                                tracing::warn!(error = %e, "failed to save language config");
+                            }
+                        }
+                    }
+
+                    // ⋮ 添加编辑器: registered kinds not on the active
+                    // screen — the re-open path for closed tabs (design
+                    // §7.1). Clicking schedules the add; applied after the
+                    // toolbar render.
+                    let visible = self.workspaces.visible_kinds(self.workspaces.active);
+                    let missing: Vec<_> = crate::editor::EDITOR_REGISTRY
+                        .iter()
+                        .filter(|d| !visible.contains(&d.kind))
+                        .collect();
+                    let menu = ui.menu_button(
+                        egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
+                        |ui| {
+                            for desc in &missing {
+                                if ui
+                                    .button(format!("{} {}", desc.icon, t!(desc.title_key)))
+                                    .clicked()
+                                {
+                                    add_kind = Some(desc.kind);
+                                    ui.close();
+                                }
+                            }
+                            if missing.is_empty() {
+                                ui.weak(t!("editor.add_none"));
+                            }
+                        },
+                    );
+                    menu.response.on_hover_text(t!("editor.add"));
+                });
             });
         });
+
+        if let Some(idx) = switch_to {
+            self.switch_workspace(idx, ui.ctx());
+        }
+        if let Some(kind) = add_kind {
+            self.add_editor(kind);
+        }
 
         // Push error toast only on None→Some transition (not every frame)
         let current_err = self.shared_state.error.get();
@@ -1542,6 +1976,36 @@ impl CompassApp {
         }
         self.last_loading = current_loading;
     }
+
+    /// Switch the active workspace (design §7.1): the index change lives in
+    /// `Workspaces::switch`; a repaint requests the new tree mount. No toast
+    /// — the layout change is its own feedback (design §7.1, distinguishing
+    /// from the theme/language write-back info toasts).
+    fn switch_workspace(&mut self, idx: usize, ctx: &egui::Context) {
+        if idx < self.workspaces.all.len() && idx != self.workspaces.active {
+            self.workspaces.switch(self.workspaces.all[idx].id);
+            // Phase 4 (design §9.2): switching triggers an immediate save —
+            // the new active workspace is what the next launch restores.
+            if let Err(e) = save_layout_config(&self.workspaces) {
+                tracing::warn!(error = %e, "failed to save layout config on workspace switch");
+            }
+            self.layout_fp = layout_fingerprint(&self.workspaces);
+            ctx.request_repaint();
+        }
+    }
+
+    /// Add an editor tab to the active workspace (design §7.1 ⋮ 添加编辑器):
+    /// the re-open path for closed editors. The tab lands in the focused
+    /// leaf (egui_dock `push_to_focused_leaf` — the last-interacted leaf,
+    /// i.e. the main pane after the user clicks it, review 94e1992b P2-1);
+    /// editor instances are global, so the reopened state is just the
+    /// instance itself.
+    fn add_editor(&mut self, kind: crate::editor::EditorKind) {
+        let active = self.workspaces.active;
+        let screen = self.workspaces.all[active].active_screen;
+        let dock = &mut self.workspaces.all[active].layouts[screen].dock_state;
+        dock.push_to_focused_leaf(crate::tabs::Tab::new(kind));
+    }
 }
 
 /// Map a timeframe index to its label. The inverse mapping is
@@ -1559,7 +2023,7 @@ fn timeframe_label(idx: usize) -> &'static str {
 /// [`timeframe_label`] — keep the two matches in sync. Unknown values fall
 /// back to 0 ("1d") so the toolbar selection and the chart never disagree
 /// even with an unexpected configured timeframe.
-fn timeframe_index_from_value(value: &str) -> usize {
+pub(crate) fn timeframe_index_from_value(value: &str) -> usize {
     match value {
         "1w" => 1,
         "1M" => 2,
@@ -1583,7 +2047,7 @@ fn adjust_value(idx: usize) -> &'static str {
 /// [`adjust_value`] — keep the two matches in sync. Unknown values fall back
 /// to 0 ("qfq") so a stale/typo'd configured mode never yields an index
 /// outside the Dropdown options.
-fn adjust_index_from_value(value: &str) -> usize {
+pub(crate) fn adjust_index_from_value(value: &str) -> usize {
     match value {
         "hfq" => 1,
         "none" => 2,
@@ -1622,19 +2086,70 @@ mod tests {
     use crate::messages::RunLlmRequest;
     use compass_core::model::{IndexBasic, StockBasic};
     use compass_types::{Filter, ScreenerQuery};
+    use compass_ui::widgets::toast::ToastManager;
 
     use crate::build_industry_names;
 
+    use crate::CompassApp;
     use crate::adjust_index_from_value;
     use crate::adjust_value;
     use crate::citizens::chart::ChartCitizen;
     use crate::citizens::logger::LoggerPanel;
+    use crate::editor::{
+        ChartHeaderAction, EDITOR_REGISTRY, EditorCtx, EditorFrame, EditorKind, EditorSignals,
+    };
     use crate::latest_quote;
     use crate::state::SharedState;
     use crate::tabs::{CHART_ID, LOGGER_ID, SCREENER_ID, SEPA_ID};
     use crate::timeframe_label;
     use crate::timeframe_value;
-    use egui_citizen::{CitizenId, Dispatcher};
+    use egui_citizen::{CitizenId, Registry};
+
+    /// Chart-editor-header render closure (`Harness::new_ui`), replaying the
+    /// timeframe/adjust/fetch actions through `chart_action` (plan §4.1).
+    fn chart_header_harness_ui<'a>(
+        app: &'a mut CompassApp,
+        chart_action: &'a mut Option<ChartHeaderAction>,
+    ) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Chart)
+                .expect("chart descriptor must exist");
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            let sidebar_visible = desc
+                .layout
+                .sidebar
+                .as_ref()
+                .map(|s| s.default_visible)
+                .unwrap_or(false);
+            let mut frame = EditorFrame { sidebar_visible };
+            frame.show(ui, desc, &mut app.editors.chart, &mut ctx);
+        }
+    }
 
     // ── data-name locale maps (epic #266 B3) ────────────────────────────
 
@@ -1749,7 +2264,7 @@ mod tests {
 
     #[test]
     fn citizens_register_and_activate() {
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let registered = crate::dispatcher::register_citizens(&mut dispatcher);
 
         let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
@@ -1829,7 +2344,6 @@ mod tests {
     // ======================================================================
 
     use crate::WINDOW_INNER_SIZE;
-    use crate::tabs::{Tab, TabKind};
     use crate::theme::CompassTheme;
     use compass_core::model::{AppConfig, AppSection, WatchlistConfig};
     use compass_ui::tokens::ColorTokens;
@@ -1956,6 +2470,337 @@ default_timeframe = "1w"
             config.app.app.default_symbol,
             AppConfig::default().app.default_symbol
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 4 (design §9.1/§9.2): `[layout]` persistence — resolve/
+    // fingerprint/save round-trip. The config must never block startup:
+    // every corruption path falls back to the default layouts.
+    // ------------------------------------------------------------------
+
+    fn todays_layout_toml(ws: &crate::editor::Workspaces) -> String {
+        let mut doc = toml::map::Map::new();
+        let mut layout = toml::map::Map::new();
+        layout.insert(
+            "active_workspace".to_string(),
+            toml::Value::String("chart".to_string()),
+        );
+        layout.insert("dock_version".to_string(), toml::Value::Integer(2));
+        let mut arr = Vec::new();
+        for w in &ws.all {
+            let mut t = toml::map::Map::new();
+            t.insert(
+                "id".to_string(),
+                toml::Value::String(w.id.as_str().to_string()),
+            );
+            t.insert(
+                "active_screen".to_string(),
+                toml::Value::Integer(w.active_screen as i64),
+            );
+            let topo =
+                crate::editor::extract_topology(&w.layouts[w.active_screen].dock_state).unwrap();
+            t.insert(
+                "dock".to_string(),
+                toml::Value::String(serde_json::to_string(&topo).unwrap()),
+            );
+            arr.push(toml::Value::Table(t));
+        }
+        layout.insert("workspaces".to_string(), toml::Value::Array(arr));
+        doc.insert("layout".to_string(), toml::Value::Table(layout));
+        toml::to_string(&toml::Value::Table(doc)).unwrap()
+    }
+
+    fn parse_layout_section(text: &str) -> crate::LayoutSection {
+        // Through the document-value path (matches `load_config`): the
+        // nested `[[layout.workspaces]]` array-of-tables does not survive a
+        // direct `toml::from_str::<LayoutSection>` (toml 0.8 limitation).
+        let doc: toml::Value = toml::from_str(text).unwrap();
+        crate::layout_section_from_doc(&doc)
+    }
+
+    #[test]
+    fn resolve_workspaces_missing_section_returns_defaults_silently() {
+        let (ws, fell_back) = crate::resolve_workspaces(&crate::LayoutSection::default());
+        assert_eq!(ws.all.len(), 3);
+        assert_eq!(ws.active, 0);
+        assert!(!fell_back, "first run must not warn");
+    }
+
+    #[test]
+    fn resolve_workspaces_roundtrips_saved_layout() {
+        // save_layout_config → parse back → resolve must restore the exact
+        // topology (dirs/fractions/tab sequences) and workspace order.
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let default = crate::editor::Workspaces::default();
+        // Opt this persistence assertion back into save_layout_config — the
+        // cfg(test) fence is off by default (review 81e84e15 P0-1).
+        unsafe {
+            std::env::set_var("COMPASS_TEST_PERSIST_LAYOUT", "1");
+        }
+        let res = crate::save_layout_config(&default);
+        unsafe {
+            std::env::remove_var("COMPASS_TEST_PERSIST_LAYOUT");
+        }
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        res.expect("save_layout_config must succeed");
+        let text = std::fs::read_to_string(tmp.path().join(".config/compass/config.toml")).unwrap();
+        let section: crate::LayoutSection = parse_layout_section(&text);
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        assert!(!fell_back, "saved layout must resolve cleanly");
+        assert_eq!(restored.all.len(), default.all.len());
+        for (a, b) in default.all.iter().zip(restored.all.iter()) {
+            assert_eq!(a.id, b.id);
+            let ta =
+                crate::editor::extract_topology(&a.layouts[a.active_screen].dock_state).unwrap();
+            let tb =
+                crate::editor::extract_topology(&b.layouts[b.active_screen].dock_state).unwrap();
+            assert_eq!(ta, tb, "topology must survive the config round-trip");
+        }
+    }
+
+    #[test]
+    fn resolve_workspaces_version_mismatch_falls_back() {
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.dock_version = Some(99);
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back);
+        assert_eq!(ws.active, 0);
+        assert_eq!(ws.all.len(), 3);
+    }
+
+    #[test]
+    fn resolve_workspaces_corrupt_dock_json_falls_back() {
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.workspaces[0].dock = Some(r#"{"root":{"split":{"tabs":[]}}}"#.to_string());
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "bad dock JSON must fall back");
+        assert_eq!(ws.active, 0);
+    }
+
+    #[test]
+    fn resolve_workspaces_bad_fraction_and_unknown_id_fall_back() {
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        // Invalid fraction (NaN is unrepresentable in TOML; use 2.0).
+        section.workspaces[0].dock = Some(
+            r#"{"root":{"split":{"dir":"vertical","fraction":2.0,
+                 "a":{"leaf":{"tabs":["watchlist"]}},"b":{"leaf":{"tabs":["chart"]}}}}}"#
+                .to_string(),
+        );
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "out-of-range fraction must fall back");
+
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.workspaces[0].id = "bogus".to_string();
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "unknown workspace id must fall back");
+
+        let mut section: crate::LayoutSection =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.active_workspace = Some("bogus".to_string());
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "unknown active_workspace must fall back");
+    }
+
+    #[test]
+    fn layout_fingerprint_changes_after_dock_edit() {
+        // The frame-end save trigger (design §9.2): a topology edit changes
+        // the fingerprint; a no-op leaves it unchanged.
+        let mut ws = crate::editor::Workspaces::default();
+        let fp0 = crate::layout_fingerprint(&ws).expect("default fingerprint");
+        assert_eq!(crate::layout_fingerprint(&ws).unwrap(), fp0, "stable");
+
+        // Simulate the ⋮ 添加编辑器 re-open path: add a Screener tab to the
+        // active (chart) workspace — the topology must change.
+        let idx = ws.active;
+        let screen = ws.all[idx].active_screen;
+        ws.all[idx].layouts[screen]
+            .dock_state
+            .push_to_focused_leaf(crate::tabs::Tab::new(crate::editor::EditorKind::Screener));
+        let fp1 = crate::layout_fingerprint(&ws).expect("edited fingerprint");
+        assert_ne!(fp0, fp1, "adding a tab must change the fingerprint");
+    }
+
+    #[test]
+    fn resolve_workspaces_active_screen_out_of_range_falls_back_per_workspace() {
+        // P1-1: `active_screen >= layouts.len()` would panic on the direct
+        // index in the render paths — the workspace alone falls back to its
+        // default layout (active_screen forced 0); others keep their trees.
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.workspaces[0].active_screen = 1;
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(
+            fell_back,
+            "out-of-range active_screen must report a fallback"
+        );
+        assert_eq!(ws.all[0].active_screen, 0, "active_screen must clamp to 0");
+        let default_chart = crate::editor::extract_topology(
+            &crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Chart),
+        )
+        .unwrap();
+        let ws0 = crate::editor::extract_topology(&ws.all[0].layouts[0].dock_state).unwrap();
+        assert_eq!(
+            ws0, default_chart,
+            "the touched workspace falls back to default"
+        );
+        // Untouched workspaces keep their (default) trees and are usable.
+        let ws1 = crate::editor::extract_topology(&ws.all[1].layouts[0].dock_state).unwrap();
+        let default_screener = crate::editor::extract_topology(
+            &crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Screener),
+        )
+        .unwrap();
+        assert_eq!(ws1, default_screener);
+    }
+
+    #[test]
+    fn resolve_workspaces_corrupt_entry_keeps_other_workspaces() {
+        // P2-1 (per-id fallback): a custom (valid) chart tree survives even
+        // when the screener entry is corrupt — only the corrupt workspace
+        // degrades to its default layout.
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        // Chart workspace: main leaf carries [chart, screener] (custom).
+        section.workspaces[0].dock = Some(
+            r#"{"root":{"split":{"dir":"vertical","fraction":0.75,
+                "a":{"split":{"dir":"horizontal","fraction":0.25,
+                     "a":{"leaf":{"tabs":["watchlist"]}},
+                     "b":{"leaf":{"tabs":["chart","screener"]}}}},
+                "b":{"leaf":{"tabs":["logger"]}}}}}"#
+                .to_string(),
+        );
+        // Screener entry: bad JSON.
+        section.workspaces[1].dock = Some(r#"{"root":{"split":{"bogus":1}}}"#.to_string());
+        let (ws, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back);
+        let ws0 = crate::editor::extract_topology(&ws.all[0].layouts[0].dock_state).unwrap();
+        assert!(
+            serde_json::to_string(&ws0)
+                .unwrap()
+                .contains("\"chart\",\"screener\""),
+            "custom chart tree must survive a sibling's corruption: {ws0:?}"
+        );
+        let ws1 = crate::editor::extract_topology(&ws.all[1].layouts[0].dock_state).unwrap();
+        let default_screener = crate::editor::extract_topology(
+            &crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Screener),
+        )
+        .unwrap();
+        assert_eq!(ws1, default_screener);
+    }
+
+    #[test]
+    fn resolve_workspaces_dock_version_wrap_guard() {
+        // P3-3: an i64 TOML integer that wraps to 2 via `as u32` must NOT
+        // pass the version check (the manual parser uses try_from).
+        let text = todays_layout_toml(&crate::editor::Workspaces::default())
+            .replace("dock_version = 2", "dock_version = 4294967298");
+        let section = parse_layout_section(&text);
+        let (_, fell_back) = crate::resolve_workspaces(&section);
+        assert!(fell_back, "wrapped dock_version must fall back");
+    }
+
+    /// P2-2 (kittest, stage 1): the startup restore path — a config with
+    /// `active_workspace = "sepa"` resolves and renders the SEPA recap as
+    /// the mounted workspace (end-to-end through the render tree).
+    #[test]
+    fn layout_startup_restores_active_workspace_renders_sepa() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.active_workspace = Some("sepa".to_string());
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        assert!(!fell_back);
+
+        let app = build_compass_app(egui::Context::default());
+        let app = CompassApp {
+            workspaces: restored,
+            ..app
+        };
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+        // SEPA header in its no-data state (no snapshot loaded).
+        let _ = harness.get_by_label(&tr("sepa.no_data"));
+    }
+
+    /// P2-2 (kittest, stage 2): switching the workspace writes the
+    /// `[layout]` section to config.toml immediately (design §9.2) — the
+    /// file appears with the *new* active workspace.
+    #[test]
+    fn layout_workspace_switch_saves_section_immediately() {
+        // Lock order must be LANG_LOCK → HOME_LOCK (as in the other
+        // combined tests, e.g. theme_dropdown_switch_persists_*): the
+        // reverse would deadlock the parallel test runner.
+        let _lock = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Opt this persistence assertion back into save_layout_config —
+        // the cfg(test) fence is off by default (review 37c81bfe P1-3).
+        unsafe {
+            std::env::set_var("COMPASS_TEST_PERSIST_LAYOUT", "1");
+        }
+
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        harness.get_by_label(&seg_label).click_accesskit();
+        harness.run_steps(3);
+
+        unsafe {
+            std::env::remove_var("COMPASS_TEST_PERSIST_LAYOUT");
+        }
+
+        let config_text = std::fs::read_to_string(tmp.path().join(".config/compass/config.toml"))
+            .expect("switch must create the config file");
+        let doc: toml::Value = toml::from_str(&config_text).unwrap();
+        assert_eq!(
+            doc["layout"]["active_workspace"].as_str(),
+            Some("screener"),
+            "switch must persist the new active workspace immediately"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]
@@ -2119,7 +2964,7 @@ default_timeframe = "1w"
     // --- render_toolbar kittest tests ---
 
     #[test]
-    fn render_toolbar_renders_segmented_and_theme_dropdown() {
+    fn render_toolbar_renders_theme_dropdown() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2128,23 +2973,23 @@ default_timeframe = "1w"
             app.render_toolbar(ui);
         });
 
-        let _ = harness.get_by_label("1d");
         let _ = harness.get_by_label_contains("compass_dark");
     }
 
     /// Contract upgrade (issue #345): the static 前复权 Tag becomes a
-    /// three-option Dropdown. Assert the trigger renders the current mode
-    /// (default qfq) and that all three option labels (前复权/后复权/不复权)
-    /// are present once the popup is open.
+    /// three-option Dropdown — now rendered in the chart header (plan §4.1).
+    /// Assert the trigger renders the current mode (default qfq) and that
+    /// all three option labels (前复权/后复权/不复权) are present once the
+    /// popup is open.
     #[test]
-    fn render_toolbar_renders_adjusted_price_tag() {
+    fn render_chart_header_renders_adjusted_price_tag() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
-        let mut harness = egui_kittest::Harness::new_ui(|ui| {
-            app.render_toolbar(ui);
-        });
+        let mut chart_action = None;
+        let mut harness =
+            egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
         harness.run();
 
         // Trigger shows the current selection (qfq → 前复权 + caret glyph).
@@ -2160,22 +3005,131 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn render_toolbar_timeframe_switch_changes_index() {
+    fn render_chart_header_timeframe_switch_changes_index() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             harness.get_by_label("1w").click();
             harness.step();
+            drop(harness);
+            if let Some(ChartHeaderAction::Timeframe(idx)) = chart_action {
+                app.set_timeframe(idx);
+            }
         }
 
         assert_eq!(app.timeframe_index, 1);
+    }
+
+    /// Full-app workspace switching (design §7.1 / plan §5.3): clicking the
+    /// Segmented segment mounts that workspace's dock tree — the screener
+    /// condition builder appears, chart-only chrome disappears; SEPA recap
+    /// mounts the SEPA header (Q1: Sepa/Market moved out of Chart).
+    #[test]
+    fn toolbar_workspace_switch_mounts_target_workspace() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Chart workspace (default): chart sidebar settings visible.
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.title"));
+
+        // Switch to the Screener workspace via the Topbar segment.
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        let seg = harness.get_by_label(&seg_label);
+        seg.click_accesskit();
+        harness.run_steps(3);
+        let _ = harness.get_by_label(&tr("screener.builder.card_title"));
+
+        // Switch to the SEPA-recap workspace: SEPA header appears
+        // (no-data state without a snapshot), chart chrome gone. Use the
+        // accesskit click: the pointer click route is unreliable under the
+        // eframe harness for some widgets (verified during 3-phase work).
+        let sepa_label = format!("{} {}", egui_phosphor::regular::GAUGE, tr("workspace.sepa"));
+        harness.get_by_label(&sepa_label).click_accesskit();
+        harness.run_steps(3);
+        let _ = harness.get_by_label(&tr("sepa.no_data"));
+    }
+
+    /// The ⋮ add-editor menu lists kinds absent from the active screen
+    /// (design §7.1 "重开" entry): on the default Chart workspace the
+    /// Screener/Sepa/Market entries appear; clicking Screener adds it as
+    /// a tab (reachable via its condition-builder title after a run).
+    #[test]
+    fn toolbar_add_editor_menu_lists_missing_kinds() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Full-app harness: two ⋮ buttons exist this frame (topbar
+        // add-editor + chart header Display Options); the topbar one
+        // renders first.
+        harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
+            .click_accesskit();
+        harness.run_steps(3);
+        // The menu renders each missing kind as "icon + title_key"; the
+        // editor content itself is not a leaf's active tab yet, so the
+        // assertion is on the dock tree composition (tab titles carry no
+        // AccessKit label — testing.md boundary).
+        let screener_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("editor.screener")
+        );
+        harness.get_by_label(&screener_label).click_accesskit();
+        harness.run_steps(3);
+        let active = harness.state().workspaces.active;
+        let screen = harness.state().workspaces.all[active].active_screen;
+        assert!(
+            harness.state().workspaces.all[active].layouts[screen]
+                .dock_state
+                .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Screener))
+                .is_some(),
+            "the add-editor menu must re-open the Screener tab on the Chart workspace"
+        );
+        // Landing-leaf guard (review 26b1a84c P2-1): the position-independent
+        // find_tab above still passes when the tab lands in the bottom Logger
+        // leaf (a leftover dock focus). default_layout now re-focuses the
+        // Chart main leaf, so Screener must live in a different leaf than
+        // Logger (same NodeIndex == same leaf).
+        let dock = &harness.state().workspaces.all[active].layouts[screen].dock_state;
+        let tree = dock
+            .get_surface(egui_dock::SurfaceIndex::main())
+            .and_then(|s| s.node_tree())
+            .expect("main surface tree");
+        let (screener_leaf, _) = tree
+            .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Screener))
+            .expect("screener tab present");
+        let (chart_leaf, _) = tree
+            .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Chart))
+            .expect("chart tab present");
+        // P2-1 contract: the new tab lands in the main (Chart) leaf —
+        // equality with the Chart leaf is tighter than merely differing from
+        // Logger (a focus regression onto the Watchlist leaf would pass an
+        // assert_ne only) (review 28e54c4f P3-2).
+        assert_eq!(
+            screener_leaf, chart_leaf,
+            "add_editor must land in the main (Chart) leaf"
+        );
     }
 
     /// The adjust Dropdown must NOT render when the current symbol is an
@@ -2192,9 +3146,9 @@ default_timeframe = "1w"
         // BK-prefixed board code → control hidden.
         app.shared_state.symbol.set("BK0001".to_string());
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             assert!(
                 harness
@@ -2213,9 +3167,9 @@ default_timeframe = "1w"
         )];
         app.shared_state.symbol.set("SH000001".to_string());
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             assert!(
                 harness
@@ -2231,9 +3185,9 @@ default_timeframe = "1w"
         // click → this assertion is RED against the pre-implementation UI.
         app.shared_state.symbol.set("SZ000001".to_string());
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             assert!(
                 harness
@@ -2262,9 +3216,9 @@ default_timeframe = "1w"
         let mut app = build_compass_app(egui::Context::default());
 
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             harness
                 .get_by_label_contains(&tr("toolbar.adjust.qfq"))
@@ -2272,6 +3226,10 @@ default_timeframe = "1w"
             harness.run();
             harness.get_by_label(&tr("toolbar.adjust.hfq")).click();
             harness.step();
+            drop(harness);
+            if let Some(ChartHeaderAction::Adjust(idx)) = chart_action {
+                app.set_adjust(idx);
+            }
         }
 
         assert_eq!(app.adjust_index, 1, "hfq must map to dropdown index 1");
@@ -2350,16 +3308,16 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn render_toolbar_fetch_sets_loading() {
+    fn render_chart_header_fetch_sets_loading() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
 
         {
-            let mut harness = egui_kittest::Harness::new_ui(|ui| {
-                app.render_toolbar(ui);
-            });
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
             harness.run();
             let fetch_label = format!(
                 "{} {}",
@@ -2368,6 +3326,10 @@ default_timeframe = "1w"
             );
             harness.get_by_label(&fetch_label).click();
             harness.step();
+            drop(harness);
+            if let Some(ChartHeaderAction::Fetch) = chart_action {
+                app.fetch_bars();
+            }
         }
 
         assert!(
@@ -2376,25 +3338,741 @@ default_timeframe = "1w"
         );
     }
 
+    /// The chart sidebar must render by default (Q4) — the MA/BOLL parameter
+    /// labels are queryable in the header harness frame.
     #[test]
-    fn render_toolbar_sidebar_toggle_flips_visibility() {
+    fn render_chart_header_sidebar_visible_by_default() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut app = build_compass_app(egui::Context::default());
+        let mut chart_action = None;
+        let mut harness =
+            egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
+        harness.run();
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.ma_periods"));
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.candle_style"));
+    }
 
+    /// The header indicator dropdown toggles the MA/BOLL overlay visibility
+    /// (design §6 指标切换 Dropdown).
+    #[test]
+    fn render_chart_header_indicator_dropdown_toggles_visibility() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        assert!(
+            app.editors.chart.indicator_visible(),
+            "default: overlay visible"
+        );
+
+        {
+            let mut chart_action = None;
+            let mut harness =
+                egui_kittest::Harness::new_ui(chart_header_harness_ui(&mut app, &mut chart_action));
+            harness.run();
+            // Open the indicator dropdown and pick "隐藏".
+            harness
+                .get_by_label_contains(&tr("editor.chart_indicators.on"))
+                .click();
+            harness.run();
+            harness
+                .get_by_label(&tr("editor.chart_indicators.off"))
+                .click();
+            harness.step();
+        }
+
+        assert!(
+            !app.editors.chart.indicator_visible(),
+            "overlay must be hidden after selecting 隐藏"
+        );
+    }
+
+    /// Screener-editor render closure (plan §4.2): full editor frame
+    /// (header + sidebar + body) so kittest can query the condition builder,
+    /// run button, count chip, and results table in one pass.
+    fn screener_editor_harness_ui<'a>(app: &'a mut CompassApp) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Screener)
+                .expect("screener descriptor must exist");
+            let mut chart_action = None;
+            let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            let sidebar_visible = desc
+                .layout
+                .sidebar
+                .as_ref()
+                .map(|s| s.default_visible)
+                .unwrap_or(false);
+            let mut frame = EditorFrame { sidebar_visible };
+            frame.show(ui, desc, &mut app.editors.screener, &mut ctx);
+        }
+    }
+
+    fn sepa_editor_harness_ui<'a>(app: &'a mut CompassApp) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Sepa)
+                .expect("sepa descriptor must exist");
+            let mut chart_action = None;
+            let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            // SEPA registers no sidebar (design §6) — the 280px detail panel
+            // stays an in-body right pane, so no left panel is created.
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.editors.sepa, &mut ctx);
+        }
+    }
+
+    fn market_editor_harness_ui<'a>(app: &'a mut CompassApp) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Market)
+                .expect("market descriptor must exist");
+            let mut chart_action = None;
+            let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            // Market registers no sidebar (design §6).
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.editors.market, &mut ctx);
+        }
+    }
+
+    /// Logger-editor render closure (plan §4.5): header (SectionTitle row)
+    /// over body (egui_lens viewer) through `EditorFrame`. The export click
+    /// is reported through the `logger_export_clicked` out-param — the same
+    /// channel the production TabViewer hands to the App, which opens the
+    /// save-file dialog after the frame pass (unchanged flow).
+    /// Watchlist-editor render closure (plan §4.6): header (search row)
+    /// over body (自选 group list) through `EditorFrame`. The editor
+    /// collects row/add/delete events into the `watchlist_action` out-param
+    /// — same channel pattern as the chart/logger harnesses.
+    fn watchlist_editor_harness_ui<'a>(
+        app: &'a mut CompassApp,
+        watchlist_action: &'a mut Option<crate::editor::WatchlistAction>,
+    ) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Watchlist)
+                .expect("watchlist descriptor must exist");
+            let mut chart_action = None;
+            let mut logger_export_clicked = false;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked: &mut logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.editors.watchlist, &mut ctx);
+        }
+    }
+
+    fn logger_editor_harness_ui<'a>(
+        app: &'a mut CompassApp,
+        logger_export_clicked: &'a mut bool,
+    ) -> impl FnMut(&mut egui::Ui) + 'a {
+        move |ui| {
+            let desc = EDITOR_REGISTRY
+                .iter()
+                .find(|d| d.kind == EditorKind::Logger)
+                .expect("logger descriptor must exist");
+            let mut chart_action = None;
+            let mut toasts = ToastManager::new(*app.theme.tokens());
+            let mut watchlist_action = None;
+            let mut sidebar_toggle_requested = false;
+            let mut ctx = EditorCtx {
+                state: &app.shared_state,
+                theme: &app.theme,
+                signals: &EditorSignals {
+                    work: &app.work_signal,
+                    screener: &app.run_screener_signal,
+                    sepa: &app.sepa_signal,
+                    index: &app.index_signal,
+                    llm: &app.llm_signal,
+                },
+                index_list: &app.index_list,
+                chart_action: &mut chart_action,
+                screener_industries: &app.screener_industries,
+                screener_boards: &app.screener_boards,
+                logger_export_clicked,
+                toasts: &mut toasts,
+                stock_list: &app.stock_list,
+                watchlist_action: &mut watchlist_action,
+                sidebar_toggle_requested: &mut sidebar_toggle_requested,
+            };
+            let mut frame = EditorFrame {
+                sidebar_visible: false,
+            };
+            frame.show(ui, desc, &mut app.editors.logger, &mut ctx);
+        }
+    }
+
+    /// The sepa header (plan §4.3): count label 「共 N 行 · 日期」 + TOP-N
+    /// segmented + refresh button — all three queryable at once.
+    #[test]
+    fn render_sepa_header_exposes_count_topn_and_refresh() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .sepa_data
+            .set(Some(compass_types::SepaData {
+                rows: vec![compass_types::SepaRow {
+                    symbol: "SH600519".to_string(),
+                    name: "贵州茅台".to_string(),
+                    rank: 1,
+                    total_score: 80.0,
+                    trend: 20.0,
+                    theme: 18.0,
+                    capital: 15.0,
+                    pattern: 15.0,
+                    risk: 0.0,
+                    industry: "白酒".to_string(),
+                    industry_en: None,
+                    latest_price: 1500.0,
+                    change_pct: 2.5,
+                    details: compass_types::SepaDetails {
+                        trend: vec![],
+                        theme: vec![],
+                        capital: vec![],
+                        pattern: vec![],
+                        risk: vec![],
+                    },
+                }],
+                thermometer: compass_types::MarketThermometer {
+                    score: 72.0,
+                    position_key: "sepa.position.full",
+                    position_pct: 90.0,
+                    indicators: vec![],
+                },
+                date: "2026-08-02".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label(&compass_i18n::t!(
+            "sepa.count",
+            shown = 1,
+            date = "2026-08-02"
+        ));
+        // Buttons with an icon expose "icon text" as the AccessKit label
+        // (same as the 2a chart fetch button test below).
+        let refresh_label = format!(
+            "{} {}",
+            egui_phosphor::regular::ARROW_CLOCKWISE,
+            tr("sepa.refresh")
+        );
+        harness.get_by_label(&refresh_label);
+        harness.get_by_label("TOP 50");
+        harness.get_by_label("TOP 30");
+    }
+
+    /// The header ⋮ menu (design §6 SEPA 行 / 2c ruling) offers "reset sort";
+    /// the menu must be openable and its action clickable (design §11 group D).
+    /// The precise sort-state restoration is asserted in sepa.rs mod tests
+    /// (the table field is private to the citizen).
+    #[test]
+    fn render_sepa_header_menu_offers_reset_sort() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .sepa_data
+            .set(Some(compass_types::SepaData {
+                rows: vec![compass_types::SepaRow {
+                    symbol: "SH600519".to_string(),
+                    name: "贵州茅台".to_string(),
+                    rank: 1,
+                    total_score: 80.0,
+                    trend: 20.0,
+                    theme: 18.0,
+                    capital: 15.0,
+                    pattern: 15.0,
+                    risk: 0.0,
+                    industry: "白酒".to_string(),
+                    industry_en: None,
+                    latest_price: 1500.0,
+                    change_pct: 2.5,
+                    details: compass_types::SepaDetails {
+                        trend: vec![],
+                        theme: vec![],
+                        capital: vec![],
+                        pattern: vec![],
+                        risk: vec![],
+                    },
+                }],
+                thermometer: compass_types::MarketThermometer {
+                    score: 72.0,
+                    position_key: "sepa.position.full",
+                    position_pct: 90.0,
+                    indicators: vec![],
+                },
+                date: "2026-08-02".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
+        harness.run();
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
+        harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.sepa_header.reset_sort"))
+            .click();
+        harness.step();
+        drop(harness);
+    }
+
+    /// The market header (plan §4.4): count label 「共 N 个 · 日期」 +
+    /// [行业板块 | 官方指数] segmented + refresh button — all queryable at
+    /// once (the old toolbar controls moved into the header).
+    #[test]
+    fn render_market_header_exposes_count_segment_and_refresh() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .index_snapshot
+            .set(Some(compass_types::IndexSnapshot {
+                rows: vec![compass_types::IndexRow {
+                    symbol: "SH000001".to_string(),
+                    name: "上证指数".to_string(),
+                    name_en: None,
+                    index_type: "official".to_string(),
+                    change_pct: 0.82,
+                    latest: 3200.0,
+                    amount: 123_456_789.0,
+                }],
+                date: "2026-08-13".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
+        harness.run();
+        // Interpolated via the t! macro (SEPA kittest precedent); the tr()
+        // helper cannot carry args but t! can.
+        harness.get_by_label(&compass_i18n::t!(
+            "index.count",
+            count = 1,
+            date = "2026-08-13"
+        ));
+        harness.get_by_label(&tr("index.segment.industry"));
+        harness.get_by_label(&tr("index.segment.official"));
+        // Icon-prefixed button label: "{icon} {text}" (chart Fetch precedent).
+        let refresh_label = format!(
+            "{} {}",
+            egui_phosphor::regular::ARROW_CLOCKWISE,
+            tr("index.refresh")
+        );
+        harness.get_by_label(&refresh_label);
+    }
+
+    /// The logger header (plan §4.5): SectionTitle row — heading 「日志」 +
+    /// entry count + export icon button — all queryable through the
+    /// EditorFrame header slot.
+    #[test]
+    fn render_logger_header_exposes_title_count_and_export() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut logger_export_clicked = false;
+        let mut harness = egui_kittest::Harness::new_ui(logger_editor_harness_ui(
+            &mut app,
+            &mut logger_export_clicked,
+        ));
+        harness.run();
+        harness.get_by_label(&tr("logger.title"));
+        harness.get_by_label("0");
+        harness.get_by_label(egui_phosphor::regular::EXPORT);
+    }
+
+    /// Export click travels through the `logger_export_clicked` out-param
+    /// (plan §4.5: the App opens the save-file dialog after the frame pass —
+    /// that flow is unchanged, so the harness only proves the channel).
+    #[test]
+    fn render_logger_export_click_reports_out_param() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut logger_export_clicked = false;
+        let mut harness = egui_kittest::Harness::new_ui(logger_editor_harness_ui(
+            &mut app,
+            &mut logger_export_clicked,
+        ));
+        harness.run();
+        harness.get_by_label(egui_phosphor::regular::EXPORT).click();
+        harness.step();
+        drop(harness);
+        assert!(
+            logger_export_clicked,
+            "export button click must reach the out-param"
+        );
+    }
+
+    /// The ⋮ menu offers reset-sort (designer ruling 2026-09-05); the exact
+    /// sort-state restoration is asserted in market.rs mod tests (the
+    /// `DataTable` field is private), here we only prove reachability.
+    #[test]
+    fn render_market_header_menu_offers_reset_sort() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(market_editor_harness_ui(&mut app));
+        harness.run();
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
+        harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.market_header.reset_sort"))
+            .click();
+        harness.step();
+        drop(harness);
+    }
+
+    /// The sepa body (plan §4.3): thermometer card + ranking table render in
+    /// the vertical stacking context (ref #221 regression guard — header rows
+    /// and body rows must stack vertically, never side by side).
+    #[test]
+    fn render_sepa_body_stacks_thermometer_and_table() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .sepa_data
+            .set(Some(compass_types::SepaData {
+                rows: vec![compass_types::SepaRow {
+                    symbol: "SH600519".to_string(),
+                    name: "贵州茅台".to_string(),
+                    rank: 1,
+                    total_score: 80.0,
+                    trend: 20.0,
+                    theme: 18.0,
+                    capital: 15.0,
+                    pattern: 15.0,
+                    risk: 0.0,
+                    industry: "白酒".to_string(),
+                    industry_en: None,
+                    latest_price: 1500.0,
+                    change_pct: 2.5,
+                    details: compass_types::SepaDetails {
+                        trend: vec![],
+                        theme: vec![],
+                        capital: vec![],
+                        pattern: vec![],
+                        risk: vec![],
+                    },
+                }],
+                thermometer: compass_types::MarketThermometer {
+                    score: 72.0,
+                    position_key: "sepa.position.full",
+                    position_pct: 90.0,
+                    indicators: vec![],
+                },
+                date: "2026-08-02".to_string(),
+            }));
+        let mut harness = egui_kittest::Harness::new_ui(sepa_editor_harness_ui(&mut app));
+        harness.run();
+        // Thermometer label prominent; table header + a row cell visible in
+        // the same frame — the vertical stacking keeps them column-aligned
+        // (the #221 real-GUI regression would place body rows right of the
+        // header, which AccessKit would report as separate labels at best,
+        // so the precise assertion stays in sepa.rs mod tests; this one
+        // guards the editor frame path end-to-end).
+        harness.get_by_label_contains(&tr("sepa.thermometer"));
+        harness.get_by_label_contains(&tr("sepa.table.code"));
+    }
+
+    /// The screener sidebar (plan §4.2) hosts the condition builder — its
+    /// card-title label must be queryable at the default width.
+    #[test]
+    fn render_screener_sidebar_exposes_condition_builder_label() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label(&tr("screener.builder.card_title"));
+    }
+
+    /// The screener header (plan §4.2) shows the result count label; the
+    /// key itself ("editor.screener_header.count") is scoped to the header.
+    #[test]
+    fn render_screener_header_shows_count_label() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.screener_total.set(3);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label("共 3 只");
+    }
+
+    /// The body renders the results table with its column headers once rows
+    /// are present (plan §4.2 — 6-column semantics unchanged).
+    #[test]
+    fn render_screener_results_table_shows_column_headers() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .screener_result
+            .set(vec![compass_types::ScreenerRow {
+                industry_en: None,
+                symbol: "SH600519".to_string(),
+                name: "贵州茅台".to_string(),
+                latest_price: 10.0,
+                change_20d: 5.0,
+                market_cap: 200.0,
+                industry: "银行".to_string(),
+            }]);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label(&tr("screener.table.code"));
+    }
+
+    /// The sidebar run button (plan §4.2) is intentionally *not* asserted for
+    /// the loading transition here: `run_filter` sends through the real
+    /// wire_backend dispatcher, whose async consumer may flip
+    /// `screener_loading` back to false — on the success or the fast-failure
+    /// error path — before the assert runs, a race (reviewer P2-3). The
+    /// synchronous loading-before-send semantics are covered race-free in
+    /// `screener.rs` mod tests (`filter_button_click_sets_loading`, isolated
+    /// signal slot).
+    #[test]
+    fn render_screener_sidebar_run_button_is_queryable() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        harness.get_by_label(&tr("screener.filter"));
+        harness.get_by_label(&tr("screener.builder.clear_action"));
+    }
+
+    /// The header ⋮ menu (plan §4.2) clears results and the count; the menu
+    /// itself must be openable and its action queryable (design §11 group D).
+    #[test]
+    fn render_screener_header_menu_clears_results() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state
+            .screener_result
+            .set(vec![compass_types::ScreenerRow {
+                industry_en: None,
+                symbol: "SH600519".to_string(),
+                name: "贵州茅台".to_string(),
+                latest_price: 10.0,
+                change_20d: 5.0,
+                market_cap: 200.0,
+                industry: "银行".to_string(),
+            }]);
+        app.shared_state.screener_total.set(3);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
+        harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.screener_header.clear_results"))
+            .click();
+        harness.step();
+        drop(harness);
+        assert!(
+            app.shared_state.screener_result.get().is_empty(),
+            "⋮ clear-results must empty the result list"
+        );
+        assert_eq!(
+            app.shared_state.screener_total.get(),
+            0,
+            "⋮ clear-results must reset the count label"
+        );
+    }
+
+    /// The ⋮ menu also offers "reset sort" (designer ruling 2026-09-05); the
+    /// exact sort-state restoration is asserted in screener.rs mod tests
+    /// (the `DataTable` field is private), here we only prove reachability —
+    /// clicking must not panic with the menu open.
+    #[test]
+    fn render_screener_header_menu_offers_reset_sort() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        harness.run();
+        // Editor-harness: exactly one ⋮ (the editor header menu; no Topbar
+        // or chart header is rendered by Harness::new_ui).
+        harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .get_by_label(&tr("editor.screener_header.reset_sort"))
+            .click();
+        harness.step();
+        drop(harness);
+    }
+
+    /// The header shows the running chip (spinner + weak text) while
+    /// `screener_loading` is set (plan §4.2 — header state feedback).
+    #[test]
+    fn render_screener_header_shows_running_chip() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.shared_state.screener_loading.set(true);
+        let mut harness = egui_kittest::Harness::new_ui(screener_editor_harness_ui(&mut app));
+        // `step` not `run`: the spinner requests repaint every frame and
+        // would blow the max_steps budget.
+        harness.step();
+        harness.get_by_label(&tr("editor.screener_header.running"));
+    }
+
+    /// The watchlist sidebar toggle was removed from the toolbar with the
+    /// sidebar semantics (plan §4.1 — Group D 侧栏开关随 Chart sidebar 语义
+    /// 迁走; in 2f the watchlist itself became an editor dock leaf). No
+    /// toolbar control flips any sidebar visibility anymore.
+    #[test]
+    fn render_toolbar_no_sidebar_toggle_control() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
         {
             let mut harness = egui_kittest::Harness::new_ui(|ui| {
                 app.render_toolbar(ui);
             });
             harness.run();
-            harness
-                .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
-                .click();
-            harness.step();
+            assert!(
+                harness
+                    .query_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
+                    .is_none(),
+                "toolbar must no longer render a sidebar toggle (moved to chart)"
+            );
         }
-
-        assert!(!app.sidebar_visible, "toggle must hide the sidebar");
+        // Watchlist became an editor (2f): its visibility is the dock tab,
+        // not a global flag — nothing to assert on the App anymore.
     }
 
     #[test]
@@ -2557,15 +4235,15 @@ default_timeframe = "1w"
         use crate::state::SharedState;
         use crate::tabs::MARKET_ID;
         use crate::tabs::TabViewer;
-        use egui_dock::{DockArea, DockState};
+        use egui_dock::DockArea;
         use egui_mobius::factory;
 
         let tokens = compass_ui::tokens::ThemeTokens::dark();
-        let mut dispatcher = Dispatcher::new();
+        let mut dispatcher = Registry::new();
         let registered = register_citizens(&mut dispatcher);
-        let mut chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
-        let mut logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
-        let mut screener = ScreenerPanel::new(
+        let chart = ChartCitizen::new(CitizenId::new(CHART_ID), registered.chart);
+        let logger = LoggerPanel::new(CitizenId::new(LOGGER_ID), registered.logger);
+        let screener = ScreenerPanel::new(
             CitizenId::new(SCREENER_ID),
             registered.screener,
             None,
@@ -2573,8 +4251,8 @@ default_timeframe = "1w"
             &tokens,
             false,
         );
-        let mut sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
-        let mut market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &tokens);
+        let sepa = SepaPanel::new(CitizenId::new(SEPA_ID), registered.sepa, &tokens);
+        let market = MarketPanel::new(CitizenId::new(MARKET_ID), registered.market, &tokens);
         let (run_signal, _run_slot) = factory::create_signal_slot::<RunScreenerRequest>();
         let (sepa_signal, _sepa_slot) = factory::create_signal_slot::<RunSepaRequest>();
         let (index_signal, _index_slot) = factory::create_signal_slot::<RunIndexSnapshotRequest>();
@@ -2583,26 +4261,48 @@ default_timeframe = "1w"
         let shared = SharedState::new("SZ000001", "1d", "qfq");
         let theme = CompassTheme::compass_dark();
 
+        // The dock tree comes from the layout builder (plan §3.1: main.rs
+        // never constructs DockState directly — the phase3 guard asserts
+        // that by text). The Sepa workspace's default layout keeps the
+        // two-tab-in-one-leaf shape this test needs (Sepa + Market share the
+        // top leaf) plus the accent-ring click path on the 东方SEPA tab.
         let mut dock_state =
-            DockState::new(vec![Tab::new(TabKind::Chart), Tab::new(TabKind::Sepa)]);
+            crate::editor::Workspaces::default_layout(crate::editor::WorkspaceId::Sepa);
+        let mut editors = crate::editor::EditorInstances {
+            chart,
+            logger,
+            screener,
+            sepa,
+            market,
+            watchlist: crate::editor::WatchlistEditor::new(),
+        };
+        let signals = crate::editor::EditorSignals {
+            work: &work_signal,
+            screener: &run_signal,
+            sepa: &sepa_signal,
+            index: &index_signal,
+            llm: &llm_signal,
+        };
         let mut logger_export_clicked = false;
+        let mut chart_action = None;
+        let mut toasts = ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
         let mut viewer = TabViewer {
             dispatcher: &mut dispatcher,
-            chart: &mut chart,
-            logger: &mut logger,
-            screener: &mut screener,
-            sepa: &mut sepa,
-            market: &mut market,
-            run_screener_signal: &run_signal,
-            sepa_signal: &sepa_signal,
-            llm_signal: &llm_signal,
-            index_signal: &index_signal,
-            work_signal: &work_signal,
-            screener_industries: &[],
-            screener_boards: &[],
+            editors: &mut editors,
             shared_state: &shared,
             theme: &theme,
+            signals: &signals,
+            index_list: &[],
+            screener_industries: &[],
+            screener_boards: &[],
+            stock_list: &[],
+            toasts: &mut toasts,
             logger_export_clicked: &mut logger_export_clicked,
+            chart_action: &mut chart_action,
+            watchlist_action: &mut watchlist_action,
+            sidebar_visibility: &mut std::collections::HashMap::new(),
+            last_interacted_kind: &mut None,
         };
 
         let mut harness = egui_kittest::Harness::builder()
@@ -2704,8 +4404,6 @@ default_timeframe = "1w"
             t!("toolbar.fetch")
         );
         let _ = harness.get_by_label(&fetch_label);
-        let _ =
-            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
         let _ = harness.get_by_label(&t!("statusbar.source", count = 0));
         // Dock area renders: the logger citizen's "Logs: n/1000" counter is
         // visible (egui_dock paints tab buttons without accesskit labels, so
@@ -2713,28 +4411,26 @@ default_timeframe = "1w"
         let _ = harness.get_by_label_contains("Logs:");
     }
 
+    /// The watchlist editor renders header (search row) and body; per Q6
+    /// there is **no hardcoded width** — the dock split + user drag (phase 4
+    /// persistence) decide it, and the split geometry is asserted in the
+    /// `default_layout` structure tests (editor/mod.rs). Here we only prove
+    /// both controls exist on the editor itself.
     #[test]
-    fn sidebar_panel_is_left_anchored_at_240px() {
+    fn watchlist_editor_renders_search_row_and_add_button() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        let search =
+        let mut app = build_compass_app(egui::Context::default());
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
+        let _ =
             harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
-        assert!(
-            search.rect().min.x < 60.0,
-            "sidebar must hug the left edge, got min.x={}",
-            search.rect().min.x
-        );
-        let add_button = harness.get_by_label("\u{e3d4}");
-        assert!(
-            add_button.rect().max.x > 220.0,
-            "sidebar must be ~240px wide (add button right edge), got max.x={}",
-            add_button.rect().max.x
-        );
+        let _ = harness.get_by_label("\u{e3d4}"); // add button
     }
 
     #[test]
@@ -2760,91 +4456,79 @@ default_timeframe = "1w"
         });
     }
 
+    // NOTE (phase 2a): `sidebar_toggle_hides_and_reshows_sidebar` is removed
+    // — the toolbar sidebar toggle control left with Group D (plan §4.1). The
+    // watchlist left panel itself migrates into `WatchlistEditor` in phase 2f,
+    // which restores its own visibility toggle (N-key semantics, phase 5).
+    // Its absence is asserted by `render_toolbar_no_sidebar_toggle_control`.
+
     #[test]
-    fn sidebar_toggle_hides_and_reshows_sidebar() {
+    fn watchlist_editor_empty_state_shows_when_watchlist_empty() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        // Dismiss the startup data-missing modal so its backdrop stops
-        // blocking clicks (the 100 ms fade completes within one 0.25 s step
-        // of egui virtual time).
-        harness.get_by_label(&tr("modal.startup.confirm")).click();
-        harness.step();
-        harness.step();
-        assert!(!harness.state().modal.is_open());
-
-        harness
-            .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
-            .click();
-        harness.step();
-        assert!(
-            harness
-                .query_all_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()))
-                .next()
-                .is_none(),
-            "sidebar must be hidden after toggle click"
-        );
-
-        harness
-            .get_by_label(egui_phosphor::regular::SIDEBAR_SIMPLE)
-            .click();
-        harness.step();
-        let _ =
-            harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
-    }
-
-    #[test]
-    fn sidebar_empty_state_shows_when_no_stock_list() {
-        let _guard = LANG_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
         let _ = harness.get_by_label(&tr("sidebar.empty_title"));
     }
 
     #[test]
-    fn sidebar_row_click_fetches_selected_symbol() {
+    fn watchlist_editor_row_click_reports_select_action() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let stocks = vec![StockBasic {
-            symbol: "SH600519".to_string(),
-            name: "贵州茅台".to_string(),
-            name_en: None,
-            area: None,
-            industry: None,
-            industry_en: None,
-            market: None,
-            board: None,
-            full_name: None,
-            total_share: None,
-            list_date: None,
-            delist_date: None,
-        }];
-        let app = build_compass_app_with_stocks(egui::Context::default(), stocks);
+        let mut app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("SH600519", "贵州茅台")],
+        );
         app.shared_state.symbol.set("SH600519".to_string());
         app.shared_state.watchlist.set(vec!["SH600519".to_string()]);
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
         harness.get_by_label("贵州茅台").click();
         harness.step();
+        drop(harness);
+        assert_eq!(
+            watchlist_action,
+            Some(crate::editor::WatchlistAction::Select {
+                symbol: "SH600519".to_string()
+            }),
+            "row click must be collected as a Select action"
+        );
+    }
 
-        assert_eq!(harness.state().shared_state.symbol.get(), "SH600519");
-        assert!(
-            harness.state().shared_state.loading.get(),
-            "sidebar select must trigger a fetch"
+    /// App-level consumer: a `Select` action fetches the symbol (the
+    /// loading flag flips — the fetch itself is async, like the chart
+    /// header fetch test).
+    #[test]
+    fn handle_watchlist_select_fetches_symbol() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app(egui::Context::default());
+        app.handle_watchlist_action(
+            crate::editor::WatchlistAction::Select {
+                symbol: "SZ000001".to_string(),
+            },
+            0.0,
         );
         assert_eq!(
-            harness.state().stock_picker.selected_symbol,
-            "SH600519",
-            "sidebar select must sync the picker"
+            app.shared_state.symbol.get(),
+            "SZ000001",
+            "select must set the global symbol"
+        );
+        assert!(
+            app.shared_state.loading.get(),
+            "select must trigger a fetch through the dispatcher"
         );
     }
 
@@ -2870,7 +4554,32 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn sidebar_add_button_adds_current_symbol_to_watchlist_and_persists() {
+    fn watchlist_editor_add_button_reports_add_action() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut app = build_compass_app_with_stocks(
+            egui::Context::default(),
+            vec![stock_basic("SZ000001", "平安银行")],
+        );
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
+        harness.get_by_label("\u{e3d4}").click(); // ＋ add button
+        harness.step();
+        drop(harness);
+        assert_eq!(
+            watchlist_action,
+            Some(crate::editor::WatchlistAction::Add),
+            "add click must be collected as an Add action"
+        );
+    }
+
+    #[test]
+    fn handle_watchlist_add_persists_current_symbol() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2884,18 +4593,14 @@ default_timeframe = "1w"
             std::env::set_var("HOME", tmp.path());
         }
 
-        let app = build_compass_app_with_stocks(
+        let mut app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![stock_basic("SZ000001", "平安银行")],
         );
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        harness.get_by_label("\u{e3d4}").click(); // ＋ add button
-        harness.step();
+        app.handle_watchlist_action(crate::editor::WatchlistAction::Add, 0.0);
 
         assert_eq!(
-            harness.state().shared_state.watchlist.get(),
+            app.shared_state.watchlist.get(),
             vec!["SZ000001".to_string()],
             "add must insert the current symbol"
         );
@@ -2996,13 +4701,14 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        // The selected row reveals its × button without hovering.
-        let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
-        assert!(
-            !delete_buttons.is_empty(),
-            "selected row must show the delete button"
+        // Delete request comes from the watchlist editor's out-param after
+        // the dock render (plan §4.6); the App consumer opens the modal.
+        harness.state_mut().handle_watchlist_action(
+            crate::editor::WatchlistAction::DeleteRequest {
+                symbol: "SH600519".to_string(),
+            },
+            0.0,
         );
-        delete_buttons.remove(0).click();
         harness.step();
 
         // Danger confirm modal (design §6.5 scenario 3). One 0.25 s step
@@ -3051,8 +4757,13 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
-        let mut delete_buttons: Vec<_> = harness.query_all_by_label("\u{e4f6}").collect();
-        delete_buttons.remove(0).click();
+        // Same out-param consumer path as the remove-on-confirm test.
+        harness.state_mut().handle_watchlist_action(
+            crate::editor::WatchlistAction::DeleteRequest {
+                symbol: "SH600519".to_string(),
+            },
+            0.0,
+        );
         harness.step();
         // One 0.25 s step completes the entry animation so the Cancel button
         // is clickable.
@@ -3247,11 +4958,11 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn sidebar_watchlist_restores_from_config() {
+    fn watchlist_editor_restores_and_renders_rows_from_state() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app_with_stocks(
+        let mut app = build_compass_app_with_stocks(
             egui::Context::default(),
             vec![
                 stock_basic("SZ000001", "平安银行"),
@@ -3261,15 +4972,19 @@ default_timeframe = "1w"
         app.shared_state
             .watchlist
             .set(vec!["SZ000001".to_string(), "SH600519".to_string()]);
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
+        let mut watchlist_action = None;
+        let mut harness = egui_kittest::Harness::new_ui(watchlist_editor_harness_ui(
+            &mut app,
+            &mut watchlist_action,
+        ));
+        harness.run();
 
         let _ = harness.get_by_label("平安银行");
         let _ = harness.get_by_label("贵州茅台");
+        drop(harness);
         assert_eq!(
-            harness.state().shared_state.watchlist.get().len(),
-            2,
-            "both watchlist symbols render as sidebar rows"
+            watchlist_action, None,
+            "rendering alone must not emit an action"
         );
     }
 
@@ -3362,22 +5077,68 @@ default_timeframe = "1w"
     }
 
     #[test]
-    fn ctrl_k_focuses_sidebar_search_input() {
+    fn watchlist_search_input_id_matches_rendered_input() {
         let _guard = LANG_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let app = build_compass_app(egui::Context::default());
-        let mut harness = sized_harness(app);
-        harness.run_steps(3);
-
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
-        harness.run_steps(3);
+        let mut app = build_compass_app(egui::Context::default());
+        let mut watchlist_action = None;
+        let focus = std::cell::Cell::new(false);
+        let mut harness = egui_kittest::Harness::new_ui({
+            let app = &mut app;
+            let watchlist_action = &mut watchlist_action;
+            let focus = &focus;
+            move |ui| {
+                let desc = EDITOR_REGISTRY
+                    .iter()
+                    .find(|d| d.kind == EditorKind::Watchlist)
+                    .expect("watchlist descriptor must exist");
+                let mut chart_action = None;
+                let mut logger_export_clicked = false;
+                let mut toasts = ToastManager::new(*app.theme.tokens());
+                let mut sidebar_toggle_requested = false;
+                let mut ctx = EditorCtx {
+                    state: &app.shared_state,
+                    theme: &app.theme,
+                    signals: &EditorSignals {
+                        work: &app.work_signal,
+                        screener: &app.run_screener_signal,
+                        sepa: &app.sepa_signal,
+                        index: &app.index_signal,
+                        llm: &app.llm_signal,
+                    },
+                    index_list: &app.index_list,
+                    chart_action: &mut chart_action,
+                    screener_industries: &app.screener_industries,
+                    screener_boards: &app.screener_boards,
+                    logger_export_clicked: &mut logger_export_clicked,
+                    toasts: &mut toasts,
+                    stock_list: &app.stock_list,
+                    watchlist_action,
+                    sidebar_toggle_requested: &mut sidebar_toggle_requested,
+                };
+                // The Ctrl+K shortcut (plan §4.6, migrated) requests this id;
+                // the salt chain must land on the rendered search input.
+                if focus.get() {
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(crate::editor::WatchlistEditor::search_input_id())
+                    });
+                }
+                let mut frame = EditorFrame {
+                    sidebar_visible: false,
+                };
+                frame.show(ui, desc, &mut app.editors.watchlist, &mut ctx);
+            }
+        });
+        harness.run();
+        focus.set(true);
+        harness.step();
 
         let search =
             harness.get_by(|n| n.placeholder() == Some(tr("sidebar.search_placeholder").as_str()));
         assert!(
             search.is_focused(),
-            "Ctrl+K must focus the sidebar search input"
+            "request_focus on WatchlistEditor::search_input_id() must land on the search input"
         );
     }
 
@@ -3419,6 +5180,293 @@ default_timeframe = "1w"
         harness.key_press(egui::Key::Num1);
         harness.step();
         assert_eq!(harness.state().timeframe_index, 0);
+    }
+
+    /// N key (design §8.2): toggles the Chart editor sidebar at the render
+    /// level — the chart-settings titles appear/disappear; a second press
+    /// restores. Seeds from `default_visible = true` (arbitration Q4).
+    #[test]
+    fn n_key_toggles_chart_sidebar_visually() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        // Default-visible (Q4): chart settings sidebar is on screen.
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.title"));
+
+        harness.key_press(egui::Key::N);
+        harness.run_steps(3);
+        // `get_all_by_label` panics on an empty result — the non-panicking
+        // `query_all_by_label` drives an absence assertion.
+        assert!(
+            harness
+                .query_all_by_label(&tr("editor.chart_sidebar.title"))
+                .next()
+                .is_none(),
+            "N must hide the Chart sidebar"
+        );
+
+        harness.key_press(egui::Key::N);
+        harness.run_steps(3);
+        let _ = harness.get_by_label(&tr("editor.chart_sidebar.title"));
+    }
+
+    /// N key no-op path (design §8.2): kinds without a registered Sidebar
+    /// (Sepa/Market/Logger/Watchlist) never touch the visibility map.
+    #[test]
+    fn n_key_noop_for_non_sidebar_kinds() {
+        let app = build_compass_app(egui::Context::default());
+        let mut app = app;
+
+        // Default chart workspace: focused leaf = Chart main leaf
+        // (focus_main_leaf) — a toggle flips the seeded default.
+        assert_eq!(
+            app.focused_editor_kind(),
+            Some(crate::editor::EditorKind::Chart)
+        );
+        app.toggle_sidebar_for_focused_editor();
+        assert!(!app.sidebar_visibility[&crate::editor::EditorKind::Chart]);
+        app.toggle_sidebar_for_focused_editor();
+        assert!(app.sidebar_visibility[&crate::editor::EditorKind::Chart]);
+
+        // Sepa workspace: no Sidebar registered → the map stays untouched.
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert_eq!(
+            app.focused_editor_kind(),
+            Some(crate::editor::EditorKind::Sepa)
+        );
+        app.toggle_sidebar_for_focused_editor();
+        assert!(
+            !app.sidebar_visibility
+                .contains_key(&crate::editor::EditorKind::Sepa),
+            "no-sidebar kinds must be a silent no-op"
+        );
+    }
+
+    /// 1/2/3 timeframe shortcuts are scoped to the Chart workspace (plan
+    /// §7.1): in the Screener workspace the digits do nothing — the
+    /// timeframe index must stay put.
+    /// Ctrl+K target existence (plan §7.1 review 6757f35b P2-2): the gate
+    /// follows the active workspace's dock tree — Chart has the Watchlist
+    /// leaf (Q6), Sepa/Screener do not.
+    #[test]
+    fn watchlist_leaf_open_follows_active_workspace() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut app = app;
+        assert!(
+            app.watchlist_leaf_open(),
+            "Chart workspace must hold the Watchlist leaf (Q6)"
+        );
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert!(
+            !app.watchlist_leaf_open(),
+            "Sepa workspace has no Watchlist leaf"
+        );
+        app.workspaces.switch(crate::editor::WorkspaceId::Chart);
+        assert!(app.watchlist_leaf_open());
+    }
+
+    /// 1/2/3 dual判定 (plan §7.1, review 6757f35b P2-1): inside the Chart
+    /// workspace the digits only act while the Chart editor is the focused
+    /// one — moving egui_dock's dock focus to the Logger leaf (the exact
+    /// state a tab click leaves behind, leaf.rs:577-584) must turn the
+    /// gate off; SEPA workspace is off regardless.
+    #[test]
+    fn chart_editor_active_dual_gate() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut app = app;
+        assert!(app.chart_editor_active());
+
+        // Move the dock focus away from the Chart leaf → gate closes.
+        {
+            let ws = &mut app.workspaces.all[app.workspaces.active];
+            let screen = &mut ws.layouts[ws.active_screen];
+            let tree = screen.dock_state.main_surface_mut();
+            let (node, _) = tree
+                .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Logger))
+                .expect("default chart layout must hold a Logger leaf");
+            tree.set_focused_node(node);
+        }
+        assert_eq!(
+            app.focused_editor_kind(),
+            Some(crate::editor::EditorKind::Logger)
+        );
+        assert!(
+            !app.chart_editor_active(),
+            "Logger-focused digits must no-op (plan §7.1 dual判定)"
+        );
+
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert!(!app.chart_editor_active());
+    }
+
+    /// Fail-soft restore (review 81e84e15 P1-1): a user-valid topology
+    /// may legitimately lack the workspace's main editor kind (tabs are
+    /// closeable by default in egui_dock) — the restore must not panic in
+    /// debug builds; the active-editor gates simply stay off.
+    #[test]
+    fn resolve_restore_without_main_kind_does_not_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let section: crate::LayoutSection = parse_layout_section(
+            r#"[layout]
+active_workspace = "chart"
+dock_version = 2
+
+[[layout.workspaces]]
+active_screen = 0
+dock = '{"root":{"split":{"dir":"vertical","fraction":0.75,"a":{"leaf":{"tabs":["watchlist"]}},"b":{"leaf":{"tabs":["logger"]}}}}}'
+id = "chart"
+
+[[layout.workspaces]]
+active_screen = 0
+dock = '{"root":{"split":{"dir":"vertical","fraction":0.75,"a":{"leaf":{"tabs":["screener"]}},"b":{"leaf":{"tabs":["logger"]}}}}}'
+id = "screener"
+
+[[layout.workspaces]]
+active_screen = 0
+dock = '{"root":{"split":{"dir":"vertical","fraction":0.75,"a":{"leaf":{"tabs":["sepa","market"]}},"b":{"leaf":{"tabs":["logger"]}}}}}'
+id = "sepa"
+"#,
+        );
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        // The chart workspace dropped its Chart tab (valid topology: no
+        // empty leaf, no duplicate kind) — the restore must degrade
+        // silently, not panic on the missing main kind.
+        assert!(!fell_back);
+        // The fixture really restored: the chart workspace holds the
+        // Watchlist + Logger leaves (the Chart tab is the one dropped).
+        assert_eq!(
+            restored.visible_kinds(restored.active),
+            vec![
+                crate::editor::EditorKind::Watchlist,
+                crate::editor::EditorKind::Logger,
+            ],
+            "the no-main-kind fixture must restore its two leaves"
+        );
+        let app = build_compass_app(egui::Context::default());
+        let app = CompassApp {
+            workspaces: restored,
+            ..app
+        };
+        // Gate off (main kind absent) but the app is fully usable.
+        assert!(!app.chart_editor_active());
+    }
+
+    /// Persisted-layout restore regression (review 37c81bfe P1-2):
+    /// `dock_state_from_topology` must re-focus the main editor — the
+    /// rebuild alone leaves egui_dock's focused_node on the last split
+    /// b-side (Logger for the chart layout), which would make 1/2/3
+    /// no-op for users with a saved [layout] section until they click
+    /// the Chart tab.
+    #[test]
+    fn chart_editor_active_after_persisted_layout_restore() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.active_workspace = Some("chart".to_string());
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        assert!(!fell_back);
+        let app = build_compass_app(egui::Context::default());
+        let app = CompassApp {
+            workspaces: restored,
+            ..app
+        };
+        assert!(
+            app.chart_editor_active(),
+            "restored chart layout must re-focus the Chart leaf so 1/2/3 work"
+        );
+        let mut app = app;
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert!(!app.chart_editor_active());
+    }
+
+    /// Screener mouse sidebar entry (design §8.2 double entry; review
+    /// 6757f35b P3-3): the ⋮ menu toggle flips the visibility map — the
+    /// same N-key out-param path the Chart editor uses.
+    #[test]
+    fn screener_menu_sidebar_toggle_flips_visibility() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        harness.get_by_label(&seg_label).click_accesskit();
+        harness.run_steps(3);
+
+        // Two ⋮ exist in the full app: the Topbar "add editor" menu and the
+        // Screener header menu — pick by screen position (the header one
+        // sits below the topbar).
+        let mut dots = harness
+            .query_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .collect::<Vec<_>>();
+        dots.sort_by_key(|n| (n.rect().min.y as i32, n.rect().min.x as i32));
+        // Global-layout assumption (review 81e84e15 P3-1): the Screener
+        // workspace currently renders exactly two ⋮ controls — the topbar
+        // add-editor menu and the Screener header menu. Any third ⋮ from a
+        // future control breaks this test on purpose (update the picker).
+        assert_eq!(
+            dots.len(),
+            2,
+            "the Screener workspace must hold exactly two ⋮ menus (topbar + header)"
+        );
+        dots[1].click_accesskit();
+        harness.run_steps(3);
+        harness
+            .get_by_label(&tr("editor.toggle_sidebar"))
+            .click_accesskit();
+        harness.run_steps(3);
+
+        assert!(
+            !harness.state().sidebar_visibility[&crate::editor::EditorKind::Screener],
+            "Screener sidebar toggle must flip from the seeded default_visible"
+        );
+    }
+
+    #[test]
+    fn digit_keys_noop_outside_chart_workspace() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        harness.get_by_label(&seg_label).click_accesskit();
+        harness.run_steps(3);
+
+        let before = harness.state().timeframe_index;
+        harness.key_press(egui::Key::Num2);
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().timeframe_index,
+            before,
+            "1/2/3 must no-op outside the Chart workspace (plan §7.1)"
+        );
     }
 
     #[test]
@@ -4103,6 +6151,7 @@ default_timeframe = "1w"
                 symbols: vec!["000001".to_string()],
             },
             llm: LlmSection::default(),
+            layout: crate::LayoutSection::default(),
         };
         // The parent of the config path is a regular file → create_dir_all /
         // write must fail.
@@ -5222,20 +7271,15 @@ breakout = { days = 120 }
         }
 
         let mut app = build_compass_app(egui::Context::default());
-        let fetch_zh = format!(
-            "{} {}",
-            egui_phosphor::regular::DOWNLOAD_SIMPLE,
-            tr("toolbar.fetch")
-        );
-        let fetch_en = format!("{} {}", egui_phosphor::regular::DOWNLOAD_SIMPLE, "Fetch");
 
         // Interact via a new_ui harness rendering the toolbar — the same
         // pattern as the theme-dropdown test, where kittest pointer clicks
         // reliably open the Area popup and select an option.
-        // The toolbar spans Groups A–D; the language dropdown (Group D,
-        // rightmost) must fit on-screen for the trigger click to register —
-        // the default 800×600 `new_ui` harness clips it since #232 widened
-        // the Fetch button (min_width 104).
+        // The toolbar spans Groups A + D; the language dropdown (Group D,
+        // rightmost) must fit on-screen for the trigger click to register.
+        // (The Fetch button moved to the chart header in phase 2a, so its
+        // label is no longer a toolbar re-paint witness — the locale assert
+        // below covers the immediate UI re-render contract.)
         let mut harness = egui_kittest::Harness::builder()
             .with_size([1440.0, 900.0])
             .build_ui(|ui| {
@@ -5254,7 +7298,6 @@ breakout = { days = 120 }
             "en",
             "selecting English must switch the process-global locale"
         );
-        let _ = harness.get_by_label(&fetch_en);
 
         let raw = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
         assert!(
@@ -5275,7 +7318,6 @@ breakout = { days = 120 }
             "zh",
             "selecting 中文 must switch the locale back"
         );
-        let _ = harness.get_by_label(&fetch_zh);
 
         if let Some(h) = saved_home {
             unsafe {

@@ -21,6 +21,7 @@ use compass_ui::widgets::empty_state::EmptyState;
 use compass_ui::widgets::segmented::Segmented;
 use compass_ui::widgets::tag::{Tag, TagVariant, tint};
 
+use crate::editor::{EditorCtx, EditorKind, EditorView};
 use crate::messages::{FetchRequest, RunSepaRequest};
 use crate::state::SharedState;
 
@@ -132,7 +133,7 @@ fn factor_note_text(note_key: &'static str, args: &[f64]) -> String {
 
 /// SEPA panel citizen.
 ///
-/// Renders the thermometer bar, the toolbar (count label / TOP-N switch /
+/// Renders the thermometer bar, the header (count label / TOP-N switch /
 /// refresh) and the ranking table next to the per-row detail panel.
 pub struct SepaPanel {
     pub citizen_id: CitizenId,
@@ -163,13 +164,21 @@ impl Citizen for SepaPanel {
 }
 
 impl SepaPanel {
-    /// Create a SEPA panel with the given citizen identity/state.
-    pub fn new(citizen_id: CitizenId, citizen_state: CitizenState, tokens: &ThemeTokens) -> Self {
-        let mut table = DataTable::new(tokens, COLUMNS.to_vec());
+    /// Apply the official default table order — rank column 0 ascending
+    /// (official order) with score columns 3..=8 descending (best first).
+    /// Shared by `new()` and `reset_sort` so the constructor default has a
+    /// single definition (2c review P3-3).
+    fn apply_official_default_sort(table: &mut DataTable) {
         table.set_sort(0, false); // rank ascending = official order
         for col in 3..=8 {
             table.set_descending_default(col, true); // score columns: best first
         }
+    }
+
+    /// Create a SEPA panel with the given citizen identity/state.
+    pub fn new(citizen_id: CitizenId, citizen_state: CitizenState, tokens: &ThemeTokens) -> Self {
+        let mut table = DataTable::new(tokens, COLUMNS.to_vec());
+        Self::apply_official_default_sort(&mut table);
         Self {
             citizen_id,
             citizen_state,
@@ -180,7 +189,10 @@ impl SepaPanel {
         }
     }
 
-    /// Render the panel: thermometer bar + toolbar + results area.
+    /// Render the panel: thermometer bar + header + results area
+    /// (old combined signature — replaced below by `EditorView`, kept as a
+    /// test-only stand-in for the kittest harnesses).
+    #[cfg(test)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -188,16 +200,51 @@ impl SepaPanel {
         sepa_signal: &Signal<RunSepaRequest>,
         work_signal: &Signal<FetchRequest>,
     ) {
-        let data = shared_state.sepa_data.get();
-        ui.vertical(|ui| {
-            self.thermometer_bar(ui, data.as_ref().map(|d| &d.thermometer));
-
-            ui.add_space(self.tokens.spacing.sm);
-            self.toolbar(ui, shared_state, sepa_signal);
-
-            ui.add_space(self.tokens.spacing.md);
-            self.results_area(ui, shared_state, sepa_signal, work_signal, data.as_ref());
-        });
+        // Test-only stand-in for the old combined render (plan §4.3): the
+        // production path now renders header + body through `EditorFrame`;
+        // this keeps the old signature so existing kittest harnesses stay
+        // untouched. The screener/index/llm signals are dummies — SEPA
+        // never fires them (same pattern as 2b screener.rs).
+        let theme = crate::theme::CompassTheme::compass_dark();
+        let (screener_signal, _screener_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunScreenerRequest>();
+        let (index_signal, _index_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunIndexSnapshotRequest>();
+        let (llm_signal, _llm_slot) =
+            egui_mobius::factory::create_signal_slot::<crate::messages::RunLlmRequest>();
+        let mut chart_action = None;
+        let mut logger_export_clicked = false;
+        let mut toasts = compass_ui::widgets::toast::ToastManager::new(*theme.tokens());
+        let mut watchlist_action = None;
+        let mut sidebar_toggle_requested = false;
+        let mut ctx = EditorCtx {
+            state: shared_state,
+            theme: &theme,
+            signals: &crate::editor::EditorSignals {
+                work: work_signal,
+                screener: &screener_signal,
+                sepa: sepa_signal,
+                index: &index_signal,
+                llm: &llm_signal,
+            },
+            index_list: &[],
+            chart_action: &mut chart_action,
+            screener_industries: &[],
+            screener_boards: &[],
+            logger_export_clicked: &mut logger_export_clicked,
+            toasts: &mut toasts,
+            stock_list: &[],
+            watchlist_action: &mut watchlist_action,
+            sidebar_toggle_requested: &mut sidebar_toggle_requested,
+        };
+        let mut frame = crate::editor::EditorFrame {
+            sidebar_visible: false,
+        };
+        let desc = crate::editor::EDITOR_REGISTRY
+            .iter()
+            .find(|d| d.kind == EditorKind::Sepa)
+            .expect("sepa descriptor must exist in EDITOR_REGISTRY");
+        frame.show(ui, desc, self, &mut ctx);
     }
 
     /// Market thermometer strip (design §4): icon + score + position tag +
@@ -296,16 +343,19 @@ impl SepaPanel {
                 });
             });
     }
+}
 
-    /// Toolbar: count label + TOP-N segmented + refresh button (design §5).
-    fn toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        shared_state: &SharedState,
-        sepa_signal: &Signal<RunSepaRequest>,
-    ) {
+impl EditorView for SepaPanel {
+    fn kind(&self) -> EditorKind {
+        EditorKind::Sepa
+    }
+
+    /// Header: count label + TOP-N segmented + refresh button (design §6
+    /// SEPA 行) — the ② toolbar upgrades in place, right-aligned.
+    fn header(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
         let tokens = self.tokens;
         let c = &tokens.color;
+        let shared_state = ctx.state;
         let loading = shared_state.sepa_loading.get();
         let count_text = match shared_state.sepa_data.get() {
             Some(data) => {
@@ -321,6 +371,24 @@ impl SepaPanel {
                     .color(c.text_secondary),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Right-most: the ⋮ menu (design §6 SEPA 行) — the only
+                // action is "reset sort" (2c designer ruling): header-click
+                // sorting persists across frames, so re-establishing the
+                // documented official order (rank asc) needs an explicit
+                // entry point. Not a fabricated item — the target state is
+                // defined by `new()` and the APIs are idempotent.
+                ui.menu_button(
+                    egui::RichText::new(egui_phosphor::regular::DOTS_THREE_VERTICAL),
+                    |ui| {
+                        if ui
+                            .button(compass_i18n::t!("editor.sepa_header.reset_sort"))
+                            .clicked()
+                        {
+                            self.reset_sort();
+                            ui.close();
+                        }
+                    },
+                );
                 if Button::new(
                     &tokens,
                     if loading {
@@ -337,7 +405,7 @@ impl SepaPanel {
                 .show(ui)
                 .clicked()
                 {
-                    self.trigger_refresh(shared_state, sepa_signal);
+                    self.trigger_refresh(shared_state, ctx.signals.sepa);
                 }
                 ui.add_space(tokens.spacing.md);
                 if let Some(idx) = Segmented::new(&tokens, ["TOP 50", "TOP 30"])
@@ -348,6 +416,38 @@ impl SepaPanel {
                 }
             });
         });
+    }
+
+    /// Body: thermometer card → 12-column ranking table → detail panel
+    /// (the 280px detail panel stays an in-body right pane, plan §4.3 /
+    /// design §6 — no sidebar registered, so the N key has no effect).
+    fn body(&mut self, ui: &mut egui::Ui, ctx: &mut EditorCtx<'_>) {
+        let shared_state = ctx.state;
+        let data = shared_state.sepa_data.get();
+        ui.vertical(|ui| {
+            self.thermometer_bar(ui, data.as_ref().map(|d| &d.thermometer));
+
+            ui.add_space(self.tokens.spacing.md);
+            self.results_area(
+                ui,
+                shared_state,
+                ctx.signals.sepa,
+                ctx.signals.work,
+                data.as_ref(),
+            );
+        });
+    }
+}
+
+impl SepaPanel {
+    /// Restore the documented default ranking order (design §6 / 2c ⋮ ruling):
+    /// rank column 0 ascending (official order) plus the score columns
+    /// 3..=8 marked descending-by-default; this repeats the initialization in
+    /// `new()` and is idempotent. Header-click sorting (DataTable::toggle_sort)
+    /// mutates only the live sort state, so this is the explicit re-entry
+    /// point after the user reordered the table.
+    fn reset_sort(&mut self) {
+        Self::apply_official_default_sort(&mut self.table);
     }
 
     /// Set loading, clear the error and dispatch a `RunSepaRequest`; on a
@@ -890,8 +990,8 @@ mod tests {
             panel.show(ui, &shared, &sepa_signal, &work_signal);
         });
         harness.fit_contents();
-        // "刷新" appears both in the toolbar and in the empty-state action;
-        // the toolbar renders first — click that one.
+        // "刷新" appears both in the header and in the empty-state action;
+        // the header renders first — click that one.
         let refresh_label = tr("sepa.refresh");
         let btn = harness
             .query_all_by_label_contains(&refresh_label)
@@ -952,7 +1052,7 @@ mod tests {
         harness.fit_contents();
         harness.step();
 
-        // The date suffix makes the toolbar label unique — the table renders
+        // The date suffix makes the header label unique — the table renders
         // its own "共 2 行" counter too.
         let _ = harness.get_by_label_contains(&compass_i18n::t!(
             "sepa.count",
@@ -1276,6 +1376,74 @@ mod tests {
         assert_eq!(COLUMNS[11].header, "sepa.table.change");
     }
 
+    /// The ⋮ reset-sort menu action (design §6 SEPA 行 / 2c designer ruling)
+    /// restores the constructor's documented default: rank column 0 ascending
+    /// (official order) — covering the state a user reaches via header clicks.
+    #[test]
+    fn reset_sort_restores_official_default_order() {
+        let (mut panel, _) = panel();
+        // Equivalent to a header click on column 3 (toggle_sort is private;
+        // set_sort constructs the same live state — 3 is inside the
+        // descending-by-default score range).
+        panel.table.set_sort(3, true);
+        assert_eq!(panel.table.sort_column(), 3);
+        assert!(panel.table.sort_descending());
+        panel.reset_sort();
+        assert_eq!(
+            panel.table.sort_column(),
+            0,
+            "reset-sort must return to the rank column (official order)"
+        );
+        assert!(
+            !panel.table.sort_descending(),
+            "reset-sort must restore rank ascending"
+        );
+    }
+
+    /// End-to-end wiring (2c review P2-1): clicking ⋮ → reset-sort through
+    /// the real menu must invoke `reset_sort` — proving the menu action is
+    /// actually bound to the state restoration (the unit test above only
+    /// proves the method itself; this one proves the click path).
+    #[test]
+    fn reset_sort_menu_action_restores_order_via_ui() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        compass_i18n::set_locale("zh");
+        let (mut panel, shared) = panel();
+        shared.sepa_data.set(Some(keyed_sample_data()));
+        shared.sepa_loading.set(false);
+        let (sepa_signal, work_signal) = signals();
+        // Disturb the order first, as a user would via header clicks
+        // (toggle_sort is private; set_sort constructs the equivalent state).
+        panel.table.set_sort(3, true);
+        assert_eq!(panel.table.sort_column(), 3);
+
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            panel.show(ui, &shared, &sepa_signal, &work_signal);
+        });
+        harness.fit_contents();
+        harness.step();
+        harness
+            .get_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .click();
+        harness.run();
+        let reset_sort_label = compass_i18n::t!("editor.sepa_header.reset_sort");
+        harness.get_by_label(reset_sort_label.as_ref()).click();
+        harness.run();
+        drop(harness);
+        assert_eq!(
+            panel.table.sort_column(),
+            0,
+            "⋮ reset-sort click must return to the rank column (official order)"
+        );
+        assert!(
+            !panel.table.sort_descending(),
+            "⋮ reset-sort click must restore rank ascending"
+        );
+        compass_i18n::set_locale("zh");
+    }
+
     fn keyed_sample_data() -> SepaData {
         SepaData {
             rows: vec![],
@@ -1424,7 +1592,6 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         compass_i18n::set_locale("zh");
-        let map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let row = row_with_industry("", None);
         let cells = SepaPanel::row_cells(&row);
         assert!(
