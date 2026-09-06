@@ -900,7 +900,18 @@ fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bo
                         fell_back = true;
                         id_default()
                     } else {
-                        dock_state_from_topology(&topo)
+                        let mut d = dock_state_from_topology(&topo);
+                        // The rebuild leaves egui_dock's focused_node on
+                        // the last split's b-side (Logger for the chart
+                        // layout, tree/mod.rs:534) — re-focus this
+                        // workspace's main editor so the phase-5 "active
+                        // editor" gates (1/2/3, design §7.1) work right
+                        // after a restore (review 37c81bfe P1-2).
+                        crate::editor::focus_main_leaf(
+                            d.main_surface_mut(),
+                            id.default_editor_kind(),
+                        );
+                        d
                     }
                 }
                 Err(e) => {
@@ -1568,6 +1579,10 @@ impl CompassApp {
     /// Ctrl+K target existence (plan §7.1): the watchlist search input
     /// only exists while the active workspace's dock tree holds a
     /// Watchlist leaf — workspaces without one must no-op (no ghost focus).
+    /// Known residual (review 37c81bfe P3-3): a leaf containing Watchlist
+    /// plus another tab (via add-editor) still gate-checks open even when
+    /// Watchlist is not the active tab — the request_focus then targets an
+    /// id that is not rendered this frame, which is a harmless no-op.
     fn watchlist_leaf_open(&self) -> bool {
         self.workspaces
             .visible_kinds(self.workspaces.active)
@@ -2731,6 +2746,12 @@ default_timeframe = "1w"
         let mut harness = sized_harness(app);
         harness.run_steps(3);
 
+        // Opt this persistence assertion back into save_layout_config —
+        // the cfg(test) fence is off by default (review 37c81bfe P1-3).
+        unsafe {
+            std::env::set_var("COMPASS_TEST_PERSIST_LAYOUT", "1");
+        }
+
         let seg_label = format!(
             "{} {}",
             egui_phosphor::regular::FUNNEL_SIMPLE,
@@ -2738,6 +2759,10 @@ default_timeframe = "1w"
         );
         harness.get_by_label(&seg_label).click_accesskit();
         harness.run_steps(3);
+
+        unsafe {
+            std::env::remove_var("COMPASS_TEST_PERSIST_LAYOUT");
+        }
 
         let config_text = std::fs::read_to_string(tmp.path().join(".config/compass/config.toml"))
             .expect("switch must create the config file");
@@ -5265,6 +5290,36 @@ default_timeframe = "1w"
         assert!(!app.chart_editor_active());
     }
 
+    /// Persisted-layout restore regression (review 37c81bfe P1-2):
+    /// `dock_state_from_topology` must re-focus the main editor — the
+    /// rebuild alone leaves egui_dock's focused_node on the last split
+    /// b-side (Logger for the chart layout), which would make 1/2/3
+    /// no-op for users with a saved [layout] section until they click
+    /// the Chart tab.
+    #[test]
+    fn chart_editor_active_after_persisted_layout_restore() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut section =
+            parse_layout_section(&todays_layout_toml(&crate::editor::Workspaces::default()));
+        section.active_workspace = Some("chart".to_string());
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        assert!(!fell_back);
+        let app = build_compass_app(egui::Context::default());
+        let app = CompassApp {
+            workspaces: restored,
+            ..app
+        };
+        assert!(
+            app.chart_editor_active(),
+            "restored chart layout must re-focus the Chart leaf so 1/2/3 work"
+        );
+        let mut app = app;
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert!(!app.chart_editor_active());
+    }
+
     /// Screener mouse sidebar entry (design §8.2 double entry; review
     /// 6757f35b P3-3): the ⋮ menu toggle flips the visibility map — the
     /// same N-key out-param path the Chart editor uses.
@@ -5292,7 +5347,11 @@ default_timeframe = "1w"
             .query_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .collect::<Vec<_>>();
         dots.sort_by_key(|n| (n.rect().min.y as i32, n.rect().min.x as i32));
-        assert!(dots.len() >= 2, "expected the topbar and header ⋮ menus");
+        assert_eq!(
+            dots.len(),
+            2,
+            "the Screener workspace must hold exactly two ⋮ menus (topbar + header)"
+        );
         dots[1].click_accesskit();
         harness.run_steps(3);
         harness

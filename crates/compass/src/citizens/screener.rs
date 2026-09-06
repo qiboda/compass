@@ -244,6 +244,7 @@ impl EditorView for ScreenerPanel {
                             self.reset_sort();
                             ui.close();
                         }
+                        ui.separator();
                         // Sidebar visibility mouse entry (design §8.2, N-key
                         // twin): the same out-param the Chart editor uses —
                         // tabs.rs flips it after the frame.

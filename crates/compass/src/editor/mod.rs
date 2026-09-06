@@ -239,6 +239,18 @@ impl WorkspaceId {
         }
     }
 
+    /// The main editor kind of this workspace's default layout — the
+    /// restore-side counterpart of `default_layout`'s `focus_main_leaf`
+    /// choice (review 37c81bfe P1-2): each workspace re-focuses its own
+    /// editor after a persisted-layout rebuild.
+    pub fn default_editor_kind(&self) -> EditorKind {
+        match self {
+            Self::Chart => EditorKind::Chart,
+            Self::Screener => EditorKind::Screener,
+            Self::Sepa => EditorKind::Sepa,
+        }
+    }
+
     /// Stable config string (`[layout] active_workspace` / `[[layout.
     /// workspaces]] id`, design §9.1) — matches the serde snake_case names.
     pub fn as_str(&self) -> &'static str {
@@ -407,7 +419,7 @@ impl Workspaces {
 /// is the bottom Logger leaf, so the add-editor menu (`push_to_focused_leaf`)
 /// would drop new editors into the logger pane until the user clicks a tab
 /// title. Direct focus back to the main editor leaf (review 26b1a84c P2-1).
-fn focus_main_leaf(tree: &mut egui_dock::Tree<Tab>, kind: EditorKind) {
+pub(crate) fn focus_main_leaf(tree: &mut egui_dock::Tree<Tab>, kind: EditorKind) {
     if let Some((node, _)) = tree.find_tab(&Tab::new(kind)) {
         tree.set_focused_node(node);
     } else {
@@ -576,6 +588,12 @@ fn extract_node(
 pub fn dock_state_from_topology(topo: &DockTopology) -> DockState<Tab> {
     let mut dock = DockState::new(Vec::new());
     grow_node(&mut dock, egui_dock::NodeIndex::root(), &topo.root);
+    // No focus fix here: the rebuild leaves egui_dock's focused_node on
+    // the last split's b-side (tree/mod.rs:534), and the "main editor"
+    // kind is a semantic choice the caller owns (it knows the workspace
+    // id; the first pre-order leaf of the chart layout is the Watchlist,
+    // not the Chart). `resolve_workspaces` re-focuses per workspace id
+    // after this call (review 37c81bfe P1-2).
     dock
 }
 
