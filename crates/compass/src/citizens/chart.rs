@@ -253,7 +253,11 @@ impl ChartCitizen {
                 // Design §8.2 mouse entry: a toggle request the owner
                 // (TabViewer) applies to the per-kind sidebar map after
                 // the frame — the same map the N key writes.
-                if ui.button(t!("editor.toggle_sidebar")).clicked() {
+                if ui
+                    .button(t!("editor.toggle_sidebar"))
+                    .on_hover_text(t!("editor.toggle_sidebar"))
+                    .clicked()
+                {
                     *ctx.sidebar_toggle_requested = true;
                     ui.close();
                 }

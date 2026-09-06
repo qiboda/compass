@@ -152,7 +152,13 @@ pub(crate) fn build_compass_app_with_timeframe(
 }
 
 pub(crate) fn build_compass_app(egui_ctx: egui::Context) -> CompassApp {
-    build_compass_app_with_timeframe(egui_ctx, "1d")
+    let mut app = build_compass_app_with_timeframe(egui_ctx, "1d");
+    // Test builders must mirror the production constructor (main.rs:155):
+    // `layout_fp` pre-seeded with the initial fingerprint, otherwise the
+    // first harness frame sees None != Some(...) and writes `[layout]` into
+    // the real ~/.config/compass/config.toml (review 6757f35b P1-1).
+    app.layout_fp = crate::layout_fingerprint(&app.workspaces);
+    app
 }
 
 pub(crate) fn build_compass_app_with_stocks(

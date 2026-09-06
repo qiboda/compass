@@ -244,6 +244,17 @@ impl EditorView for ScreenerPanel {
                             self.reset_sort();
                             ui.close();
                         }
+                        // Sidebar visibility mouse entry (design §8.2, N-key
+                        // twin): the same out-param the Chart editor uses —
+                        // tabs.rs flips it after the frame.
+                        if ui
+                            .button(compass_i18n::t!("editor.toggle_sidebar"))
+                            .on_hover_text(compass_i18n::t!("editor.toggle_sidebar"))
+                            .clicked()
+                        {
+                            *ctx.sidebar_toggle_requested = true;
+                            ui.close();
+                        }
                         if ui
                             .button(compass_i18n::t!("editor.screener_header.clear_results"))
                             .clicked()

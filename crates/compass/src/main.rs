@@ -1012,7 +1012,7 @@ fn save_layout_config(workspaces: &crate::editor::Workspaces) -> Result<(), Stri
 /// (the plan's `DockStateChange` was a pre-0.21 assumption; A1 correction),
 /// so a frame-end string compare detects edits (drag/close/move). The
 /// serialization is topology-only and tiny.
-fn layout_fingerprint(workspaces: &crate::editor::Workspaces) -> Option<String> {
+pub(crate) fn layout_fingerprint(workspaces: &crate::editor::Workspaces) -> Option<String> {
     let active = workspaces.all.get(workspaces.active)?;
     let screen = active.layouts.get(active.active_screen)?;
     crate::editor::extract_topology(&screen.dock_state)
@@ -1484,7 +1484,7 @@ impl CompassApp {
         if ctrl_enter {
             self.fetch_bars();
         }
-        if ctrl_k {
+        if ctrl_k && self.watchlist_leaf_open() {
             ui.ctx()
                 .memory_mut(|m| m.request_focus(crate::editor::WatchlistEditor::search_input_id()));
         }
@@ -1494,15 +1494,14 @@ impl CompassApp {
         if n_pressed {
             self.toggle_sidebar_for_focused_editor();
         }
-        // 1/2/3 (timeframe) is scoped to the Chart workspace (plan §7.1):
-        // in Screener/SEPA the digits do nothing (their meaning is
-        // workspace-specific; the design §7.1 上下文隔离 contract).
-        let chart_workspace_active = self
-            .workspaces
-            .all
-            .get(self.workspaces.active)
-            .is_some_and(|w| w.id == crate::editor::WorkspaceId::Chart);
-        if chart_workspace_active {
+        // 1/2/3 (timeframe) is scoped to the Chart workspace AND the Chart
+        // editor being the focused one (plan §7.1 双判定): in Screener/SEPA
+        // the digits do nothing, and inside the Chart workspace clicking
+        // the Logger/Watchlist tab (focused leaf left Chart) also no-ops —
+        // egui_dock moves `new_focused` on every tab click
+        // (leaf.rs:577-584), so the focused kind is the authoritative
+        // "which editor is active" answer.
+        if self.chart_editor_active() {
             if num1 {
                 self.set_timeframe(0);
             }
@@ -1552,6 +1551,27 @@ impl CompassApp {
             return Some(tab.kind());
         }
         self.last_interacted_kind
+    }
+
+    /// Dual gate for the 1/2/3 timeframe shortcuts (plan §7.1): they apply
+    /// only in the Chart workspace AND while the Chart editor is the
+    /// focused one — `focused_editor_kind()` follows egui_dock's focused
+    /// leaf, which moves on every tab click (leaf.rs:577-584).
+    fn chart_editor_active(&self) -> bool {
+        self.workspaces
+            .all
+            .get(self.workspaces.active)
+            .is_some_and(|w| w.id == crate::editor::WorkspaceId::Chart)
+            && self.focused_editor_kind() == Some(crate::editor::EditorKind::Chart)
+    }
+
+    /// Ctrl+K target existence (plan §7.1): the watchlist search input
+    /// only exists while the active workspace's dock tree holds a
+    /// Watchlist leaf — workspaces without one must no-op (no ghost focus).
+    fn watchlist_leaf_open(&self) -> bool {
+        self.workspaces
+            .visible_kinds(self.workspaces.active)
+            .contains(&crate::editor::EditorKind::Watchlist)
     }
 
     fn set_timeframe(&mut self, idx: usize) {
@@ -4088,6 +4108,8 @@ default_timeframe = "1w"
             egui_kittest::Harness::new_eframe(|cc| build_compass_app(cc.egui_ctx.clone()));
 
         harness.step();
+        harness.step();
+        harness.step();
     }
 
     // ======================================================================
@@ -4653,6 +4675,7 @@ default_timeframe = "1w"
         assert!(harness.state().modal.is_open());
         harness.get_by_label(&tr("modal.remove.confirm")).click();
         harness.step();
+        harness.step();
 
         assert!(
             harness.state().shared_state.watchlist.get().is_empty(),
@@ -5182,6 +5205,107 @@ default_timeframe = "1w"
     /// 1/2/3 timeframe shortcuts are scoped to the Chart workspace (plan
     /// §7.1): in the Screener workspace the digits do nothing — the
     /// timeframe index must stay put.
+    /// Ctrl+K target existence (plan §7.1 review 6757f35b P2-2): the gate
+    /// follows the active workspace's dock tree — Chart has the Watchlist
+    /// leaf (Q6), Sepa/Screener do not.
+    #[test]
+    fn watchlist_leaf_open_follows_active_workspace() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut app = app;
+        assert!(
+            app.watchlist_leaf_open(),
+            "Chart workspace must hold the Watchlist leaf (Q6)"
+        );
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert!(
+            !app.watchlist_leaf_open(),
+            "Sepa workspace has no Watchlist leaf"
+        );
+        app.workspaces.switch(crate::editor::WorkspaceId::Chart);
+        assert!(app.watchlist_leaf_open());
+    }
+
+    /// 1/2/3 dual判定 (plan §7.1, review 6757f35b P2-1): inside the Chart
+    /// workspace the digits only act while the Chart editor is the focused
+    /// one — moving egui_dock's dock focus to the Logger leaf (the exact
+    /// state a tab click leaves behind, leaf.rs:577-584) must turn the
+    /// gate off; SEPA workspace is off regardless.
+    #[test]
+    fn chart_editor_active_dual_gate() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut app = app;
+        assert!(app.chart_editor_active());
+
+        // Move the dock focus away from the Chart leaf → gate closes.
+        {
+            let ws = &mut app.workspaces.all[app.workspaces.active];
+            let screen = &mut ws.layouts[ws.active_screen];
+            let tree = screen.dock_state.main_surface_mut();
+            let (node, _) = tree
+                .find_tab(&crate::tabs::Tab::new(crate::editor::EditorKind::Logger))
+                .expect("default chart layout must hold a Logger leaf");
+            tree.set_focused_node(node);
+        }
+        assert_eq!(
+            app.focused_editor_kind(),
+            Some(crate::editor::EditorKind::Logger)
+        );
+        assert!(
+            !app.chart_editor_active(),
+            "Logger-focused digits must no-op (plan §7.1 dual判定)"
+        );
+
+        app.workspaces.switch(crate::editor::WorkspaceId::Sepa);
+        assert!(!app.chart_editor_active());
+    }
+
+    /// Screener mouse sidebar entry (design §8.2 double entry; review
+    /// 6757f35b P3-3): the ⋮ menu toggle flips the visibility map — the
+    /// same N-key out-param path the Chart editor uses.
+    #[test]
+    fn screener_menu_sidebar_toggle_flips_visibility() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app = build_compass_app(egui::Context::default());
+        let mut harness = sized_harness(app);
+        harness.run_steps(3);
+
+        let seg_label = format!(
+            "{} {}",
+            egui_phosphor::regular::FUNNEL_SIMPLE,
+            tr("workspace.screener")
+        );
+        harness.get_by_label(&seg_label).click_accesskit();
+        harness.run_steps(3);
+
+        // Two ⋮ exist in the full app: the Topbar "add editor" menu and the
+        // Screener header menu — pick by screen position (the header one
+        // sits below the topbar).
+        let mut dots = harness
+            .query_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
+            .collect::<Vec<_>>();
+        dots.sort_by_key(|n| (n.rect().min.y as i32, n.rect().min.x as i32));
+        assert!(dots.len() >= 2, "expected the topbar and header ⋮ menus");
+        dots[1].click_accesskit();
+        harness.run_steps(3);
+        harness
+            .get_by_label(&tr("editor.toggle_sidebar"))
+            .click_accesskit();
+        harness.run_steps(3);
+
+        assert!(
+            !harness.state().sidebar_visibility[&crate::editor::EditorKind::Screener],
+            "Screener sidebar toggle must flip from the seeded default_visible"
+        );
+    }
+
     #[test]
     fn digit_keys_noop_outside_chart_workspace() {
         let _guard = LANG_LOCK
