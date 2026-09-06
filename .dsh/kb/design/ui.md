@@ -70,60 +70,181 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
 颜色全部由 `compass-ui` 的 `ColorTokens` 预设派生（`tokens/color.rs`），
 经 `CompassTheme::apply_theme` 映射到 `egui::Visuals`，UI 代码不硬编码。
 
-## 布局结构
+## 布局结构（Blender 式编辑器架构，#357）
+
+### 五层架构
 
 ```
-┌─ 工具栏 (40px, Toolbar 组件)：[标的] [周期 1d|1w|1M 复权▾] | [操作 Fetch] | [显示 侧栏/主题/语言] ┐
-├──────────┬──────────────────────────────────────────────────────────────┤
-│ Sidebar  │  DockArea（egui_dock，可拖拽/关/开标签页）                      │
-│ 240px    │  顶层 leaf：图表 | 大盘 | 东方SEPA；底层 leaf：日志 | 选股器      │
-│ 自选/搜索 │  （中文标题 + Phosphor 图标）                                   │
-├──────────┴──────────────────────────────────────────────────────────────┤
-│ StatusBar (26px)：标的摘要(mono 涨跌) │ 加载/错误状态 │ 数据源 · 时钟        │
-└─────────────────────────────────────────────────────────────────────────┘
-浮层：Toast 通知（右上角）/ Modal 遮罩（全屏）—— 渲染于三栏之上
+Application（进程级：CompassApp + 主题/语言/配置/时钟）
+├─ global area ①：Topbar（40px，Panel::top — workspace 切换 + 标的选择器 +
+│                   ⋮ 添加编辑器 + 主题/语言；不随 workspace 切换重建）
+├─ global area ②：StatusBar（26px，Panel::bottom — 标的摘要/状态/数据源·时钟）
+└─ Workspace（任务域，顶部切换，v1 共 3 个）
+   └─ Screen（DockState 树 = bScreen 顶点图；v1 每 workspace 恰 1 屏，Vec 预留）
+      ├─ Area（egui_dock leaf：一个 tab 容器 + active tab）
+      │  └─ Editor（编辑器实例：EditorKind + EditorView + 实例状态）
+      └─ …（多个 area 以 split 树组合）
 ```
 
-- **工具栏**：`compass-ui::widgets::Toolbar` 组件（40px），逻辑四组：
-  **标的**（`SearchableDropdown`，Symbol 搜索）/ **周期**（`Segmented` 1d|1w|1M）/
-  **操作**（`Button(Primary)` Fetch，loading 禁用+spinner）/ **显示**（侧栏切换
-  `IconButton` + 主题 `Dropdown` + 语言 `Dropdown`）；组间强分隔线 + 16px 间距（ref #130）
-- **Sidebar**：`SidePanel::left` 240px（resizable 200–320），自选股分组列表
-  （名称 + mono 代码 + 交易所标签），行点击切图表、hover 删除（Modal 确认）、
-  顶部搜索 + 添加按钮；watchlist 持久化到 `[watchlist]` 配置节（ref #131）
-- **Dock 区**：egui_dock `DockState` + `compass-ui::dock_style()` 深度定制
-  （tab 栏 28px、**仅 focused 面板 tab 高亮**（accent 文字 + accent 描边）、
-  非 focused tab 平静（text_primary/secondary、无描边）——因每 leaf 单 tab
-  结构下所有 tab 都是 active，靠 focused 区分当前面板；
-  `hline_below_active_tab_name`、separator 三色），
+| Blender 概念 | Compass 对应物 | 说明 |
+|---|---|---|
+| Application | `CompassApp`（eframe::App）+ 应用级状态容器 | 进程级单例；不引入窗口级侧栏/工具条（global areas 只有 topbar/statusbar） |
+| global areas | Topbar（40px）+ StatusBar（26px） | 独立于 Screen/DockState 渲染，不随 workspace 切换重建 |
+| WorkSpace | `Workspace { id, layouts, active_screen }` | 差异：Blender 多 screen，v1 每 workspace 恰 1 屏（`Vec` 预留多屏） |
+| bScreen | `ScreenLayout { dock_state: DockState<Tab> }` | `DockState` 树 = bScreen 矩形分割顶点图；无浮窗/多窗口 |
+| ScrArea | egui_dock leaf + active tab | leaf = 矩形 tab 容器；active tab = 当前 SpaceType |
+| SpaceType | `EditorDescriptor` 静态注册表（`EDITOR_REGISTRY: [EditorDescriptor; 6]`） | name/id/布局角色（layout）/标题/图标；`convert()` 由「每 Kind 单实例全局容器」近似承担 |
+| SpaceData | 编辑器实例结构体（ChartCitizen/ScreenerPanel/SepaPanel/MarketPanel/LoggerPanel/WatchlistEditor） | 每 Kind 单实例（现状），非「每 area 一实例」；`EditorInstances::get_mut` 单点分发为多实例预留升级缝 |
+| ARegion | `EditorLayout` 三槽位：Header（必备 32px）/ Sidebar / Toolbar（可选） | Header 恒顶部；Blender region 是 area 内绝对矩形 vs Compass 用 egui 布局流 |
+| keymap + operator | 集中式 `ShortcutRouter`（ctx.input 轮询 + 焦点守卫 + 活跃编辑器判定） | egui 无全局按键监听，用「集中路由 + 上下文判定」近似（见「N 键语义」） |
+
+### 全局 chrome（两个 global area）
+
+**Topbar（40px，`Panel::top`）**——现状全局 `Toolbar` 重构后（原「工具栏」四组
+中的标的/周期/操作归位各编辑器，仅全局职责残留于此）：
+
+```
+┌──────────────────────────────┬──────────────────────────────────────────────────┐
+│ [图表|选股|SEPA 复盘](workspace)│ [标的选择器 ▾] │ [⋮ 添加编辑器] │ [主题] [语言]    │
+└──────────────────────────────┴──────────────────────────────────────────────────┘
+ 左：workspace 切换 Segmented（3 段，图标+键名：CHART_LINE 图表 / FUNNEL_SIMPLE 选股 / GAUGE SEPA 复盘）
+ 中：标的选择器（SearchableDropdown，stock+index 合并列表 = 现状 picker_list）
+ 右：⋮ 添加编辑器（下拉列出注册表 EditorKind 中当前未在屏的，重建已关闭 tab）
+ 最右：主题 Dropdown + 语言 Dropdown（从现状 Group D 迁入，行为/持久化不变）
+```
+
+**StatusBar（26px，`Panel::bottom`）**——纯信息角色，不变：左段标的摘要
+（mono 价格 + 涨跌幅红涨绿跌）/ 中段状态点（StatusDot：loading 脉冲/error 红点）/
+右段数据源信息 + 本地时钟（每秒刷新）（ref #130）。**不放主题/语言**（Q2 定案，
+Topbar 最右段）；workspace 名 caption 推荐省略（摘要已含标的信息），未确认。
+
+### 三个内置 Workspace
+
+| Workspace | 编辑器组成 | 布局形态 |
+|---|---|---|
+| **图表**（默认） | Watchlist + Chart + Logger | Watchlist 左侧独立 dock leaf tab + Chart 主 leaf + Logger 底部 leaf |
+| **选股** | Screener + Logger | Screener 主（Sidebar = 条件构建器）+ Logger 底部 leaf |
+| **SEPA 复盘** | Sepa + Market + Logger | [Sepa, Market] 同叶两 tab + Logger 底部 leaf |
+
+**图表（默认，`WorkspaceId::Chart`）**：
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Topbar(40px): [图表|选股|SEPA 复盘]│ [标的选择器] │ [⋮] [主题] [语言]        │
+├──────────────┬───────────────────────────────────────────────────────────┤
+│ 自选股        │ [图表]                                                        │
+│ Watchlist    │  header: [1d|1w|1M][复权▾]│[MA/BOLL▾ 指标]       [Fetch]│[⋮]  │
+│ (搜索+添加)   │  body:    K 线主区（空态 EmptyState 引导）                     │
+│ 左侧 leaf tab│  sidebar(右侧, N 键): 指标参数(MA/BOLL) + 图层设置             │
+│ (宽度随 dock) │                                                               │
+├──────────────┴───────────────────────────────────────────────────────────┤
+│ [日志]                                                                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ StatusBar(26px): 标的摘要 | 状态 | 数据源 · 时钟                              │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- Watchlist / Chart 为同一 DockState 树中左、主两 leaf（构造 = `split_left(root, 0.25, [Watchlist])`，
+  egui_dock fraction = **首子（左/上）份额**，0.25 即 Watchlist 25% / Chart 75%）；Logger 底部 leaf。
+  三处均可被用户拖动重排/关闭；**关闭后经 Topbar `⋮ 添加编辑器` 重新打开**（v1 便捷入口，Blender 的 Add Editor 菜单类比）。
+- Watchlist **宽度不设硬编码默认值**（Q6 定案）：由 dock split 比例 + 用户拖拽 + 持久化决定；非 Sidebar、不注册 N 键。
+- 关闭/重排即写入持久化（见「布局持久化」）；editor 实例状态全局共享，切换/重开无状态丢失。
+
+**选股（`WorkspaceId::Screener`）**：
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Topbar(40px)                                                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│ [选股器]                                                                    │
+│  header: [共 N 只] · [运行…状态 chip]                    [⋮]               │
+│  ┌───────────┬─────────────────────────────────────────────────────────┐ │
+│  │ sidebar   │ 结果 DataTable（6 列；默认市值降序；行点击联动图表）        │ │
+│  │ 条件构建器 │                                                          │ │
+│  │ (N 键,    │                                                          │ │
+│  │  500px)   │                                                          │ │
+│  │ 根组卡片   │                                                          │ │
+│  │ +11 类    │                                                          │ │
+│  │ +子分组    │                                                          │ │
+│  │ [运行/清空]│                                                          │ │
+│  └───────────┴─────────────────────────────────────────────────────────┘ │
+├──────────────────────────────────────────────────────────────────────────┤
+│ [日志]                                                                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ StatusBar                                                                    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**SEPA 复盘（`WorkspaceId::Sepa`）**：
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Topbar(40px)                                                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│ [东方SEPA] [大盘]                                                            │
+│  header: [共 N 行 · 日期] [TOP 50|30] [刷新]           [⋮]                │
+│  body:   ① 市场温度计 Card → ② 12 列表格 → ③ 详情面板 280px（body 内嵌，   │
+│          非 Sidebar——不注册 N 键）                                          │
+│  大盘 tab:header: [共 N 个 · 日期] [行业板块|官方指数] [刷新]   [⋮]         │
+│          body: ① 核心指数 Card → ② 板块/指数列表                             │
+├──────────────────────────────────────────────────────────────────────────┤
+│ [日志]                                                                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ StatusBar                                                                    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- 主 leaf 内 [东方SEPA | 大盘] 两 tab 互切（egui_dock tab 语义）；SEPA 筛选/TOP-N 截断/选中行、
+  Market 段选择的本地副本策略不变（SEPA `rows.clone().truncate(top_n)` 先例——**绝不回写 shared_state**）。
+
+### 编辑器库存清单（Editor 注册表）
+
+| Editor | Header 结构（编辑器切换器位置 + 控件） | Sidebar | Toolbar |
+|---|---|---|---|
+| **Chart** | 切换器 = dock tab 栏（`[图表]`，Blender header type-switcher 同构，**不在 header 内重复**）；header 左端 Mode Toggle 组：周期 `Segmented 1d\|1w\|1M` + 复权 `Dropdown`（指数/板块隐藏逻辑保留）→ 指标切换 `Dropdown`（MA/BOLL 显隐 + 参数入口）→ 右端：`Fetch` Primary 按钮（loading 禁用 + spinner）+ Display Options `⋮`（十字准线/交易量/图例开关 + 侧栏切换项） | **有**：指标参数（MA 周期编辑、BOLL 参数）+ 图层设置（K 线样式/成交量子开关）——Blender「Separated Data Properties from Tools」的 N-panel 类比；N 键显隐，默认 `visible=true`（Q4 定案） | **无**（空槽零渲染；Blender 源码证明 Outliner 同样无 toolbar） |
+| **Screener** | 切换器 = dock tab；header：计数标签「共 N 只」+ 运行中状态 chip + 右端 `⋮`（**「重置排序」+「清除结果」**两项；恢复业务默认市值降序） | **有**：条件构建器（根组卡片 + 11 类 + 子分组，从现状主区上段迁入，`builder_root` 状态不变）；N 键显隐，默认 `visible=true`；**专用宽度 `default_width 500.0 / width_range (486.0, 640.0)`**（与 Chart 240 解耦）；「运行/清空」按钮随构建器入 sidebar 底部 | 无 |
+| **SEPA** | 切换器 = dock tab；header：计数「共 N 行 · 日期」+ `Segmented [TOP 50, TOP 30]` + 刷新（Primary + spinner；纯手动）+ 右端 `⋮`（「重置排序」一项——表头排序持久生效，菜单项恢复官方默认 rank asc + 得分列 3..=8 降序，动作幂等） | 无（详情面板 280px 是 body 内部右栏，保持垂直堆叠约束 ref #221） | 无 |
+| **Market** | 切换器 = dock tab；header：计数 + `Segmented [行业板块\|官方指数]` + 刷新 + 右端 `⋮`（「重置排序」一项——恢复板块轮动业务默认 = 涨幅降序，动作幂等） | 无 | 无 |
+| **Logger** | 切换器 = dock tab；header = 现状 `SectionTitle` 升级为 EditorFrame Header 槽：`[日志] · N 条` 左 + `[导出]` 右 | 无 | 无 |
+| **Watchlist**（Outliner 式） | 切换器 = dock tab；header：搜索输入框（`Ctrl+K` 聚焦语义从旧侧栏迁来）+ `[添加]` IconButton（添加当前标的）；位置：图表 workspace 左侧独立 dock leaf tab（Q6 定案），宽度随 dock 不固定 | 无 | 无 |
+
+**EditorLayout 空槽表达总则**：`toolbar: None` / `sidebar: None` 的编辑器，`EditorFrame` 不渲染对应区域、不注册 N 键、不占布局——「空区域零渲染成本」（锁定决策 1）。
+
+### Dock 区样式（egui_dock，迁移后不变）
+
+- egui_dock `DockState` + `compass-ui::dock_style()` 深度定制（tab 栏 28px、
+  **仅 focused 面板 tab 高亮**（accent 文字 + accent 描边）、非 focused tab 平静
+  （text_primary/secondary、无描边）——因每 leaf 单 tab 结构下所有 tab 都是 active，
+  靠 focused 区分当前面板；`hline_below_active_tab_name`、separator 三色），
   标签页中文标题 + 图标（ref #130）
-- **StatusBar**：`TopBottomPanel::bottom` 26px 三段式——左段标的摘要
-  （mono 价格 + 涨跌幅红涨绿跌）/ 中段状态（StatusDot：loading 脉冲/error 红点）/
-  右段数据源信息 + 本地时钟（每秒刷新）（ref #130）
 - **浮层**：Toast（右上角叠放，队列上限 10 条）、Modal（全屏半透明遮罩）
   —— 渲染在布局之上，随每帧渲染
 
-### 面板职责
+### 编辑器实例与职责
 
-| 面板 | CitizenId | 职责 |
-|---|---|---|
-| Chart | `chart` | K 线图表（平移/缩放/十字准线），默认 100 根可见柱；空态引导（「输入代码并点击获取数据」） |
-| Logger | `logger` | 可滚动日志面板（tracing 事件）+ 导出按钮（保存文件对话框） |
-| Screener | `screener` | 条件选股（基础/技术面两张卡片 + 结果 `DataTable`） |
-| Sepa | `sepa` | 东方SEPA 评分（温度计 + TOP50 排名表 + 详情 + 图表联动），叠入 Chart leaf 三 tab |
-| Market | `market` | 大盘概览（核心指数 Card + 板块/指数排序表 + Segmented + 手动刷新），叠入 Chart leaf 三 tab |
+| 编辑器 | EditorKind | 所在 workspace | 职责 | Sidebar / N 键 |
+|---|---|---|---|---|
+| Chart | `chart` | 图表（默认） | K 线图表（平移/缩放/十字准线），默认 100 根可见柱；空态引导 | 有（默认显示） |
+| Watchlist | `watchlist` | 图表 | 自选股分组列表（搜索 + 添加 + 行点击切换 + hover 删除确认） | 无（dock leaf tab） |
+| Logger | `logger` | 三个 workspace 底部 | 可滚动日志面板（tracing 事件）+ 导出按钮（保存文件对话框） | 无 |
+| Screener | `screener` | 选股 | 条件选股（条件构建器 + 结果 `DataTable`） | 有（默认显示） |
+| Sepa | `sepa` | SEPA 复盘 | 东方SEPA 评分（温度计 + TOP50 排名表 + 详情 + 图表联动），与 Market 同叶两 tab | 无 |
+| Market | `market` | SEPA 复盘 | 大盘概览（核心指数 Card + 板块/指数排序表 + Segmented + 手动刷新），与 Sepa 同叶两 tab | 无 |
 
-### SEPA 评分面板（`TabKind::Sepa`，ref #152）
+### SEPA 评分面板（`EditorKind::Sepa`，ref #152）
 
-独立标签页「东方SEPA」，**叠入顶部 Chart leaf 三 tab**（dock tab 栏 `[图表] [大盘] [东方SEPA]`）；
+独立编辑器「东方SEPA」，**位于 SEPA 复盘 workspace 主 leaf，与大盘同叶两 tab**
+（dock tab 栏 `[东方SEPA] [大盘]`，Q1 定案——从原 Chart leaf 三 tab 拆出）；
 报告型心智模型（每日预计算排名，打开即读），与选股器的查询型模型分开。
 
-面板内部自上而下：**① 温度计条 → ② 工具条 → ③④ 表格+详情水平分栏**。
+面板内部自上而下：**① 温度计条 → ② header（原「② 工具条」升级）→ ③④ 表格+详情水平分栏**。
 
 - **① 市场温度计 Card**（恒显示）：温度计 icon + 「市场温度」+ score（色阶色）+ 仓位建议 Tag +
   5 指标 chip（chip tint = `score_color(heat)`，delta 箭头 A 股红涨绿跌）
-- **② 工具条**：计数标签「共 N 行 · 日期」+ `Segmented ["TOP 50","TOP 30"]` + 刷新按钮
+- **② header（原「② 工具条」升级）**：计数标签「共 N 行 · 日期」+ `Segmented ["TOP 50","TOP 30"]` + 刷新按钮
   （Primary + ARROW_CLOCKWISE；loading 禁用 + spinner；**纯手动触发，无自动计算**）
+  + 右端 `⋮` 菜单（**「重置排序」一项**：表头点击排序持久生效，菜单恢复官方默认
+  rank asc + 得分列 3..=8 降序，动作幂等；i18n 键 `editor.sepa_header.reset_sort`）
 - **③ 12 列表格**（默认排序列 = 排名升序）：排名 `Rank`(1-3 warning) / 代码 `Text` /
   名称 `Text` / 总分 `Score{max:100}` / 趋势 `Score{max:30}` / 题材 `Score{max:25}` /
   资金 `Score{max:20}` / 形态 `Score{max:20}` / 风险 `Score{inverted}`（带符号 `-x.x`，
@@ -147,13 +268,13 @@ B 股（采集决策「including delisted」），过滤在 GUI 层完成，数�
   `RunSepaResponse`），backend handler **进程内**调 `compass_strategy::sepa::run_sepa`
   ——GUI 只读 Parquet，不依赖 CLI 写回
 
-### 大盘面板（`TabKind::Market`，epic #255）
+### 大盘面板（`EditorKind::Market`，epic #255）
 
-新 dock tab「大盘」，**叠入顶部 Chart leaf 三 tab**（dock tab 栏 `[图表] [大盘] [东方SEPA]`，
-icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构。**不重排三栏布局，
-不新增 UI 组件**（全复用现有 24 组件）。
+编辑器「大盘」，**位于 SEPA 复盘 workspace 主 leaf，与东方SEPA 同叶两 tab**
+（dock tab 栏 `[东方SEPA] [大盘]`，Q1 定案——从原 Chart leaf 三 tab 拆出）；
+icon `TREND_UP`；报告型面板（打开即读快照），与 SEPA 同构。**不新增 UI 组件**（全复用现有 24 组件）。
 
-面板内部自上而下：**① 核心指数 Card → ② 工具条 → ③ 板块/指数列表 DataTable**。
+面板内部自上而下：**① 核心指数 Card → ② header（原「② 工具条」升级）→ ③ 板块/指数列表 DataTable**。
 
 - **① 核心指数 Card**（恒显示）：官方指数**核心白名单 6 只**——`SH000001` 上证指数 /
   `SZ399001` 深证成指 / `SZ399006` 创业板指 / `SH000300` 沪深300 / `SH000905` 中证500 /
@@ -162,9 +283,11 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
   （`bg_hover`，100ms `motion.fast`）；点击 `dispatch_symbol_fetch` 联动图表
   （**不切 tab**，SEPA 行点击先例）。快照缺行时名称回退白名单内嵌值、点位显示 `--`。
   其余官方指数 + 全部板块经 ③ 列表按 Segmented 切换可达，与「全部官方指数」锁定决策不冲突。
-- **② 工具条**：计数标签「共 N 个 · 日期」+ `Segmented [行业板块|官方指数]`
+- **② header（原「② 工具条」升级）**：计数标签「共 N 个 · 日期」+ `Segmented [行业板块|官方指数]`
   （**行业板块为默认段**；概念段已随 issue #283 D4 移除）+ 刷新按钮（Primary +
-  ARROW_CLOCKWISE；loading 禁用 + spinner；**纯手动触发，无自动刷新**，SEPA 先例）。
+  ARROW_CLOCKWISE；loading 禁用 + spinner；**纯手动触发，无自动刷新**，SEPA 先例）
+  + 右端 `⋮` 菜单（**「重置排序」一项**：恢复板块轮动业务默认 = **涨幅降序**
+  （`CHANGE_COLUMN=3`），动作幂等；i18n 键 `editor.market_header.reset_sort`）。
   Segmented 切换仅过滤**本地内存副本**（`index_type` 匹配），**绝不回写
   shared_state、不重新 fetch**（SEPA TOP-N 本地截断先例）。
 - **③ 板块/指数列表 DataTable**：列 = 名称 `Text` / 代码 `Text`(mono) / 最新 `Price` /
@@ -178,41 +301,86 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
   算点位 + 涨跌幅，结果写入 `shared_state.index_snapshot`（镜像 sepa_* 三件套状态）。
 - **状态**：loading spinner / error colored_label / 空态 EmptyState「暂无指数数据」
   （`index_daily.parquet` 缺失时，含刷新引导）；个别板块无数据 → 行内 `—`。
-- **复权 Dropdown（ref #345）**：工具栏「周期」组内三档下拉（前复权/后复权/不复权），
+- **复权 Dropdown（ref #345）**：Chart header Mode Toggle 组内三档下拉（前复权/后复权/不复权），
   当前标的为指数/板块时**隐藏**（判断：符号带 `BK` 前缀或列于 `index_basic.parquet`
   且 `index_type` 非空）——指数无复权概念，显示复权控件是错误信息；股票保持显示。
   切换立即重载（与周期切换一致，last request wins），会话内不持久化。
+  （#357 起控件位置从全局工具栏迁入 Chart header，隐藏逻辑不变。）
 
 ## 交互规范
 
-### 工具栏
+### Topbar
 
-- 标的：可搜索输入框（`SearchableDropdown`），`交易所 | 代码 | 名称` 格式，
-  弹窗列匹配项，↑↓/Enter 键盘导航，空过滤显示「无匹配结果」
-- 周期：`Segmented` 分段选择器 `1d | 1w | 1M`——**切换立即重载**（ref #218）：
-  `set_timeframe` 同步 `shared_state.timeframe` 并无条件触发 `fetch_bars()`
-  （loading 守卫不拦截切换——旧周期数据与标签不一致）；启动时 `timeframe_index`
-  从配置 `default_timeframe` 派生（`timeframe_index_from_value`，与
-  `timeframe_label` 双向同步）
-- Fetch：`Button(Primary)` 主操作按钮，loading 时禁用 + 内嵌 spinner +「加载中…」；
-  按钮文案键化（`t!("toolbar.fetch")`，zh「获取数据」/ en "Fetch"）
-- 主题：`Dropdown` 下拉切换，即时全局生效 + Info toast「主题已切换」
-- 语言（ref #222）：`Dropdown` 下拉（Group D，主题右侧，76px，选项为母语原生名
+- **workspace 切换**：`Segmented` 3 段（图标 + 键名：图表 / 选股 / SEPA 复盘）—
+  点击段位 → `Workspaces::switch(target)` → 当前 workspace 的 DockState 就地保存并
+  **即时写入 config**（见「布局持久化」）→ 挂载目标 DockState → `request_repaint()`。
+  **无 toast**（布局变化本身即反馈，避免噪音；与 theme/language 的 Info toast 先例区分——
+  那是「配置已写回」的提示）；切换**瞬时**（egui 无布局过渡，克制原则）。
+- **标的选择器**：可搜索输入框（`SearchableDropdown`），`交易所 | 代码 | 名称` 格式，
+  弹窗列匹配项，↑↓/Enter 键盘导航，空过滤显示「无匹配结果」；`/` 聚焦（全局生效）。
+- **⋮ 添加编辑器**：下拉列出注册表 `EditorKind` 中**当前未在屏**的编辑器；
+  点击重建已关闭 tab（落入 focused leaf，`push_to_focused_leaf`）；全部在屏时
+  显示「无可添加」（`editor.add_none`）。v1 便捷入口，Blender 的 Add Editor 菜单类比。
+- **主题**：`Dropdown` 下拉切换（Topbar 最右段，Q2 定案），即时全局生效 +
+  Info toast「主题已切换」+ 写回 config 顶层 `theme` 键（行为不变，仅位置迁入）。
+- **语言**（ref #222）：`Dropdown` 下拉（主题旁，76px，选项为母语原生名
   「中文」/「English」），切换即 `set_locale` + 全界面立即刷新 + Info toast
   「语言已切换」+ 写回 config.toml 顶层 `language` 键（`save_language_config`）；
-  窗口标题保持英文品牌 "Compass — Stock Chart" 不变
+  窗口标题保持英文品牌 "Compass — Stock Chart" 不变。
+
+### 编辑器 Header 交互（Header 恒存在，EditorFrame 统一 chrome）
+
+- **Chart**：header 左端 Mode Toggle 组——周期 `Segmented 1d | 1w | 1M`：
+  **切换立即重载**（ref #218）：`set_timeframe` 同步 `shared_state.timeframe` 并无条件
+  触发 `fetch_bars()`（loading 守卫不拦截切换——旧周期数据与标签不一致）；启动时
+  `timeframe_index` 从配置 `default_timeframe` 派生（`timeframe_index_from_value`，与
+  `timeframe_label` 双向同步）。复权 `Dropdown` 三档（前/后/不复权，指数/板块隐藏）。
+  指标切换 `Dropdown`（MA/BOLL 显隐开关；**参数编辑在侧栏**）。
+  右端：`Fetch` `Button(Primary)`（loading 时禁用 + 内嵌 spinner +「加载中…」；
+  文案键化 `t!("toolbar.fetch")`，zh「获取数据」/ en "Fetch"；`min_width(104)` 防两态
+  文本宽度抖动）+ Display Options `⋮`（十字准线/交易量/图例开关 + **侧栏切换项**
+  ——N 键的鼠标双入口，i18n 键 `editor.toggle_sidebar`，tooltip「显示/隐藏侧栏 (N)」）。
+- **Screener**：header 计数标签「共 N 只」（`editor.screener_header.count`）+ 运行中状态
+  chip（`editor.screener_header.running`）+ 右端 `⋮`——「重置排序」（恢复市值降序，
+  `editor.screener_header.reset_sort`）+「清除结果」（`editor.screener_header.clear_results`）。
+- **SEPA**：计数「共 N 行 · 日期」+ `Segmented [TOP 50, TOP 30]` + 刷新 + 右端 `⋮`
+  （「重置排序」，`editor.sepa_header.reset_sort`）。
+- **Market**：计数 + `Segmented [行业板块|官方指数]` + 刷新 + 右端 `⋮`
+  （「重置排序」，`editor.market_header.reset_sort`）。
+- **Logger**：`SectionTitle`（`[日志] · N 条` 左 + `[导出]` 右——导出按钮打开
+  保存文件对话框，写出 `[时间戳] [级别] 消息`，成功/失败 toast）。
+- **Watchlist**：header 搜索行 = 输入框（过滤自选，`Ctrl+K` 聚焦）
+  + `[添加]` IconButton（添加当前标的，去重 + 排序）。
 
 ### 快捷键
 
 | 键 | 作用 |
 |---|---|
-| `/` | 聚焦工具栏标的输入框 |
+| `/` | 聚焦 Topbar 标的选择器 |
 | `Ctrl+Enter` | 触发 Fetch |
-| `Ctrl+K` | 聚焦侧边栏搜索框 |
-| `1` / `2` / `3` | 切换周期 1d / 1w / 1M |
+| `Ctrl+K` | 聚焦自选股（Watchlist）搜索框 |
+| `1` / `2` / `3` | 切换周期 1d / 1w / 1M（**仅图表 workspace 生效**——上下文隔离） |
+| `N` | 切换当前聚焦编辑器的侧栏显隐（仅注册了 Sidebar 的 Chart/Screener） |
 | `Esc` | 关闭弹层 / Modal |
 
-> 焦点守卫：`1/2/3` 与 `/` 在文本输入框聚焦时不触发（避免输入代码时误切换周期）。
+> 焦点守卫：`1/2/3`、`/` 与 `N` 在文本输入框聚焦时不触发（避免输入代码时误切换
+> 周期/误弹侧栏）。`1/2/3` 另受 workspace 上下文限制（选股/SEPA 复盘下无效）。
+
+### N 键语义（Sidebar 显隐）
+
+- **机制**：egui 无全局按键监听——每帧 `ctx.input(|i| i.key_pressed(Key::N))`
+  轮询，并入 `handle_shortcuts` 集中路由（现有 `1/2/3`、`/` 同机制）。
+- **焦点守卫（必须）**：`!editing_text`（`memory.focused().is_some()` 为假）才触发；
+  弹层（Dropdown/MultiSelect 弹出）内置输入框同样有焦点，守卫全覆盖。
+- **作用对象**：当前聚焦编辑器——① `dock_state.focused_leaf()` 的 active tab；
+  ② fallback：`last_interacted_kind`（tab 按钮点击时更新）。查 `EDITOR_REGISTRY`：
+  `Some(sidebar)` → 翻转 `sidebar_visibility[kind]`（会话级 HashMap，默认 =
+  `default_visible`）；`None` → **无操作**（不提示，Blender 中无 panel region 的
+  编辑器 N 亦无操作）。
+- **状态**：会话级不持久化（与 adjust 会话态先例一致；v1 持久化面最小）。
+- **动画**：显隐瞬时（egui 布局无过渡；N-panel 弹入滑动超出本轮）。
+- **可访问性**：Header 右端 Display Options 中「侧栏」按钮保留（IconButton +
+  tooltip「显示/隐藏侧栏 (N)」）——鼠标用户与键盘用户双入口。
 
 ### 图表（Chart）
 
@@ -238,7 +406,7 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
   + mono 值（线色）；BOLL 单标签 + 三值 ` / ` 连接；MA/BOLL 组间 1px 竖分隔线；
   数值格式复用 vendored `format_price`（≥100→2 位、≥1→4 位、<1→6 位）；暖机
   显示 `—`；不消费输入事件。
-- **复权 Dropdown（ref #345）**（工具栏「周期」组内）：`Dropdown` 三档
+- **复权 Dropdown（ref #345）**（Chart header Mode Toggle 组内，#357 前在全局工具栏「周期」组）：`Dropdown` 三档
   （前复权/后复权/不复权，`id_salt("adjust")`、宽 96px、32px 与周期 Segmented 同高）——
   K 线价格按档位在 fetch 层缩放（qfq 前复权归一化后最新 bar=现价 / hfq 后复权 / none
   原始价）；**当前标的为指数/板块时隐藏**（epic #255：指数无复权，显示是错误信息），
@@ -248,7 +416,7 @@ icon `TREND_UP`）；报告型面板（打开即读快照），与 SEPA 同构�
 
 | 类型 | 表现 | 自动消失 |
 |---|---|---|
-| Loading | 工具栏 spinner + StatusBar 脉冲点 | 加载完成 |
+| Loading | Chart header Fetch 按钮 spinner + StatusBar 脉冲点 | 加载完成 |
 | Success toast | 右上角 ✅ | 3 秒 |
 | Warning toast | 右上角 ⚠ | 3 秒 |
 | Error toast | 右上角 ❌ | 8 秒 |
@@ -265,7 +433,7 @@ toast 使用 Phosphor 图标字形，垂直堆叠，队列上限 10 条（超出
 - **三个真实绑定场景**（ref #131）：
   1. **启动数据缺失引导**：`load_stock_list` 为空时首帧弹出（数据未就绪 + 导入提示 + 知道了）
   2. **日志导出**：Logger 面板导出按钮 → 保存文件对话框 → 写日志文本 → toast 反馈
-  3. **移除自选确认**：Sidebar 行 hover 点 × → Danger 确认框（移除/保留）→ 移除 + 持久化
+  3. **移除自选确认**：Watchlist 编辑器行 hover 点 × → Danger 确认框（移除/保留）→ 移除 + 持久化
 
 ## 条件构建器（ref #245，Epic #243 Batch 2）
 
@@ -290,6 +458,10 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 无法识别的 AST 形状（如 Batch 4 LLM 产物）→ 只读摘要卡（mono 弱化 JSON + 删除）。
 
 ### 布局
+
+> **位置（#357）**：条件构建器现为 Screener 编辑器的 **Sidebar**（N 键显隐、
+> 默认显示；sidebar 专用宽度 500/(486,640)，构造参数与交互细节见「编辑器库存清单」）；
+> 「运行/清空」按钮随构建器位于 sidebar 底部。下述卡片组规格不变。
 
 - **根组 Card**「筛选条件」：组头行 [Segmented 且(AND)/或(OR) + Badge 条件数 +
   清空按钮(ERASER)]；Leaf 卡行；组底「添加条件」菜单（Dropdown，哨兵选项 +
@@ -350,6 +522,68 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 - **可访问性**：按钮 label 纯文本（无 icon 前缀——`get_by_label` 精确匹配）；
   禁用态经 `ui.add_enabled_ui` 设置 accesskit disabled。
 
+## 布局持久化（`[layout]` 节，#357）
+
+### schema（config.toml）
+
+```toml
+[layout]
+active_workspace = "chart"          # "chart" | "screener" | "sepa"
+dock_version = 2                     # 布局拓扑格式版本；≠2 → 结构性损坏 → 三默认布局 + warn
+
+[[layout.workspaces]]               # 每 Workspace 一条（显示用表数组示例；实际保存器输出
+id = "chart"                        # 内联数组 workspaces = [{...}, ...]，读回两种形状均兼容）
+active_screen = 0
+dock = """{"root":{"split":{"dir":"vertical","fraction":0.75,
+        "a":{"split":{"dir":"horizontal","fraction":0.25,
+             "a":{"leaf":{"tabs":["watchlist"]}},
+             "b":{"leaf":{"tabs":["chart"]}}}},
+        "b":{"leaf":{"tabs":["logger"]}}}}}"""
+tab_widths = [...]                   # 预留：v1 面板固定宽（SEPA 详情 280px 等 body 内嵌右栏）
+```
+
+- **拓扑 JSON（v2 自定义格式）**：递归节点树，root 为 `split`（`dir`: `"horizontal"`
+  = a 左 b 右 / `"vertical"` = a 上 b 下，**`fraction` = a（前序子）的份额**，与
+  egui_dock `Split{fraction}` 首子份额语义 1:1，无补数变换）或 `leaf`（`tabs`:
+  EditorKind snake_case 字符串数组，**保序**、非空——空 leaf/中介态序列化时剔除）。
+- **不存**：`rect`（运行期布局缓存，每帧重算——egui_dock#197 崩溃根因：新节点
+  `Rect::NOTHING`(±inf) 被 serde_json 序列化为 null）、`viewport`/节点几何、
+  `focused_surface`/`active`（运行期焦点态）。尺寸恢复 = fraction（已存）+ 容器
+  实际可用空间。版本号单一来源 = TOML 层 `dock_version`（JSON 内不重复 version 字段）。
+- **写盘形状（P3-2 注记）**：`save_layout_config` 以 `toml::Value` + `toml::to_string`
+  把 workspaces 写为**内联数组**；读回经 `layout_section_from_doc` 的 `as_array`
+  解析——两种形状（表数组/内联数组）均接受，仅外观差异。写盘复用 read-modify-write
+  （`save_*_config` 先例）；拓扑提取失败（如 workspace 全 tab 被清空）→ 跳过该
+  workspace 的 dock 键 + warn。
+
+### 保存时机 / 启动恢复
+
+```
+启动：load_config → [layout] 解析 → 每 workspace dock 拓扑解析 → DockState 重建 → active_workspace 挂载
+切换：Workspaces::switch(target) = 保存当前拓扑 + 立即写 config.toml（即时保存）
+布局改动：DockArea 返回 Option<DockStateChange>（TabMoved/TabClosed/…）→ Some(_) 即触发
+        保存（同帧末尾，写盘频率 = 用户拖拽频率，可接受）
+退出：无需退出钩子（保存已即时）
+```
+
+### 损坏回退（双层语义，P2-1 裁决）
+
+| 损坏层 | 触发条件 | 回退行为 |
+|---|---|---|
+| **结构性** | `dock_version ≠ 2`（缺失/旧值/未来更高）、workspaces 列表不完整/重复/未知 id、`active_workspace` 未知（TOML 语法错在 load_config 层即整体回退默认，属结构性） | 整节 `Workspaces::default()` **三默认布局** + warn |
+| **条目级** | 坏拓扑 JSON、拓扑 validate 失败、缺 `dock` 条目、`active_screen` 越界 | **仅该 workspace** 回退 `default_layout(id)`（其余保留定制布局）+ warn |
+
+理由：清空某 workspace 全部 tab 是**合法态**（egui_dock 默认 `is_closeable`）→ 拓扑
+提取返回 None → 保存器跳过该 workspace 的 dock 键——若全量回退会把其余两个 workspace
+的定制布局**级联丢弃**；条目级损坏有明确 per-id anchor，结构性损坏无「哪个 workspace
+受损」的定位信息，整节重建语义一致。两层均维持「配置永远不阻止启动」。
+
+### 持久化范围（v1）
+
+仅 **DockState 树 + 面板宽度**（split 比例）。编辑器内部状态（builder_root、TOP-N、
+排序态、sidebar 显隐、复权等）会话级不持久化——sidebar 显隐与 adjust 会话态先例
+一致；builder 有 config 级 `[screener]` 兜底。
+
 ## 设计变更记录
 
 | 日期 | 变更 | 来源归档 | 实现状态 |
@@ -366,6 +600,7 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 2026-08-13 | 选股器条件构建器（Epic #243 Batch 2）：Metabase 范式条件卡片组（AND/OR 嵌套）操作 Filter AST，替换固定表单（ref #245） | `.dsh/designs/llm-screener-ui.md` | 已实现（与代码同步） |
 | 2026-08-14 | 大盘 tab（epic #255）：核心指数 Card（6 白名单）+ 板块/指数排序表 + Segmented 行业/概念/官方 + 手动刷新 + 行点击联动不切 tab + BK 前缀搜索 + 前复权 Tag 按类型隐藏 | `.dsh/designs/index-data.md` | 已实现（与代码同步） |
 | 2026-08-16 | 板块数据源战略调整（issue #283）：行业板块切同花顺 90 个（881xxx，BK+6 位符号）；概念板块全链路移除（Segmented 概念段、SEPA 概念主题标签、concept_member）；SEPA 题材模块改用行业板块聚合（stock_basic.industry 分组） | `.dsh/plans/industry-ths.md` | 已实现（与代码同步） |
+| 2026-09-05 | Blender 式编辑器架构（issue #357）：五层架构（Application/Workspace/Screen/Area/Editor）+ 3 内置 workspace（图表 = Watchlist 左 leaf + Chart 主 + Logger 底；选股 = Screener + Logger 底；SEPA 复盘 = [SEPA 大盘] 同叶 + Logger 底）+ EditorKind 注册表/EditorLayout（Header 必备、Sidebar/Toolbar 按角色、空槽零渲染）+ Topbar workspace 切换/⋮ 添加编辑器/主题语言最右段 + N 键侧栏显隐（Chart/Screener）+ `[layout]` 持久化（dock_version=2 拓扑 JSON、双层回退、切换即时保存）；原全局 Toolbar/全局左栏移除，Watchlist 编辑器化（图表 workspace 左侧 dock leaf tab） | `.dsh/designs/editor-architecture.md`（v8 定稿） | 已实现（worktree 代码核查；「Sidebar widget 参数化」裁决**已落地** commit 496fc60——`search_row`/`show_list` 增显式 `min_width`、`Sidebar::show()` 保持 240 默认、WatchlistEditor 传 `ui.available_width()`，见决策记录「Sidebar widget 最小宽度」行） |
 
 > 每次 DESIGN 门禁完成后，在此追加一行：日期、变更摘要、对应
 > `.dsh/designs/<feature>.md` 归档文件、实现状态。
@@ -411,6 +646,9 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 键命名空间（ref #222） | 模块前缀点分 / 扁平键 / 数字 id | 模块前缀点分（app./tab./toolbar./chart.* 等，独立 crate `compass-i18n` 承键表） | 与现有领域划分一一对应（citizens 即域）；IDE/文档可读；未来加语言零重构 | 扁平键难分组易冲突；数字 id 不可读 |
 | 语言切换机制（ref #222） | 仅 config 重启生效 / 应用内下拉即时切换 + config 持久化 | 应用内下拉 + config 持久化 | 主题 Dropdown 先例（即时 + Info toast + 持久化）已建立心智；`set_locale` 进程级 + 每帧 `t!()` 使即时切换成本极低；重启后保留选择 | 仅 config 无法即时预览，UX 差 |
 | 语言下拉位置（ref #222） | 工具栏 Group D / 状态栏 / 设置页 | 工具栏 Group D（主题旁） | 与主题并列，用户已熟悉「下拉即全局生效」交互；工具栏有空间；选项用母语原生名（中文/English），宽度 76px | 状态栏位偏角落发现性差；无设置页 |
+
+> **（#357 起）** 主题/语言入口迁至 **Topbar 最右段**（Q2 用户仲裁定案）——见下方
+> 「主题/语言入口（#357 Q2）」决策行；本行保留为 ref #222 时点定位记录。
 | 切换后窗口标题（ref #222） | 保持启动标题 / `ViewportCommand::Title` 更新 | `ViewportCommand::Title` 更新（保持英文品牌 "Compass — Stock Chart"） | egui 官方示例同款；标题即 `t!("app.title")` 键，切换重发一次即可 | 保持启动标题则切换后标题与 locale 不一致 |
 | fork 日期格式键化（ref #222） | fork 内嵌格式串写死 / fork 自带 locales 键化 | fork 自带 locales 键化（`chart.date.*` 等键，fork 独立 locales/ 目录） | 锁定决策：fork 用自身 rust-i18n + 自带 locales；`set_locale` 全局同日生效 | fork 写死无法随语言切换 |
 | 条件构建器归属（ref #245） | compass 业务层（screener_builder.rs 新模块）/ compass-ui 新复合组件 | compass 业务层新模块 | 视图模型依赖 `compass-types::Filter`；compass-ui 零业务依赖是硬边界；AST↔卡片映射是 screener 领域逻辑 | 入 compass-ui 违反依赖方向（ui 引 types） |
@@ -430,6 +668,9 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 子组 scope 高度（ref #245 测试发现） | `f32::INFINITY` / `available_rect_before_wrap().bottom()` | 有限底部 | INFINITY 使 wrap 垂直居中算 NaN → 组内与组后控件 rect 全毁、点击静默丢弃（生产 + kittest 同受影响） | INFINITY 写法直白但布局不可用 |
 | en locale 测试并发（ref #222） | 并行 / LANG_LOCK 串行 | `LANG_LOCK: Mutex` 串行（ui_fixes_218.rs 定义） | `set_locale` 进程全局，并行测试互相污染 locale 造成 flaky；复用 HOME_LOCK 先例 | 并行省时但不可靠 |
 | 大盘 tab 入口（epic #255） | 新 dock tab「大盘」/ 仅增强 picker / 侧栏分组 | 新 dock tab（报告型面板，TabKind::Market，叠入 Chart leaf 三 tab） | 板块轮动需要「排序列表 + 概览」这类浏览场景，picker 是精确查找不是浏览；与 SEPA 报告型先例同构；SEPA 先例证明每 leaf 多 tab 已支持 | 仅 picker 无法承载板块排序列表；侧栏分组把 500 行塞进 240px 侧栏，浏览效率差 |
+
+> **（#357 起）** Market 归「SEPA 复盘」workspace（Q1 用户仲裁定案），与东方SEPA
+> 同叶两 tab——见下方「Workspace 划分（#357 Q1）」决策行；本行保留为 epic #255 时点定位记录。
 | 大盘 Segmented 概念段移除（issue #283 D4） | 保留概念段（数据源已删）/ 移除 | 移除概念段，Segmented 缩为 [行业板块, 官方指数] | 概念板块行情/发现全链路删除后保留段会渲染空列表，误导用户；删除型变更无新设计 | 保留段需保留概念数据，与「彻底放弃概念」决策冲突 |
 | 核心指数白名单 6 只（epic #255） | 全量官方指数进 Card / 核心白名单 Card + 全量进列表 | 白名单 Card（6 只：上证/深成/创业板/沪深300/中证500/中证1000）+ 全量进 Segmented 列表 | Card 横向空间有限，白名单保证概览可读；全量仍可经列表/搜索可达，不违背「全部官方指数」锁定决策 | 全量进 Card 横向溢出、可读性差 |
 | 板块列表默认排序（epic #255） | 名称升序 / 涨跌幅降序 | 涨跌幅降序（板块轮动视角） | 核心用途「板块轮动」即找当日强势/弱势板块，默认排序直击场景；表头可改 | 名称升序是中性默认但无信息价值 |
@@ -437,3 +678,21 @@ And/Or **双向折叠**为裸节点（对齐 `From<ScreenerQuery>` 的 `1 => nod
 | 前复权 Tag 按类型隐藏（epic #255） | 指数也显示 / 按类型隐藏 | 标的为指数/板块（`BK` 前缀或 `index_type` 非空）时隐藏 | 指数不复权（东财 fqt=0），显示「前复权」是错误信息 | 统一显示会误导用户 |
 | 板块快照通道（epic #255） | 复用 FetchRequest 逐标的拉 / 新 RunIndexSnapshotRequest 批量 | 新第四条通道批量快照（SEPA 同构） | 500 标的逐次 fetch 是 500 次异步往返；批量一次查询毫秒级；与 SEPA 通道同构 | 复用 FetchRequest 需逐标的循环、状态管理复杂 |
 | 刷新机制（epic #255） | 自动定时刷新 / 纯手动刷新 | 纯手动（Button loading 禁用 + spinner） | 与 SEPA「纯手动、无自动」先例一致；避免无谓磁盘读取 | 自动刷新需定时器与后台线程，违背 SEPA 心智 |
+| 五层编辑器架构（#357） | 全局 Toolbar + 全局左栏 + Dock 平铺（现状）/ Blender 五层（Application→Workspace→Screen→Area→Editor）/ 全功能 Blender 复刻（浮窗/多屏/多实例） | 五层映射（渐进：每 workspace 一屏、无浮窗；egui_dock 保留为 Area 引擎，0.20→**0.21.1** 升级已落地 commit f33ab39） | `DockState` 树 = bScreen 顶点图同构；布局任务化（workspace 按任务组织、顶部切换）；编辑器声明自身 chrome 集（Header/Sidebar/Toolbar），新增编辑器按角色注册而非复制 chrome；多屏/多实例以数据结构预留 | 现状「面板各自为政」（F2）、全局 chrome 与 Chart 编辑器耦合（F1）；全功能复刻超本轮范围（非目标：多屏幕 UI、浮窗、编辑器多实例 UI、键位重绑定） |
+| Workspace 划分（#357 Q1） | 图表 workspace 保留五 tab 现状 / 拆分为三内置 workspace | 三内置：图表 = Watchlist 左 leaf + Chart 主 + Logger 底；选股 = Screener（条件构建器侧栏）+ Logger 底；SEPA 复盘 = [Sepa, Market] 同叶两 tab + Logger 底（用户仲裁 2026-09-05 确认） | workspace = 任务语义；Market/Sepa 属「复盘」任务；拆分后「图表」workspace 名实相符、header 结构纯粹 | 保留五 tab 使 workspace 语义混乱、Topbar/header 拆分收益打折 |
+| Logger 布局（#357 Q5） | 仅图表 workspace 含 Logger / 选股与 SEPA 复盘两处都含 | **两处都含**（用户仲裁，推翻原推荐「选股无 Logger」） | 与现状习惯一致；错误处理仍走 inline + toast 双通道（Logger 为追加记录通道，不替代错误双通道） | 版面纯净收益低于用户习惯一致性 |
+| Watchlist 形态（#357 Q6） | 左侧竖 split 240px（resizable）/ 主区叠 tab / 左侧 dock leaf tab 无固定宽度 | **左侧 tab 无固定宽度**（用户自定义，推翻两个推荐）——图表 workspace 左侧独立 dock leaf tab，宽度由 dock split 比例 + 拖拽 + 持久化决定；非 Sidebar、不注册 N 键 | 保持左栏空间习惯且无硬编码宽；可与其它编辑器叠 tab/拖动重排；Blender Outliner 类比（无 toolbar、无 N-panel） | 固定 240 宽与「主区叠 tab」均未获用户选择 |
+| Editor 注册表（#357） | 静态 const 表 + enum（编译期穷尽）/ once_cell/inventory 动态全局表 | 静态表（`EDITOR_REGISTRY: [EditorDescriptor; 6]`；EditorLayout = Header 必备 + Sidebar/Toolbar 按角色，`None` = 空槽零渲染零 N 键） | 新增编辑器 = 1 变体 + 1 描述符；match 穷尽 + 静态表完整性与 i18n 键可单测；无全局可变状态；kittest 可断言「恰 6 条」 | 动态注册需全局初始化/错误处理/运行时迭代，收益低（两处改动可接受） |
+| per-Editor 状态所有权（#357） | 每 Kind 单实例（现 citizen 全局容器演进）/ per-area 多实例（Blender 完全式） | 单实例 + `EditorInstances::get_mut` kind 分发（句柄化预留多实例升级缝） | 渐进映射；citizen/Dispatcher/SharedState 响应式全复用；SEPA/大盘/选股行点击共享「单一当前标的」语义（`dispatch_symbol_fetch`）；分发收敛到单点 | per-area 实例需每编辑器 serde 契约 + 与 layout 树生命周期绑定，远超本轮；破坏「多结果表联动单一图表」用途假设 |
+| Chart/Screener Sidebar 规格（#357） | 统一 240.0/(200.0..=320.0) / 每编辑器独立配置 | **每编辑器独立**：Chart 240.0/(200.0..=320.0)；Screener 专用 **500.0/(486.0..=640.0)**（2026-09-05 2b 评审勘误） | 条件卡为原子组（ref #220：label+control 永不跨行），最宽叶片 Momentum 估宽 470px + Panel 内边距 16px = 下限 486px；默认 500 恰为 `GROUP_ALIGNMENT_WIDTHS` 首个测试锚（复用既有 kittest 覆盖）；240 下内容区仅 224px 无法容纳任何叶片（最窄 300px），控件必被 Panel clip | 沿用 Chart 值直接复现溢出；窄宽重排需改 leaf 布局 + 全部 wrap 测试锚，破坏原子组心智，留待后续专项 |
+| Sidebar 显隐持久化（#357） | 会话级（默认 default_visible）/ `[layout]` 持久化 | 会话级（`HashMap<EditorKind, bool>`） | 与 adjust 会话态先例一致；v1 持久化面最小（仅树 + 宽度） | per-screen 拆键 + 恢复时序处理，收益低 |
+| N 键机制（#357） | ctx.input 轮询集中路由 / keymap-operator 系统 | 每帧 `ctx.input` 轮询（并入 handle_shortcuts）+ 文本焦点守卫 + 活跃编辑器判定（focused_leaf → last clicked 兜底）+ 无 Sidebar 编辑器 no-op | egui 无全局按键监听（唯一机制即每帧轮询）；现有模式已验证（`1/2/3`、`/` 同机制）；单一 N 键不值得 DSL | keymap 是 Blender 完整基础设施复刻（运行时注册/重绑定/序列化），属过度设计 |
+| 主题/语言入口（#357 Q2） | Topbar 最右段 / StatusBar | **Topbar 最右段**（用户仲裁确认；行为不变：即时 + Info toast + 写回 config） | 发现性最优；现状用户已习惯顶部找到 | StatusBar 26px 角落发现性差；两处重复 |
+| Fetch 按钮去向（#357 Q3） | 保留 Topbar Group C / Chart header | **Chart header 右端**（Primary + loading，与 Display Options ⋮ 同端） | Fetch 语义绑定 Chart 编辑器；workspace 无 Chart 时 Topbar 上的 Fetch 是无效控件（F1 根因之一） | 保留 Topbar 继续全局 chrome 与编辑器耦合 |
+| Chart Sidebar 默认态（#357 Q4） | 默认隐藏 / 默认显示 | **默认显示**（`default_visible=true`，用户仲裁确认） | 指标参数（MA 周期/BOLL）+ 图层设置是图表常规操作，默认展示省一层发现成本 | 默认隐藏需用户先发现 N 键/⋮ 菜单 |
+| ⋮ 菜单内容（#357 裁决） | 不渲染 ⋮ / 各含「重置排序」一项（SEPA/Market/Screener），Screener 另含「清除结果」；「列宽重置」暂缓 | **各含「重置排序」**（恢复官方/业务默认排序，动作幂等；i18n `editor.*_header.reset_sort`）+ **Screener「清除结果」**；「列宽重置」**暂缓**待 DataTable 列宽调整能力上线（2026-09-05 裁决） | 三表表头点击排序持久生效（`table` 为 panel 字段、`set_sort` 仅构造时调用、`set_rows` 不重置排序），用户乱序后无显式复位入口（唯一手动路径 = 点回默认列头，需已知隐含约定且误点一次即翻向）；恢复目标由代码明确定义、API 齐备且幂等；「列宽重置」无可重置对象（DataTable `ColumnSpec` 仅 header+numeric，无列宽 API） | 不渲染丢弃「官方顺序显式复位」意图；其他候选动作无对象（清除结果/导出无既有语义或实现，刷新已在 header） |
+| 编辑器内部状态持久化范围（#357） | 仅 DockState 树 + 面板宽度 / 含各编辑器内部状态（builder_root、TOP-N、排序） | **仅树 + 宽度**（v1） | 锁定决策 8 字面范围；内部状态 serde 需逐 citizen 打标（MultiSelect 瞬态不可序列化），契约与测试矩阵爆炸 | 收益低（builder 有 config 级 `[screener]` 兜底），风险高 |
+| 阶段 4 持久化 schema（#357） | ① `DockState<Tab>` 直接 serde（egui_dock serde feature）/ ② **自定义拓扑 serde**（split 方向+分数+leaf tab 序列）/ ③ 升级 egui_dock + egui 全栈 | **② 自定义拓扑 serde**，`[layout]` 节 + `dock_version=2`（2026-09-05 设计师裁决；③ 升级已落地 f33ab39——egui 0.36.1/egui_dock 0.21.1——但 #197 实测仍未修，裁决结论维持） | ① 直接崩溃：节点 `rect = Rect::NOTHING`(±inf) 被 serde_json 序列化为 null（上游 egui_dock#197，0.20.1/0.21.1 同址 `let rect = Rect::NOTHING;`）；② 只存布局语义原语（dir/fraction/tabs，无 egui 类型），运行期 rect/viewport/focused 不落盘，重启按 fraction 比例重建尺寸；拓扑树与 egui_dock 节点递归结构同构，重建/断言直接；fraction = 首子份额 1:1 无补数变换/无精度损耗；v1 从未发布 → 1→2 无兼容负担 | ① 不可用（#197）；③ 升级后 0.21.1 源码仍未修复（上游 master 无相关修复、最新 release tag 0.21），直接序列化依旧崩溃 |
+| 加载回退语义（#357） | 全量回退（任何损坏 → 三默认 + warn）/ 纯 per-id 回退（任何损坏 → 仅该 workspace 默认）/ **双层**（结构性 → 全量；条目级 → per-id） | **双层**（2026-09-05 阶段 4 review 41e74cc0 P2-1 裁决） | 清空某 workspace 全部 tab 是**合法态**（egui_dock 默认 `is_closeable`）→ 拓扑提取返回 None → 保存器跳过该 workspace 的 dock 键（warn）——若全量回退，其余两个 workspace 的定制布局被**级联丢弃**；结构性损坏（dock_version ≠ 2/缺失、workspaces 列表不完整/重复/未知 id、active_workspace 未知）无可定位的「哪个 workspace 受损」，整节重建语义一致；条目级（坏拓扑 JSON、validate 失败、缺 dock、active_screen 越界）有明确 per-id anchor，仅换受损 workspace 即保全其余。两层均维持「配置永远不阻止启动」 | 全量回退 = 布局数据损失（合法空 workspace 触发级联丢弃）；纯 per-id 在结构性损坏时无恢复对象，且 dock_version 语义未知时逐条解析结果不可信 |
+| Sidebar widget 最小宽度（#357） | A 参数化（`search_row`/`show_list` 增 `min_width` 参数，调用方决定）/ B 记录决策（240 正式定义「内容最小可读宽度」，不改 widget 代码） | **A 参数化**（2026-09-05 设计师裁决；**已落地** commit 496fc60——`search_row`/`show_list` 增 `min_width: f32`（`compass-ui/src/widgets/sidebar.rs:106`/`:142`）、`Sidebar::show()` 保持 240 默认（`:82-97`）、WatchlistEditor 调用点传 `ui.available_width()`（`editor/mod.rs:857`/`:907`）、in-widget 新增测试 `search_row_and_list_accept_custom_min_width`（`sidebar.rs:318`）） | 层职责分离：Q6「无固定宽度」= 布局层契约（无 `default_width`、不进 `tab_widths`）；widget 层 240 = 内容可读下限（行文本 name/code/tag + 输入框需要）；参数化后 240 仅为 `Sidebar::show()` 完整复合容器默认（既有 in-widget 测试零改动）；WatchlistEditor 传 `ui.available_width()`（dock 自适应）；<240 拖窄降级 = 行元素 L2R 右缘依次裁剪（tag → code → name），左对齐保留最优信息 | B 把「无固定宽度」降级为「用户别拖窄」的行为假设——egui_dock 分隔条拖拽不按内容 min 收敛（0.20.1/0.21.1 实测同），拖窄 <240 时内容溢出/裁剪缺陷依旧存在且无文档化降级行为 |
+| N 键回落路径取舍（#357，review 6757f35b P3-5） | `last_interacted_kind` 仅覆盖鼠标点击 / 覆盖全部激活路径（键盘 Enter/Space + 程序化 `set_active_tab`） | **仅鼠标点击**（实现现状，已知取舍） | `focused_editor_kind`（`main.rs:1543-1554`）优先走 egui_dock `focused_leaf` 链（:1547-1553）——键盘/程序化激活时该链通常已随激活给出权威目标；`focus_main_leaf`（`editor/mod.rs:410-421`）各 workspace 挂载时 `set_focused_node` 兜底（:412），focused 链为空且需回退 `last_interacted_kind` 的窗口极窄（触发概率极低） | 全覆盖需 hook egui_dock 键盘激活路径或为每个程序化 `set_active_tab` 调用点加更新，侵入布局/激活逻辑；收益仅覆盖极窄窗口（当前差异报告未发现受影响场景） |

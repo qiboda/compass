@@ -25,7 +25,7 @@ theme = "compass_dark"
 language = "zh"
 
 [watchlist]
-# 自选股（Sidebar 左侧栏）。带交易所前缀的代码列表（如 "SH600519"）。
+# 自选股（Watchlist 编辑器 leaf tab）。带交易所前缀的代码列表（如 "SH600519"）。
 # 由 GUI 在添加/移除自选时自动写回，重启后恢复。
 # symbols = ["SH600519", "SZ000002"]
 
@@ -56,6 +56,20 @@ language = "zh"
 # base_url = "https://api.openai.com/v1"   # API 根（直接拼接 /chat/completions）
 # api_key = "sk-..."                        # 留空 = 隐藏 LLM 入口
 # model = "gpt-4o-mini"                     # 模型名
+
+[layout]
+# 工作区布局持久化（issue #357 阶段 4；设计 §9）。整节由 GUI 在切换工作区/
+# 拖拽/关闭面板后自动写回，重启后恢复；缺失该节 = 三个内置工作区默认布局。
+# active_workspace = "chart"          # "chart" | "screener" | "sepa"（未打开时默认 chart）
+# dock_version = 2                    # 布局拓扑格式版本（v2 = 本项目自定义拓扑 JSON）；
+#                                     # ≠2（缺失/旧/未来）→ 回退默认布局 + 警告
+# [[layout.workspaces]]               # 每工作区一条（v1：一工作区 = 一屏）
+# id = "chart"                        # "chart" | "screener" | "sepa"
+# active_screen = 0                   # v1 恒 0（多屏预留）；越界 → 该工作区回退默认布局
+# dock = """{"root":{"split":...}}"""  # v2 拓扑 JSON：递归 split{dir,fraction,a,b}/leaf{tabs}
+#                                     # （fraction = a 份额；只存方向/分数/tab 序列，
+#                                     # 不存 rect/viewport/焦点——服务端为绕开 egui_dock#197）
+# tab_widths = [...]                  # 预留：面板固定宽组（当前无消费方；split 比例已在 dock 内）
 
 [parquet]
 # 包含 stock_basic.parquet 和 stock_daily.parquet 的文件夹。
@@ -109,6 +123,9 @@ default_adjust = "qfq"
 | `llm` | `base_url` | `https://api.openai.com/v1` |
 | `llm` | `api_key` | `""`（空 = LLM 入口隐藏） |
 | `llm` | `model` | `gpt-4o-mini` |
+| `layout` | `active_workspace` | 无（缺失 = 默认启动 chart 工作区） |
+| `layout` | `dock_version` | `2` |
+| `layout` | `workspaces` | 无（缺失 = 三内置工作区默认布局：图表=Watchlist 左+Chart 主+Logger 底；选股=主+Logger；SEPA复盘=[Sepa,Market]+Logger） |
 
 ## 配置示例
 
@@ -156,8 +173,36 @@ language = "en"
 symbols = ["SH600519", "SZ000002"]
 ```
 
-左侧自选栏的股票列表，按代码升序。GUI 在侧边栏点 ＋ 添加、点 × 并确认移除时
-自动写回；也可手动编辑。缺失该节 = 空自选。
+自选股列表（Watchlist 编辑器），按代码升序。GUI 在自选搜索框旁点 ＋ 添加、
+点 × 并确认移除时自动写回；也可手动编辑。缺失该节 = 空自选。
+
+### 工作区布局（layout）
+
+```toml
+[layout]
+active_workspace = "sepa"
+dock_version = 2
+
+[[layout.workspaces]]
+id = "chart"
+active_screen = 0
+dock = "{\"root\":{\"split\":{\"dir\":\"vertical\",\"fraction\":0.75,...}}}"
+
+[[layout.workspaces]]
+id = "screener"
+active_screen = 0
+dock = "{\"root\":{\"leaf\":{\"tabs\":[\"screener\",\"logger\"]}}}"
+
+[[layout.workspaces]]
+id = "sepa"
+active_screen = 0
+dock = "{\"root\":{\"split\":{\"dir\":\"vertical\",...}}}"
+```
+
+GUI 在切换工作区、拖拽分隔条、关闭/重开面板时自动写回；损坏（``dock_version`` 不符、
+JSON 坏、``active_screen`` 越界等）按粒度回退——结构性损坏回退三默认布局、条目级损坏
+仅该工作区回退默认布局，配置损坏**永不阻止启动**。保存器输出 ``workspaces = [{...}]``
+内联数组（toml Value 序列化），读取侧两种形状均可。
 
 ### 旧格式自动迁移（D10，issue #181）
 
