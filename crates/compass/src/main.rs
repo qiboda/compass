@@ -952,6 +952,17 @@ fn resolve_workspaces(section: &LayoutSection) -> (crate::editor::Workspaces, bo
 /// corruption, review 41e74cc0 P2-1; a null-main-surface tree would
 /// otherwise poison the whole section).
 fn save_layout_config(workspaces: &crate::editor::Workspaces) -> Result<(), String> {
+    // Tests must never write the real user config (review 6757f35b P1-1 /
+    // 37c81bfe P1-3 / 81e84e15 P0-1): full-harness frames trigger genuine
+    // topo changes (workspace switch saves immediately, add-editor changes
+    // the frame fingerprint) and would silently overwrite the developer's
+    // ~/.config/compass/config.toml. The test build skips the save unless
+    // a persistence test opts back in per test via COMPASS_TEST_PERSIST_
+    // LAYOUT (paired with a tempdir HOME); cfg! keeps this compile-time in
+    // release builds, where the production path always writes.
+    if cfg!(test) && std::env::var_os("COMPASS_TEST_PERSIST_LAYOUT").is_none() {
+        return Ok(());
+    }
     let config_path = std::env::var("HOME")
         .map(|home| std::path::PathBuf::from(home).join(".config/compass/config.toml"))
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.config/compass/config.toml"));
@@ -2527,7 +2538,15 @@ default_timeframe = "1w"
         }
 
         let default = crate::editor::Workspaces::default();
+        // Opt this persistence assertion back into save_layout_config — the
+        // cfg(test) fence is off by default (review 81e84e15 P0-1).
+        unsafe {
+            std::env::set_var("COMPASS_TEST_PERSIST_LAYOUT", "1");
+        }
         let res = crate::save_layout_config(&default);
+        unsafe {
+            std::env::remove_var("COMPASS_TEST_PERSIST_LAYOUT");
+        }
 
         if let Some(h) = saved_home {
             unsafe {
@@ -5290,6 +5309,57 @@ default_timeframe = "1w"
         assert!(!app.chart_editor_active());
     }
 
+    /// Fail-soft restore (review 81e84e15 P1-1): a user-valid topology
+    /// may legitimately lack the workspace's main editor kind (tabs are
+    /// closeable by default in egui_dock) — the restore must not panic in
+    /// debug builds; the active-editor gates simply stay off.
+    #[test]
+    fn resolve_restore_without_main_kind_does_not_panic() {
+        let _guard = LANG_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let section: crate::LayoutSection = parse_layout_section(
+            r#"[layout]
+active_workspace = "chart"
+dock_version = 2
+
+[[layout.workspaces]]
+active_screen = 0
+dock = '{"root":{"split":{"dir":"vertical","fraction":0.75,"a":{"leaf":{"tabs":["watchlist"]}},"b":{"leaf":{"tabs":["logger"]}}}}}'
+id = "chart"
+
+[[layout.workspaces]]
+active_screen = 0
+dock = '{"root":{"split":{"dir":"vertical","fraction":0.75,"a":{"leaf":{"tabs":["screener"]}},"b":{"leaf":{"tabs":["logger"]}}}}}'
+id = "screener"
+
+[[layout.workspaces]]
+active_screen = 0
+dock = '{"root":{"split":{"dir":"vertical","fraction":0.75,"a":{"leaf":{"tabs":["sepa","market"]}},"b":{"leaf":{"tabs":["logger"]}}}}}'
+id = "sepa"
+"#,
+        );
+        let (restored, fell_back) = crate::resolve_workspaces(&section);
+        // The chart workspace dropped its Chart tab (valid topology: no
+        // empty leaf, no duplicate kind) — the restore must degrade
+        // silently, not panic on the missing main kind.
+        assert!(!fell_back);
+        assert!(
+            !restored.all[restored.active].layouts[0]
+                .dock_state
+                .main_surface()
+                .leaf(egui_dock::NodeIndex::root())
+                .is_ok()
+        );
+        let app = build_compass_app(egui::Context::default());
+        let app = CompassApp {
+            workspaces: restored,
+            ..app
+        };
+        // Gate off (main kind absent) but the app is fully usable.
+        assert!(!app.chart_editor_active());
+    }
+
     /// Persisted-layout restore regression (review 37c81bfe P1-2):
     /// `dock_state_from_topology` must re-focus the main editor — the
     /// rebuild alone leaves egui_dock's focused_node on the last split
@@ -5347,6 +5417,10 @@ default_timeframe = "1w"
             .query_all_by_label(egui_phosphor::regular::DOTS_THREE_VERTICAL)
             .collect::<Vec<_>>();
         dots.sort_by_key(|n| (n.rect().min.y as i32, n.rect().min.x as i32));
+        // Global-layout assumption (review 81e84e15 P3-1): the Screener
+        // workspace currently renders exactly two ⋮ controls — the topbar
+        // add-editor menu and the Screener header menu. Any third ⋮ from a
+        // future control breaks this test on purpose (update the picker).
         assert_eq!(
             dots.len(),
             2,

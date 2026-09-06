@@ -345,11 +345,14 @@ mod tests {
         let input = harness.get_by(|n| n.placeholder() == Some("搜索自选"));
         let _ = harness.get_by_label("贵州茅台");
         let _ = harness.get_by_label("平安银行");
-        // min_width(200) → Input width 160 → prefixed field = 104 px
-        // (200 − 40 add-button offset − 56 icon budget, input.rs:180-221
-        // precedent): the parameterization must actually flow into layout.
+        // The parameterization must actually flow into layout: field =
+        // min_width − 40 (add-button offset, sidebar.rs) − 56 (icon
+        // budget, input.rs:180-221 precedent) — expressed via the budget
+        // so a designer adjustment updates one formula, not three magic
+        // numbers (review 81e84e15 P2-1).
+        let expected = 200.0 - 40.0 - 56.0;
         assert!(
-            (input.rect().width() - 104.0).abs() <= 1.0,
+            (input.rect().width() - expected).abs() <= 1.0,
             "decomposed entries must size the input from the caller min_width, got {}",
             input.rect().width()
         );
@@ -371,13 +374,14 @@ mod tests {
             claimed_inner.set(ui.min_rect().width());
         });
         harness.run();
-        // 240 default: (240 − 40) − 56 icon budget = 144 px field.
+        // 240 default via the same budget formula (review 81e84e15 P2-1).
         let w = harness
             .get_by(|n| n.placeholder() == Some("搜索自选"))
             .rect()
             .width();
+        let expected = 240.0 - 40.0 - 56.0;
         assert!(
-            (w - 144.0).abs() <= 1.0,
+            (w - expected).abs() <= 1.0,
             "composite show() must keep the 240 default field, got {w}"
         );
     }
@@ -398,12 +402,17 @@ mod tests {
             claimed_inner.set(ui.min_rect().width());
         });
         harness.run();
-        harness.get_by(|n| n.placeholder() == Some("搜索自选"));
-        // The .max(80.0) floor keeps the field positive (30 → 80 → field
-        // = 80 − 56 = 24 px); the assertion is the frame did not panic.
+        // The .max(80.0) floor keeps the field positive: 30 → 80 → field
+        // ≈ 24 px (> 0). Assert the rendered input width directly so the
+        // floor removal is caught even if a future egui clamps the
+        // negative width instead of panicking (review 81e84e15 P2-2).
+        let w = harness
+            .get_by(|n| n.placeholder() == Some("搜索自选"))
+            .rect()
+            .width();
         assert!(
-            claimed.get() > 0.0,
-            "the frame must survive a below-40px dock leaf"
+            (20.0..40.0).contains(&w),
+            "the floor must keep the narrow field at ≈24 px, got {w}"
         );
     }
 

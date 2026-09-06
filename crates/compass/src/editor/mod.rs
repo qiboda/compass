@@ -423,10 +423,14 @@ pub(crate) fn focus_main_leaf(tree: &mut egui_dock::Tree<Tab>, kind: EditorKind)
     if let Some((node, _)) = tree.find_tab(&Tab::new(kind)) {
         tree.set_focused_node(node);
     } else {
-        // Unreachable today: the tab was just constructed one line above.
-        // Record the invariant so a future caller cannot silently regress
-        // to the logger-focus bug (review 28e54c4f P3-4).
-        debug_assert!(false, "focus_main_leaf: kind {kind:?} missing from layout");
+        // Fail-soft (review 81e84e15 P1-1): the invariant "the kind was
+        // just constructed" holds for default_layout, but the persisted
+        // restore path feeds user data — a closed main tab (egui_dock
+        // tabs are closeable by default) produces a valid topology
+        // without the main kind, and the config contract (§9.1) must
+        // never block startup. Log and skip; the active-editor gates
+        // simply stay off until the user clicks a tab.
+        tracing::warn!(kind = ?kind, "focus_main_leaf: kind missing from layout, leaving dock focus untouched");
     }
 }
 
