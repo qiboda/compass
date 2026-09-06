@@ -5344,12 +5344,15 @@ id = "sepa"
         // empty leaf, no duplicate kind) — the restore must degrade
         // silently, not panic on the missing main kind.
         assert!(!fell_back);
-        assert!(
-            !restored.all[restored.active].layouts[0]
-                .dock_state
-                .main_surface()
-                .leaf(egui_dock::NodeIndex::root())
-                .is_ok()
+        // The fixture really restored: the chart workspace holds the
+        // Watchlist + Logger leaves (the Chart tab is the one dropped).
+        assert_eq!(
+            restored.visible_kinds(restored.active),
+            vec![
+                crate::editor::EditorKind::Watchlist,
+                crate::editor::EditorKind::Logger,
+            ],
+            "the no-main-kind fixture must restore its two leaves"
         );
         let app = build_compass_app(egui::Context::default());
         let app = CompassApp {

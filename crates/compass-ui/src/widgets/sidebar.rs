@@ -331,14 +331,11 @@ mod tests {
         let tokens = ThemeTokens::dark();
         let sidebar = Sidebar::new(&tokens);
         let mut search = String::new();
-        let claimed = std::rc::Rc::new(std::cell::Cell::new(0.0f32));
-        let claimed_inner = claimed.clone();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             let min_width = 200.0; // below the composite default
             let mut events = sidebar.search_row(ui, &mut search, min_width);
             ui.add_space(4.0);
             events.extend(sidebar.show_list(ui, &groups(), min_width));
-            claimed_inner.set(ui.min_rect().width());
             let _ = events;
         });
         harness.run();
@@ -367,11 +364,8 @@ mod tests {
         let tokens = ThemeTokens::dark();
         let sidebar = Sidebar::new(&tokens);
         let mut search = String::new();
-        let claimed = std::rc::Rc::new(std::cell::Cell::new(0.0f32));
-        let claimed_inner = claimed.clone();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             let _ = sidebar.show(ui, &groups(), &mut search);
-            claimed_inner.set(ui.min_rect().width());
         });
         harness.run();
         // 240 default via the same budget formula (review 81e84e15 P2-1).
@@ -395,11 +389,8 @@ mod tests {
         let tokens = ThemeTokens::dark();
         let sidebar = Sidebar::new(&tokens);
         let mut search = String::new();
-        let claimed = std::rc::Rc::new(std::cell::Cell::new(0.0f32));
-        let claimed_inner = claimed.clone();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
             let _ = sidebar.search_row(ui, &mut search, 30.0);
-            claimed_inner.set(ui.min_rect().width());
         });
         harness.run();
         // The .max(80.0) floor keeps the field positive: 30 → 80 → field
