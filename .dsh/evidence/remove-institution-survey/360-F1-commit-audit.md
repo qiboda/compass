@@ -22,13 +22,20 @@
 | 项 | 值 |
 |---|---|
 | 基点（origin/master） | `ad850c4` |
-| 实现 commit | `9777dd6` feat: remove institution_survey end-to-end and reallocate survey points to dragon bonus |
-| 领先 origin/master | 1 commit（实现）；evidence/反思 commit 随后追加 |
 | 分支 | `feat/remove-institution-survey` |
 | worktree | `/data/codes/compass/.worktrees/remove-institution-survey` |
-| `ref #360` 独立成行 | 1 处（`git log origin/master..HEAD --format=%B \| grep -c '^ref #360$'`） |
-| 变更规模 | 24 files changed, +1531 / −657（含 3 个新测试文件、1 个 plan 文件） |
-| pre-commit hook | `cargo fmt --check` 通过 |
+| 提交台账（本 evidence 更新于反思 commit 之前；3 个 commit 已落盘） | |
+| `9777dd6` | `feat: remove institution_survey end-to-end and reallocate survey points to dragon bonus`（24 files, +1531/−657） |
+| `824817d` | `docs: add #360 F1/F3/F4 verification evidence`（3 files, +191） |
+| `b8255c4` | `fix: address #360 five-angle review findings (docs, tests, evidence)`（15 files, +357/−42） |
+| 随后 1 个（docs-only） | 反思 commit：`.dsh/kb/dev/reflections.md` + 本 F1 台账更新——PR 最后一个 commit，与实现同批推送 |
+| 区间规模 | `git diff --shortstat ad850c4..HEAD` = **33 files changed, +2043 / −663**（截至 `b8255c4`） |
+| `ref #360` 独立成行 | 3 / 3 commit 各自命中 1 行（`git log ad850c4..HEAD --format=%B \| grep -c '^ref #360$'` = 3） |
+| pre-commit hook | `cargo fmt --check` 每次通过 |
+
+> 时点说明（质量 review QUAL-P1-1/目标 review P3-3 指出）：本文件首次落盘于 `824817d` 时点，
+> 当时区间为 1 commit / 24 files / +1531−657；上表为补齐后的**可复核台账**（含 review 修复 commit），
+> PR 最终规模以 issue #360 完成 comment 为准。
 
 ## 4. RED → GREEN 证据
 
