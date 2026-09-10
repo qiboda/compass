@@ -1692,14 +1692,22 @@ mod tests {
         .expect("copy empty basic");
     }
 
-    /// Files in the shared stage_csv temp dir that contain `needle`.
+    /// Files in the shared stage_csv temp dir that contain `needle` **and were
+    /// created by this process** (`stage_csv` embeds the PID in the file name).
+    ///
+    /// The directory is shared by every nextest process, so an in-flight file
+    /// owned by a parallel test must not be mistaken for a leftover of ours
+    /// (seen during #360 verification: a parallel process's staged
+    /// `market_temperature` file failed this assertion under `llvm-cov
+    /// nextest`, while `cargo test` happened to interleave differently).
     fn staged_files_containing(needle: &str) -> Vec<PathBuf> {
         let dir = std::env::temp_dir().join("compass_sepa_writeback");
+        let own_pid = format!("_{}_", std::process::id());
         let mut out = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
-                if name.contains(needle) {
+                if name.contains(needle) && name.contains(&own_pid) {
                     out.push(e.path());
                 }
             }
@@ -1886,6 +1894,11 @@ mod tests {
         let start = Some(NaiveDate::from_ymd_opt(2026, 8, 13).expect("start"));
         let end = Some(NaiveDate::from_ymd_opt(2026, 8, 14).expect("end"));
 
+        // Snapshot first: a stale file from an earlier run that reused this
+        // PID must not be attributed to the run below.
+        let before: std::collections::HashSet<PathBuf> =
+            staged_files_containing("2026-08-1").into_iter().collect();
+
         run_backfill_dates(start, end, &reader, dolt_tmp.path()).expect("backfill");
 
         // stage_csv writes under std::env::temp_dir()/compass_sepa_writeback;
@@ -1893,6 +1906,7 @@ mod tests {
         let leftovers = staged_files_containing("2026-08-13_")
             .into_iter()
             .chain(staged_files_containing("2026-08-14_"))
+            .filter(|p| !before.contains(p))
             .collect::<Vec<_>>();
         assert!(
             leftovers.is_empty(),

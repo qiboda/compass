@@ -211,7 +211,7 @@ fn validate_since_arg(flag: &str, value: &str) -> Result<(), Box<dyn std::error:
 /// Thresholds: fin_* tables 120 days (quarterly reports), market tables
 /// (main_flow/dragon_list/block_trade/index_daily/index_basic) 7 days.
 /// `stock_basic` is skipped: its data_updates row has a NULL last_report_date
-/// (collectors write only 4 columns, main.py:79-85).
+/// (collectors write only 4 columns, see `compass-collectors/src/stock_basic_official.rs`).
 fn warn_if_stale(dolt_dir: &Path, table: &str, threshold_days: i64) {
     let Ok(Some(last)) = crate::validate::data_updates_last_report_date(dolt_dir, table) else {
         return; // no data_updates row / NULL / missing table -> nothing to compare

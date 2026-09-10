@@ -841,12 +841,29 @@ mod tests {
             "温度计 64"
         );
         assert_eq!(
-            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, 5.0]),
-            "主力75+龙虎10+大宗+5"
+            factor_note_text("sepa.note.big_capital", &[20.0, 15.0, 5.0]),
+            "主力20+龙虎15+大宗+5"
         );
         assert_eq!(
-            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, -5.0]),
-            "主力75+龙虎10+大宗-5"
+            factor_note_text("sepa.note.big_capital", &[20.0, 15.0, -5.0]),
+            "主力20+龙虎15+大宗-5"
+        );
+        // #360: extra args beyond the three placeholders must be ignored — the
+        // removed survey slot must not resurface through positional drift.
+        assert_eq!(
+            factor_note_text("sepa.note.big_capital", &[20.0, 15.0, 5.0, 999.0]),
+            "主力20+龙虎15+大宗+5"
+        );
+        // #360 review (QA P1-1): the en template was edited alongside zh, so it
+        // needs its own rendered assertion (the zh case cannot guard en text).
+        compass_i18n::set_locale("en");
+        assert_eq!(
+            factor_note_text("sepa.note.big_capital", &[20.0, 15.0, 5.0]),
+            "main 20 + dragon 15 + block +5"
+        );
+        assert_eq!(
+            factor_note_text("sepa.note.big_capital", &[20.0, 15.0, -5.0]),
+            "main 20 + dragon 15 + block -5"
         );
         compass_i18n::set_locale("zh");
     }

@@ -1,5 +1,8 @@
 # remove-institution-survey — Work Plan
 
+> 状态（2026-09-10）：实现 + 数据清理 + evidence 完成，五角度 review 已跑（findings 已修）；
+> 待反思 commit 与 push/PR/issue 收尾。台账见下 Todos，完成定义以 Final verification wave（F1-F4）为准。
+
 ## TL;DR (For humans)
 
 **What you'll get:** `institution_survey` 表从全链路彻底移除——采集器模块、CLI 子命令、
@@ -154,18 +157,18 @@ rm -f /data/compass-data/parquet_data/institution_survey.parquet
 
 ### Todos
 
-- [ ] 1. 委派对抗性 + 需求验收测试（RED）
+- [x] 1. 委派对抗性 + 需求验收测试（RED）
   What to do: 门禁 3.5/4——两个测试 subagent 独立写失败测试/测试清单
   Acceptance: 新测试当前失败（RED 证据）；列出需删除/更新的既有测试清单
-- [ ] 2. collectors：删除模块 + CLI + orchestrate 分支
-- [ ] 3. compass-core：删除 InstitutionSurveyRow + fetch_institution_survey + 测试
-- [ ] 4. compass-data：删除枚举/parse/import match/DDL/测试
-- [ ] 5. compass-strategy：评分删除 survey 信号 + dragon 10→15 + 测试/fixture 更新
-- [ ] 6. scripts：update-database.sh + test-update-database.sh 断言更新
-- [ ] 7. i18n 模板 + GUI `factor_note_text` 更新（display-only）
-- [ ] 8. docs 同步（上述清单全部文件 + 决策记录行）
-- [ ] 9. 数据清理（Dolt drop + commit/push + parquet 删除 + 验证）
-- [ ] 10. 全量验证（GREEN + just check + 冒烟 + grep 零残留 + 覆盖率）
+- [x] 2. collectors：删除模块 + CLI + orchestrate 分支
+- [x] 3. compass-core：删除 InstitutionSurveyRow + fetch_institution_survey + 测试
+- [x] 4. compass-data：删除枚举/parse/import match/DDL/测试
+- [x] 5. compass-strategy：评分删除 survey 信号 + dragon 10→15 + 测试/fixture 更新
+- [x] 6. scripts：update-database.sh + test-update-database.sh 断言更新
+- [x] 7. i18n 模板 + GUI `factor_note_text` 更新（display-only）
+- [x] 8. docs 同步（上述清单全部文件 + 决策记录行）
+- [x] 9. 数据清理（Dolt drop + commit/push + parquet 删除 + 验证）
+- [x] 10. 全量验证 —— 完成定义见下节 Final verification wave（F1-F4），本行不再重复列举
 
 ## Final verification wave
 

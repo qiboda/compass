@@ -440,9 +440,9 @@
 - **症状**: `sepa backtest` 全窗口（385 天）40+ 分钟未完成；单日 ~3.1s。
   `RUST_LOG=debug` 显示每日期 `fetch_ms≈3000`、`compute_ms≈210`（fetch 占 93%）
 - **根因**: `run_backtest` 逐日调用 `run_sepa`，而 `run_sepa` 每次独立 fetch
-  6 份数据（550 日 cross-section + stock_basic + concept_member +
-  capital_main_flow + dragon_list + block_trade；当时为 7 份，含 institution_survey，
-  该采集器已随 #360 移除）。
+  5 份数据（550 日 cross-section + stock_basic + capital_main_flow + dragon_list +
+  block_trade；历史为 7 份：另含 concept_member（随 #283 移除）与 institution_survey
+  （随 #360 移除））。
   385 天重复读取 380 次（累计 rchar 255GB）——IO 是瓶颈，compute 只占 7%
 - **排查路径**:
   1. 加 tracing 量化：`scoring.rs` 各 fetch 单独计时 + `backtest.rs` 每日/阶段

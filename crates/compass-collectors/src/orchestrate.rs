@@ -646,6 +646,24 @@ mod tests {
         assert!(require_nonzero(1, "test").is_ok());
     }
 
+    /// #360: the removed `institution_survey` target must be rejected by BOTH
+    /// dispatch entry points (each previously carried an arm for it). The
+    /// unknown arm short-circuits before any network/Dolt work, so this stays
+    /// a pure dispatch-contract test.
+    #[tokio::test]
+    async fn removed_and_unknown_targets_are_rejected() {
+        for target in ["institution_survey", "institution-survey", "not_a_table"] {
+            assert!(
+                fetch(target, None, false).await.is_err(),
+                "fetch must reject {target}"
+            );
+            assert!(
+                import_target(target).await.is_err(),
+                "import must reject {target}"
+            );
+        }
+    }
+
     #[test]
     fn auto_heal_table_names_match_python() {
         assert_eq!(

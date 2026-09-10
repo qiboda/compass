@@ -30,21 +30,37 @@ Dolt 仓库 `/data/compass-data/compass_data`（`main`，已 push，working tree
 | `696rp2t…` | `feat: refresh SEPA derived tables under dragon institution bonus 15 (ref #360)`（technical_factor / industry_factor / capital_factor / final_score / market_temperature / backtest_result / data_updates） |
 | `c6krg9f…` | `feat: drop institution_survey table and its data_updates row (ref #360)` |
 | `…`（第三次） | `chore: refresh market_temperature after re-run (parallel-sum FP noise, ref #360)` |
+| `…`（第四次） | `fix: restore full-window backtest_result snapshot (410 rows 2025-01-02..2026-09-09) under new SEPA formula (ref #360)` — 见下方「非目标表副作用」 |
+
+**非目标表副作用（诚实披露，ref #360 安全审查 SEC-P1-1）**：验收冒烟 `sepa backtest --start 2026-07-01`
+触发了 `crates/compass-data/src/backtest.rs:115` 的**无条件全表 `DELETE FROM backtest_result`**，
+把既有 384 行快照（2025-01-02..2026-08-03）替换为 51 行短窗口——超出本 issue 声明范围。
+处置：以默认全窗口重跑 `sepa backtest`（411 日 / 82 次换仓）恢复为 **410 行、2025-01-02..2026-09-09**
+的完整历史曲线（新公式口径），单独 Dolt commit + push；代码层加固（scoped delete / 替换前快照）
+已建 issue #361 跟踪。其余派生表在本批 commit 中均为「仅新增当日行、0 行删除」
+（technical_factor / capital_factor / final_score / industry_factor）。
 
 清理验证：
 
 - `dolt sql -q "SHOW TABLES"` → 无 `institution_survey`
 - `SELECT COUNT(*) FROM data_updates WHERE table_name='institution_survey'` → `0`
 - `rm -f /data/compass-data/parquet_data/institution_survey.parquet` → `ls | grep -i institution` 无输出
+- `rm -f /data/compass-data/csv/institution_survey.progress.json /data/compass-data/csv/RPT_ORG_SURVEYNEW.csv`
+  （仓库外采集中间产物，安全审查 SEC-P2-1：`progress` 子命令的 glob 枚举会把它显示为有效 target）
+  → `ls /data/compass-data/csv/ | grep -ci "institution\|SURVEYNEW"` = `0`
 - `dolt status` → up to date with origin/main、working tree clean
 - **未创建任何备份**（无 `pre_merge_backup` 之外的额外副本、无归档表、无 CSV 留档）——符合用户锁定决策"存量数据直接删除不留备份"
 
-## 3. grep 零残留（worktree 内全仓）
+## 3. grep 零残留（worktree 内全仓 + 仓库外数据目录）
 
 ```
 grep -R -n "institution_survey\|InstitutionSurvey\|institution-survey\|机构调研" \
-  --include=*.rs --include=*.toml --include=*.sh --include=*.yml (worktree root)
+  --include=*.rs --include=*.toml --include=*.sh --include=*.yml --include=*.json --include=*.csv \
+  (worktree root)
+ls /data/compass-data/{parquet_data,csv} | grep -i "institution\|SURVEYNEW"   # 仓库外数据面
 ```
+
+（安全审查 SEC-P2-1 要求：范围必须含 `*.json`/`*.csv` 且覆盖仓库外数据目录——已补。）
 
 生产代码（`crates/**` 非测试、`scripts/update-database.sh`、`*.yml` 语言包）：**零命中**。
 
@@ -63,5 +79,6 @@ grep -R -n "institution_survey\|InstitutionSurvey\|institution-survey\|机构调
 
 ## 4. 结论
 
-F4 通过：唯一数值变更 dragon 10→15（cap 30 不变）、无备份、数据面仅删除该表与其 data_updates 行 +
-按新公式刷新 SEPA 派生表；生产代码 grep 零残留，例外项全部为契约/历史记录并逐条说明。
+F4 通过：唯一数值变更 dragon 10→15（cap 30 不变）、无备份、数据面删除该表 + 其 `data_updates` 行 +
+仓库外 parquet/CSV 残留，并按新公式刷新 SEPA 派生表；生产代码 grep 零残留，例外项全部为契约/历史记录并逐条说明。
+非目标表副作用（`backtest_result` 快照被冒烟替换）已修复并披露（见 §2）。

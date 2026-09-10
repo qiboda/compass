@@ -716,7 +716,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | D4（#247）：LLM 请求通道 | 第五 `AsyncDispatcher` 通道 / 复用 run_screener 通道 | 第五通道（`RunLlmRequest/Response`，含 seq 守卫） | 与 sepa/index 通道模式完全同构；LLM 是独立后端职责（网络 I/O + 解析校验）；seq 守卫保证 Esc 取消后在途响应不混入 | 复用 screener 通道破坏单一职责、错误语义混杂 |
 | D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
 | C4（#267）：抓取进度存储形态 | JSON 进度文件 / SQLite / 日志行 | `csv_dir()/<name>.progress.json` 原子写（tmp+os.replace） | 轻量零依赖、跨进程可读、与 CSV 同目录便于排查；CSV 保持一次性写入语义 | SQLite 过重；日志行无结构化查询 |
-| C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon；#360 后接入者减为 5 个：main_flow/block_trade/index_daily/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
+| C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon；#360 后接入者减为 4 个：main_flow/block_trade/index_daily/dragon——concept_member 早随 #283 移除、institution_survey 随 #360 移除） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
 
 > 注：C5 原记录含 `concept_member`——该采集器已随 issue #283（概念板块移除）
 > 删除。现状 progress 文件写入方为 **5 个模块、7 个文件名**：SEPA 四采集器
@@ -731,6 +731,7 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | MIG-4（#310）：切换门槛 | 直接删除 Python / dual-run 等价后切换 | 并行开发 + dual-run 对比（CSV/Dolt 行数、日期覆盖、关键字段）全部通过后才切换 `update-database.sh` | 数据管线不能因迁移中断；等价值可复现且不依赖“看起来像” | 直接切换风险高，无回退证据 |
 | MIG-5（#310）：Python 退役时机 | 提前删除 / B7 同批切换+|删除 | B7 完成全量 dual-run 后，同批完成切换 `update-database.sh` 与删除 `collectors/`（一个 PR，可含多个逻辑提交） | 用户锁定：保留 Python 并存直到等价，删除与切换同批分步便于回退；B1-B6 各批均有 dual-run evidence | 提前删无回退；分开两条 PR 会增加双入口维护期 |
 | TIMING-1（#334）：同步计时存储形态 | 写入 Dolt / 输出 CSV / 本地 JSON | 每次运行一个本地 JSON（`logs/sync-timings/YYYY-MM-DD-<run_id>.json`），Rust 通过 `COMPASS_TIMING_FILE` 上报 JSONL 中间事件，shell 统一合并 | 便于后续优化对比、不污染数据仓库；JSONL 支持 Rust 子进程增量上报、shell 汇总；JSON 能表达 run/steps/collectors/summary 分层结构 | 写入 Dolt 混淆数据与诊断；CSV 丢失嵌套结构且不便按运行聚合 |
+| SEPA-1（#360）：机构调研源移除 | 保留表 + 修锚点 / **整表移除 + 分值重分配** | 整表移除并删除全部现网数据（Dolt DROP + `data_updates` 行 + parquet 文件，无备份）；survey 信号（`SepaWindow.surveys`/`MarketContext.surveyed`/`CapitalInputs.has_survey`）全删，dragon-list 机构净买入 +10 → `DRAGON_INSTITUTION_BONUS = 15.0`，`big_capital = (main_flow + dragon + block_adj).clamp(0.0, 30.0)`（cap 30 不变）；采集器/CLI/import-compass/读取原语/脚本/文档全链路清理 | 根因：采集器按 NOTICE_DATE 抓取、按 survey_date 锚定，晚发布行反复触发 #343 历史守卫降级为计划外全量导出；数据源不可靠且维护成本持续 | 保留表需长期修锚点与守卫；保留 survey 权重会固化不可靠信号（完整版理由见 data-providers.md 决策记录 #360 行） |
 
 > 注：设计文件 `.dsh/designs/llm-screener-llm.md` §4 的"拒绝空 And/Or、深度 > 8"
 > 与实现契约（`validate_filter` 空 And/Or 合法、深度上限 32）不一致——以后者为准：
