@@ -230,24 +230,6 @@ pub struct BlockTradeRow {
     pub update_date: Option<chrono::NaiveDate>,
 }
 
-/// One 机构调研 (institution survey) record.
-///
-/// Read from `institution_survey.parquet` by
-/// [`crate::data::parquet::ParquetReader::fetch_institution_survey`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstitutionSurveyRow {
-    /// Stock symbol (exchange-prefixed, e.g. "SH600519").
-    pub symbol: String,
-    /// Survey date (调研日期).
-    pub survey_date: chrono::NaiveDate,
-    /// Investigating institution name (调研机构, e.g. 长信基金).
-    pub org_name: String,
-    /// Survey method (接待方式, e.g. 电话会议).
-    pub survey_type: Option<String>,
-    /// Date this row was last updated.
-    pub update_date: Option<chrono::NaiveDate>,
-}
-
 // ---------------------------------------------------------------------------
 // App command (UI → worker thread)
 // ---------------------------------------------------------------------------

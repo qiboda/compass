@@ -125,11 +125,11 @@ cargo run --bin compass-data -- import-compass --table <table> [OPTIONS]
 
 | 选项 | 默认值 | 说明 |
 |---|---|---|
-| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow`、`capital_main_flow`、`dragon_list`、`block_trade`、`institution_survey`、`index_daily`、`index_basic` |
+| `--table` | （必填） | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow`、`capital_main_flow`、`dragon_list`、`block_trade`、`index_daily`、`index_basic` |
 | `--dolt-dir` | 来自配置 `[dolt].compass_data_dir` | Dolt 数据库目录 |
 | `--output` | 来自配置 `[parquet].dir` | Parquet 文件输出目录 |
 | `--overwrite` | `false` | 替换已有数据而非合并 |
-| `--since` | （无） | 增量导入：仅导入各表日期列 >= since 的数据（YYYY-MM-DD，如 2026-08-21；`import` 命令仍用 YYYYMMDD）。日期列按表不同：财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）为 `report_date`；行情表（capital_main_flow/dragon_list/block_trade/index_daily）为 `trade_date`；institution_survey 为 `survey_date`。index_basic/stock_basic 不支持 `--since`（全量覆盖/镜像）。增量 merge 前会校验 Dolt `< since` 历史与既有 parquet 一致性，不一致自动降级为全量导出（ref #343） |
+| `--since` | （无） | 增量导入：仅导入各表日期列 >= since 的数据（YYYY-MM-DD，如 2026-08-21；`import` 命令仍用 YYYYMMDD）。日期列按表不同：财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）为 `report_date`；行情表（capital_main_flow/dragon_list/block_trade/index_daily）为 `trade_date`。index_basic/stock_basic 不支持 `--since`（全量覆盖/镜像）。增量 merge 前会校验 Dolt `< since` 历史与既有 parquet 一致性，不一致自动降级为全量导出（ref #343） |
 
 **指数/板块表（epic #255）**：`index_daily` / `index_basic` 存指数与板块数据
 （官方指数 + 行业板块，来源：腾讯主源 + 东财备用 + THS，Rust 采集器 `index_daily`；
@@ -166,7 +166,7 @@ cargo run --bin compass-data -- import-compass --table stock_basic --overwrite
 
 - **全量导入**（无 `--since`/`--overwrite`/首次）：源 Dolt COUNT（含过滤条件）vs parquet 行数精确对比，不一致 → 报错退出（exit 1）
 - **增量 merge**：merge 前先比对 Dolt `< since` 历史与旧 parquet `< since` 切片（双向 EXCEPT，可检出缺失历史/过期值/孤儿行三类分叉）；不一致 → **自动降级为不带 `--since` 的真全量导出**写回（先保留 `pre_merge_backup`），并对全量 Dolt COUNT 校验；一致 → 正常 merge，merge 后 parquet 行数 ≥ 旧 parquet 行数，否则报错退出；DuckDB merge 失败 fallback 同全量导出（ref #298、#343）
-- **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/institution_survey/index_daily/index_basic）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，采集器写库时不填）
+- **新鲜度（仅 warn，不退出）**：读 `compass_data` Dolt 的 `data_updates.last_report_date`，超过阈值仅告警——财务表（fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）阈值 120 天；行情表（capital_main_flow/dragon_list/block_trade/index_daily/index_basic）阈值 7 天；stock_basic 不检查（其 last_report_date 为 NULL，采集器写库时不填）
 - **⚠️ `--overwrite --since`**：显式覆盖时不再走增量 merge，而是用 `--since` 过滤后的导出**整体替换** parquet；该组合会丢掉过滤条件之外的历史行（与 `import --since` 同义）。无特殊需求应避免同时传这两个 flag（ref #298 外层根因提醒）。
 
 ---
@@ -266,7 +266,6 @@ Python `collectors/` 已在 epic #310 完成迁移并退役。它使用 `wreq`
 | `backfill --table T START END` | 按日期窗口回补（`--table` 可多个，如 `index_daily`） |
 | `block-trade` | 大宗交易专用入口（`--start`/`--end`/`--years`/`--page-size`） |
 | `dragon` | 龙虎榜专用入口（`--start`/`--end`/`--page-size`） |
-| `institution-survey` | 机构调研专用入口（`--start-date`/`--page-size`） |
 | `main-flow` | 主力资金流专用入口（新浪 lscjfb 逐股窗口，无需参数；只请求当日处于上市状态的股票，`stock_basic` list/delist 活跃区间过滤） |
 | `main-flow-backfill --start D --end D [--symbols S,S]` | 主力资金流回补（`--symbols` 与全量均只请求 [start,end] 内上市股；`--symbols` 被过滤清空时报 `outside the active window` 错误，退市股不再被请求） |
 | `fin-indicators` | 财务指标（`--years`/`--periods`/`--page-size`/`--incremental`） |
@@ -290,7 +289,6 @@ cargo run -p compass-collectors -- fetch cash_flow
 cargo run -p compass-collectors -- fetch main_flow            # SEPA: 主力资金流（新浪 lscjfb 逐股 num=20 窗口）
 cargo run -p compass-collectors -- fetch dragon               # SEPA: 龙虎榜席位
 cargo run -p compass-collectors -- fetch block_trade          # SEPA: 大宗交易
-cargo run -p compass-collectors -- fetch institution_survey   # SEPA: 机构调研
 cargo run -p compass-collectors -- fetch index_daily          # SEPA: 指数/板块日线
 cargo run -p compass-collectors -- sync                       # 获取 + 导入全部
 cargo run -p compass-collectors -- sync-investment --restart
@@ -298,8 +296,8 @@ cargo run -p compass-collectors -- sync-investment --restart
 
 **抓取进度查询（`progress` 子命令，issue #267）**：一次写 CSV 的采集器在抓取期间
 实时写 `csv_dir()/<name>.progress.json`（tmp+os.replace 原子写，可安全跨进程读取）。
-写入方 6 个模块、产出 8 个进度文件：SEPA 五采集器（main_flow/block_trade/
-dragon/institution_survey/index_daily——用快名）+ 财务三表（balance_sheet/income/
+写入方 5 个模块、产出 7 个进度文件：SEPA 四采集器（main_flow/block_trade/
+dragon/index_daily——用快名）+ 财务三表（balance_sheet/income/
 cash_flow 经 financial.rs 共享路径——进度文件名为 API 报告名
 `RPT_F10_FINANCE_*.progress.json`）。**fin_indicators 不产生进度文件**（自有
 fetch 循环，无 Progress 写入）；`progress <target>` 的 target 用对应文件名
@@ -318,7 +316,7 @@ cargo run -p compass-collectors -- progress block_trade --json
 `stock_basic`（官网采集器）不产生进度文件。
 
 `fetch`/`import` 的 target 集合（`stock_basic`/`fin_indicators`/`balance_sheet`/
-`income`/`cash_flow`/`dragon`/`block_trade`/`institution_survey`/`main_flow`/
+`income`/`cash_flow`/`dragon`/`block_trade`/`main_flow`/
 `index_daily`）；`sync` 保持 auto-heal → 各表按序 fetch+import → data_updates 的完整顺序。
 
 ### 环境变量（collectors）
@@ -342,7 +340,7 @@ config.toml**。
 关键概念：
 - **wreq** 用于 TLS 伪装（东方财富反爬虫；BSE 官网需要携带会话 cookie）
 - **CSV 作为中间格式**，连接 API 与 Dolt
-- **增量机制**：财务三表（fin_balance_sheet/fin_income/fin_cash_flow）与 fin_indicators 使用 **UPDATE_DATE 时间锚点**增量（见下方说明）；SEPA 时间序列表（main_flow/dragon/block_trade/institution_survey/index_daily）继续用 Dolt `data_updates.last_report_date` 锚点，只抓 `>= 最新已抓报告期` 的窗口；任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。财务三表自 ref #202 起改用 **F10 完整版报表**（RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW，203/319/254 字段），自 issue #299 起采用 **UPDATE_DATE 增量 + merge/ODKU 导入**（历史永不丢失、修订覆盖）；fin_indicators + 5 个时间序列表（main_flow/dragon/block_trade/institution_survey/index_daily）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 或 ODKU 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史。长文本表（institution_survey org_name 可达 ~800 字节）与宽表（财务三表 203-319 列超 Dolt `-c` 推断行尺寸上限）用显式宽 schema 建临时表导入（`dolt table import -u`，采集器 `create_sql` 参数），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8 或 65504 字节行尺寸超限。
+- **增量机制**：财务三表（fin_balance_sheet/fin_income/fin_cash_flow）与 fin_indicators 使用 **UPDATE_DATE 时间锚点**增量（见下方说明）；SEPA 时间序列表（main_flow/dragon/block_trade/index_daily）继续用 Dolt `data_updates.last_report_date` 锚点，只抓 `>= 最新已抓报告期` 的窗口；任一天/板块抓取失败即整体中止（不推进 watermark，重跑补全）。财务三表自 ref #202 起改用 **F10 完整版报表**（RPT_F10_FINANCE_GINCOME/GBALANCE/GCASHFLOW，203/319/254 字段），自 issue #299 起采用 **UPDATE_DATE 增量 + merge/ODKU 导入**（历史永不丢失、修订覆盖）；fin_indicators + 4 个时间序列表（main_flow/dragon/block_trade/index_daily）**merge 导入**（CREATE IF NOT EXISTS + INSERT IGNORE 或 ODKU 按 PK 去重）——增量窗口 CSV 追加进已有表，绝不覆盖完整历史。宽表（财务三表 203-319 列超 Dolt `-c` 推断行尺寸上限）用显式宽 schema 建临时表导入（`dolt table import -u`，采集器 `create_sql` 参数），避免 dolt 类型推断按 varchar(200) 字节截断 UTF-8 或 65504 字节行尺寸超限。
 
 **fin_indicators 增量修订检测（issue #135，替代 #27 的 `--refresh N`）**：`cargo run -p compass-collectors -- fetch fin-indicators --incremental` 改用 **UPDATE_DATE 时间锚点**——filter=`(UPDATE_DATE>='{anchor}')`，锚点 = `min(data_updates.last_updated, state.json last_update_date)`（Dolt 为 source of truth，state.json 兜底；两源皆无则全量 REPORTDATE 枚举）。增量模式忽略 `--years/--periods`（锚点过滤跨报告期，旧报告期修订与新披露一体覆盖）。`fin_indicators::import_to_dolt` 改 **UPSERT**（`INSERT ... SELECT ... ON DUPLICATE KEY UPDATE`，SELECT 侧全列别名 + ODKU 无前缀别名引用——Dolt 2.2.3 不支持限定源列引用与 `VALUES()`），修订后的行覆盖 Dolt 旧 PK 行；CSV 每次写入后整文件 keep-LAST 去重（键 `(SECURITY_CODE, REPORTDATE)`）。**已知限制**：不做历史回补（锚点前的存量修订不重抓，风险自担）；fetch 与 import 应同日运行（跨日/单独 import 会致锚点超前漏抓间隙修订）；API 侧下架/删除的行不传播到 Dolt（UPSERT 只能覆盖不能删除）。
 
@@ -352,13 +350,12 @@ SEPA 采集器说明：
 - `main_flow`：新浪 `MoneyFlow.ssl_qsfx_lscjfb` 逐股日频窗口（`daima=sh600519` 形式，num=20 只导 `trade_date > last_report_date` 的行）；字段映射 `main_net_inflow=r0_net+r1_net`、`main_net_inflow_rate=(r0_net+r1_net)/(r0+r1+r2+r3)×100`（百分数，除零→0）、r0_net/r1_net/r2_net/r3_net → super/large/medium/small、`trade_date=opendate`；按 (symbol, trade_date) merge 导入；0 新行删陈旧 CSV 且按交易日历判定为 no-op（#338）；采集目标按 `stock_basic` 活跃区间过滤（#348，退市股不再请求）、导入仅接受 `main_net_inflow` 非 NULL 行；逐股窗口建议在**盘后**运行（交易日数据发布前运行会 0 行并因日历含今日而失败，次日重跑可自愈）
 - `dragon`：龙虎榜席位明细（RPT_BILLBOARD_DAILYDETAILSBUY/SELL），按 (symbol, trade_date, seat_type) 聚合
 - `block_trade`：大宗交易（RPT_DATA_BLOCKTRADE）
-- `institution_survey`：机构调研（RPT_ORG_SURVEYNEW，NOTICE_DATE 过滤）
 - `index_daily`：指数/板块日线（官方指数白名单 + THS 行业板块，增量按 `MAX(trade_date)`；merge 导入；`index_type` 仅 `official`/`industry` 两种取值）
 - `index_basic`：指数/板块名称表（官方指数 + THS 行业板块，版本快照，全量覆盖导出；`import index_daily` 时伴生写入）
 
 **采集器字符串统一 TRIM（issue #235）**：所有写 Dolt 的采集器在 INSERT SELECT 中
 对用户可见文本列统一 `TRIM()`（stock_basic 的 name/board/full_name/industry/region、
-fin_indicators 文本列、财务三表文本列、institution_survey 的 org_name/survey_type、
+fin_indicators 文本列、财务三表文本列、
 block_trade 的 buyer/seller）。仅去 ASCII 空格（U+0020），全角空格 U+3000 保留
 （`TRIM()` 不剥离，Dolt 实证）。Dolt 现库脏数据计数为 0，无需重导；Parquet 为旧
 导出快照，若 GUI 仍见旧空格需重新 `export` 刷新。
@@ -464,7 +461,7 @@ cargo run --bin compass-data -- sepa backfill-dates --start 2026-08-13 --end 202
 `investment_data` 上游（`scripts/sync-investment-data.sh`）→ `cargo import`
 → `check-stock-daily` 缺口硬校验 → `compass-collectors sync`
 （自动检测并回补日频源数据缺口；0 行日频 import 按交易日历判定 no-op）
-→ Dolt commit（含 data_updates）→ import-compass 11 张表
+→ Dolt commit（含 data_updates）→ import-compass 10 张表
 （`stock_basic`/`index_basic` 全量覆盖，其余按锚点增量；data_updates 只读不导出）。
 SEPA 派生表不再随每日管线自动计算；需要时手动运行
 `compass-data sepa backfill-dates` → `sepa temperature` → `sepa score --top 50`。

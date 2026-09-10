@@ -264,7 +264,7 @@ sepa:
     no_sector_data: No sector data
     news_v1: "v1: no news data"
     news_default: "v1: default 10/20"
-    big_capital: "main %{main} + dragon %{dragon} + survey %{survey} + block %{block}"
+    big_capital: "main %{main} + dragon %{dragon} + block %{block}"
     thermometer: "Thermometer %{score}"
 
 index:

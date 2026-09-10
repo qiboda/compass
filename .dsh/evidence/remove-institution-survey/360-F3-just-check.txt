@@ -1,0 +1,138 @@
+# gate: just check (fmt --check + clippy -D warnings + cargo test)
+# HEAD: 824817d  date: 2026-09-10T21:38:13+08:00
+# 原始输出 141KB 已精简为：fmt/clippy 结论 + 每个测试二进制的结果行 + 关键摘要
+
+## head
+cargo fmt -- --check
+cargo clippy -- -D warnings
+    Checking compass-core v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-core)
+    Checking compass-collectors v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-collectors)
+    Checking compass-strategy v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-strategy)
+    Checking compass-data v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-data)
+    Checking compass v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.67s
+cargo test
+   Compiling compass-core v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-core)
+   Compiling compass-collectors v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-collectors)
+   Compiling compass-strategy v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-strategy)
+   Compiling compass-data v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass-data)
+   Compiling compass v0.1.0 (/data/codes/compass/.worktrees/remove-institution-survey/crates/compass)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.97s
+     Running unittests src/main.rs (target/debug/deps/compass-56ac35b8c6105b0e)
+
+running 394 tests
+test citizens::indicators::tests::defaults_carry_canonical_parameters ... ok
+test citizens::logger::tests::new_creates_panel ... ok
+test citizens::indicators::tests::line_names_reflect_edited_periods ... ok
+test citizens::logger::tests::new_creates_panel_with_correct_id ... ok
+test citizens::indicators::tests::setters_guard_invalid_inputs ... ok
+test citizens::indicators::tests::calculate_uses_instance_periods ... ok
+test citizens::indicators::tests::with_periods_seeds_explicit_parameters ... ok
+
+## clippy / warnings 摘要
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 246 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## 每个测试二进制的结果行（46 个）
+     Running unittests src/main.rs (target/debug/deps/compass-56ac35b8c6105b0e)
+test result: ok. 394 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.33s
+     Running tests/adversarial_219_fork_formats.rs (target/debug/deps/adversarial_219_fork_formats-09eeb0f33f619ffd)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/adversarial_245_screener_builder.rs (target/debug/deps/adversarial_245_screener_builder-00120de14db948f7)
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/adversarial_357_editor_architecture.rs (target/debug/deps/adversarial_357_editor_architecture-bdf8d9aad2e7716d)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/requirement_editor_architecture.rs (target/debug/deps/requirement_editor_architecture-38ad11ff698483e6)
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/requirement_index_market.rs (target/debug/deps/requirement_index_market-456a9a834d7e81d3)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/compass_collectors-acc75bda49f44ff2)
+test result: ok. 132 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.14s
+     Running unittests src/main.rs (target/debug/deps/compass_collectors-0d4fa154153c9674)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/compass_core-3f92ca18f89079ef)
+test result: ok. 194 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 87.06s
+     Running tests/index_duckdb_fallback.rs (target/debug/deps/index_duckdb_fallback-638ddcf32f5714f2)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+     Running tests/index_symbol_bk.rs (target/debug/deps/index_symbol_bk-f1027d09207a10a5)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration_test.rs (target/debug/deps/integration_test-8ed42247af6da39e)
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.23s
+     Running tests/llm.rs (target/debug/deps/llm-c438af255f85ee5f)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/requirement_index_duckdb.rs (target/debug/deps/requirement_index_duckdb-682c7dacc650563d)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+     Running unittests src/lib.rs (target/debug/deps/compass_data-22aaa251731e7d48)
+test result: ok. 112 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.71s
+     Running unittests src/main.rs (target/debug/deps/compass_data-5769368512f674ca)
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 125.63s
+     Running tests/data_quality_adversarial.rs (target/debug/deps/data_quality_adversarial-533aaabb791db120)
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.76s
+     Running tests/index_import_compass.rs (target/debug/deps/index_import_compass-a9a96ccb6bdfdae6)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+     Running tests/name_en_data_layer_adversarial.rs (target/debug/deps/name_en_data_layer_adversarial-4f1c1d786963ecf8)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+     Running tests/requirement_index_import.rs (target/debug/deps/requirement_index_import-6c25320ba9ab0129)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+     Running tests/requirement_institution_survey_removal.rs (target/debug/deps/requirement_institution_survey_removal-bd33c1824be4576f)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/requirement_name_en_data.rs (target/debug/deps/requirement_name_en_data-3d6ffcf8b66602d5)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+     Running unittests src/lib.rs (target/debug/deps/compass_i18n-c12733c1620e534a)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/compass_strategy-7faefb43d4088fb1)
+test result: ok. 118 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+     Running tests/institution_survey_removal_adversarial.rs (target/debug/deps/institution_survey_removal_adversarial-35a865380f28cb72)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+     Running tests/requirement_institution_survey_removal.rs (target/debug/deps/requirement_institution_survey_removal-621e6b763f7329b1)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+     Running tests/screener.rs (target/debug/deps/screener-23c410a4b174eba5)
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.50s
+     Running tests/screener_engine.rs (target/debug/deps/screener_engine-8e8cbd32c9ae2438)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.34s
+     Running tests/screener_eval_adversarial.rs (target/debug/deps/screener_eval_adversarial-cbb812540d32a5e8)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+     Running tests/sepa.rs (target/debug/deps/sepa-da78543680771e87)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.61s
+     Running tests/sepa_real_smoke.rs (target/debug/deps/sepa_real_smoke-42492a0a5fdf2a76)
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/compass_types-dbd05e10e93ca891)
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/adversarial_247_filter_serde.rs (target/debug/deps/adversarial_247_filter_serde-3b98bdcb8cdb7a09)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/adversarial_serde.rs (target/debug/deps/adversarial_serde-7f16a941f754eaa5)
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/validate_filter.rs (target/debug/deps/validate_filter-9cbd094f15b58366)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/compass_ui-678457006af4855d)
+test result: ok. 246 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/adversarial_widget_deviations.rs (target/debug/deps/adversarial_widget_deviations-f93b320b5f6897d0)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/button_230_theme_width.rs (target/debug/deps/button_230_theme_width-c3084f4afb8b1e41)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/index_searchable_bk.rs (target/debug/deps/index_searchable_bk-40222e32d616802b)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+   Doc-tests compass_collectors
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests compass_core
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests compass_data
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests compass_i18n
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests compass_strategy
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests compass_types
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests compass_ui
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

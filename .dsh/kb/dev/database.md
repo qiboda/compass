@@ -36,7 +36,7 @@
 | 类别 | 表 | 说明 |
 |---|---|---|
 | 基本面 | `stock_basic`、`fin_indicators`、`fin_balance_sheet`、`fin_income`、`fin_cash_flow` | 公司概况与三大报表 |
-| SEPA 采集 | `block_trade`、`capital_main_flow`、`dragon_list`、`index_daily`、`index_basic`、`institution_survey` | 龙虎榜/大宗/主力资金/指数与板块日线/指数与板块名称表/机构调研 |
+| SEPA 采集 | `block_trade`、`capital_main_flow`、`dragon_list`、`index_daily`、`index_basic` | 龙虎榜/大宗/主力资金/指数与板块日线/指数与板块名称表 |
 | 计算产物 | `final_score`、`market_temperature`、`capital_factor`、`industry_factor`、`technical_factor`、`data_updates`、`backtest_result` | SEPA 评分与因子输出、抓取状态、`sepa backtest` 回测净值曲线 |
 
 > `backtest_result`（issue #327）：`sepa backtest` 写回的每日策略/基准净值曲线
@@ -56,7 +56,7 @@ row_count + last_report_date）。消费方：
   import 写入，供新鲜度校验使用。
 - **update-database.sh 增量锚点**（`scripts/update-database.sh` step 2/4）：step 0 先同步
   `investment_data` 上游（`scripts/sync-investment-data.sh`）；step 2 由
-  `compass-collectors sync` 统一刷新全部 11 张 `compass_data` 表 + `data_updates`，
+  `compass-collectors sync` 统一刷新全部 10 张 `compass_data` 表 + `data_updates`，
   并在开头自动检测/回补日频源表缺口（`ts_trade_day_calendar` 对比 Dolt 现有交易日）；
   step 2 内 4 张日频表的 0 行 import 按交易日历判定 no-op（#338）；
   step 4 对**逐表读取**各表自身的 `last_report_date`（含 `fin_*` 财务表与
@@ -71,8 +71,8 @@ row_count + last_report_date）。消费方：
 
 `last_report_date` 语义（采集器写库时按表类填写）：`fin_*` 财务表
 （fin_indicators/fin_balance_sheet/fin_income/fin_cash_flow）= `MAX(report_date)`；
-行情表 capital_main_flow/dragon_list/block_trade/index_daily = `MAX(trade_date)`、
-institution_survey = `MAX(survey_date)`；index_basic = `CURDATE()`；
+行情表 capital_main_flow/dragon_list/block_trade/index_daily = `MAX(trade_date)`；
+index_basic = `CURDATE()`；
 stock_basic = NULL（写库只填 4 列，见 `crates/compass-collectors/src/stock_basic_official.rs`）。
 
 **运行统计（issue #334）**：`scripts/update-database.sh` 每次运行在

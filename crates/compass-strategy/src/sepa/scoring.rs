@@ -11,7 +11,7 @@
 //!   the denominator is always 90 and the cap is explicit; v1 has no news
 //!   data so `news` defaults to 10/20.
 //! - **资金 20%** — 量价配合 40, 筹码集中 30, 大资金流入 30 (main-flow
-//!   percentile 20 + dragon-list institution 10 + survey 5 + block-trade ±5,
+//!   percentile 20 + dragon-list institution 15 + block-trade ±5,
 //!   capped at 30 after the block adjustment).
 //! - **形态 20%** — VCP quality 15 + breakout confirmation 5 scaled by the
 //!   thermometer band (≥60 full / 40-60 half / <40 zero).
@@ -27,8 +27,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::{Duration, NaiveDate};
 use compass_core::data::parquet::ParquetReader;
 use compass_core::model::{
-    BlockTradeRow, CapitalMainFlow, CrossSectionBar, DragonListRow, InstitutionSurveyRow,
-    StockBasic,
+    BlockTradeRow, CapitalMainFlow, CrossSectionBar, DragonListRow, StockBasic,
 };
 use compass_types::{SepaData, SepaDetails, SepaFactor, SepaQuery, SepaRow};
 
@@ -47,6 +46,11 @@ pub const DEFAULT_TOP_N: usize = 50;
 const TREND_WEIGHT: f64 = 0.30;
 const THEME_WEIGHT: f64 = 0.25;
 const CAPITAL_WEIGHT: f64 = 0.20;
+
+/// 资金 constants (locked): dragon-list institution buy bonus (15, cap 30
+/// fixed — the +5 previously allocated to the removed fifth signal was
+/// reallocated here).
+const DRAGON_INSTITUTION_BONUS: f64 = 15.0;
 
 /// 题材 formula constants (locked): denominator always 90, news default 10/20.
 const NEWS_SCORE_DEFAULT: f64 = 10.0;
@@ -81,14 +85,14 @@ const SUSPEND_CAL_DAYS: i64 = 7; // ≈ 5 trading days
 /// Pre-fetched SEPA scoring window (full range, sliced per-day by
 /// [`score_sepa`]). Fetching once and scoring many days avoids re-reading
 /// the parquet files for every backtest day (the original per-day
-/// `run_sepa` re-fetched 7 datasets per day, ~3s/day of which ~93% was I/O).
+/// `run_sepa` re-fetched every dataset per day, ~3s/day of which ~93%
+/// was I/O).
 pub(crate) struct SepaWindow {
     bars: Vec<CrossSectionBar>,
     basics: Vec<StockBasic>,
     flows: Vec<CapitalMainFlow>,
     dragons: Vec<DragonListRow>,
     blocks: Vec<BlockTradeRow>,
-    surveys: Vec<InstitutionSurveyRow>,
 }
 
 /// Keep the last row per (symbol, date). Real parquet data occasionally
@@ -137,12 +141,6 @@ pub(crate) fn fetch_sepa_window(
     let t = std::time::Instant::now();
     let blocks = reader.fetch_block_trade(range_start, range_end)?;
     tracing::debug!(fetch = "block_trade", elapsed_ms = t.elapsed().as_millis());
-    let t = std::time::Instant::now();
-    let surveys = reader.fetch_institution_survey(range_start, range_end)?;
-    tracing::debug!(
-        fetch = "institution_survey",
-        elapsed_ms = t.elapsed().as_millis()
-    );
     tracing::debug!(
         bars_loaded = bars.len(),
         window_start = %range_start,
@@ -156,7 +154,6 @@ pub(crate) fn fetch_sepa_window(
         flows,
         dragons,
         blocks,
-        surveys,
     })
 }
 
@@ -204,11 +201,6 @@ pub(crate) fn score_sepa(
         .blocks
         .iter()
         .filter(|b| b.trade_date >= range_start && b.trade_date <= now)
-        .collect();
-    let surveys: Vec<&InstitutionSurveyRow> = window
-        .surveys
-        .iter()
-        .filter(|s| s.survey_date >= range_start && s.survey_date <= now)
         .collect();
     let basics = &window.basics;
     let slice_ms = started.elapsed().as_millis();
@@ -315,11 +307,6 @@ pub(crate) fn score_sepa(
         }
     }
 
-    let mut surveyed: HashSet<String> = HashSet::new();
-    for s in surveys.iter().copied() {
-        surveyed.insert(s.symbol.clone());
-    }
-
     // Block-trade ±5 adjustment from the last 5 rows per symbol: a discount
     // (>2%) adds, a premium (>2%) subtracts.
     let mut block_group: HashMap<String, Vec<&BlockTradeRow>> = HashMap::new();
@@ -375,7 +362,6 @@ pub(crate) fn score_sepa(
         best_industry,
         main_flow_pct,
         institution_buy,
-        surveyed,
         block_adj,
         market_momentums,
         sector_momentums,
@@ -434,7 +420,6 @@ struct MarketContext {
     best_industry: HashMap<String, ThemeComponents>,
     main_flow_pct: HashMap<String, f64>,
     institution_buy: HashSet<String>,
-    surveyed: HashSet<String>,
     block_adj: HashMap<String, f64>,
     market_momentums: Vec<(String, f64)>,
     sector_momentums: HashMap<String, Vec<(String, f64)>>,
@@ -668,11 +653,10 @@ fn score_theme(best: Option<&ThemeComponents>) -> (f64, Vec<SepaFactor>) {
     )
 }
 
-/// Capital inputs precomputed per symbol from the four flow tables.
+/// Capital inputs precomputed per symbol from the flow tables.
 struct CapitalInputs {
     main_flow_pct: f64,
     has_institution_buy: bool,
-    has_survey: bool,
     block_adj: f64,
 }
 
@@ -682,14 +666,13 @@ fn score_capital(series: &[&CrossSectionBar], inputs: &CapitalInputs) -> (f64, V
     let chip = chip_compliance(series);
     let main_flow = inputs.main_flow_pct * 20.0;
     let dragon = if inputs.has_institution_buy {
-        10.0
+        DRAGON_INSTITUTION_BONUS
     } else {
         0.0
     };
-    let survey = if inputs.has_survey { 5.0 } else { 0.0 };
     // min(30, 合计) — the cap applies after the block-trade ±5 adjustment;
     // the floor keeps a negative-only adjustment from dragging below 0.
-    let big_capital = (main_flow + dragon + survey + inputs.block_adj).clamp(0.0, 30.0);
+    let big_capital = (main_flow + dragon + inputs.block_adj).clamp(0.0, 30.0);
 
     let module = volume_price + chip + big_capital;
     (
@@ -714,7 +697,7 @@ fn score_capital(series: &[&CrossSectionBar], inputs: &CapitalInputs) -> (f64, V
                 score: big_capital,
                 max: 30.0,
                 note_key: Some("sepa.note.big_capital"),
-                note_args: Some(vec![main_flow, dragon, survey, inputs.block_adj]),
+                note_args: Some(vec![main_flow, dragon, inputs.block_adj]),
             },
         ],
     )
@@ -967,7 +950,6 @@ fn score_symbol(
     let capital_inputs = CapitalInputs {
         main_flow_pct: ctx.main_flow_pct.get(symbol).copied().unwrap_or(0.0),
         has_institution_buy: ctx.institution_buy.contains(symbol),
-        has_survey: ctx.surveyed.contains(symbol),
         block_adj: ctx.block_adj.get(symbol).copied().unwrap_or(0.0),
     };
     let (capital, capital_factors) = score_capital(series, &capital_inputs);
@@ -1313,25 +1295,22 @@ mod tests {
         let full = CapitalInputs {
             main_flow_pct: 1.0,
             has_institution_buy: true,
-            has_survey: true,
             block_adj: 5.0,
         };
         let (_, factors) = score_capital(&s, &full);
-        assert_eq!(factors[2].score, 30.0, "20+10+5+5 = 40 → capped at 30");
+        assert_eq!(factors[2].score, 30.0, "20+15+5 = 40 → capped at 30");
 
         let discounted = CapitalInputs {
             main_flow_pct: 1.0,
             has_institution_buy: true,
-            has_survey: true,
             block_adj: -5.0,
         };
         let (_, factors) = score_capital(&s, &discounted);
-        assert_eq!(factors[2].score, 30.0, "20+10+5−5 = 30 → still 30");
+        assert_eq!(factors[2].score, 30.0, "20+15−5 = 30 → still 30");
 
         let negative_only = CapitalInputs {
             main_flow_pct: 0.0,
             has_institution_buy: false,
-            has_survey: false,
             block_adj: -5.0,
         };
         let (_, factors) = score_capital(&s, &negative_only);
@@ -1381,7 +1360,6 @@ mod tests {
             best_industry: HashMap::new(),
             main_flow_pct: HashMap::new(),
             institution_buy: HashSet::new(),
-            surveyed: HashSet::new(),
             block_adj: HashMap::new(),
             market_momentums: market.clone(),
             sector_momentums: HashMap::from([("BK1".to_string(), sector.clone())]),
@@ -1400,7 +1378,6 @@ mod tests {
             best_industry: HashMap::new(),
             main_flow_pct: HashMap::new(),
             institution_buy: HashSet::new(),
-            surveyed: HashSet::new(),
             block_adj: HashMap::new(),
         };
         let peers = rs_peers_for("a", &ctx_small);

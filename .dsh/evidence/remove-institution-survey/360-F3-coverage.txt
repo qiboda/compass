@@ -1,0 +1,12 @@
+# coverage: cargo llvm-cov nextest --json --summary-only > cov.json
+# summary: 1704 tests run: 1704 passed, 2 skipped
+# 校验: bash scripts/check-coverage.sh cov.json
+OK: workspace line coverage 95.59860539491966%
+OK: compass-core line coverage 97.18644739449178%
+OK: compass-data line coverage 96.52143359100492%
+OK: compass-i18n line coverage 99.39393939393939%
+OK: compass line coverage 92.84802043422734%
+OK: compass-strategy line coverage 96.86452848252752%
+OK: compass-types line coverage 99.442119944212%
+OK: compass-ui line coverage 97.54482313035051%
+OK: compass-collectors line coverage 43.29869437783107%

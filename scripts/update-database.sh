@@ -8,7 +8,7 @@
 #   1b. verify:     check-stock-daily gaps           (missing trading day ⇒ hard fail)
 #   2. collect:     compass-collectors sync         (all compass_data sources → Dolt, auto-heal gaps)
 #   3. Dolt commit: collector tables + data_updates  (limited add, push; skipped when clean)
-#   4. import:      import-compass 11 tables         (9 incremental/anchored + stock_basic/index_basic full)
+#   4. import:      import-compass 10 tables         (8 incremental/anchored + stock_basic/index_basic full)
 #
 # Idempotency: compass-collectors sync skips already-fetched dates (data_updates.
 # last_report_date); data_updates itself is refreshed by the sync and committed
@@ -50,7 +50,7 @@ export SEPA_INVESTMENT_DATA_DIR="${SEPA_INVESTMENT_DATA_DIR:-$INVESTMENT_DATA_DI
 # the index tables (index_basic is a side effect of index_daily import), and
 # data_updates (refreshed by the compass-collectors sync itself), so the daily
 # data write-back is committed in a single step even on a compute-free day.
-COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic data_updates)
+COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade index_daily index_basic data_updates)
 
 # --- helpers ---
 red()   { echo -e "\033[31m$*\033[0m" >&2; }

@@ -37,8 +37,6 @@ pub enum CompassTable {
     /// Block trades (大宗交易), incremental merge on the full Dolt PK
     /// (symbol, trade_date, price, volume, amount, buyer, seller).
     BlockTrade,
-    /// Institution surveys (机构调研), incremental merge on (symbol, survey_date, org_name).
-    InstitutionSurvey,
     /// Index/board daily bars (指数/板块日线), incremental merge on (symbol, trade_date).
     ///
     /// The exported parquet renames Dolt `trade_date` → `tradedate` and adds
@@ -62,7 +60,6 @@ impl std::str::FromStr for CompassTable {
             "capital_main_flow" => Ok(CompassTable::MainFlow),
             "dragon_list" => Ok(CompassTable::DragonList),
             "block_trade" => Ok(CompassTable::BlockTrade),
-            "institution_survey" => Ok(CompassTable::InstitutionSurvey),
             "index_daily" => Ok(CompassTable::IndexDaily),
             "index_basic" => Ok(CompassTable::IndexBasic),
             _ => Err(format!("unknown table: {s}")),
@@ -156,25 +153,6 @@ pub fn run(
             warn_if_stale(&dolt_dir, "block_trade", MARKET_FRESHNESS_DAYS);
             Ok(())
         }
-        CompassTable::InstitutionSurvey => {
-            import_append_table(
-                AppendTableSpec {
-                    table_name: "institution_survey",
-                    date_col: "survey_date",
-                    parquet_date_col: None,
-                    partition_cols: "symbol, survey_date, org_name",
-                    prefer_new: true,
-                    dolt_order_cols: None,
-                    select_cols: None,
-                },
-                &dolt_dir,
-                &output,
-                overwrite,
-                since,
-            )?;
-            warn_if_stale(&dolt_dir, "institution_survey", MARKET_FRESHNESS_DAYS);
-            Ok(())
-        }
         CompassTable::IndexDaily => {
             import_append_table(
                 AppendTableSpec {
@@ -231,10 +209,9 @@ fn validate_since_arg(flag: &str, value: &str) -> Result<(), Box<dyn std::error:
 
 /// Warn when the source data is stale (issue #136, Q5: warn-only).
 /// Thresholds: fin_* tables 120 days (quarterly reports), market tables
-/// (main_flow/dragon_list/block_trade/institution_survey/
-/// index_daily/index_basic) 7 days. `stock_basic` is skipped: its
-/// data_updates row has a NULL last_report_date (collectors write only
-/// 4 columns, main.py:79-85).
+/// (main_flow/dragon_list/block_trade/index_daily/index_basic) 7 days.
+/// `stock_basic` is skipped: its data_updates row has a NULL last_report_date
+/// (collectors write only 4 columns, see `compass-collectors/src/stock_basic_official.rs`).
 fn warn_if_stale(dolt_dir: &Path, table: &str, threshold_days: i64) {
     let Ok(Some(last)) = crate::validate::data_updates_last_report_date(dolt_dir, table) else {
         return; // no data_updates row / NULL / missing table -> nothing to compare
@@ -759,15 +736,6 @@ mod tests {
         update_date DATE, \
         PRIMARY KEY (symbol, trade_date, price, volume, amount, buyer, seller))";
 
-    const INSTITUTION_SURVEY_SCHEMA: &str = "\
-        CREATE TABLE institution_survey (\
-        symbol VARCHAR(20) NOT NULL, \
-        survey_date DATE NOT NULL, \
-        org_name VARCHAR(1000) NOT NULL, \
-        survey_type VARCHAR(300), \
-        update_date DATE, \
-        PRIMARY KEY (symbol, survey_date, org_name))";
-
     fn setup_dolt(tmp: &std::path::Path) {
         for (key, val) in [("user.email", "test@compass.local"), ("user.name", "Test")] {
             let out = Command::new("dolt")
@@ -980,10 +948,6 @@ mod tests {
         assert!(matches!(
             "block_trade".parse::<CompassTable>(),
             Ok(CompassTable::BlockTrade)
-        ));
-        assert!(matches!(
-            "institution_survey".parse::<CompassTable>(),
-            Ok(CompassTable::InstitutionSurvey)
         ));
         assert!(matches!(
             "index_daily".parse::<CompassTable>(),
@@ -1614,34 +1578,10 @@ mod tests {
             .output()
             .expect("insert block trade");
 
-        Command::new("dolt")
-            .arg("--data-dir")
-            .arg(tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg(INSTITUTION_SURVEY_SCHEMA)
-            .output()
-            .expect("create institution survey");
-        Command::new("dolt")
-            .arg("--data-dir")
-            .arg(tmp.path())
-            .arg("sql")
-            .arg("-q")
-            .arg(
-                "INSERT INTO institution_survey (symbol, survey_date, org_name, survey_type) \
-                  VALUES ('SH600519', '2026-01-05', '华夏基金', '现场调研')",
-            )
-            .output()
-            .expect("insert institution survey");
-
         for (table, parquet_name) in [
             (CompassTable::MainFlow, "capital_main_flow.parquet"),
             (CompassTable::DragonList, "dragon_list.parquet"),
             (CompassTable::BlockTrade, "block_trade.parquet"),
-            (
-                CompassTable::InstitutionSurvey,
-                "institution_survey.parquet",
-            ),
         ] {
             run(
                 tmp.path().to_path_buf(),
@@ -3150,73 +3090,6 @@ mod tests {
                 )
                 .expect("count by seat_type");
             assert_eq!(count, 1, "seat_type {seat_type} must survive");
-        }
-    }
-
-    /// Requirement contract (bug #298): `institution_survey` production PK is
-    /// `(symbol, survey_date, org_name)`. The existing
-    /// `INSTITUTION_SURVEY_SCHEMA` uses exactly that PK. Two different
-    /// org_names on the same symbol/survey_date are the minimal pair that
-    /// detects a future partition narrowed to `(symbol, survey_date)`.
-    ///
-    /// GREEN (current code): partition is `symbol, survey_date, org_name`.
-    #[test]
-    fn institution_survey_requirement_drift_guard_preserves_full_pk_rows() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        setup_dolt(tmp.path());
-        dolt_sql(tmp.path(), INSTITUTION_SURVEY_SCHEMA);
-
-        dolt_sql(
-            tmp.path(),
-            "INSERT INTO institution_survey (symbol, survey_date, org_name) VALUES \
-             ('SH600519', '2026-01-05', '华夏基金'), \
-             ('SH600519', '2026-01-05', '南方基金')",
-        );
-        run(
-            tmp.path().to_path_buf(),
-            tmp.path().to_path_buf(),
-            CompassTable::InstitutionSurvey,
-            false,
-            None,
-        )
-        .expect("full import institution_survey");
-        let parquet = tmp.path().join("institution_survey.parquet");
-        assert_eq!(read_parquet_row_count(&parquet), 2);
-
-        dolt_sql(
-            tmp.path(),
-            "INSERT INTO institution_survey (symbol, survey_date, org_name) VALUES \
-             ('SH600519', '2026-01-05', '易方达基金')",
-        );
-        run(
-            tmp.path().to_path_buf(),
-            tmp.path().to_path_buf(),
-            CompassTable::InstitutionSurvey,
-            false,
-            Some("2026-01-05"),
-        )
-        .expect("incremental merge institution_survey");
-
-        assert_eq!(
-            read_parquet_row_count(&parquet),
-            3,
-            "all (symbol, survey_date, org_name) rows must survive the merge"
-        );
-        let duck = duckdb::Connection::open_in_memory().expect("duckdb");
-        for org_name in ["华夏基金", "南方基金", "易方达基金"] {
-            let count: i64 = duck
-                .query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM read_parquet('{}') \
-                         WHERE symbol = 'SH600519' AND survey_date = '2026-01-05' \
-                           AND org_name = '{org_name}'",
-                        parquet.display()
-                    ),
-                    [],
-                    |row| row.get(0),
-                )
-                .expect("count by org_name");
-            assert_eq!(count, 1, "org_name {org_name} must survive");
         }
     }
 

@@ -2,8 +2,7 @@ use std::process::ExitCode;
 
 use compass_collectors::{
     balance_sheet, block_trade, cash_flow, check_proxy_pool, dragon, fin_indicators, freeproxy,
-    income, index_daily, institution_survey, keepalive, main_flow, orchestrate, stock_basic,
-    stock_basic_official,
+    income, index_daily, keepalive, main_flow, orchestrate, stock_basic, stock_basic_official,
 };
 
 #[tokio::main]
@@ -264,32 +263,6 @@ async fn run_cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let out = dragon::run(start, end, page_size).await?;
-            println!("{}", out.display());
-            Ok(())
-        }
-        "institution-survey" | "institution_survey" => {
-            let mut start_date = None;
-            let mut page_size = 100usize;
-            let mut i = 1;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--start-date" => {
-                        start_date = Some(
-                            args.get(i + 1)
-                                .ok_or("--start-date requires a value")?
-                                .as_str(),
-                        );
-                        i += 2;
-                    }
-                    "--page-size" => {
-                        let raw = args.get(i + 1).ok_or("--page-size requires a value")?;
-                        page_size = raw.parse()?;
-                        i += 2;
-                    }
-                    other => return Err(format!("unknown flag {other}").into()),
-                }
-            }
-            let out = institution_survey::run(start_date, page_size).await?;
             println!("{}", out.display());
             Ok(())
         }
@@ -717,7 +690,6 @@ fn print_usage() {
          \x20 backfill --table T START END [--table ...]\n\
          \x20 block-trade [--start D] [--end D] [--years Y,Y] [--page-size N]\n\
          \x20 dragon [--start D] [--end D] [--page-size N]\n\
-         \x20 institution-survey [--start-date D] [--page-size N]\n\
          \x20 main-flow\n\
          \x20 main-flow-backfill --start D --end D [--symbols S,S]\n\
          \x20 fin-indicators [--years Y,Y] [--periods Q1,Q2,FY] [--page-size N] [--incremental]\n\

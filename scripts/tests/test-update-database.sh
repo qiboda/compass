@@ -6,9 +6,9 @@
 # Run: scripts/tests/test-update-database.sh
 #
 # This suite carries the adversarial RED contract for issue #306:
-#   - COLLECTOR_TABLES = all 11 compass_data tables, in declared order
+#   - COLLECTOR_TABLES = all 10 compass_data tables, in declared order
 #   - step 2 = exactly one `cargo run --bin compass-collectors -- sync`
-#   - step 4 = exactly 11 import-compass calls
+#   - step 4 = exactly 10 import-compass calls
 #   - stock_basic and index_basic always full (never --since)
 #   - financial four tables use per-table last_report_date anchors
 #   - non-financial incremental tables preserve per-table anchor behavior
@@ -84,7 +84,6 @@ case "${1:-}" in
                 *"capital_main_flow"*) printf 'd\n2026-07-30\n' ;;
                 *"dragon_list"*) printf 'd\n2026-07-31\n' ;;
                 *"block_trade"*) printf 'd\n2026-08-01\n' ;;
-                *"institution_survey"*) printf 'd\n2026-08-02\n' ;;
                 *"index_daily"*) printf 'd\n2026-08-03\n' ;;
                 *) printf 'd\nNULL\n' ;;
             esac
@@ -186,7 +185,7 @@ assert_order() {
 
 # ---------------------------------------------------------------------------
 # 1. Happy path: clean Dolt both times → no commit/push at all, single sync,
-#    11 table import chain
+#    10 table import chain
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- 1. happy path (no Dolt changes → commits skipped) ---"
@@ -224,7 +223,7 @@ assert_order "step 1b: gap check after import before sync" "$T1/calls.log" \
 assert_order "step 1b: gap check before compass-collectors sync" "$T1/calls.log" \
     "check-stock-daily" "cargo run --bin compass-collectors -- sync"
 
-assert_true "step 4: 11 table exports (stock_basic + index_basic full + 9 anchored)" \
+assert_true "step 4: 10 table exports (stock_basic + index_basic full + 8 anchored)" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_indicators --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_balance_sheet --since 2026-07-31" "$T1/calls.log" &&
@@ -233,7 +232,6 @@ assert_true "step 4: 11 table exports (stock_basic + index_basic full + 9 anchor
      grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-07-31" "$T1/calls.log" &&
-     grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-07-31" "$T1/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T1/calls.log"'
 assert_true "step 4: index_basic is a full overwrite (no --since)" \
@@ -256,9 +254,7 @@ assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
 assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
     "import-compass --table dragon_list" "import-compass --table block_trade"
 assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
-    "import-compass --table block_trade" "import-compass --table institution_survey"
-assert_order "step 4: append imports in allowlist order" "$T1/calls.log" \
-    "import-compass --table institution_survey" "import-compass --table index_daily"
+    "import-compass --table block_trade" "import-compass --table index_daily"
 assert_order "step 4: index_basic full overwrite follows index_daily" "$T1/calls.log" \
     "import-compass --table index_daily" "import-compass --table index_basic"
 
@@ -402,11 +398,11 @@ assert_true "not-a-Dolt-database error message" \
 assert_false "no step ran" 'grep -q "^cargo " "$T6/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 7. Single-sync + 11-table contract: step 2 exactly one sync, step 4 exactly
-#    11 import-compass calls, COLLECTOR_TABLES contains all 11 tables
+# 7. Single-sync + 10-table contract: step 2 exactly one sync, step 4 exactly
+#    10 import-compass calls, COLLECTOR_TABLES contains all 10 tables
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 7. single-sync and 11-table contract ---"
+echo "--- 7. single-sync and 10-table contract ---"
 T7="$TMP_ROOT/t7"
 mkdir -p "$T7"
 setup_fakes "$T7"
@@ -424,14 +420,19 @@ assert_true "step 2: exactly one sync, no fetch/import source loop" \
     'test "$(grep -c "^cargo run --bin compass-collectors -- sync" "$T7/calls.log")" -eq 1 &&
      test "$(grep -c "^cargo run --bin compass-collectors -- fetch " "$T7/calls.log")" -eq 0 &&
      test "$(grep -c "^cargo run --bin compass-collectors -- import " "$T7/calls.log")" -eq 0'
-assert_true "step 4: exactly 11 import-compass calls" \
-    'test "$(grep -c "cargo run --bin compass-data -- import-compass --table " "$T7/calls.log")" -eq 11'
+assert_true "step 4: exactly 10 import-compass calls" \
+    'test "$(grep -c "cargo run --bin compass-data -- import-compass --table " "$T7/calls.log")" -eq 10'
 assert_true "step 4: stock_basic full overwrite first" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T7/calls.log"'
 assert_true "step 4: index_basic full overwrite last" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T7/calls.log"'
-assert_true "COLLECTOR_TABLES declares all 11 compass_data tables plus data_updates in order" \
-    'test "$(grep "^COLLECTOR_TABLES=" "$SEPA_SCRIPT")" = "COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic data_updates)"'
+assert_true "COLLECTOR_TABLES declares all 10 compass_data tables plus data_updates in order" \
+    'test "$(grep "^COLLECTOR_TABLES=" "$SEPA_SCRIPT")" = "COLLECTOR_TABLES=(stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade index_daily index_basic data_updates)"'
+# #360 RED: institution_survey must be gone from the COLLECTOR_TABLES declaration
+# (plan acceptance: "update-database.sh 的 COLLECTOR_TABLES 不含 institution_survey").
+# 当前声明仍含该表 → count=1 → RED；实现移除后 count=0 → GREEN。
+assert_true "COLLECTOR_TABLES: institution_survey must be removed" \
+    'test "$(grep "^COLLECTOR_TABLES=" "$SEPA_SCRIPT" | grep -c "institution_survey")" -eq 0'
 
 # ---------------------------------------------------------------------------
 # 8. Error path: sync (step 2) fails → non-zero exit, no step 4/5/6/7
@@ -516,14 +517,14 @@ assert_true "collector commit + push for index_daily only" \
     'grep -qx "dolt --data-dir $T10/repos/compass_data commit -m feat: sepa collectors data ref #139" "$T10/calls.log" &&
      grep -qx "dolt --data-dir $T10/repos/compass_data push origin main" "$T10/calls.log"'
 assert_true "no other collector tables staged" \
-    '! grep -qE "dolt .* add (capital_main_flow|dragon_list|block_trade|institution_survey)" "$T10/calls.log"'
+    '! grep -qE "dolt .* add (capital_main_flow|dragon_list|block_trade)" "$T10/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 11. Incremental anchor: per-table data_updates queries for all 9 anchored
+# 11. Incremental anchor: per-table data_updates queries for all 8 anchored
 #     tables; all use their own 2026-07-31 default; stock_basic/index_basic full
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 11. per-table incremental anchor: 9 anchored tables since, 2 full ---"
+echo "--- 11. per-table incremental anchor: 8 anchored tables since, 2 full ---"
 T11="$TMP_ROOT/t11"
 mkdir -p "$T11"
 setup_fakes "$T11"
@@ -552,11 +553,10 @@ assert_true "financial four use same default since anchor" \
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_balance_sheet --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_income --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_cash_flow --since 2026-07-31" "$T11/calls.log"'
-assert_true "all 5 incremental partial tables use same since anchor" \
+assert_true "all 4 incremental partial tables use same since anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-07-31" "$T11/calls.log" &&
-     grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-07-31" "$T11/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-07-31" "$T11/calls.log"'
 assert_true "stock_basic and index_basic stay full overwrite even with anchors" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T11/calls.log" &&
@@ -565,10 +565,10 @@ assert_true "stock_basic and index_basic stay full overwrite even with anchors" 
      ! grep -q "import-compass --table index_basic --since" "$T11/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 12. Empty anchor: no anchors → full import for all 11 tables
+# 12. Empty anchor: no anchors → full import for all 10 tables
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 12. empty anchor NULL → full import for all 11 ---"
+echo "--- 12. empty anchor NULL → full import for all 10 ---"
 T12="$TMP_ROOT/t12"
 mkdir -p "$T12"
 setup_fakes "$T12"
@@ -589,7 +589,7 @@ assert_true "financial four full import (no --since) on NULL anchor" \
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_cash_flow" "$T12/calls.log"'
 assert_true "partial index_daily full import (no --since) on NULL anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table index_daily" "$T12/calls.log"'
-assert_true "all 11 tables take full import path on NULL anchor" \
+assert_true "all 10 tables take full import path on NULL anchor" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table stock_basic" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_indicators" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table fin_balance_sheet" "$T12/calls.log" &&
@@ -598,7 +598,6 @@ assert_true "all 11 tables take full import path on NULL anchor" \
      grep -qx "cargo run --bin compass-data -- import-compass --table capital_main_flow" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table block_trade" "$T12/calls.log" &&
-     grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table index_daily" "$T12/calls.log" &&
      grep -qx "cargo run --bin compass-data -- import-compass --table index_basic" "$T12/calls.log"'
 assert_false "no table uses --since on NULL anchor" \
@@ -670,11 +669,10 @@ assert_false "no anchored import after anchor query failure" \
      grep -q "import-compass --table capital_main_flow" "$T12C/calls.log" ||
      grep -q "import-compass --table dragon_list" "$T12C/calls.log" ||
      grep -q "import-compass --table block_trade" "$T12C/calls.log" ||
-     grep -q "import-compass --table institution_survey" "$T12C/calls.log" ||
      grep -q "import-compass --table index_daily" "$T12C/calls.log"'
 
 # ---------------------------------------------------------------------------
-# 12d. Distinct per-table anchors: each of the 9 anchored tables uses its own
+# 12d. Distinct per-table anchors: each of the 8 anchored tables uses its own
 #      data_updates.last_report_date; stock_basic/index_basic always full
 # ---------------------------------------------------------------------------
 echo ""
@@ -706,8 +704,6 @@ assert_true "dragon_list uses its own 2026-07-31" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table dragon_list --since 2026-07-31" "$T12D/calls.log"'
 assert_true "block_trade uses its own 2026-08-01" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table block_trade --since 2026-08-01" "$T12D/calls.log"'
-assert_true "institution_survey uses its own 2026-08-02" \
-    'grep -qx "cargo run --bin compass-data -- import-compass --table institution_survey --since 2026-08-02" "$T12D/calls.log"'
 assert_true "index_daily uses its own 2026-08-03" \
     'grep -qx "cargo run --bin compass-data -- import-compass --table index_daily --since 2026-08-03" "$T12D/calls.log"'
 assert_true "stock_basic and index_basic full even when others have distinct anchors" \
@@ -746,11 +742,11 @@ assert_true "exactly one sync attempt (no retry)" \
     'test "$(grep -c "^cargo run --bin compass-collectors -- sync" "$T13/calls.log")" -eq 1'
 
 # ---------------------------------------------------------------------------
-# 14. Adversarial: dolt collector commit must cover the full 11-table allowlist
+# 14. Adversarial: dolt collector commit must cover the full 10-table allowlist
 #     (including stock_basic and financial four), and must never `dolt add .`
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- 14. dolt collector commit allowlist covers all 11 tables ---"
+echo "--- 14. dolt collector commit allowlist covers all 10 tables ---"
 T14="$TMP_ROOT/t14"
 mkdir -p "$T14"
 setup_fakes "$T14"
@@ -765,7 +761,6 @@ Changes not staged for commit:
 	modified:         capital_main_flow
 	modified:         dragon_list
 	modified:         block_trade
-	modified:         institution_survey
 	modified:         index_daily
 	modified:         index_basic
 	new table:        some_unrelated_table
@@ -776,8 +771,8 @@ nothing to commit, working tree clean
 EOF
 run_script "$T14"
 assert_true "exit 0" 'test "$(cat "$T14/exit.code")" = 0'
-assert_true "collector add includes all 11 tables in allowlist order" \
-    'grep -qx "dolt --data-dir $T14/repos/compass_data add stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade institution_survey index_daily index_basic" "$T14/calls.log"'
+assert_true "collector add includes all 10 tables in allowlist order" \
+    'grep -qx "dolt --data-dir $T14/repos/compass_data add stock_basic fin_indicators fin_balance_sheet fin_income fin_cash_flow capital_main_flow dragon_list block_trade index_daily index_basic" "$T14/calls.log"'
 assert_false "unrelated/new table never staged" \
     'grep -q "some_unrelated_table" "$T14/calls.log"'
 assert_false "no dolt add ." 'grep -q "dolt .* add \." "$T14/calls.log"'
@@ -835,12 +830,12 @@ assert_false "script header no longer says (5 incremental" \
 # Positive contract: the header must describe the full table set.  We accept the
 # most direct formulations a correct fix might use; the old header has none of
 # them, so this RED is real and will GREEN after the documented sync.
-assert_true "script header mentions all-11 / complete compass_data refresh" \
-    'grep -E "(complete compass_data|all 11 compass_data|11 compass_data tables|11 tables|11 张表|11 个表|全部 11|完整.*compass_data|full compass_data)" "$SEPA_SCRIPT"'
+assert_true "script header mentions all-10 / complete compass_data refresh" \
+    'grep -E "(complete compass_data|all 10 compass_data|10 compass_data tables|10 tables|10 张表|10 个表|全部 10|完整.*compass_data|full compass_data)" "$SEPA_SCRIPT"'
 assert_true "script header reflects the single compass-collectors sync entry point" \
     'grep -E "(main\.py sync|single.*sync|one.*sync|collect.*sync)" "$SEPA_SCRIPT"'
-assert_true "script header still mentions the 11 table import step" \
-    'grep -E "(11 table|11 tables|11 张|11 个|all 11|全部 11)" "$SEPA_SCRIPT"'
+assert_true "script header still mentions the 10 table import step" \
+    'grep -E "(10 table|10 tables|10 张|10 个|all 10|全部 10)" "$SEPA_SCRIPT"'
 
 # ---------------------------------------------------------------------------
 # 17. Requirement: `.dsh/kb/user/cli.md` daily pipeline description must match the
@@ -862,8 +857,8 @@ assert_true "cli.md daily pipeline covers stock_basic" \
     'grep -q "stock_basic" "$CLI_DOC"'
 assert_true "cli.md daily pipeline covers financial tables" \
     'grep -qE "fin_indicators|财务四表|财务表" "$CLI_DOC"'
-assert_true "cli.md daily pipeline reflects 11-table / full refresh" \
-    'grep -qE "11 张表|11 tables|11 个表|全部 11|all 11|完整.*刷新|完整.*compass_data|compass_data 每日刷新|daily.*compass_data" "$CLI_DOC"'
+assert_true "cli.md daily pipeline reflects 10-table / full refresh" \
+    'grep -qE "10 张表|10 tables|10 个表|全部 10|all 10|完整.*刷新|完整.*compass_data|compass_data 每日刷新|daily.*compass_data" "$CLI_DOC"'
 
 # ---------------------------------------------------------------------------
 # 18. Adversarial (#340): after removing SEPA step 5-8, `data_updates` is part

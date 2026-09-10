@@ -17,6 +17,9 @@ parquet_data/
 __pycache__/
 /.coverage
 
+# llvm-cov JSON report (`> cov.json` in .dsh/kb/dev/testing.md) — never tracked
+cov.json
+
 # Saved output files (backtest results, exports) — not tracked
 saved/
 

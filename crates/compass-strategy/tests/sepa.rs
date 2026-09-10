@@ -58,18 +58,11 @@ struct TestBlock {
     premium_rate: f64,
 }
 
-/// One institution-survey row (institution_survey.parquet).
-struct TestSurvey {
-    symbol: &'static str,
-    survey_date: &'static str,
-}
-
 struct Fixture {
     stocks: Vec<TestStock>,
     flows: Vec<TestFlow>,
     dragons: Vec<TestDragon>,
     blocks: Vec<TestBlock>,
-    surveys: Vec<TestSurvey>,
 }
 
 impl Fixture {
@@ -79,7 +72,6 @@ impl Fixture {
             flows: Vec::new(),
             dragons: Vec::new(),
             blocks: Vec::new(),
-            surveys: Vec::new(),
         }
     }
 
@@ -95,11 +87,6 @@ impl Fixture {
 
     fn with_blocks(mut self, blocks: Vec<TestBlock>) -> Self {
         self.blocks = blocks;
-        self
-    }
-
-    fn with_surveys(mut self, surveys: Vec<TestSurvey>) -> Self {
-        self.surveys = surveys;
         self
     }
 
@@ -234,25 +221,6 @@ impl Fixture {
                 tmp.path().join("block_trade.parquet").display()
             ))
             .expect("copy block_trade");
-        }
-
-        if !self.surveys.is_empty() {
-            conn.execute_batch(
-                "CREATE TABLE institution_survey (symbol VARCHAR, survey_date DATE, org_name VARCHAR, survey_type VARCHAR, update_date DATE);",
-            )
-            .expect("create institution_survey");
-            for s in &self.surveys {
-                conn.execute(
-                    "INSERT INTO institution_survey VALUES (?, ?, '长信基金', '电话会议', ?)",
-                    duckdb::params![s.symbol, s.survey_date, s.survey_date],
-                )
-                .expect("insert institution_survey");
-            }
-            conn.execute_batch(&format!(
-                "COPY institution_survey TO '{}' (FORMAT PARQUET)",
-                tmp.path().join("institution_survey.parquet").display()
-            ))
-            .expect("copy institution_survey");
         }
 
         let reader = ParquetReader::new(tmp.path()).expect("create reader");
@@ -401,10 +369,6 @@ fn ranking_fixture() -> Fixture {
         symbol: "SZ000001",
         trade_date: "2026-07-31",
         premium_rate: -3.0,
-    }])
-    .with_surveys(vec![TestSurvey {
-        symbol: "SZ000001",
-        survey_date: "2026-07-31",
     }])
 }
 

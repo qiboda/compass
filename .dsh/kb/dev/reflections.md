@@ -455,3 +455,37 @@
 - 「声称 vs 实际脱节（过度声称/验证不足）」第二次出现并首次由 P0 坐实：#353（fixture 整秒时间戳→生产零删除，3 个 reviewer 抓出）与 #357（fence python 未写入却声称 fenced，81e84e15 抓出）——本次落实：process.md 编辑纪律补「批量替换后 grep 验证落盘」；AGENTS.md「收尾前核实」为既有规则，关闭条件=后续无同类 P0。
 - edit 工具摩擦延续（#336/#338/#342-343/#345/#348/#353 → #357 用脚本化替代 edit 但引入新风险「脚本化≠安全」）：由 process.md 编辑纪律承载，本轮教训强化验证环节。
 - 独立审查兜底模式持续有效：#348 MED-1/#354 M1/#357 P0 均由 review 子代理抓出——主 agent 自证不足是常态，review 链不可省。
+
+## 2026-09-10 — ref #360 institution_survey 全链路移除 + SEPA 分值重分配
+
+**What was done**: worktree 会话实现 #360——institution_survey 表全链路移除（collectors 模块/CLI/orchestrate 分支、compass-core 模型与读取原语、compass-data 枚举/parse/DDL、scripts、i18n、GUI 注记、6 份 KB 文档 + 决策记录行），SEPA survey +5 重分配为 dragon 机构净买入 +10→+15（`DRAGON_INSTITUTION_BONUS = 15.0`，cap 30 不变）；Dolt 表 / `data_updates` 行 / parquet / CSV 残留删除并推送；13 条新契约测试 RED→GREEN；五角度 review（3×P1 + 8×P2 + 若干 P3）逐条修复；后续硬化项建 issue #361。
+
+**User corrections**:
+- 本会话仅 2 条用户消息（reflect-audit 提取，逐条核对无纠正型内容）：① worktree kickoff 指令（读 `.dsh/plans/handoff.md` → 按锁定决策推进 → 完成写 `.completion-message` 再 close）；② 「继续」（在 coverage 测量被中断后要求继续推进）。均为指令/流程提醒，无「不对/应该」类纠正。
+
+**What went wrong**:
+1. **P1 数据面副作用（本次最严重）**：验收冒烟 `cargo run --bin compass-data -- sepa backtest --start 2026-07-01` 触发 `crates/compass-data/src/backtest.rs:115` 的无条件 `DELETE FROM backtest_result`，把远端既有 384 行历史快照（2025-01-02..2026-08-03）替换为 51 行短窗口并 push——**运行破坏性命令前未评估其写库破坏半径**（安全审查 SEC-P1-1 抓出）。修复：默认全窗口重跑恢复 410 行（2025-01-02..2026-09-09，新公式口径），单独 Dolt commit+push；代码层加固建 issue #361。
+2. **验证命令参数错误**：首次调用 `scripts/check-coverage.sh` 未先生成 `cov.json` → `ERROR: coverage report not found: cov.json`（exit 2）。正确姿势早写在 `.dsh/kb/dev/testing.md:335-336`（`cargo llvm-cov nextest --json --summary-only > cov.json && bash scripts/check-coverage.sh cov.json`）。
+3. **长时后台任务被中断 → 0 字节 `cov.json`**：`job_output` 调用被打断时后台 llvm-cov 一并终止，`cov.json` 为空；随后的 check-coverage 报 9 条 FAIL（**假失败**，读空文件），险些被读成"覆盖率不达标"。处理：删除空文件重跑并核对大小（53656 B）。
+4. **残留扫描扫错根目录**：`grep -R` 在 `/data/codes/compass`（master 旧代码）而非 worktree 根内执行，输出大量"残留"假象；改为 worktree 内重扫后生产代码零命中。
+5. **edit 工具连续报错 7 次**：context 压缩后观察记录失效（`edit requires reading … first` 连续 5 次）+ 1 次 `old_string and new_string must differ`。
+6. **nextest 跨进程干扰**：`run_backfill_dates_stage_csv_temp_files_cleaned_after_success` 断言扫描共享 `/tmp/compass_sepa_writeback`，被并行 nextest 进程的在飞 stage 文件触发失败（`llvm-cov nextest` exit 100；`cargo test` 因交错不同未复现）——判定为环境敏感测试而非 #360 回归；修复为按 PID + 前置快照过滤（ref #357 反思记录过同目录 flaky，本次是第二次出现）。
+7. **market_temperature 浮点末位差异**：清理后二次冒烟重算产生 `total_amount` 末位差（1.9036236812701262e+12 vs …218e+12，DuckDB 并行求和顺序），单独 commit 记录，非 #360 缺陷。
+
+**Lessons learned**:
+1. 任何"验证/冒烟"命令（尤其 `sepa backtest`/`backfill-dates` 等写回 Dolt 的子命令）运行前必须先确认写库语义与破坏半径；对全表替换/删除语义的表先落快照，或改用不写库的验证路径（`--csv` 不阻止写回）。
+2. 门禁命令按 testing.md 既有一行式执行（先生成报告再校验），并把输出落盘为 evidence（本次 `just check` 日志已落盘）。
+3. 长时后台任务被中断后必须验证产物完整性（`wc -c cov.json`）再解释结果，禁止把空报告读成"不达标"。
+4. context 压缩后编辑文件前必须重新 `read`；批量编辑同一文件先 read 一次再批量提交。
+5. 全仓 grep 必须在 worktree 根内执行（主工作区是 master 旧代码），否则结论反向。
+6. 断言共享临时目录的测试必须按属主（PID）过滤或做前置快照——并行 nextest 下"别人的在飞文件"会被误判为"自己的残留"。
+
+**Process improvements**:
+- 已落实（随本 PR）：① `.gitignore` 增补 `cov.json`；② `crates/compass-data/src/sepa.rs` 的 `staged_files_containing` 按本进程 PID 过滤 + 测试前置快照（#357 记录的 `/tmp/compass_sepa_writeback` flaky 第二次出现，本次固化）；③ `crates/compass-data/src/import_compass.rs` 清除 Python 时代死引用（`main.py:79-85` → 现行 Rust 落点）；④ `crates/compass-collectors/src/orchestrate.rs` 新增 `removed_and_unknown_targets_are_rejected`（补 collectors 分派移除的回归保障）。
+- proposed (ref #361)：`backtest_result` 无条件全表 DELETE → 作用域删除或替换前快照；历史 `final_score` 口径统一（`backfill-dates`）；dragon 机构买入近因窗口语义；全局 dolt 身份污染（`Test <test@compass.local>`）。
+- **自动化缺口（本次仍靠人工/记忆的环节，待固化）**：① 冒烟命令的写库副作用评估靠记忆 → 建议 testing.md 增「验证命令写库影响标注」小节；② 门禁日志落盘靠手写重定向 → 建议 `just` recipe 或脚本固化；③ F4 的 grep 范围（含 `*.json`/`*.csv` 与仓库外数据目录）靠人记 → 建议固化为 F-wave 模板/脚本。
+
+### Trends (last 10)
+- 「声称 vs 实际脱节」第三次出现，本次集中在 evidence/台账层（#360：F1 声称 architecture.md 有决策行实际无、plan 台账 10 项全未勾选）——与 #353/#357 同类，review 子代理再次兜底；落实方式仍为既有纪律，未产生新机制。
+- 「共享临时目录 flaky」第二次出现（#357 `/tmp/compass_sepa_writeback` 首跑失败 → #360 nextest exit 100）——第二次出现即第一次未落实到机制，本次已固化到测试代码（PID 过滤 + 前置快照）。
+- 「验证类命令的副作用」为新模式（#360 冒烟销毁 backtest_result 384 行），前 10 条反思无同类记录；已建 issue #361 并列入待固化清单。

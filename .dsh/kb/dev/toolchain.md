@@ -440,8 +440,9 @@
 - **症状**: `sepa backtest` 全窗口（385 天）40+ 分钟未完成；单日 ~3.1s。
   `RUST_LOG=debug` 显示每日期 `fetch_ms≈3000`、`compute_ms≈210`（fetch 占 93%）
 - **根因**: `run_backtest` 逐日调用 `run_sepa`，而 `run_sepa` 每次独立 fetch
-  7 份数据（550 日 cross-section + stock_basic + concept_member +
-  capital_main_flow + dragon_list + block_trade + institution_survey）。
+  5 份数据（550 日 cross-section + stock_basic + capital_main_flow + dragon_list +
+  block_trade；历史为 7 份：另含 concept_member（随 #283 移除）与 institution_survey
+  （随 #360 移除））。
   385 天重复读取 380 次（累计 rchar 255GB）——IO 是瓶颈，compute 只占 7%
 - **排查路径**:
   1. 加 tracing 量化：`scoring.rs` 各 fetch 单独计时 + `backtest.rs` 每日/阶段
@@ -735,7 +736,7 @@
   `DuckDB merge failed: Binder Error: Set operations can only apply to expressions with the same number of result columns, falling back to full export`；
   随后 `capital_main_flow.parquet` 只剩 2026-08-20 一天 5544 行，Dolt 表共 27706 行。
   进一步检查发现 dragon_list（parquet 278 / Dolt 6143）、block_trade（118 / 19654）、
-  institution_survey（478 / 304848）、index_daily（528116 / 528476）也均少于 Dolt，疑为历史 fallback 覆盖累积。
+  institution_survey（478 / 304848，已随 #360 删除）、index_daily（528116 / 528476）也均少于 Dolt，疑为历史 fallback 覆盖累积。
 - **根因（两条）**:
   1. `crates/compass-data/src/import_compass.rs` `import_append_table` fallback 分支（原约 497-503 行）
      在 merge 失败时执行 `std::fs::write(&path, &new_data)`，而 `new_data` 是 `WHERE date_col >= since`
@@ -754,7 +755,7 @@
   - `import_fin_indicators` 改为通过共享 `import_append_table` 路径，不再维护独立 fallback 副本。
   - 新增生产 PK 防漂移回归测试（全部 append/import-compass 表）+ block_trade 增量 merge 保行测试 +
     fallback 保留历史测试（`cargo test -p compass-data --lib` 104 passed）。
-- **修复（本次数据恢复，先前已完成）**: 对 5 个 append 表（capital_main_flow, dragon_list, block_trade, institution_survey, index_daily）
+- **修复（本次数据恢复，先前已完成）**: 对 4 个 append 表（capital_main_flow, dragon_list, block_trade, index_daily；institution_survey 已随 #360 删除）
   执行无 `--since` 的 `import-compass` 全量重导，parquet 行数与 Dolt 一致后重跑 SEPA。
 - **验证（代码修复后）**:
   - `cargo test -p compass-data --lib`：104 passed, 0 failed。
@@ -782,18 +783,18 @@
 ### [compass-data] import-compass --since 增量合并不会同步 auto-heal 回补的早于锚点历史（issue #343）
 
 - **症状**: 2026-08-30 auto-heal 补入 capital_main_flow 2026-08-03~08-25 后，Dolt 与 Parquet 不一致：
-  capital_main_flow Dolt 118097 / parquet 49885；institution_survey Dolt 325959 / parquet 325756；
+  capital_main_flow Dolt 118097 / parquet 49885；institution_survey Dolt 325959 / parquet 325756（该表已随 #360 删除）；
   fin_balance_sheet 4481/4479、fin_income 4476/4434、fin_cash_flow 4630/4612。
 - **根因**: `crates/compass-data/src/import_compass.rs::import_append_table()`（约 line 395-510）在
   parquet 已存在且传 `--since` 时，只从 Dolt 导出 `date_col >= since` 切片并与旧 parquet 合并。
   auto-heal 补进 Dolt 的**早于 since 的缺失日期**既不在增量切片也不在旧 parquet，因此永久留缺。
-- **处理（本次数据修复）**: 对全部 11 张 compass_data 表执行无 `--since` 的
+- **处理（本次数据修复）**: 对全部 11 张 compass_data 表（当时 11 张；institution_survey 已随 #360 删除）执行无 `--since` 的
   `import-compass` 全量重建；重建后 Dolt ↔ Parquet 行数/最大日期完全一致，且 `priority`/`rn`
   内部列已清除（增量 merge 成功路径会把这两列写进正式 parquet，下次 merge 才触发 Binder fallback）。
   已修复于 PR #344（2026-08-31）：merge 前做 Dolt `<since` vs 旧 parquet `<since` 双向 EXCEPT 历史
   一致性校验，发散/不可读自动降级全量导出（pre_merge_backup 保留）；merge 输出
   `SELECT * EXCLUDE (priority, rn)` 清除内部列。
-- **验证**: 全量重建后 Python/DuckDB 查询 11 张 parquet 均与 Dolt 对齐。
+- **验证**: 全量重建后 Python/DuckDB 查询 11 张 parquet（当时 11 张；institution_survey 已随 #360 删除）均与 Dolt 对齐。
 - **教训**: 增量导入必须假设“旧 parquet 可能缺失 Dolt 中早于锚点的历史行”；auto-heal 回补后
   受影响表不能只跑 `--since` 增量，应强制全量 export 或先做缺失检测。
 
@@ -868,10 +869,10 @@
 - **处理（本次临时 fallback）**: 完整刷新改为
   `COMPASS_AUTO_HEAL=0 COMPASS_PROXY_DISABLE=1 cargo run --bin compass-collectors -- sync`
   （跳过 auto-heal，走 daily 路径，官方指数靠 Tencent 兜底）+ 手动 Dolt commit/push +
-  全量 `import-compass` 11 表。Dolt/Parquet 已验证全部一致；未 export DuckDB。
+  全量 `import-compass` 11 表（当时 11 张；institution_survey 已随 #360 删除）。Dolt/Parquet 已验证全部一致；未 export DuckDB。
 - **验证**: 2026-09-04 数据 Dolt=Parquet：stock_basic 5910；fin_* 132126/4546/4530/4686（report 06-30）；
   capital_main_flow 142823/09-04；dragon_list 7469/09-04；block_trade 20641/09-04；
-  institution_survey 338373/09-04；index_daily 529834/09-04；index_basic 120。
+  institution_survey 338373/09-04（已随 #360 删除）；index_daily 529834/09-04；index_basic 120。
 - **教训**: auto-heal 回补必须复用 daily 路径的第三方兜底（Tencent）与 proxy 健康策略；
   任何新增 backfill 路径都要先验证 EastMoney 不可达时仍能完成。
 - **修复（fix/index-daily-tencent-default，PR #356）**: `decide_official` 纯决策函数统一
