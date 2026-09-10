@@ -565,7 +565,7 @@ proxy_pool 的补充代理源，保证代理数量和 HTTPS 可用性：
 #### collectors 代理层接入与 keepalive（#294）
 
 采集器接入状态：**proxy-first**——东财 datacenter（balance_sheet/cash_flow/income/
-fin_indicators/block_trade/dragon/institution_survey）、push2（main_flow）、
+fin_indicators/block_trade/dragon）、push2（main_flow）、
 push2his 备用+THS（index_daily：腾讯主源+东财 push2his 备用+THS）、三大交易所官网（stock_basic_official）全部
 默认走代理；池空/API 不可达 → 醒目警告 + `proxy_pool_state.json` + 直连不失败。
 

@@ -15,8 +15,8 @@ use crate::dolt::{dolt_sql, dolt_sql_csv, set_last_report_date};
 use crate::error::{CollectError, Result};
 use crate::timing::{TimingEvent, TimingWriter};
 use crate::{
-    balance_sheet, block_trade, cash_flow, dragon, fin_indicators, income, index_daily,
-    institution_survey, main_flow, progress, stock_basic_official,
+    balance_sheet, block_trade, cash_flow, dragon, fin_indicators, income, index_daily, main_flow,
+    progress, stock_basic_official,
 };
 
 /// Default financial report periods (comma-separated).
@@ -144,7 +144,6 @@ pub async fn fetch(
         "cash_flow" => cash_flow::run(years, periods, page_size, incremental).await,
         "dragon" => dragon::run(None, None, page_size).await,
         "block_trade" => block_trade::run(None, None, None, page_size).await,
-        "institution_survey" => institution_survey::run(None, page_size).await,
         "main_flow" => main_flow::run().await,
         "index_daily" => index_daily::run().await,
         other => Err(CollectError::InvalidInput(format!(
@@ -183,10 +182,6 @@ pub async fn import_target(target: &str) -> Result<()> {
         "block_trade" => {
             let rows = block_trade::import_to_dolt(None).await?;
             require_nonzero(rows, "block_trade")
-        }
-        "institution_survey" => {
-            let rows = institution_survey::import_to_dolt(None).await?;
-            require_nonzero(rows, "institution_survey")
         }
         "main_flow" => {
             let rows = main_flow::import_to_dolt(None).await?;
@@ -586,21 +581,6 @@ pub async fn sync(_restart: bool) -> Result<()> {
         block_trade::import_to_dolt(None).await
     )?;
     require_daily_rows("block_trade", rows).await?;
-
-    eprintln!("\n[sync] Fetching institution_survey...");
-    let _ = timed!(
-        &timing,
-        "institution_survey",
-        "fetch",
-        institution_survey::run(None, DEFAULT_PAGE_SIZE).await
-    )?;
-    let rows = timed!(
-        &timing,
-        "institution_survey",
-        "import",
-        institution_survey::import_to_dolt(None).await
-    )?;
-    require_nonzero(rows, "institution_survey")?;
 
     eprintln!("\n[sync] Fetching main_flow...");
     let _ = timed!(&timing, "main_flow", "fetch", main_flow::run().await)?;

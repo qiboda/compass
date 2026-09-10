@@ -445,7 +445,7 @@ EastMoney API ──compass-collectors──► CSV ──import──► compas
 | `balance_sheet.rs` | 资产负债表 | 319 个字段，按季度，RPT_F10_FINANCE_GBALANCE |
 | `income.rs` | 利润表 | 203 个字段，按季度，RPT_F10_FINANCE_GINCOME |
 | `cash_flow.rs` | 现金流量表 | 254 个字段，按季度，RPT_F10_FINANCE_GCASHFLOW |
-| `dragon.rs` / `block_trade.rs` / `institution_survey.rs` | SEPA 日频/事件表 | 龙虎榜/大宗交易/机构调研 |
+| `dragon.rs` / `block_trade.rs` | SEPA 日频/事件表 | 龙虎榜/大宗交易 |
 | `main_flow.rs` / `index_daily.rs` / `freeproxy.rs` / `proxy.rs` / `keepalive.rs` | SEPA/代理 | 主力资金流、指数/板块、代理池 |
 
 工具链：Rust workspace（cargo fmt/clippy/test/doc）为唯一强制门禁；CI 已不含
@@ -473,7 +473,7 @@ Python tests、uv/ruff 相关 CI 与 hooks 均已退役。HTTP/TLS 使用 `wreq`
 （rquest 项目的后续名；`rquest` crates.io 已 yank、仓库改名 `0x676e67/wreq`，
 同一作者/同一指纹方案，不是降级到 reqwest），Chrome 142 指纹由 `wreq-util`
 提供。迁移按 B1 基础设施 → B2 pilot（block_trade）→ B3
-（dragon_list、institution_survey、main_flow、stock_basic EastMoney）→
+（dragon_list、institution_survey、main_flow、stock_basic EastMoney；其中 institution_survey 采集器已随 #360 移除）→
 B4 财务报表 → B5 复杂/特殊 → B6 编排 CLI → B7 切换/退役推进，每批一个 PR，
 并通过 dual-run 对比等价后才切换。B6 的 `crates/compass-collectors::orchestrate`
 提供与旧 `main.py` 等价的 fetch/import/sync/progress/backfill/auto-heal/
@@ -521,7 +521,7 @@ shell 把步骤事件与采集器事件合并成单个本地 JSON
 - `--overwrite` 替换已有数据；默认合并/跳过（仅新增数据）
 - `--since` 用于增量导入
 - append 表（fin_*、capital_main_flow、dragon_list、block_trade、
-  institution_survey、index_daily）的 merge 分区列必须与生产 Dolt 全主键一致；
+  index_daily）的 merge 分区列必须与生产 Dolt 全主键一致；
   merge 失败 fallback 改为不带 `--since` 的真全量导出（ref #298）
 
 ### export：Parquet → 其他格式
@@ -716,11 +716,11 @@ Compass 中的每个库选择都是经过深思熟虑的。以下是每个库的
 | D4（#247）：LLM 请求通道 | 第五 `AsyncDispatcher` 通道 / 复用 run_screener 通道 | 第五通道（`RunLlmRequest/Response`，含 seq 守卫） | 与 sepa/index 通道模式完全同构；LLM 是独立后端职责（网络 I/O + 解析校验）；seq 守卫保证 Esc 取消后在途响应不混入 | 复用 screener 通道破坏单一职责、错误语义混杂 |
 | D5（#247）：API key 存储 | config.toml 明文 / 系统钥匙串 / GUI 输入框 | `[llm]` 节明文（与项目其他配置同级） | 桌面本地应用、配置即文本的既有惯例；无密钥管理依赖 | 钥匙串引入平台差异与额外依赖，超出辅助功能定位 |
 | C4（#267）：抓取进度存储形态 | JSON 进度文件 / SQLite / 日志行 | `csv_dir()/<name>.progress.json` 原子写（tmp+os.replace） | 轻量零依赖、跨进程可读、与 CSV 同目录便于排查；CSV 保持一次性写入语义 | SQLite 过重；日志行无结构化查询 |
-| C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
+| C5（#267）：progress target 范围 | 11 个全量名 / 仅 6 个接入者 | 仅 6 个接入者（main_flow/block_trade/index_daily/institution_survey/concept_member/dragon；#360 后接入者减为 5 个：main_flow/block_trade/index_daily/concept_member/dragon） | 未接入 target 查询必失败，choices 收敛到真实有效值（append 型采集器无进度文件） | 全量 choices 误导用户 |
 
 > 注：C5 原记录含 `concept_member`——该采集器已随 issue #283（概念板块移除）
-> 删除。现状 progress 文件写入方为 **6 个模块、8 个文件名**：SEPA 五采集器
-> （main_flow/block_trade/dragon/institution_survey/index_daily，快名）+ 财务三表
+> 删除。现状 progress 文件写入方为 **5 个模块、7 个文件名**：SEPA 四采集器
+> （main_flow/block_trade/dragon/index_daily，快名）+ 财务三表
 > （balance_sheet/income/cash_flow 经 financial.rs 共享路径，文件名 = API 报告名
 > `RPT_F10_FINANCE_*.progress.json`）；**fin_indicators 自有 fetch 循环，不产生
 > 进度文件**。`progress` 运行时扫描 `csv_dir()` 下全部 `*.progress.json`，

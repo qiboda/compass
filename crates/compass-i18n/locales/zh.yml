@@ -262,7 +262,7 @@ sepa:
     no_sector_data: 无板块数据
     news_v1: v1 无新闻数据
     news_default: v1 默认 10/20
-    big_capital: "主力%{main}+龙虎%{dragon}+调研%{survey}+大宗%{block}"
+    big_capital: "主力%{main}+龙虎%{dragon}+大宗%{block}"
     thermometer: "温度计 %{score}"
 
 index:

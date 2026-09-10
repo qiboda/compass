@@ -34,8 +34,6 @@ pub mod income;
 /// Incremental UPDATE_DATE-based fetching helpers.
 pub mod incremental;
 pub mod index_daily;
-/// Institution-survey (机构调研) collector.
-pub mod institution_survey;
 pub mod keepalive;
 /// Main-capital-flow (主力资金流) collector.
 pub mod main_flow;

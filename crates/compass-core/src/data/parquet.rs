@@ -16,7 +16,7 @@ use crate::data::provider::{DataError, DataProvider};
 use crate::indicators::{RawBar, adjust_ohlc};
 use crate::model::{
     BlockTradeRow, CapitalMainFlow, CrossSectionBar, DragonListRow, IndexBasic, IndexDailyRow,
-    InstitutionSurveyRow, StockBasic, SymbolInfo,
+    StockBasic, SymbolInfo,
 };
 
 /// One row from the daily parquet query: (date_str, open, high, low, close,
@@ -854,36 +854,6 @@ impl ParquetReader {
             })
         })
     }
-
-    /// Load 机构调研 (institution survey) rows within `[start, end]` (inclusive).
-    ///
-    /// If `institution_survey.parquet` doesn't exist, returns an empty vec.
-    pub fn fetch_institution_survey(
-        &self,
-        start: NaiveDate,
-        end: NaiveDate,
-    ) -> Result<Vec<InstitutionSurveyRow>, DataError> {
-        let path = self.parquet_dir.join("institution_survey.parquet");
-        let sql = format!(
-            "SELECT symbol, CAST(survey_date AS VARCHAR) AS survey_date, org_name, survey_type,
-                    CAST(update_date AS VARCHAR) AS update_date
-             FROM read_parquet('{}')
-             WHERE survey_date >= ? AND survey_date <= ?
-             ORDER BY symbol, survey_date ASC",
-            escape_sql_path(&path.to_string_lossy())
-        );
-        let start_str = start.format("%Y-%m-%d").to_string();
-        let end_str = end.format("%Y-%m-%d").to_string();
-        self.query_parquet(&path, &sql, params![start_str, end_str], |row| {
-            Ok(InstitutionSurveyRow {
-                symbol: row.get(0)?,
-                survey_date: parse_naive_date(row.get(1)?)?,
-                org_name: row.get(2)?,
-                survey_type: row.get(3)?,
-                update_date: parse_naive_date_opt(row.get(4)?)?,
-            })
-        })
-    }
 }
 
 fn date_str_to_utc(date_str: &str) -> Option<DateTime<Utc>> {
@@ -1403,32 +1373,6 @@ mod tests {
     }
 
     #[test]
-    fn fetch_institution_survey_returns_rows() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        create_test_table_parquet(
-            &tmp,
-            "institution_survey",
-            "CREATE TABLE institution_survey (symbol VARCHAR, survey_date DATE, org_name VARCHAR, survey_type VARCHAR, update_date DATE)",
-            &[
-                "INSERT INTO institution_survey VALUES ('SH600519', '2026-07-28', '长信基金', '电话会议', '2026-07-28')",
-                "INSERT INTO institution_survey VALUES ('SH600519', '2026-07-28', '国泰基金', NULL, '2026-07-28')",
-            ],
-        );
-
-        let reader = ParquetReader::new(tmp.path()).expect("create reader");
-        let rows = reader
-            .fetch_institution_survey(
-                NaiveDate::from_ymd_opt(2026, 7, 28).expect("date"),
-                NaiveDate::from_ymd_opt(2026, 7, 28).expect("date"),
-            )
-            .expect("fetch institution survey");
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].org_name, "长信基金");
-        assert_eq!(rows[0].survey_type.as_deref(), Some("电话会议"));
-        assert_eq!(rows[1].survey_type, None, "NULL survey_type is None");
-    }
-
-    #[test]
     fn sepa_table_readers_return_empty_when_parquet_missing() {
         // Boundary: GUI tables not yet imported must degrade to empty vecs,
         // not DataError — otherwise run_sepa's `?` fails hard (review revision).
@@ -1455,15 +1399,6 @@ mod tests {
         assert!(
             reader
                 .fetch_block_trade(
-                    NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"),
-                    NaiveDate::from_ymd_opt(2030, 1, 1).expect("date"),
-                )
-                .expect("empty")
-                .is_empty()
-        );
-        assert!(
-            reader
-                .fetch_institution_survey(
                     NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"),
                     NaiveDate::from_ymd_opt(2030, 1, 1).expect("date"),
                 )

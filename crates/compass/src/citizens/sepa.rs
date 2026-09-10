@@ -101,7 +101,7 @@ fn format_indicator_value(value: f64, unit_key: &str) -> String {
 
 /// Resolve a factor note from its key + positional numeric args. Args map
 /// positionally onto the note template names (drawdown/momentum → `pct`,
-/// big_capital → main/dragon/survey/block, thermometer → score).
+/// big_capital → main/dragon/block, thermometer → score).
 fn factor_note_text(note_key: &'static str, args: &[f64]) -> String {
     let arg = |i: usize| args.get(i).copied().unwrap_or(0.0);
     // Pre-format numeric args exactly like the pre-i18n `format!` strings in
@@ -120,8 +120,7 @@ fn factor_note_text(note_key: &'static str, args: &[f64]) -> String {
             note_key,
             main = format!("{:.0}", arg(0)),
             dragon = format!("{:.0}", arg(1)),
-            survey = format!("{:.0}", arg(2)),
-            block = format!("{:+.0}", arg(3)),
+            block = format!("{:+.0}", arg(2)),
         )
         .into_owned(),
         "sepa.note.thermometer" => {
@@ -842,12 +841,12 @@ mod tests {
             "温度计 64"
         );
         assert_eq!(
-            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, 5.0, 5.0]),
-            "主力75+龙虎10+调研5+大宗+5"
+            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, 5.0]),
+            "主力75+龙虎10+大宗+5"
         );
         assert_eq!(
-            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, 5.0, -5.0]),
-            "主力75+龙虎10+调研5+大宗-5"
+            factor_note_text("sepa.note.big_capital", &[75.0, 10.0, -5.0]),
+            "主力75+龙虎10+大宗-5"
         );
         compass_i18n::set_locale("zh");
     }
